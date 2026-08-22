@@ -1,0 +1,22 @@
+# Build output and downloaded dependencies.
+#
+# Makina asks agents to build and verify their work, then commits the whole
+# task worktree. Anything a build writes that is not ignored here is committed
+# with the task and rejected as outside its authored footprint — so these rules
+# are what keep the first task that compiles anything from failing the run.
+#
+# Add your own; nothing below is removed by Makina.
+
+# Rust
+/target/
+
+# JavaScript / TypeScript
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# OS noise
+.DS_Store
