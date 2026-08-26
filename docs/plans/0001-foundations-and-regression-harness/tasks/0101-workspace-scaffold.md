@@ -46,7 +46,7 @@ touches:
   - "xtask/src/**"
   - "xtask/tests/skeleton.rs"
   - "policy/lexicon/workspace-scaffold.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Workspace Scaffold
