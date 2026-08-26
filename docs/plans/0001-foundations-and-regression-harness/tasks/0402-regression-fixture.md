@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-harness/tests/regression_fixture.rs"
   - "xtask/src/regression.rs"
   - "policy/lexicon/regression-fixture.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Regression Fixture
