@@ -11,15 +11,20 @@ reconnect and nothing else.
 
 This repository is the server, the client engine the application links, the
 wire protocol between them, the C ABI the application calls, and the harness
-that proves all of it. The macOS application lives in its own repository and
-is built against `docs/CLIENT.md`, the contract plan 0006 publishes.
+that proves all of it. The macOS application lives in its own repository and is
+built against the C ABI contract that plan 0006 publishes.
 
 ## Status
 
-Designed, not yet built. The design is [`ARCHITECTURE.md`](ARCHITECTURE.md);
-the work is six executable plans under [`docs/plans/`](docs/plans/STATUS.md),
-run by [Makina](https://github.com/koraytaylan/makina). Nothing under
-`crates/` exists until the first plan lands it.
+Plan 0001 — the foundations and the regression harness — has landed: the
+rule-gated workspace, the golden-pinned wire primitives, the headless VT oracle,
+the pseudoterminal harness, and the two-container Podman regression suite whose
+scenarios are parallel nextest tests and whose claims registry gates every later
+plan. The five plans that build the server, the multiplexer, the daemon, the SSH
+bootstrap and the client API are designed and not yet built. The design is
+[`ARCHITECTURE.md`](ARCHITECTURE.md); the work is six executable plans under
+[`docs/plans/`](docs/plans/STATUS.md), run by
+[Makina](https://github.com/koraytaylan/makina).
 
 ## Layout
 
@@ -27,7 +32,6 @@ run by [Makina](https://github.com/koraytaylan/makina). Nothing under
 ARCHITECTURE.md      the system design every plan implements
 CONTRIBUTING.md      the rules every line is held to, and the gates that hold them
 docs/plans/          the plans: scope, architecture, status and one document per task
-docs/CLIENT.md       the contract the macOS application is built against (plan 0006)
 crates/              iznik-protocol, iznik-link, iznik-server, iznik-client, iznik-ffi,
                      iznik-cli, iznik-harness, iznik-testkit, iznik-regression
 xtask/               gates, policy checks, the claims registry, images, staging, distribution

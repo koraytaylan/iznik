@@ -162,7 +162,7 @@ boundary. There, every `unsafe` block carries a `// SAFETY:` comment naming
 the invariant it relies on and the caller obligation from the header that
 guarantees it, and a block contains one unsafe operation. *Enforced by
 `#![forbid(unsafe_code)]` in every other crate root (checked by
-`xtask/tests/policy_unsafe.rs`), `clippy::undocumented_unsafe_blocks` and
+`xtask/tests/policy_unsafe_boundary.rs`), `clippy::undocumented_unsafe_blocks` and
 `clippy::multiple_unsafe_ops_per_block`.*
 
 ### 3.8 Lints
@@ -282,9 +282,11 @@ Every scenario under `regression/scenarios/` is one such test, named
 
 ```sh
 cargo nextest run --package iznik-regression --test regression_scenarios \
-  --run-ignored all -E 'test(=scenario::pty-spawn::login-shell)'
+  --run-ignored all -E 'test(=scenario::scenario-driver::round-trip)'
 ```
 
+The fixture starts its two containers in about a second and a half with warm
+images, held under a ten-second ceiling and asserted by its own test.
 `.config/nextest.toml` kills any test that exceeds its deadline and reports
 it as a failure naming the test — a hung test cannot hold the suite — and
 prints `SLOW` for an in-process test past five seconds, which is the bar.

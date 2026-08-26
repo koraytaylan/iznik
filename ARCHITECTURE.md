@@ -18,8 +18,8 @@ application costs a reconnect and nothing else.
 This repository holds everything except the macOS application: the server,
 the client engine the application links, the wire protocol between them, the
 C ABI the application calls, and the test harness that proves all of it. The
-application is built in its own repository against the contract published in
-`docs/CLIENT.md`.
+application is built in its own repository against the contract that plan 0006
+publishes.
 
 ### Non-goals
 
@@ -63,11 +63,11 @@ daemon knows what SSH is.
 | `iznik-link` | library | Frames over a duplex stream and streaming compression, written once for both ends and the test client. | `iznik-protocol` |
 | `iznik-server` | library + binary `iznik-server` | The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions, multiplexing, resume. | `iznik-protocol`, `iznik-link` |
 | `iznik-client` | library | The client engine: SSH transport, bootstrap, the client-side model and reducer, optimistic commands, multi-host management. | `iznik-protocol`, `iznik-link` |
-| `iznik-ffi` | `cdylib` + `staticlib` | The C ABI over `iznik-client`. The only crate that may contain `unsafe`. | `iznik-client` |
-| `iznik-cli` | binary `iznik` | Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor`, `uninstall`. Never a user interface. | `iznik-client` |
+| `iznik-ffi` | `cdylib` + `staticlib` | The C ABI over `iznik-client`. The only crate that may contain `unsafe`. | `iznik-client`, `iznik-protocol` |
+| `iznik-cli` | binary `iznik` | Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor`, `uninstall`. Never a user interface. | `iznik-client`, `iznik-protocol` |
 | `iznik-harness` | library | The bounded process runner, the deadline helpers, the two-container fixture, staging, and the scenario format and runner. No emulator and no product code, so `xtask` builds in seconds. | — |
 | `iznik-testkit` | library | The golden loader, the headless VT oracle, the pseudoterminal harness, the fidelity corpus, the model generator, the protocol test client and the in-process stack. | `iznik-protocol`, `iznik-link`, `iznik-server`, `iznik-harness` |
-| `iznik-regression` | library + binary `iznik-regression` | The scenario driver that runs inside a container and reports NDJSON, and the test binary that makes every scenario a nextest test. | `iznik-harness`, `iznik-testkit`, `iznik-server`, `iznik-client` |
+| `iznik-regression` | library + binary `iznik-regression` | The scenario driver that runs inside a container and reports NDJSON, and the test binary that makes every scenario a nextest test. | `iznik-harness`, `iznik-testkit`, `iznik-server`, `iznik-client`, `iznik-protocol` |
 | `xtask` | library + binary `xtask` | Gates, policy checks, the claims registry, images, staging, distribution, the header, the soak. | `iznik-harness` |
 
 Dependencies point one way: protocol ← link ← server/client ← ffi/cli, and
@@ -319,7 +319,7 @@ Pane output is delivered by callback straight into the application's surface,
 and flow control is mandatory: the application returns credit as its surface
 consumes. The header is generated and golden-pinned, so an accidental ABI
 change fails a test here rather than crashing somebody else's application.
-The full contract is `docs/CLIENT.md`.
+The full contract is the document plan 0006 publishes.
 
 ## 8. How it is proven
 
@@ -356,9 +356,9 @@ The full contract is `docs/CLIENT.md`.
   field of an options struct whose default is the named constant; the product
   uses the default and a test shortens it. An in-process test finishes in
   under five seconds, and nextest says so when one does not.
-- **Committed numbers**: latency, throughput and memory baselines live in
-  `docs/notes/baseline.md` with the machine described; tests assert generous
-  ceilings so the regression test survives a noisy machine.
+- **Committed numbers**: latency, throughput and memory baselines live in a
+  notes file under `docs/notes/` with the machine described; tests assert
+  generous ceilings so the regression test survives a noisy machine.
 - **Deadlines everywhere.** No test, gate, scenario step, fixture wait or
   spawned process runs without a bound. A hang is a failure that names what
   was running, never a wait.
