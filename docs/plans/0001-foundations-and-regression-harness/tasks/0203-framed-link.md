@@ -10,7 +10,7 @@ touches:
   - "crates/iznik-link/src/framed.rs"
   - "crates/iznik-link/tests/framed.rs"
   - "policy/lexicon/framed-link.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Framed Link
