@@ -13,7 +13,7 @@ touches:
   - "crates/iznik-protocol/tests/message_golden.rs"
   - "crates/iznik-protocol/tests/fixtures/message.jsonl"
   - "policy/lexicon/control-messages.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Control Messages
