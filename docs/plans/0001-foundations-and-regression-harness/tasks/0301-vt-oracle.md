@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-testkit/tests/vt_oracle.rs"
   - "crates/iznik-testkit/tests/fixtures/vt/**"
   - "policy/lexicon/vt-oracle.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # VT Oracle
