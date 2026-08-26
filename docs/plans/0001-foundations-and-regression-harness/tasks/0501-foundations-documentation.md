@@ -13,7 +13,7 @@ touches:
   - "crates/*/README.md"
   - "xtask/README.md"
   - "policy/lexicon/foundations-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Foundations Documentation
