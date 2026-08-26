@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-harness/tests/regression_images.rs"
   - "xtask/src/regression.rs"
   - "policy/lexicon/regression-images.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Regression Images
