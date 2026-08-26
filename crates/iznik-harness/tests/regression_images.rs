@@ -166,7 +166,7 @@ fn regression_images_building_twice_builds_nothing_the_second_time() {
     std::fs::write(
         &wrapper,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexec {PROGRAM} \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec {PROGRAM} \"$@\"\n",
             log.display()
         ),
     )
