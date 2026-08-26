@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-testkit/tests/pty_harness.rs"
   - "crates/iznik-testkit/tests/metrics.rs"
   - "policy/lexicon/pty-harness.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # PTY Harness
