@@ -1,0 +1,82 @@
+{"description": "Hello with both known capabilities", "direction": "to_server", "message": {"Hello": {"protocol_version": 1, "client_version": "iznik 0.1.0", "capabilities": 3}}, "hex": "0001000b000000697a6e696b20302e312e3003000000"}
+{"description": "Hello with protocol version 0 and an empty client version, decoded as values", "direction": "to_server", "message": {"Hello": {"protocol_version": 0, "client_version": "", "capabilities": 0}}, "hex": "0000000000000000000000"}
+{"description": "Hello with the largest protocol version and every capability bit set", "direction": "to_server", "message": {"Hello": {"protocol_version": 65535, "client_version": "x", "capabilities": 4294967295}}, "hex": "00ffff0100000078ffffffff"}
+{"description": "Hello with protocol version 2 and only an unknown capability bit, preserved", "direction": "to_server", "message": {"Hello": {"protocol_version": 2, "client_version": "future", "capabilities": 2147483648}}, "hex": "0002000600000066757475726500000080"}
+{"description": "SnapshotRequest", "direction": "to_server", "message": "SnapshotRequest", "hex": "01"}
+{"description": "Command with id 0 and an empty opaque payload", "direction": "to_server", "message": {"Command": {"command_id": 0, "payload": ""}}, "hex": "02000000000000000000000000"}
+{"description": "Command with the largest id and an opaque payload", "direction": "to_server", "message": {"Command": {"command_id": 18446744073709551615, "payload": "0102"}}, "hex": "02ffffffffffffffff020000000102"}
+{"description": "Subscribe pane 1", "direction": "to_server", "message": {"Subscribe": {"pane": 1}}, "hex": "030100000000000000"}
+{"description": "Unsubscribe the largest pane id", "direction": "to_server", "message": {"Unsubscribe": {"pane": 18446744073709551615}}, "hex": "04ffffffffffffffff"}
+{"description": "Resume from sequence 0", "direction": "to_server", "message": {"Resume": {"pane": 5, "from_sequence": 0}}, "hex": "0505000000000000000000000000000000"}
+{"description": "Resume from the largest sequence", "direction": "to_server", "message": {"Resume": {"pane": 5, "from_sequence": 18446744073709551615}}, "hex": "050500000000000000ffffffffffffffff"}
+{"description": "ScreenRequest pane 9", "direction": "to_server", "message": {"ScreenRequest": {"pane": 9}}, "hex": "060900000000000000"}
+{"description": "Credit of 0 bytes on channel 1", "direction": "to_server", "message": {"Credit": {"channel": 1, "bytes": 0}}, "hex": "070100000000"}
+{"description": "Credit of the largest count on channel 255", "direction": "to_server", "message": {"Credit": {"channel": 255, "bytes": 4294967295}}, "hex": "07ffffffffff"}
+{"description": "ChannelReleased channel 1", "direction": "to_server", "message": {"ChannelReleased": {"channel": 1}}, "hex": "0801"}
+{"description": "ChannelReleased channel 255", "direction": "to_server", "message": {"ChannelReleased": {"channel": 255}}, "hex": "08ff"}
+{"description": "Input with no bytes", "direction": "to_server", "message": {"Input": {"pane": 3, "bytes": ""}}, "hex": "09030000000000000000000000"}
+{"description": "Input with an escape sequence", "direction": "to_server", "message": {"Input": {"pane": 3, "bytes": "1b5b41"}}, "hex": "090300000000000000030000001b5b41"}
+{"description": "Resize to 80 by 24", "direction": "to_server", "message": {"Resize": {"pane": 2, "columns": 80, "rows": 24}}, "hex": "0a020000000000000050001800"}
+{"description": "Resize to 0 by 0", "direction": "to_server", "message": {"Resize": {"pane": 2, "columns": 0, "rows": 0}}, "hex": "0a020000000000000000000000"}
+{"description": "Resize to the largest size", "direction": "to_server", "message": {"Resize": {"pane": 2, "columns": 65535, "rows": 65535}}, "hex": "0a0200000000000000ffffffff"}
+{"description": "Focus pane 0", "direction": "to_server", "message": {"Focus": {"pane": 0}}, "hex": "0b0000000000000000"}
+{"description": "Ping", "direction": "to_server", "message": "Ping", "hex": "0c"}
+{"description": "Hello reply with both known capabilities", "direction": "to_client", "message": {"Hello": {"protocol_version": 1, "server_version": "iznik-server 0.1.0", "capabilities": 3}}, "hex": "00010012000000697a6e696b2d73657276657220302e312e3003000000"}
+{"description": "Hello reply with unknown capability bits, preserved", "direction": "to_client", "message": {"Hello": {"protocol_version": 1, "server_version": "", "capabilities": 4026531843}}, "hex": "00010000000000030000f0"}
+{"description": "Snapshot at generation 0 with an empty opaque model", "direction": "to_client", "message": {"Snapshot": {"generation": 0, "payload": ""}}, "hex": "01000000000000000000000000"}
+{"description": "Snapshot at the largest generation with an opaque model", "direction": "to_client", "message": {"Snapshot": {"generation": 18446744073709551615, "payload": "deadbeef"}}, "hex": "01ffffffffffffffff04000000deadbeef"}
+{"description": "Delta at generation 1", "direction": "to_client", "message": {"Delta": {"generation": 1, "payload": "00"}}, "hex": "0201000000000000000100000000"}
+{"description": "CommandResult with an empty opaque outcome", "direction": "to_client", "message": {"CommandResult": {"command_id": 1, "payload": ""}}, "hex": "03010000000000000000000000"}
+{"description": "CommandResult with an opaque outcome", "direction": "to_client", "message": {"CommandResult": {"command_id": 2, "payload": "0100"}}, "hex": "030200000000000000020000000100"}
+{"description": "PaneChannel from sequence 0 on channel 1", "direction": "to_client", "message": {"PaneChannel": {"pane": 1, "channel": 1, "sequence": 0}}, "hex": "040100000000000000010000000000000000"}
+{"description": "PaneChannel with every field at its largest", "direction": "to_client", "message": {"PaneChannel": {"pane": 18446744073709551615, "channel": 255, "sequence": 18446744073709551615}}, "hex": "04ffffffffffffffffffffffffffffffffff"}
+{"description": "PaneDetached from channel 1", "direction": "to_client", "message": {"PaneDetached": {"pane": 1, "channel": 1}}, "hex": "05010000000000000001"}
+{"description": "Screen with no bytes", "direction": "to_client", "message": {"Screen": {"pane": 1, "sequence": 10, "columns": 80, "rows": 24, "bytes": ""}}, "hex": "0601000000000000000a000000000000005000180000000000"}
+{"description": "Screen with VT bytes at size 0 by 0", "direction": "to_client", "message": {"Screen": {"pane": 1, "sequence": 0, "columns": 0, "rows": 0, "bytes": "1b5b48"}}, "hex": "060100000000000000000000000000000000000000030000001b5b48"}
+{"description": "Screen at the largest size and sequence", "direction": "to_client", "message": {"Screen": {"pane": 7, "sequence": 18446744073709551615, "columns": 65535, "rows": 65535, "bytes": "41"}}, "hex": "060700000000000000ffffffffffffffffffffffff0100000041"}
+{"description": "Mark PromptStart", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 100, "kind": "PromptStart"}}, "hex": "070100000000000000640000000000000000"}
+{"description": "Mark CommandStart", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 100, "kind": "CommandStart"}}, "hex": "070100000000000000640000000000000001"}
+{"description": "Mark CommandExecuted", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 100, "kind": "CommandExecuted"}}, "hex": "070100000000000000640000000000000002"}
+{"description": "Mark CommandFinished without an exit status", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 101, "kind": {"CommandFinished": {"exit_status": null}}}}, "hex": "07010000000000000065000000000000000300"}
+{"description": "Mark CommandFinished with exit status 0", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 102, "kind": {"CommandFinished": {"exit_status": 0}}}}, "hex": "0701000000000000006600000000000000030100000000"}
+{"description": "Mark CommandFinished with exit status -1", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 103, "kind": {"CommandFinished": {"exit_status": -1}}}}, "hex": "07010000000000000067000000000000000301ffffffff"}
+{"description": "Mark CommandFinished with the smallest exit status", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 104, "kind": {"CommandFinished": {"exit_status": -2147483648}}}}, "hex": "0701000000000000006800000000000000030100000080"}
+{"description": "Mark CommandFinished with the largest exit status", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 105, "kind": {"CommandFinished": {"exit_status": 2147483647}}}}, "hex": "07010000000000000069000000000000000301ffffff7f"}
+{"description": "Mark WorkingDirectory", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 106, "kind": {"WorkingDirectory": {"path": "/home/user"}}}}, "hex": "0701000000000000006a00000000000000040a0000002f686f6d652f75736572"}
+{"description": "Mark WorkingDirectory with a path beyond ASCII", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 107, "kind": {"WorkingDirectory": {"path": "/tmp/\u00fcn\u00efc\u00f6de"}}}}, "hex": "0701000000000000006b00000000000000040f0000002f746d702fc3bc6ec3af63c3b66465"}
+{"description": "Mark Title empty", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 108, "kind": {"Title": {"text": ""}}}}, "hex": "0701000000000000006c000000000000000500000000"}
+{"description": "Mark Title", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 109, "kind": {"Title": {"text": "vim"}}}}, "hex": "0701000000000000006d00000000000000050300000076696d"}
+{"description": "Mark AlternateScreen entered", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 110, "kind": {"AlternateScreen": {"entered": true}}}}, "hex": "0701000000000000006e000000000000000601"}
+{"description": "Mark AlternateScreen left", "direction": "to_client", "message": {"Mark": {"pane": 1, "sequence": 111, "kind": {"AlternateScreen": {"entered": false}}}}, "hex": "0701000000000000006f000000000000000600"}
+{"description": "Pong", "direction": "to_client", "message": "Pong", "hex": "08"}
+{"description": "Error ProtocolVersion", "direction": "to_client", "message": {"Error": {"code": "ProtocolVersion", "message": "ProtocolVersion happened"}}, "hex": "09001800000050726f746f636f6c56657273696f6e2068617070656e6564"}
+{"description": "Error InputBacklog", "direction": "to_client", "message": {"Error": {"code": "InputBacklog", "message": "InputBacklog happened"}}, "hex": "090115000000496e7075744261636b6c6f672068617070656e6564"}
+{"description": "Error UnknownPane", "direction": "to_client", "message": {"Error": {"code": "UnknownPane", "message": "UnknownPane happened"}}, "hex": "090214000000556e6b6e6f776e50616e652068617070656e6564"}
+{"description": "Error ChannelsExhausted", "direction": "to_client", "message": {"Error": {"code": "ChannelsExhausted", "message": "ChannelsExhausted happened"}}, "hex": "09031a0000004368616e6e656c734578686175737465642068617070656e6564"}
+{"description": "Error NotSubscribed", "direction": "to_client", "message": {"Error": {"code": "NotSubscribed", "message": "NotSubscribed happened"}}, "hex": "0904160000004e6f74537562736372696265642068617070656e6564"}
+{"description": "Error with an empty message", "direction": "to_client", "message": {"Error": {"code": "UnknownPane", "message": ""}}, "hex": "090200000000"}
+{"description": "an empty payload to the server", "direction": "to_server", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
+{"description": "an empty payload to the client", "direction": "to_client", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
+{"description": "a discriminant no server message claims", "direction": "to_server", "hex": "0d", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 13}}}
+{"description": "a discriminant no client message claims", "direction": "to_client", "hex": "0a", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 10}}}
+{"description": "the largest discriminant", "direction": "to_server", "hex": "ff", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 255}}}
+{"description": "an error code no variant claims", "direction": "to_client", "hex": "090500000000", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 5}}}
+{"description": "a mark kind no variant claims", "direction": "to_client", "hex": "070100000000000000010000000000000007", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 7}}}
+{"description": "a presence byte that is neither 0 nor 1", "direction": "to_client", "hex": "0701000000000000000100000000000000030200000000", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
+{"description": "a boolean byte that is neither 0 nor 1", "direction": "to_client", "hex": "07010000000000000001000000000000000602", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
+{"description": "a pane id cut short", "direction": "to_server", "hex": "03010000", "error": {"Truncated": {"discriminant": 3, "needed": 8, "available": 3}}}
+{"description": "a string length cut short", "direction": "to_server", "hex": "0001000000", "error": {"Truncated": {"discriminant": 0, "needed": 4, "available": 2}}}
+{"description": "a string cut short", "direction": "to_server", "hex": "0001000a000000616263", "error": {"Truncated": {"discriminant": 0, "needed": 10, "available": 3}}}
+{"description": "an opaque payload cut short", "direction": "to_client", "hex": "0101000000000000000500000000", "error": {"Truncated": {"discriminant": 1, "needed": 5, "available": 1}}}
+{"description": "an exit status cut short", "direction": "to_client", "hex": "070100000000000000010000000000000003010000", "error": {"Truncated": {"discriminant": 7, "needed": 4, "available": 2}}}
+{"description": "a Ping followed by a byte", "direction": "to_server", "hex": "0c00", "error": {"TrailingBytes": {"discriminant": 12, "count": 1}}}
+{"description": "a Pong followed by two bytes", "direction": "to_client", "hex": "080000", "error": {"TrailingBytes": {"discriminant": 8, "count": 2}}}
+{"description": "a Subscribe followed by a byte", "direction": "to_server", "hex": "03010000000000000000", "error": {"TrailingBytes": {"discriminant": 3, "count": 1}}}
+{"description": "an error message that is not UTF-8", "direction": "to_client", "hex": "090002000000fffe", "error": {"Utf8": {"discriminant": 9}}}
+{"description": "a client version that is not UTF-8", "direction": "to_server", "hex": "00010002000000c32800000000", "error": {"Utf8": {"discriminant": 0}}}
+{"description": "a working directory that is not UTF-8", "direction": "to_client", "hex": "07010000000000000001000000000000000401000000ff", "error": {"Utf8": {"discriminant": 7}}}
+{"description": "Input whose bytes alone fill the maximum payload", "direction": "to_server", "message": {"Input": {"pane": 1, "bytes": {"repeat": "00", "count": 1048576}}}, "error": {"Oversize": {"length": 1048589}}}
+{"description": "Screen one byte over the maximum payload", "direction": "to_client", "message": {"Screen": {"pane": 1, "sequence": 0, "columns": 80, "rows": 24, "bytes": {"repeat": "41", "count": 1048552}}}, "error": {"Oversize": {"length": 1048577}}}
+{"description": "pane output on channel 1 is the payload", "pane_output": {"channel": 1, "payload": "1b5b41"}}
+{"description": "empty pane output on channel 255", "pane_output": {"channel": 255, "payload": ""}}
+{"description": "pane output on the control channel is refused", "pane_output": {"channel": 0, "payload": "1b5b41"}, "error": "ControlChannel"}
