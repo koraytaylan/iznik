@@ -444,6 +444,7 @@ dependencies = [
  "iznik-protocol",
  "iznik-server",
  "libghostty-vt",
+ "nix 0.31.3",
  "portable-pty",
  "serde_json",
  "tokio",

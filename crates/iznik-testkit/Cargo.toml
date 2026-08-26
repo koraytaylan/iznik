@@ -15,6 +15,10 @@ iznik-server = { path = "../iznik-server" }
 iznik-harness = { path = "../iznik-harness" }
 libghostty-vt = "=0.2.1"
 portable-pty = "=0.9.0"
+# Beyond the architecture's list for this crate: a dropped pseudoterminal
+# child is killed by process group, and the metrics ask the system for its
+# page size and clock tick, both through nix's safe wrappers.
+nix = { version = "=0.31.3", features = ["signal", "process", "feature"] }
 tokio = { version = "=1.53.1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
 # Beyond the architecture's list for this crate: the golden loader hands
 # every golden test the JSON values of a JSONL fixture, as the architecture
