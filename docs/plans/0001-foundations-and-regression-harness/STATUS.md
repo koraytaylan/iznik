@@ -9,7 +9,7 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Approach:** land the rules as failing builds before the first line of product code, land the proof surface before the first claim, make every process, test, scenario step and fixture wait carry a deadline that turns a hang into a named failure, and make the harness's own speed a claim with a proof.
 - **Progress:** 5/14 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `in-progress`; run —; base `develop`; validation base —; mode —; final integration —.
-- **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
+- **Exceptions:** `iznik-protocol` holds a private `wire` module the module skeleton in ARCHITECTURE.md predates, hoisted out of `message.rs` after `control-messages` landed, because that file was at the length limit and plan 0003's payload codecs need the same primitives; and `frame-codec`'s decoder gained `ready` and `pending` after the task was done, because `framed-link` cannot be written against the decoder's specified surface and its touches are `iznik-link` only. Both are follow-up commits, reviewed; the plans' text is unchanged.
 - **Outcome:** A rule-gated Rust workspace with golden-pinned wire primitives, a headless VT oracle, and a two-container Podman regression suite whose scenarios are parallel nextest tests and whose claims registry gates every later plan, with `cargo xtask check` as the one command that says whether a change may land.
 
 _Last updated: 2026-08-26, against `develop`._

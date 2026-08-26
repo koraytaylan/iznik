@@ -15,6 +15,7 @@ Framing, the `iznik/1` control messages, the session model, deltas and the recon
 | `message` | The control messages on channel 0 in both directions, the error codes and the mark kinds, and the rule that pane output on every other channel is never parsed. | `control-messages` (plan 0001) |
 | `model` | The host model: sessions holding ordered tabs holding a normalized layout tree of panes, its invariants, and the `Snapshot` payload encoding. | `model-types` (plan 0003) |
 | `reconcile` | Applying a numbered delta to a host model: exactly the next generation, every invariant checked before the first mutation. | `deltas-and-reconciler` (plan 0003) |
+| `wire` | The little-endian, length-prefixed primitives every codec in the crate reads and writes with: a sink measured before it is filled, and a reader that names what it could not read. | `control-messages` (plan 0001), as a follow-up |
 
 ## Tests
 

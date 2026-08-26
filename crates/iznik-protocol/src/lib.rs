@@ -11,3 +11,4 @@ pub mod identity;
 pub mod message;
 pub mod model;
 pub mod reconcile;
+mod wire;
