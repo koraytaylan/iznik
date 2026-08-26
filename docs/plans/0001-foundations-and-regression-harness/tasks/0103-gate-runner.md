@@ -16,7 +16,7 @@ touches:
   - "xtask/tests/gate_runner.rs"
   - "xtask/tests/doctor.rs"
   - "policy/lexicon/gate-runner.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Gate Runner
