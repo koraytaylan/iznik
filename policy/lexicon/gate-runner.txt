@@ -26,6 +26,7 @@ contributing
 count
 describe
 detail
+documentation
 does
 drain
 dropped
@@ -79,6 +80,7 @@ keeps
 kept
 killed
 left
+length
 limit
 lines
 lint

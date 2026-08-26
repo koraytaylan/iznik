@@ -204,7 +204,7 @@ fn cargo_failure(what: &str, output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.code() == Some(TIMEOUT_EXIT_STATUS) {
         return format!(
-            "{what}: the {COMMAND_DEADLINE_SECONDS}-second deadline elapsed; this case assumes a warm build cache — run `cargo build --workspace` first\n{stderr}"
+            "{what}: the {COMMAND_DEADLINE_SECONDS}-second deadline elapsed; this case assumes a warm build cache; run `cargo build --workspace` first\n{stderr}"
         );
     }
     format!("{what}: {stderr}")
