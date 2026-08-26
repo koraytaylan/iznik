@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-testkit/assets/fidelity-corpus.bin"
   - "crates/iznik-testkit/tests/corpus.rs"
   - "policy/lexicon/fidelity-corpus.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Fidelity Corpus
