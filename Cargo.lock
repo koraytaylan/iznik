@@ -445,6 +445,7 @@ dependencies = [
  "iznik-server",
  "libghostty-vt",
  "portable-pty",
+ "serde_json",
  "tokio",
 ]
 
