@@ -137,6 +137,8 @@ struct Counting {
     slice_count: Arc<AtomicUsize>,
     /// The length of the second slice of the last vectored write.
     payload_length: Arc<AtomicUsize>,
+    /// The address the last read was given to fill.
+    read_address: Arc<AtomicUsize>,
 }
 
 impl AsyncRead for Counting {
@@ -145,6 +147,10 @@ impl AsyncRead for Counting {
         context: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        self.read_address.store(
+            buffer.initialize_unfilled().as_ptr().addr(),
+            Ordering::SeqCst,
+        );
         Pin::new(&mut self.inner).poll_read(context, buffer)
     }
 }
@@ -211,6 +217,7 @@ async fn framed_send_is_one_vectored_write_of_the_callers_bytes() {
         payload_address: Arc::clone(&payload_address),
         slice_count: Arc::clone(&slice_count),
         payload_length: Arc::clone(&payload_length),
+        read_address: Arc::new(AtomicUsize::new(0)),
     };
     let mut link = FramedLink::new(counting);
     let payload = vec![0x5a; 4096];
@@ -231,6 +238,47 @@ async fn framed_send_is_one_vectored_write_of_the_callers_bytes() {
         "the header and the whole payload"
     );
     assert_eq!(payload_length.load(Ordering::SeqCst), payload.len());
+}
+
+/// A received frame is yielded from where the read landed: the payload's
+/// address is the address the stream was given to fill, plus the header.
+///
+/// # Panics
+///
+/// When the payload was copied after the read, or the frame does not arrive.
+#[tokio::test]
+async fn framed_a_frame_is_yielded_where_the_read_landed() {
+    let (ours, mut theirs) = duplex(ROOMY);
+    let read_address = Arc::new(AtomicUsize::new(0));
+    let counting = Counting {
+        inner: ours,
+        writes: Arc::new(AtomicUsize::new(0)),
+        payload_address: Arc::new(AtomicUsize::new(0)),
+        slice_count: Arc::new(AtomicUsize::new(0)),
+        payload_length: Arc::new(AtomicUsize::new(0)),
+        read_address: Arc::clone(&read_address),
+    };
+    let mut frame = Vec::new();
+    iznik_protocol::frame::encode(2, b"landed here", &mut frame).expect("encodes");
+    theirs
+        .write_all(&frame)
+        .await
+        .expect("the frame is written");
+    let mut link = FramedLink::new(counting);
+    let yielded = timeout(DEADLINE, link.next_frame())
+        .await
+        .expect("no deadline")
+        .expect("the frame decodes")
+        .expect("a frame");
+    assert_eq!(yielded.payload, b"landed here");
+    assert_eq!(
+        yielded.payload.as_ptr().addr(),
+        read_address
+            .load(Ordering::SeqCst)
+            .checked_add(HEADER_LENGTH)
+            .expect("fits"),
+        "the payload sits where the read put it"
+    );
 }
 
 /// After the peer closes, `next_frame` yields `None` after the last complete

@@ -1,21 +1,22 @@
 //! Frames over any duplex byte stream — a unix socket, an SSH child's
 //! standard streams, an in-memory pipe: one vectored write per frame out, so
 //! a pane byte is copied from the caller's buffer to the socket and nowhere
-//! else; a resuming decoder in, fed once from the read buffer and lending
-//! each frame out of its own — the one copy a decoder that lent its spare
-//! capacity to the read would remove, a frame-codec follow-up; split halves,
-//! because every real user reads on one task and writes on another; and the
-//! parts a compression layer is built from once both `Hello`s agree.
+//! else; a resuming decoder in, whose spare capacity every read lands in, so
+//! a whole frame is yielded from where the kernel put it — only the head of
+//! a frame a read split is ever moved, and only when the decoder compacts or
+//! grows its buffer;
+//! split halves, because every real user reads on one task and writes on
+//! another; and the parts a compression layer is built from once both
+//! `Hello`s agree.
 
 use core::fmt::{self, Display, Formatter};
 use std::io::{self, IoSlice};
 
-use iznik_protocol::frame::{Frame, FrameDecoder, FrameError, FrameHeader, MAXIMUM_PAYLOAD_LENGTH};
+use iznik_protocol::frame::{Frame, FrameDecoder, FrameError, FrameHeader};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
-/// How many bytes one read asks the stream for: a socket's send buffer is
-/// of this order, so a full one drains in one read, and the read buffer is
-/// sixty-four kibibytes.
+/// How many bytes of spare the decoder is asked to lend a read: a socket's
+/// send buffer is of this order, so a full one drains in one read.
 const READ_LENGTH: usize = 64 * 1024;
 
 /// Why a link could not send or receive.
@@ -80,20 +81,17 @@ impl Sending {
     /// # Errors
     ///
     /// [`LinkError::Frame`] with [`FrameError::Oversize`] for a payload over
-    /// [`MAXIMUM_PAYLOAD_LENGTH`], before anything is written;
-    /// [`LinkError::Io`] when the stream fails or accepts nothing.
+    /// the maximum, before anything is written; [`LinkError::Io`] when the
+    /// stream fails or accepts nothing.
     async fn send<Writer: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut Writer,
         channel: u8,
         payload: &[u8],
     ) -> Result<(), LinkError> {
-        let length = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-        if length > MAXIMUM_PAYLOAD_LENGTH {
-            return Err(FrameError::Oversize { length }.into());
-        }
+        let header = FrameHeader::for_payload(channel, payload)?;
         self.header.clear();
-        FrameHeader { length, channel }.write(&mut self.header);
+        header.write(&mut self.header);
         let total = self.header.len().saturating_add(payload.len());
         let mut slices = [IoSlice::new(&self.header), IoSlice::new(payload)];
         let mut remaining: &mut [IoSlice<'_>] = &mut slices;
@@ -117,11 +115,9 @@ impl Sending {
     }
 }
 
-/// The receiving side's state: a read buffer and the decoder it feeds.
+/// The receiving side's state: the decoder every read lands in.
 #[derive(Debug)]
 struct Receiving {
-    /// Where one read lands before its bytes are pushed to the decoder.
-    buffer: Vec<u8>,
     /// The bytes past the last yielded frame, and the frames they hold.
     decoder: FrameDecoder,
 }
@@ -131,16 +127,14 @@ impl Receiving {
     fn new(pending: &[u8]) -> Receiving {
         let mut decoder = FrameDecoder::new();
         decoder.push(pending);
-        Receiving {
-            buffer: vec![0; READ_LENGTH],
-            decoder,
-        }
+        Receiving { decoder }
     }
 
     /// Reads until a frame is whole, then yields it borrowed from the decoder;
-    /// `None` when the stream ends between frames. Cancel-safe: a read that
-    /// is dropped has taken no bytes, and everything after a read is
-    /// synchronous.
+    /// `None` when the stream ends between frames. Each read lands in the
+    /// spare capacity the decoder lends. Cancel-safe: a read that is dropped
+    /// has taken no bytes and nothing is committed, and everything after a
+    /// read is synchronous.
     ///
     /// # Errors
     ///
@@ -153,7 +147,7 @@ impl Receiving {
         stream: &mut Reader,
     ) -> Result<Option<Frame<'_>>, LinkError> {
         while !self.decoder.ready()? {
-            let count = stream.read(&mut self.buffer).await?;
+            let count = stream.read(self.decoder.spare(READ_LENGTH)).await?;
             if count == 0 {
                 return if self.decoder.pending().is_empty() {
                     Ok(None)
@@ -161,8 +155,7 @@ impl Receiving {
                     Err(LinkError::Closed)
                 };
             }
-            self.decoder
-                .push(self.buffer.get(..count).unwrap_or_default());
+            self.decoder.commit(count);
         }
         // `ready` said a frame waits and nothing was pushed since, so this
         // is `Some`; were it not, it would read as a clean end of stream.
