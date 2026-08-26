@@ -1,15 +1,19 @@
 //! `xtask regression images`, `stage` and `reap`: the container images, the
 //! staging directory, and the removal of every labelled container. `images`
 //! builds the two images that are missing, tagged by their Containerfiles'
-//! content, and prints both references; `stage` and `reap` are filled by
-//! task `regression-fixture` of plan 0001.
+//! content, and prints both references; `stage` builds and lays out the
+//! three musl binaries under a content hash and prints the directory; `reap`
+//! removes every container and network with the fixture's labels, for a
+//! person.
 
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 
+use iznik_harness::fixture::{Reap, reap};
 use iznik_harness::images::{IMAGE_BUILD_DEADLINE, ensure_images};
 use iznik_harness::process::Deadline;
+use iznik_harness::staging::{STAGING_DEADLINE, stage};
 
 use crate::USAGE_EXIT_CODE;
 
@@ -27,13 +31,8 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         .map(|argument| argument.to_string_lossy().into_owned());
     match form.as_deref() {
         Some("images") => images(),
-        Some(pending @ ("stage" | "reap")) => {
-            let _written = writeln!(
-                std::io::stderr(),
-                "{pending}: not implemented until task regression-fixture"
-            );
-            ExitCode::from(USAGE_EXIT_CODE)
-        }
+        Some("stage") => staged(),
+        Some("reap") => reaped(),
         _ => {
             let _written = writeln!(std::io::stderr(), "usage: xtask regression <{FORMS}>");
             ExitCode::from(USAGE_EXIT_CODE)
@@ -55,6 +54,34 @@ fn images() -> ExitCode {
         }
         Err(error) => {
             let _written = writeln!(std::io::stderr(), "regression images: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Stages the binaries and prints the directory.
+fn staged() -> ExitCode {
+    match stage(Deadline(STAGING_DEADLINE)) {
+        Ok(directory) => {
+            let _written = writeln!(std::io::stdout(), "{}", directory.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _written = writeln!(std::io::stderr(), "regression stage: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Removes everything with the fixture's labels and prints how many.
+fn reaped() -> ExitCode {
+    match reap(Reap::Everything) {
+        Ok(count) => {
+            let _written = writeln!(std::io::stdout(), "removed {count}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _written = writeln!(std::io::stderr(), "regression reap: {error}");
             ExitCode::FAILURE
         }
     }

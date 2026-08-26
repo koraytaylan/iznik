@@ -10,8 +10,6 @@ depth
 ensure
 exists
 filter
-form
-forms
 function
 greeting
 identities
@@ -24,7 +22,6 @@ purpose
 rebuild
 shadow
 sshd
-staged
 twice
 unprivileged
 wrapper

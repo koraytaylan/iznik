@@ -24,6 +24,12 @@ test-group = 'scenarios'
 filter = 'test(/latency|throughput|baseline/)'
 threads-required = 'num-cpus'
 
+# The fixture reaper removes every labelled container and network, a sibling
+# test's live fixture included, so it runs with the machine to itself.
+[[profile.default.overrides]]
+filter = 'test(/regression_fixture_reaper_/)'
+threads-required = 'num-cpus'
+
 [test-groups.scenarios]
 max-threads = 4
 
