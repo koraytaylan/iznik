@@ -1,0 +1,34 @@
+# The host: nothing but a root sshd and an unprivileged login user, exactly
+# as a real host is arranged; procps for the census, ncurses-bin for tic and
+# infocmp; no toolchain, no source, no iznik binary. The base is pinned by
+# digest. The package index is fetched and used in one layer, because a
+# cached index outlives the packages it names and a later edit would then
+# fail to fetch versions the mirror has replaced.
+FROM docker.io/library/debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server procps ncurses-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd
+
+# sshd's configuration: no PAM, keys only, on the real port, and nothing
+# printed at login that is not the shell's own, so a prompt is predictable
+# bytes.
+RUN printf 'Port 22\nUsePAM no\nPasswordAuthentication no\nPubkeyAuthentication yes\nPrintMotd no\nPrintLastLog no\nSubsystem sftp /usr/lib/openssh/sftp-server\n' > /etc/ssh/sshd_config
+
+# The login user: uid 1000, a bash login shell, a prompt that is predictable
+# bytes, and a profile that sources the rc because a login shell reads the
+# profile and not the rc.
+RUN useradd --uid 1000 --create-home --shell /bin/bash iznik \
+    && printf "PS1='$ '\n" > /home/iznik/.bashrc \
+    && printf '. ~/.bashrc\n' > /home/iznik/.bash_profile \
+    && chown iznik:iznik /home/iznik/.bashrc /home/iznik/.bash_profile
+
+# The privilege-separation directory is in the image, and the entrypoint
+# makes it again before sshd runs, as root, for the runtimes that mount a
+# fresh tmpfs on /run.
+RUN printf '#!/bin/sh\nmkdir -p /run/sshd\nexec /usr/sbin/sshd -D -e\n' > /entrypoint.sh \
+    && chmod 755 /entrypoint.sh
+
+EXPOSE 22
+ENTRYPOINT ["/entrypoint.sh"]

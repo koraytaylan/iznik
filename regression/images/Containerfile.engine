@@ -1,0 +1,16 @@
+# The engine: as bare as a machine somebody just installed. An ssh client
+# with ssh-agent and ssh-add deleted after installation, no sshd, no ~/.ssh,
+# no toolchain, no source, no iznik binary; everything runs as uid 1000. The
+# base is pinned by digest. The package index is fetched and used in one
+# layer, because a cached index outlives the packages it names.
+FROM docker.io/library/debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/bin/ssh-agent /usr/bin/ssh-add
+
+RUN useradd --uid 1000 --create-home --shell /bin/bash iznik
+
+USER iznik
+WORKDIR /home/iznik
