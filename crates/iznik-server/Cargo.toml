@@ -1,0 +1,33 @@
+[package]
+name = "iznik-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "iznik-server"
+path = "src/main.rs"
+
+[[bench]]
+name = "baseline"
+harness = false
+
+[dependencies]
+iznik-protocol = { path = "../iznik-protocol" }
+iznik-link = { path = "../iznik-link" }
+# `io-std` is beyond the architecture's feature list: the binary reports through
+# tokio's standard streams (CONTRIBUTING.md section 3.6), and the relay of plan 0004
+# copies between them and the daemon's socket.
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "net", "io-util", "io-std", "sync", "time", "signal", "macros", "fs", "process"] }
+portable-pty = "=0.9.0"
+nix = { version = "=0.31.3", features = ["fs", "signal", "user", "process"] }
+libghostty-vt = "=0.2.1"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+iznik-testkit = { path = "../iznik-testkit" }

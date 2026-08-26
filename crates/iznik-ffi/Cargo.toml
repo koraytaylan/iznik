@@ -1,0 +1,20 @@
+[package]
+name = "iznik-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "iznik"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+iznik-client = { path = "../iznik-client" }
+iznik-protocol = { path = "../iznik-protocol" }
+
+[dev-dependencies]
+iznik-testkit = { path = "../iznik-testkit" }

@@ -1,0 +1,27 @@
+# iznik-client
+
+The client engine the macOS application links: the SSH transport over the system `ssh`, the bootstrap, the client-side model and reducer, optimistic commands, and multi-host management. Asynchronous end to end.
+
+## Modules
+
+| Module | Holds | Landed by |
+|---|---|---|
+| `bootstrap` | The bootstrap: probe, decide, upload, launch, handshake, snapshot, and the upgrade and uninstall paths. | `remote-launch` (plan 0005) |
+| `bootstrap::launch` | Launching or adopting the daemon on a probed host, and the upgrade decision. | `remote-launch` (plan 0005) |
+| `bootstrap::probe` | The one-round-trip probe of a host and its pure parser. | `host-probe` (plan 0005) |
+| `bootstrap::terminfo` | The `xterm-ghostty` terminfo source as a constant, with where it came from. | `terminfo-asset` (plan 0005) |
+| `bootstrap::upload` | Uploading the server artifact and the terminfo over the same channel, with digest verification and an atomic rename. | `payload-upload` (plan 0005) |
+| `commands` | Optimistic commands: the unambiguous ones applied locally at once and confirmed or rolled back by the authoritative delta, the rest waiting one round trip. | `optimistic-commands` (plan 0005) |
+| `host` | Multi-host: host identity, the per-host connection state machine, and the manager that runs one task per host. | `host-identity-and-state` (plan 0005) |
+| `host::identity` | `HostId`, the user's alias, and the global pane address `iznik://<host>/<pane>`. | `host-identity-and-state` (plan 0005) |
+| `host::manager` | The host manager: one task per host, isolation between hosts, and the resume that keeps a pane's bytes across a drop. | `connection-manager` (plan 0005) |
+| `host::state` | The per-host connection state machine with exponential backoff and jitter, as a pure table of transitions. | `host-identity-and-state` (plan 0005) |
+| `model` | The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs. | `client-model` (plan 0005) |
+| `reduce` | The reducer that applies every server message to the client model, routed by host first, yielding the effects the engine acts on. | `client-reducer` (plan 0005) |
+| `transport` | The transport under a host: the system `ssh` with a control master, or a local daemon socket for the `unix:` alias. | `ssh-control-master` (plan 0005) |
+| `transport::channel` | One channel per host carrying every pane: the `Hello` exchange, compression, liveness pings, and the deadline that surfaces a dead link at once. | `remote-channel` (plan 0005) |
+| `transport::ssh` | Spawning the system `ssh` with `ControlMaster`, and classifying its failures into messages a person can act on. | `ssh-control-master` (plan 0005) |
+
+## Tests
+
+Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace.

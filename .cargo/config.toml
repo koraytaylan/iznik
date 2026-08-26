@@ -1,0 +1,19 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+
+# The musl cross-compilers supply libc and the startup objects; rustc's
+# self-contained copies must not be linked beside them.
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+rustflags = ["-C", "link-self-contained=no"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "link-self-contained=no"]
+
+# The libghostty-vt-sys build script otherwise builds the emulator in Zig's
+# Debug mode for the dev profile, and every test would run a different, many
+# times slower emulator than the one the product ships. One emulator build,
+# everywhere.
+[env]
+LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseFast"

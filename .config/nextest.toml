@@ -1,0 +1,32 @@
+# The test runner's deadlines: a hung test cannot hold the suite.
+
+[profile.default]
+retries = 0
+fail-fast = false
+# A test over five seconds is printed as SLOW and is a review rejection; one
+# over sixty is killed and reported by name.
+slow-timeout = { period = "5s", terminate-after = 12 }
+
+# Test binaries that start containers, build release artifacts or measure over
+# a window are named regression_*, are ignored, and get longer deadlines.
+[[profile.default.overrides]]
+filter = 'binary(/^regression_/)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+# Every scenario owns three containers; four at a time keeps podman contention
+# out of the scenario overhead ceiling.
+[[profile.default.overrides]]
+filter = 'test(/^scenario::/)'
+test-group = 'scenarios'
+
+# A timing measurement never shares the machine with the rest of the suite.
+[[profile.default.overrides]]
+filter = 'test(/latency|throughput|baseline/)'
+threads-required = 'num-cpus'
+
+[test-groups.scenarios]
+max-threads = 4
+
+# `xtask claims verify` reads the outcome of every proof from this report.
+[profile.claims.junit]
+path = "claims.xml"

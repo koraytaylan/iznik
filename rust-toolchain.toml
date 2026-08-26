@@ -1,0 +1,6 @@
+# The pinned toolchain; rustup installs it on first use. The musl targets are
+# what the regression containers and the SSH bootstrap run.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]

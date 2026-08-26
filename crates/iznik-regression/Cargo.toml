@@ -1,0 +1,33 @@
+[package]
+name = "iznik-regression"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "iznik-regression"
+path = "src/main.rs"
+
+[[test]]
+name = "regression_scenarios"
+harness = false
+
+[dependencies]
+iznik-harness = { path = "../iznik-harness" }
+iznik-testkit = { path = "../iznik-testkit" }
+iznik-server = { path = "../iznik-server" }
+iznik-client = { path = "../iznik-client" }
+iznik-protocol = { path = "../iznik-protocol" }
+# `derive` is beyond the architecture's feature list: the step tables are
+# deserialized by derived implementations.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=0.9.12"
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+libtest-mimic = "=0.8.2"

@@ -1,0 +1,19 @@
+[package]
+name = "iznik-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nix = { version = "=0.31.3", features = ["signal", "process"] }
+# `derive` is beyond the architecture's feature list: the scenario tables are
+# deserialized by derived implementations.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=0.9.12"
+regex = "=1.13.1"
+sha2 = "=0.11.0"

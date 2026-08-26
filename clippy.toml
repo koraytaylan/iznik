@@ -1,0 +1,15 @@
+# Thresholds for the lint table in Cargo.toml, and the scope of the test-only
+# relaxations: a panicking test is a failing test, which is what it should be,
+# while tests still speak through assertions rather than printing.
+too-many-lines-threshold = 100
+cognitive-complexity-threshold = 15
+min-ident-chars-threshold = 1
+allowed-idents-below-min-chars = []
+check-private-items = true
+avoid-breaking-exported-api = false
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = false
+allow-dbg-in-tests = false

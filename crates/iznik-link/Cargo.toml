@@ -1,0 +1,18 @@
+[package]
+name = "iznik-link"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+iznik-protocol = { path = "../iznik-protocol" }
+tokio = { version = "=1.53.1", features = ["io-util"] }
+zstd = "=0.13.3"
+
+[dev-dependencies]
+iznik-testkit = { path = "../iznik-testkit" }
+tokio = { version = "=1.53.1", features = ["rt", "macros"] }
