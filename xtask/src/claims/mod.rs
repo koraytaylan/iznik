@@ -1,6 +1,12 @@
-//! The claims registry: what a task claims about runtime behavior, the proof that establishes each claim, and the gate that runs the proofs.
+//! The claims registry: what a task claims about runtime behavior, the proof
+//! that establishes each claim, and the gate that runs the proofs.
 //!
-//! Filled by task `claims-registry` of plan 0001; until then this module holds only its documentation and the stub of its entry point.
+//! `registry` loads and validates the claims files, `selection` decides which
+//! tasks a run covers, and `verify` runs the selected proofs and reads their
+//! report. `xtask claims verify` is the fifth gate: with no `--task` it covers
+//! the current branch, and it fails when the branch changes code without
+//! declaring claims. `xtask claims coverage` covers every task that has a
+//! claims file, which is how the trunk — whose branch diff is empty — is proven.
 
 pub mod registry;
 pub mod selection;
@@ -10,48 +16,141 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
-/// The directory the claims registry lives in, relative to the repository root.
-const CLAIMS_DIRECTORY: &str = "regression/claims";
+use crate::claims::selection::Selection;
+use crate::claims::verify::{Outcome, Report, Status, VerifyError};
 
-/// The entry point of `xtask claims verify` and `xtask claims coverage`; a
-/// stub until task `claims-registry` replaces its body.
+/// A task id: the stem of a claims file, and how a selection names a task.
+pub type TaskId = String;
+
+/// How long one nextest invocation of the selected proofs may run before it is
+/// a failure, not a wait; a typical run is far under it.
+const RUN_DEADLINE: Duration = Duration::from_mins(15);
+
+/// The `claims` subcommand: `verify [--task <id>]… [--root <dir>]` or
+/// `coverage [--root <dir>]`.
 ///
-/// `verify` is the fifth gate, so its stub is the gate's bootstrap form rather
-/// than a refusal: it exits 0 while `regression/claims/` does not exist under
-/// the root and fails naming the task once it does, so the gate passes on
-/// every task that lands before the registry and cannot be forgotten by the
-/// task that lands it. `--root <directory>` names a root other than this
-/// repository, as the real subcommand will accept it. `coverage` is a plain
-/// stub.
+/// The dispatcher hands over every argument after the program name, the
+/// subcommand first.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
-    if arguments.get(1).and_then(|argument| argument.to_str()) == Some("verify") {
-        return verify_bootstrap(arguments);
+    match arguments.get(1).and_then(|argument| argument.to_str()) {
+        Some("verify") => command(&verify_selection(arguments), arguments),
+        Some("coverage") => command(&Selection::Everything, arguments),
+        _ => usage(),
     }
-    writeln!(
-        std::io::stderr(),
-        "claims: not implemented until task claims-registry"
+}
+
+/// The selection `verify` covers: the named tasks, or the current branch when
+/// none are named.
+fn verify_selection(arguments: &[OsString]) -> Selection {
+    let tasks = task_arguments(arguments);
+    if tasks.is_empty() {
+        Selection::CurrentBranch
+    } else {
+        Selection::Tasks(tasks)
+    }
+}
+
+/// Verifies a selection under the root the arguments name, prints the report,
+/// and exits by whether it holds.
+fn command(selection: &Selection, arguments: &[OsString]) -> ExitCode {
+    let root = root_argument(arguments).unwrap_or_else(crate::repository_root);
+    match verify::verify(&root, selection, RUN_DEADLINE) {
+        Ok(report) => {
+            print_report(&report);
+            if report.holds() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+/// Prints one line per claim and a one-line summary.
+fn print_report(report: &Report) {
+    let _printed = writeln!(std::io::stdout(), "{}", render(report));
+}
+
+/// The whole report as text: one line per claim, a failure's or a deferral's
+/// reason indented under it, and a summary — or that nothing was selected.
+fn render(report: &Report) -> String {
+    if report.outcomes.is_empty() {
+        return "claims: no claims selected".to_owned();
+    }
+    let lines: Vec<String> = report.outcomes.iter().map(render_outcome).collect();
+    let proven = count(report, |status| matches!(status, Status::Proven));
+    let failed = count(report, |status| matches!(status, Status::Failed { .. }));
+    let missing = count(report, |status| matches!(status, Status::Missing));
+    let deferred = count(report, |status| matches!(status, Status::Deferred { .. }));
+    format!(
+        "{}\nclaims: {proven} proven, {failed} failed, {missing} missing, {deferred} deferred",
+        lines.join("\n")
     )
-    .unwrap_or_default();
+}
+
+/// One claim's line, with a failure's or deferral's reason indented under it.
+fn render_outcome(outcome: &Outcome) -> String {
+    let head = format!(
+        "{}: {} — {} ({})",
+        word(&outcome.status),
+        outcome.id,
+        outcome.statement,
+        outcome.task
+    );
+    match &outcome.status {
+        Status::Failed { detail } => format!("{head}\n    {detail}"),
+        Status::Deferred { reason } => format!("{head}\n    {reason}"),
+        Status::Proven | Status::Missing => head,
+    }
+}
+
+/// How many outcomes have a status the predicate accepts.
+fn count(report: &Report, predicate: impl Fn(&Status) -> bool) -> usize {
+    report
+        .outcomes
+        .iter()
+        .filter(|outcome| predicate(&outcome.status))
+        .count()
+}
+
+/// The word a status is reported with.
+fn word(status: &Status) -> &'static str {
+    match status {
+        Status::Proven => "proven",
+        Status::Failed { .. } => "failed",
+        Status::Missing => "missing",
+        Status::Deferred { .. } => "deferred",
+    }
+}
+
+/// Reports a verification that could not be carried out, and the failure code.
+fn fail(error: &VerifyError) -> ExitCode {
+    let _printed = writeln!(std::io::stderr(), "claims: {error}");
+    ExitCode::FAILURE
+}
+
+/// Reports an unusable command line and the usage code.
+fn usage() -> ExitCode {
+    let _printed = writeln!(std::io::stderr(), "claims: expected `verify` or `coverage`");
     ExitCode::from(crate::USAGE_EXIT_CODE)
 }
 
-/// Passes while there is no registry to verify; fails naming the task once
-/// there is one.
-fn verify_bootstrap(arguments: &[OsString]) -> ExitCode {
-    let root = root_argument(arguments).unwrap_or_else(crate::repository_root);
-    let claims = root.join(CLAIMS_DIRECTORY);
-    if claims.is_dir() {
-        writeln!(
-            std::io::stderr(),
-            "claims verify: {} exists, and verifying it is not implemented until task claims-registry",
-            claims.display()
-        )
-        .unwrap_or_default();
-        return ExitCode::FAILURE;
+/// Every task id named by a `--task <id>` on the command line, in order.
+fn task_arguments(arguments: &[OsString]) -> Vec<TaskId> {
+    let mut tasks = Vec::new();
+    let mut iterator = arguments.iter();
+    while let Some(argument) = iterator.next() {
+        if argument.as_os_str() == "--task"
+            && let Some(value) = iterator.next()
+        {
+            tasks.push(value.to_string_lossy().into_owned());
+        }
     }
-    ExitCode::SUCCESS
+    tasks
 }
 
 /// The value following `--root`, when the command line carries one.

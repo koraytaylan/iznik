@@ -1,0 +1,14 @@
+# The claims registry's own claims, proven by its own scenarios under the same
+# `xtask claims coverage` run as every other task's. That a failing scenario
+# fails its claim is proven by a captured report in `xtask/tests/claims.rs`,
+# never by a scenario committed to fail.
+
+[[claim]]
+id = "claims-registry-scenario-proof-passes"
+statement = "A scenario proof is established by its scenario passing."
+scenario = "proof-passes"
+
+[[claim]]
+id = "claims-registry-scenario-in-container"
+statement = "A scenario proof runs inside the container it names."
+scenario = "in-container"

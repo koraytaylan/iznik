@@ -1,0 +1,20 @@
+name = "proof-passes"
+claims = ["claims-registry-scenario-proof-passes"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "prove"
+container = "engine"
+run = "printf proven"
+timeout_seconds = 10
+
+[[expect]]
+step = "prove"
+exit = 0
+stdout_equals = "proven"

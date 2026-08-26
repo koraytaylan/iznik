@@ -1,0 +1,20 @@
+name = "in-container"
+claims = ["claims-registry-scenario-in-container"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "identify"
+container = "engine"
+run = "printf %s \"$(hostname)\""
+timeout_seconds = 10
+
+[[expect]]
+step = "identify"
+exit = 0
+stdout_equals = "engine"

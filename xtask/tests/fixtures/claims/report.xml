@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="2" skipped="0" failures="1" errors="0" uuid="00000000-0000-0000-0000-000000000000" timestamp="2026-08-26T00:00:00.000+00:00" time="0.200">
+    <testsuite name="iznik-regression::regression_scenarios" tests="1" skipped="0" errors="0" failures="0">
+        <testcase name="scenario::demo::passes" classname="iznik-regression::regression_scenarios" timestamp="2026-08-26T00:00:00.000+00:00" time="0.100"/>
+    </testsuite>
+    <testsuite name="demo::unit" tests="1" skipped="0" errors="0" failures="1">
+        <testcase name="demo_fails" classname="demo::unit" timestamp="2026-08-26T00:00:00.000+00:00" time="0.100">
+            <failure message="assertion `left == right` failed" type="test failure with exit code 101">assertion failed</failure>
+            <system-out>running 1 test</system-out>
+        </testcase>
+    </testsuite>
+</testsuites>
