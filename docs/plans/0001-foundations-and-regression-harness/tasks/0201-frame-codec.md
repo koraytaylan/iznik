@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-protocol/tests/fixtures/frame.jsonl"
   - "crates/iznik-testkit/src/golden.rs"
   - "policy/lexicon/frame-codec.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Frame Codec
