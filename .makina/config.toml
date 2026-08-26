@@ -1,0 +1,76 @@
+# Makina project configuration for iznik.
+#
+# This is the committed, repository-specific layer of Makina's two-layer
+# configuration. The machine-specific layer (`~/.makina/config.toml`) supplies
+# the agent backend and models; this file supplies what the repository knows
+# about itself: the base branch, the quality gates, and the caps that decide
+# how much time a task may spend before it is failed rather than waited on.
+
+base_branch = "develop"
+
+# One task at a time. Every task's gates compile the whole workspace and run
+# the container fixture; three of those at once thrash sixteen cores and,
+# worse, contend for one build cache. Sequential tasks with a warm cache finish
+# sooner than parallel tasks with cold ones, and they finish predictably.
+concurrency = 1
+
+# ── Caps ─────────────────────────────────────────────────────────────────────
+#
+# A task that is still running after these caps is a task that is stuck, and a
+# stuck task costs hours if nobody is watching. Every cap here is chosen so
+# that the failure it catches is cheaper than the wait it prevents.
+[caps]
+# Developer finishes → gates run → a gate fails → developer tries again. Three
+# rounds is enough for a genuine fix; a fourth is a task whose design was
+# misread, and it should fail so a person reads it.
+gate_iterations = 3
+# Reviewer requests changes → developer addresses them. Twice.
+reviewer_iterations = 2
+# Per task, all iterations included. The five gates take ten minutes warm;
+# three gate rounds, two review rounds and the developer's own turns fit
+# comfortably in an hour, and a task that does not fit is failed, not waited on.
+wall_clock_secs = 3600
+# The idle watchdog. A step that produces no output for five minutes is dead —
+# a shell waiting on a container that never came up, a test with no deadline,
+# a build script that hung — and is aborted. The longest legitimate silences
+# here are far shorter: the Zig build of libghostty-vt measured sixteen seconds
+# cold on this machine (its first build per target and profile also clones
+# ghostty, which prints as it goes), a single in-process test is killed at
+# sixty seconds by `.config/nextest.toml`, and the claims gate runs scenarios
+# as nextest tests, which print a line as each finishes and a `SLOW` marker
+# every minute for one still running, so a container proof is never silent.
+idle_secs = 300
+
+# ── Gates ────────────────────────────────────────────────────────────────────
+#
+# The same five commands `cargo xtask check` runs, in the same order, with the
+# same deadlines, so a task that passes locally is a task that lands. Warm,
+# they take about ten minutes together; the deadlines are for hangs. Each gate
+# is `sh -c`; it passes iff it exits 0; the first failure is fed back to the
+# developer and all gates re-run from the top on the next iteration.
+#
+# Every gate is wrapped in `timeout` so that a hung gate is a failed gate with
+# a name, and every gate shares one build cache so that a fresh worktree does
+# not mean a cold build (a cold build here compiles libghostty-vt with Zig).
+# `CARGO_TARGET_DIR` set in the environment wins; the default is the user's
+# cache directory.
+
+[[gates]]
+name = "format"
+command = "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/iznik/target}\"; timeout 300 cargo fmt --all --check"
+
+[[gates]]
+name = "lint"
+command = "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/iznik/target}\"; timeout 900 cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[[gates]]
+name = "documentation"
+command = "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/iznik/target}\"; RUSTDOCFLAGS='-D warnings' timeout 600 cargo doc --workspace --no-deps --document-private-items --locked"
+
+[[gates]]
+name = "test"
+command = "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/iznik/target}\"; timeout 900 cargo nextest run --workspace --locked"
+
+[[gates]]
+name = "claims"
+command = "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/iznik/target}\"; timeout 900 cargo xtask claims verify"

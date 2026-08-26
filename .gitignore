@@ -20,3 +20,11 @@ __pycache__/
 
 # OS noise
 .DS_Store
+
+# Makina runtime state, when it is kept inside the checkout.
+/.worktrees/
+
+# Agent and editor state never belongs to the repository; the rules that
+# apply here live in AGENTS.md, and tooling configuration lives at user level.
+/.claude/
+/CLAUDE.md
