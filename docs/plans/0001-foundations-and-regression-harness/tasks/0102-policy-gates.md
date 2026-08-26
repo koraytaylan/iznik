@@ -12,7 +12,7 @@ touches:
   - "xtask/tests/fixtures/policy/**"
   - "policy/dependencies.md"
   - "policy/lexicon/policy-gates.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Policy Gates
