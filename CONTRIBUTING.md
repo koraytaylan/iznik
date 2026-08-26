@@ -178,9 +178,11 @@ One lint clippy offers is deliberately absent, and this is the record of why:
 parameters, while `min_ident_chars` with an empty allow list forbids keeping
 `fmt(f)` and `from_str(s)` as the standard library names them. The two cannot
 both hold; whole words win, and a trait implementation names its parameters
-like everything else. Note that `arithmetic_side_effects` and
-`non_ascii_literal` have no test-scope relaxation: test code writes
-`count.checked_add(1)` and `"\u{6F22}"` like the rest of the workspace.
+like everything else. Note that clippy skips test code for
+`arithmetic_side_effects` — a `+=` inside a `#[test]` passes the lint gate —
+and `non_ascii_literal` cannot see inside `format!`, so in test code those two
+rules are review's to enforce: test code writes `count.checked_add(1)` and
+`"\u{6F22}"` like the rest of the workspace.
 
 A second lint is absent because the toolchain removed it:
 `clippy::string_to_string` no longer exists in the pinned clippy, which
