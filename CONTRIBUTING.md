@@ -149,8 +149,11 @@ may die of a bug that could have been an error value.
 
 `iznik-server` and `iznik-client` are asynchronous end to end. In their
 sources there is no `std::thread::sleep`, no blocking `std::io::Read` or
-`std::io::Write`, and no `std::process`; the async runtime's equivalents are
-used instead. *Enforced by `xtask/tests/policy_blocking.rs`.*
+`std::io::Write`, and no `std::process` beyond its inert types and values —
+`std::process::ExitCode`, `ExitStatus`, `Stdio`, `Output` and `id`, which a
+binary's `main` returns and `tokio::process` itself hands out; the async
+runtime's equivalents are used instead.
+*Enforced by `xtask/tests/policy_blocking.rs`.*
 
 ### 3.7 Unsafe
 
