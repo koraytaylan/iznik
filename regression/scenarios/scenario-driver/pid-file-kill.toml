@@ -1,0 +1,33 @@
+name = "pid-file-kill"
+claims = ["scenario-driver-pid-file-kill"]
+driver = "engine"
+budget_seconds = 40
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "start-sleeper"
+container = "host0"
+run = "sleep 30 >/dev/null 2>&1 & echo $! > /tmp/sleeper.pid"
+timeout_seconds = 10
+
+[[steps]]
+id = "kill-sleeper"
+container = "host0"
+timeout_seconds = 10
+[steps.fault]
+action = "kill-process"
+file = "/tmp/sleeper.pid"
+
+[[steps]]
+id = "census"
+container = "host0"
+run = "sleep 1; kill -0 $(cat /tmp/sleeper.pid) 2>/dev/null && printf alive || printf gone"
+timeout_seconds = 10
+
+[[expect]]
+step = "census"
+stdout_equals = "gone"

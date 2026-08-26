@@ -1,0 +1,20 @@
+name = "round-trip"
+claims = ["scenario-driver-round-trip"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "echo"
+container = "engine"
+run = "printf hello"
+timeout_seconds = 10
+
+[[expect]]
+step = "echo"
+exit = 0
+stdout_equals = "hello"

@@ -1,0 +1,20 @@
+name = "cross-container-ssh"
+claims = ["scenario-driver-cross-container-ssh"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "ssh-to-host"
+container = "engine"
+run = "printf %s \"$(ssh -o BatchMode=yes host0 hostname)\""
+timeout_seconds = 15
+
+[[expect]]
+step = "ssh-to-host"
+exit = 0
+stdout_equals = "host0"

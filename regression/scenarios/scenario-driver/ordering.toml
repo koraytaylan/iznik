@@ -1,0 +1,39 @@
+name = "ordering"
+claims = ["scenario-driver-ordering"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "first"
+container = "engine"
+run = "printf 1"
+timeout_seconds = 10
+
+[[steps]]
+id = "second"
+container = "engine"
+run = "printf 2"
+timeout_seconds = 10
+
+[[steps]]
+id = "third"
+container = "engine"
+run = "printf 3"
+timeout_seconds = 10
+
+[[expect]]
+step = "first"
+stdout_equals = "1"
+
+[[expect]]
+step = "second"
+stdout_equals = "2"
+
+[[expect]]
+step = "third"
+stdout_equals = "3"

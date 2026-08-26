@@ -1,0 +1,31 @@
+name = "both-containers"
+claims = ["scenario-driver-both-containers"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "on-engine"
+container = "engine"
+run = "printf %s \"$(hostname)\""
+timeout_seconds = 10
+
+[[steps]]
+id = "on-host"
+container = "host0"
+run = "printf %s \"$(hostname)\""
+timeout_seconds = 10
+
+[[expect]]
+step = "on-engine"
+exit = 0
+stdout_equals = "engine"
+
+[[expect]]
+step = "on-host"
+exit = 0
+stdout_equals = "host0"

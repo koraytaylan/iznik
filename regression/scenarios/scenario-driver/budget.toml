@@ -1,0 +1,15 @@
+name = "budget"
+claims = ["scenario-driver-budget"]
+driver = "engine"
+budget_seconds = 2
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "too-slow"
+container = "engine"
+run = "sleep 10"
+timeout_seconds = 30

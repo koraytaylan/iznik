@@ -1,0 +1,21 @@
+name = "expected-non-zero"
+claims = ["scenario-driver-expected-non-zero"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "fails"
+container = "engine"
+run = "printf out; printf err 1>&2; exit 1"
+timeout_seconds = 10
+
+[[expect]]
+step = "fails"
+exit = 1
+stdout_equals = "out"
+stderr_equals = "err"

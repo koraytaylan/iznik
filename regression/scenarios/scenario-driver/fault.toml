@@ -1,0 +1,31 @@
+name = "fault"
+claims = ["scenario-driver-fault"]
+driver = "engine"
+budget_seconds = 40
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "disconnect"
+container = "host0"
+fault = "disconnect-network"
+timeout_seconds = 10
+
+[[steps]]
+id = "unreachable"
+container = "engine"
+run = "ssh -o BatchMode=yes -o ConnectTimeout=2 host0 true"
+timeout_seconds = 10
+
+[[steps]]
+id = "reconnect"
+container = "host0"
+fault = "reconnect-network"
+timeout_seconds = 10
+
+[[expect]]
+step = "unreachable"
+exit = 255

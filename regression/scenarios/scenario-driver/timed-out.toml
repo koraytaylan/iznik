@@ -1,0 +1,30 @@
+name = "timed-out"
+claims = ["scenario-driver-timed-out"]
+driver = "engine"
+budget_seconds = 30
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "sleeps"
+container = "host0"
+run = "printf before; sleep 5"
+timeout_seconds = 1
+
+[[steps]]
+id = "census"
+container = "host0"
+run = "sleep 0.3; printf %s \"$(ps -eo args | grep -c '[s]leep 5')\""
+timeout_seconds = 10
+
+[[expect]]
+step = "sleeps"
+stdout_contains = "before"
+duration_under_seconds = 3
+
+[[expect]]
+step = "census"
+stdout_equals = "0"
