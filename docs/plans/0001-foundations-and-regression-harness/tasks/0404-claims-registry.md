@@ -21,7 +21,7 @@ touches:
   - "regression/scenarios/claims-registry/**"
   - "docs/notes/claims.md"
   - "policy/lexicon/claims-registry.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Claims Registry
