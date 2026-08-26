@@ -15,7 +15,7 @@ touches:
   - "crates/iznik-regression/tests/regression_scenarios.rs"
   - "regression/scenarios/scenario-driver/**"
   - "policy/lexicon/scenario-driver.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Scenario Driver
