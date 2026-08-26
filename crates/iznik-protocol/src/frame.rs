@@ -6,6 +6,7 @@
 //! is held to it.
 
 use core::fmt::{self, Display, Formatter};
+use core::ops::Range;
 
 /// The most bytes a payload may carry: one mebibyte. A larger length in a
 /// header is a protocol error, not an allocation.
@@ -108,7 +109,8 @@ pub fn encode(channel: u8, payload: &[u8], out: &mut Vec<u8>) -> Result<(), Fram
 /// Bytes are pushed as they arrive; [`FrameDecoder::next_frame`] yields each
 /// complete frame borrowed from the buffer, so a payload is copied once — into
 /// the buffer — and never again: the buffer is compacted only when the decoder
-/// asks for more bytes, and what remains then is at most one partial frame,
+/// asks for more bytes — on `next_frame`'s way to `None` and on `ready`'s way
+/// to `false` — and what remains then is at most one partial frame,
 /// which is moved to the front at most once, and only when the consumed
 /// prefix before it has outgrown the compaction threshold of sixty-four
 /// kibibytes.
@@ -140,6 +142,52 @@ impl FrameDecoder {
         self.buffer.capacity()
     }
 
+    /// The bytes pushed and not yet part of a yielded frame, in order: what
+    /// a link hands back with its stream when a layer is put under it.
+    #[must_use]
+    pub fn pending(&self) -> &[u8] {
+        self.buffer.get(self.consumed..).unwrap_or_default()
+    }
+
+    /// The frame at the front when it is whole: its channel and the range of
+    /// its payload in the buffer. The one place the header is read.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError::Oversize`] when the header names a length over
+    /// [`MAXIMUM_PAYLOAD_LENGTH`].
+    fn front(&self) -> Result<Option<(u8, Range<usize>)>, FrameError> {
+        let Some(header) = FrameHeader::read(self.pending()) else {
+            return Ok(None);
+        };
+        if header.length > MAXIMUM_PAYLOAD_LENGTH {
+            return Err(FrameError::Oversize {
+                length: header.length,
+            });
+        }
+        let length = usize::try_from(header.length).unwrap_or(usize::MAX);
+        let start = self.consumed.saturating_add(HEADER_LENGTH);
+        let end = start.saturating_add(length);
+        Ok((end <= self.buffer.len()).then_some((header.channel, start..end)))
+    }
+
+    /// Whether a complete frame waits at the front, without yielding it:
+    /// what a link asks before reading more from its stream, so that the
+    /// frame it then yields is borrowed once. A `false` is the decoder asking
+    /// for more bytes, which is when it compacts.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError::Oversize`] when the header at the front names a length
+    /// over [`MAXIMUM_PAYLOAD_LENGTH`], the refusal `next_frame` gives.
+    pub fn ready(&mut self) -> Result<bool, FrameError> {
+        if self.front()?.is_some() {
+            return Ok(true);
+        }
+        self.compact();
+        Ok(false)
+    }
+
     /// The next complete frame, or `None` until more bytes arrive.
     ///
     /// The frame yielded by the previous call is released by this one. The
@@ -152,31 +200,15 @@ impl FrameDecoder {
     /// over [`MAXIMUM_PAYLOAD_LENGTH`]; the stream is corrupt from there, the
     /// decoder keeps returning the error, and the caller drops the link.
     pub fn next_frame(&mut self) -> Result<Option<Frame<'_>>, FrameError> {
-        let pending = self.buffer.get(self.consumed..).unwrap_or_default();
-        let Some(header) = FrameHeader::read(pending) else {
+        let Some((channel, range)) = self.front()? else {
             self.compact();
             return Ok(None);
         };
-        if header.length > MAXIMUM_PAYLOAD_LENGTH {
-            return Err(FrameError::Oversize {
-                length: header.length,
-            });
-        }
-        let length = usize::try_from(header.length).unwrap_or(usize::MAX);
-        let start = self.consumed.saturating_add(HEADER_LENGTH);
-        let end = start.saturating_add(length);
-        if end > self.buffer.len() {
-            self.compact();
-            return Ok(None);
-        }
-        let Some(payload) = self.buffer.get(start..end) else {
+        let Some(payload) = self.buffer.get(range.clone()) else {
             return Ok(None);
         };
-        self.consumed = end;
-        Ok(Some(Frame {
-            channel: header.channel,
-            payload,
-        }))
+        self.consumed = range.end;
+        Ok(Some(Frame { channel, payload }))
     }
 
     /// Frees what has been consumed, called only when what remains is at most

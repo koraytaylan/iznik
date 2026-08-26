@@ -105,6 +105,17 @@ fn same_bytes(actual: &[u8], expected: &[u8]) -> Result<(), String> {
     }
 }
 
+/// The next frame, owned, or `None`.
+///
+/// # Errors
+///
+/// The decoder's refusal.
+fn drain_one(decoder: &mut FrameDecoder) -> Result<Option<Decoded>, FrameError> {
+    Ok(decoder
+        .next_frame()?
+        .map(|frame| (frame.channel, frame.payload.to_vec())))
+}
+
 /// Every frame the decoder can yield now, owned.
 ///
 /// # Errors
@@ -112,8 +123,8 @@ fn same_bytes(actual: &[u8], expected: &[u8]) -> Result<(), String> {
 /// The decoder's error.
 fn drain(decoder: &mut FrameDecoder) -> Result<Vec<Decoded>, FrameError> {
     let mut frames = Vec::new();
-    while let Some(frame) = decoder.next_frame()? {
-        frames.push((frame.channel, frame.payload.to_vec()));
+    while let Some(frame) = drain_one(decoder)? {
+        frames.push(frame);
     }
     Ok(frames)
 }
@@ -241,7 +252,9 @@ fn frame_golden_resumes_across_one_byte_pushes() {
 /// once, or makes the decoder reserve room for the payload it names.
 #[test]
 fn frame_golden_refuses_an_oversize_header_without_allocating() {
-    let length = MAXIMUM_PAYLOAD_LENGTH + 1;
+    let length = MAXIMUM_PAYLOAD_LENGTH
+        .checked_add(1)
+        .expect("one more fits a u32");
     let mut header = Vec::new();
     FrameHeader { length, channel: 3 }.write(&mut header);
     assert_eq!(header.len(), HEADER_LENGTH);
@@ -355,6 +368,132 @@ fn frame_golden_never_moves_a_complete_frame() {
         }
         previous = Some(address);
         yielded = yielded.saturating_add(1);
+    }
+    assert_eq!(yielded, frame_count);
+}
+
+/// `ready` and `pending` describe what the decoder holds without yielding
+/// or moving anything.
+///
+/// # Panics
+///
+/// When `ready` is true before a frame is whole or false once it is, or
+/// when `pending` is not exactly the bytes pushed and not yet yielded.
+#[test]
+fn frame_golden_ready_and_pending_track_a_frame_as_it_arrives() {
+    let mut first = Vec::new();
+    encode(2, b"first", &mut first).expect("a small payload encodes");
+    let mut second = Vec::new();
+    encode(3, b"second", &mut second).expect("a small payload encodes");
+    let mut decoder = FrameDecoder::new();
+    assert_eq!(decoder.ready(), Ok(false), "empty");
+    assert!(decoder.pending().is_empty(), "empty");
+    let (header_start, rest) = first.split_at(3);
+    decoder.push(header_start);
+    assert_eq!(decoder.ready(), Ok(false), "a partial header");
+    assert_eq!(decoder.pending(), header_start);
+    let (payload_start, payload_end) = rest.split_at(4);
+    decoder.push(payload_start);
+    assert_eq!(decoder.ready(), Ok(false), "a partial payload");
+    assert_eq!(decoder.pending(), [header_start, payload_start].concat());
+    decoder.push(payload_end);
+    decoder.push(&second);
+    assert_eq!(decoder.ready(), Ok(true), "a whole frame, and more");
+    assert_eq!(
+        decoder.pending(),
+        [first.as_slice(), second.as_slice()].concat()
+    );
+    let yielded = drain_one(&mut decoder).expect("decodes");
+    assert_eq!(yielded, Some((2, b"first".to_vec())));
+    assert_eq!(
+        decoder.pending(),
+        second.as_slice(),
+        "the second frame is what remains"
+    );
+    assert_eq!(decoder.ready(), Ok(true));
+    assert_eq!(
+        drain_one(&mut decoder).expect("decodes"),
+        Some((3, b"second".to_vec()))
+    );
+    assert!(decoder.pending().is_empty());
+    assert_eq!(decoder.ready(), Ok(false));
+}
+
+/// An empty payload's frame is whole at its five header bytes.
+///
+/// # Panics
+///
+/// When `ready` does not say so, or the frame does not yield empty.
+#[test]
+fn frame_golden_ready_holds_for_an_empty_payload() {
+    let mut empty = Vec::new();
+    encode(4, b"", &mut empty).expect("an empty payload encodes");
+    let mut decoder = FrameDecoder::new();
+    decoder.push(&empty);
+    assert_eq!(decoder.ready(), Ok(true));
+    assert_eq!(
+        drain_one(&mut decoder).expect("decodes"),
+        Some((4, Vec::new()))
+    );
+    assert_eq!(decoder.ready(), Ok(false));
+}
+
+/// `ready` refuses an oversize header exactly as `next_frame` would.
+///
+/// # Panics
+///
+/// When an oversize header is not refused by `ready`.
+#[test]
+fn frame_golden_ready_refuses_an_oversize_header() {
+    let length = MAXIMUM_PAYLOAD_LENGTH
+        .checked_add(1)
+        .expect("one more fits a u32");
+    let mut oversize = Vec::new();
+    FrameHeader { length, channel: 1 }.write(&mut oversize);
+    let mut decoder = FrameDecoder::new();
+    decoder.push(&oversize);
+    assert_eq!(decoder.ready(), Err(FrameError::Oversize { length }));
+    assert_eq!(
+        decoder.pending(),
+        oversize.as_slice(),
+        "nothing was consumed"
+    );
+    assert_eq!(decoder.next_frame(), Err(FrameError::Oversize { length }));
+}
+
+/// A link's loop — ask `ready`, push until it says so, yield — keeps the
+/// buffer bounded too: `ready` compacts when it asks for more bytes.
+///
+/// # Panics
+///
+/// When the buffer grows with the stream, when `ready` says a frame waits
+/// and none is yielded, or when a frame goes missing.
+#[test]
+fn frame_golden_bounds_its_buffer_through_a_link_loop() {
+    let frame_count = 20_000;
+    let payload = [0x3c; 100];
+    let mut stream = Vec::new();
+    for _ in 0..frame_count {
+        encode(1, &payload, &mut stream).expect("a small payload encodes");
+    }
+    let chunk = 7_777;
+    let bound = 256 * 1024;
+    let mut decoder = FrameDecoder::new();
+    let mut yielded: usize = 0;
+    for piece in stream.chunks(chunk) {
+        decoder.push(piece);
+        while decoder.ready().expect("the stream decodes") {
+            assert!(
+                drain_one(&mut decoder).expect("decodes").is_some(),
+                "ready means a frame"
+            );
+            yielded = yielded.saturating_add(1);
+        }
+        assert!(
+            decoder.capacity() <= bound,
+            "the buffer grew to {} bytes after {yielded} frames",
+            decoder.capacity()
+        );
     }
     assert_eq!(yielded, frame_count);
 }

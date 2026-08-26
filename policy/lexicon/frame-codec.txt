@@ -2,6 +2,7 @@ across
 actual
 address
 allocating
+arrives
 asks
 bound
 bounds
@@ -25,10 +26,12 @@ encodes
 exactly
 for
 frames
+front
 hex
 invalid
 jsonl
 loader
+loop
 more
 moves
 offset
@@ -38,6 +41,8 @@ payload
 per
 pushes
 radix
+range
+ready
 refuses
 rejects
 removed
@@ -47,6 +52,8 @@ same
 short
 string
 threshold
+through
+track
 trips
 whole
 width
