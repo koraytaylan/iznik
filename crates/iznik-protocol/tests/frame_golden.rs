@@ -18,6 +18,14 @@ const FIXTURE: &str = "tests/fixtures/frame.jsonl";
 /// tests, which try every boundary and so want a short stream.
 const SPLIT_PAYLOAD_LIMIT: usize = 512;
 
+/// The spare a landing test asks the decoder to lend: room for many small
+/// frames, so the spare is reused rather than regrown.
+const LANDING_SPARE: usize = 4096;
+
+/// Where the kept-spare test plants a byte the decoder must never touch: the
+/// last byte of the spare lent after the first frame landed.
+const SENTINEL: usize = LANDING_SPARE - 1;
+
 /// The one refusal a fixture line may declare.
 const OVERSIZE: &str = "oversize";
 
@@ -496,6 +504,146 @@ fn frame_golden_bounds_its_buffer_through_a_link_loop() {
         );
     }
     assert_eq!(yielded, frame_count);
+}
+
+/// A read can land in the decoder's own buffer: `spare` lends at least the
+/// asked-for bytes, `commit` makes what was filled pending, and the frame is
+/// yielded from where it landed.
+///
+/// # Panics
+///
+/// When the spare is too short, the committed bytes are not pending, the
+/// frame does not decode as it would after a push, or its payload does not
+/// sit where the read landed.
+#[test]
+fn frame_golden_a_read_can_land_in_the_decoder() {
+    let mut frame = Vec::new();
+    encode(6, b"landed", &mut frame).expect("a small payload encodes");
+    let mut decoder = FrameDecoder::new();
+    let spare = decoder.spare(LANDING_SPARE);
+    assert!(
+        spare.len() >= LANDING_SPARE,
+        "the spare is at least what was asked"
+    );
+    let landing_address = spare.as_ptr().addr();
+    spare[..frame.len()].copy_from_slice(&frame);
+    assert!(
+        decoder.pending().is_empty(),
+        "nothing is pending before the commit"
+    );
+    decoder.commit(frame.len());
+    assert_eq!(decoder.pending(), frame.as_slice());
+    let yielded = decoder.next_frame().expect("decodes").expect("a frame");
+    assert_eq!(yielded.channel, 6);
+    assert_eq!(yielded.payload, b"landed");
+    assert_eq!(
+        yielded.payload.as_ptr().addr(),
+        landing_address.checked_add(HEADER_LENGTH).expect("fits"),
+        "the frame is yielded from where the read landed"
+    );
+    assert_eq!(decoder.ready(), Ok(false));
+    assert!(decoder.pending().is_empty());
+}
+
+/// `commit` counts at most what the spare holds.
+///
+/// # Panics
+///
+/// When an over-count is not clamped to the spare.
+#[test]
+fn frame_golden_commit_counts_at_most_the_spare() {
+    let mut decoder = FrameDecoder::new();
+    let lent = decoder.spare(64).len();
+    decoder.commit(usize::MAX);
+    assert_eq!(
+        decoder.pending().len(),
+        lent,
+        "an over-count is the whole spare"
+    );
+}
+
+/// A decoder that grew its spare once does not grow it again while reads
+/// fit in it: the spare survives compaction.
+///
+/// # Panics
+///
+/// When the allocation or the buffer's length changes across reads that fit
+/// the spare, when the sentinel planted in the spare is zeroed or moved, or
+/// when a frame goes missing.
+#[test]
+fn frame_golden_the_spare_is_kept_across_reads() {
+    let mut decoder = FrameDecoder::new();
+    let mut frame = Vec::new();
+    encode(1, &[0x11; 100], &mut frame).expect("a small payload encodes");
+    land(&mut decoder, &frame).expect("the frame lands");
+    decoder.spare(LANDING_SPARE)[SENTINEL] = 0xaa;
+    let capacity_after_first = decoder.capacity();
+    let lent_after_first = decoder.spare(0).len();
+    for _ in 0..1000 {
+        assert!(drain_one(&mut decoder).expect("decodes").is_some());
+        assert_eq!(decoder.ready(), Ok(false));
+        land(&mut decoder, &frame).expect("the frame lands");
+    }
+    assert_eq!(
+        decoder.capacity(),
+        capacity_after_first,
+        "the spare is reused, not regrown"
+    );
+    assert_eq!(
+        decoder.spare(0).len(),
+        lent_after_first,
+        "the buffer's length is kept across compaction"
+    );
+    assert_eq!(
+        decoder.spare(0)[SENTINEL],
+        0xaa,
+        "the spare is neither zeroed nor reallocated while reads fit in it"
+    );
+}
+
+/// Lands bytes in the decoder the way a read would: into the spare it
+/// lends, then committed.
+///
+/// # Errors
+///
+/// When the spare is shorter than the bytes.
+fn land(decoder: &mut FrameDecoder, bytes: &[u8]) -> Result<(), String> {
+    let spare = decoder.spare(LANDING_SPARE);
+    spare
+        .get_mut(..bytes.len())
+        .ok_or("the spare is too short")?
+        .copy_from_slice(bytes);
+    decoder.commit(bytes.len());
+    Ok(())
+}
+
+/// `FrameHeader::for_payload` owns the size rule `encode` and a link apply.
+///
+/// # Panics
+///
+/// When a fitting payload's header differs from `encode`'s, or an oversize
+/// payload is not refused with its length.
+#[test]
+fn frame_golden_for_payload_owns_the_size_rule() {
+    let payload = [0x7e; 300];
+    let header = FrameHeader::for_payload(9, &payload).expect("fits");
+    let mut written = Vec::new();
+    header.write(&mut written);
+    let mut encoded = Vec::new();
+    encode(9, &payload, &mut encoded).expect("fits");
+    assert_eq!(written.as_slice(), &encoded[..HEADER_LENGTH]);
+    let maximum = usize::try_from(MAXIMUM_PAYLOAD_LENGTH).expect("the maximum fits");
+    assert!(
+        FrameHeader::for_payload(1, &vec![0; maximum]).is_ok(),
+        "exactly the maximum fits"
+    );
+    let length = MAXIMUM_PAYLOAD_LENGTH
+        .checked_add(1)
+        .expect("one more fits a u32");
+    assert_eq!(
+        FrameHeader::for_payload(1, &vec![0; maximum.checked_add(1).expect("fits")]),
+        Err(FrameError::Oversize { length })
+    );
 }
 
 /// A scratch file removed on drop.

@@ -23,6 +23,12 @@ const LENGTH_FIELD_WIDTH: usize = 4;
 /// the partial frame at a read boundary is moved rarely.
 const COMPACTION_THRESHOLD: usize = 64 * 1024;
 
+/// The refusal a payload length earns when it is over the maximum: the one
+/// place the size rule lives, on both sides of the wire.
+fn refusal(length: u32) -> Option<FrameError> {
+    (length > MAXIMUM_PAYLOAD_LENGTH).then_some(FrameError::Oversize { length })
+}
+
 /// A frame's header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameHeader {
@@ -33,6 +39,22 @@ pub struct FrameHeader {
 }
 
 impl FrameHeader {
+    /// The header of a frame carrying `payload` on `channel`, refused when the
+    /// payload is over the maximum.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError::Oversize`] when the payload is longer than
+    /// [`MAXIMUM_PAYLOAD_LENGTH`]; a payload beyond what a header can even
+    /// count is reported as [`u32::MAX`].
+    pub fn for_payload(channel: u8, payload: &[u8]) -> Result<FrameHeader, FrameError> {
+        let length = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        if let Some(refused) = refusal(length) {
+            return Err(refused);
+        }
+        Ok(FrameHeader { length, channel })
+    }
+
     /// Appends the header's five bytes.
     pub fn write(self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.length.to_le_bytes());
@@ -95,29 +117,30 @@ impl core::error::Error for FrameError {}
 /// [`MAXIMUM_PAYLOAD_LENGTH`], before anything is appended; a payload beyond
 /// what a header can even count is reported as [`u32::MAX`].
 pub fn encode(channel: u8, payload: &[u8], out: &mut Vec<u8>) -> Result<(), FrameError> {
-    let length = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-    if length > MAXIMUM_PAYLOAD_LENGTH {
-        return Err(FrameError::Oversize { length });
-    }
-    FrameHeader { length, channel }.write(out);
+    FrameHeader::for_payload(channel, payload)?.write(out);
     out.extend_from_slice(payload);
     Ok(())
 }
 
 /// Reassembles frames from a byte stream split wherever the transport likes.
 ///
-/// Bytes are pushed as they arrive; [`FrameDecoder::next_frame`] yields each
-/// complete frame borrowed from the buffer, so a payload is copied once — into
-/// the buffer — and never again: the buffer is compacted only when the decoder
-/// asks for more bytes — on `next_frame`'s way to `None` and on `ready`'s way
-/// to `false` — and what remains then is at most one partial frame,
-/// which is moved to the front at most once, and only when the consumed
-/// prefix before it has outgrown the compaction threshold of sixty-four
-/// kibibytes.
+/// Bytes arrive by [`FrameDecoder::push`], or land in the buffer itself when
+/// a read is given the spare capacity [`FrameDecoder::spare`] lends and then
+/// [`FrameDecoder::commit`]s what it filled; [`FrameDecoder::next_frame`]
+/// yields each complete frame borrowed from the buffer, so a payload is
+/// copied at most once and never again: the buffer is compacted only when
+/// the decoder asks for more bytes — on `next_frame`'s way to `None` and on
+/// `ready`'s way to `false` — and what remains then is at most one partial
+/// frame, which is moved to the front at most once, and only when the
+/// consumed prefix before it has outgrown the compaction threshold of
+/// sixty-four kibibytes. The spare capacity is kept across compaction and
+/// zeroed only when it grows.
 #[derive(Debug, Default)]
 pub struct FrameDecoder {
-    /// Bytes pushed and not yet compacted away.
+    /// The bytes: filled up to `filled`, spare beyond it.
     buffer: Vec<u8>,
+    /// How many bytes at the front of the buffer hold data.
+    filled: usize,
     /// How many bytes at the front of the buffer belong to frames already
     /// yielded.
     consumed: usize,
@@ -132,11 +155,34 @@ impl FrameDecoder {
 
     /// Appends bytes from the stream.
     pub fn push(&mut self, bytes: &[u8]) {
-        self.buffer.extend_from_slice(bytes);
+        let Some(landing) = self.spare(bytes.len()).get_mut(..bytes.len()) else {
+            return;
+        };
+        landing.copy_from_slice(bytes);
+        let copied = landing.len();
+        self.commit(copied);
     }
 
-    /// The bytes the buffer can hold without growing: what a test asserts a
-    /// bound on after a long stream.
+    /// At least `minimum` bytes of spare capacity after the data, for a read
+    /// to land in; what the read fills is then [`FrameDecoder::commit`]ted.
+    /// The spare is zeroed only when it has to grow.
+    pub fn spare(&mut self, minimum: usize) -> &mut [u8] {
+        let wanted = self.filled.saturating_add(minimum);
+        if self.buffer.len() < wanted {
+            self.buffer.resize(wanted, 0);
+        }
+        self.buffer.get_mut(self.filled..).unwrap_or_default()
+    }
+
+    /// Records that a read filled the first `count` bytes of the spare;
+    /// more than the spare holds counts as all of it.
+    pub fn commit(&mut self, count: usize) {
+        let spare = self.buffer.len().saturating_sub(self.filled);
+        self.filled = self.filled.saturating_add(count.min(spare));
+    }
+
+    /// The size of the buffer's allocation: what a test asserts a bound on
+    /// after a long stream.
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.buffer.capacity()
@@ -146,7 +192,9 @@ impl FrameDecoder {
     /// a link hands back with its stream when a layer is put under it.
     #[must_use]
     pub fn pending(&self) -> &[u8] {
-        self.buffer.get(self.consumed..).unwrap_or_default()
+        self.buffer
+            .get(self.consumed..self.filled)
+            .unwrap_or_default()
     }
 
     /// The frame at the front when it is whole: its channel and the range of
@@ -160,15 +208,13 @@ impl FrameDecoder {
         let Some(header) = FrameHeader::read(self.pending()) else {
             return Ok(None);
         };
-        if header.length > MAXIMUM_PAYLOAD_LENGTH {
-            return Err(FrameError::Oversize {
-                length: header.length,
-            });
+        if let Some(refused) = refusal(header.length) {
+            return Err(refused);
         }
         let length = usize::try_from(header.length).unwrap_or(usize::MAX);
         let start = self.consumed.saturating_add(HEADER_LENGTH);
         let end = start.saturating_add(length);
-        Ok((end <= self.buffer.len()).then_some((header.channel, start..end)))
+        Ok((end <= self.filled).then_some((header.channel, start..end)))
     }
 
     /// Whether a complete frame waits at the front, without yielding it:
@@ -215,19 +261,21 @@ impl FrameDecoder {
     /// one partial frame: everything, at no cost, when nothing remains;
     /// otherwise the consumed prefix, once it outweighs both the threshold
     /// and the remainder, by moving that remainder to the front — after which
-    /// `consumed` is zero until the frame completes, so it is moved once.
+    /// `consumed` is zero until the frame completes, so it is moved once. The
+    /// spare capacity beyond the data is kept either way.
     fn compact(&mut self) {
         if self.consumed == 0 {
             return;
         }
-        if self.consumed == self.buffer.len() {
-            self.buffer.clear();
+        if self.consumed == self.filled {
             self.consumed = 0;
+            self.filled = 0;
             return;
         }
-        let remaining = self.buffer.len().saturating_sub(self.consumed);
+        let remaining = self.filled.saturating_sub(self.consumed);
         if self.consumed >= COMPACTION_THRESHOLD && self.consumed >= remaining {
-            self.buffer.drain(..self.consumed);
+            self.buffer.copy_within(self.consumed..self.filled, 0);
+            self.filled = remaining;
             self.consumed = 0;
         }
     }
