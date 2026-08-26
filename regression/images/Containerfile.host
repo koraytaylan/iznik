@@ -19,7 +19,10 @@ RUN printf 'Port 22\nUsePAM no\nPasswordAuthentication no\nPubkeyAuthentication 
 # The login user: uid 1000, a bash login shell, a prompt that is predictable
 # bytes, and a profile that sources the rc because a login shell reads the
 # profile and not the rc.
-RUN useradd --uid 1000 --create-home --shell /bin/bash iznik \
+# The account is given the password field `*`, no valid password but not
+# locked, because sshd with `UsePAM no` refuses a locked account even for a
+# key.
+RUN useradd --uid 1000 --create-home --shell /bin/bash --password '*' iznik \
     && printf "PS1='$ '\n" > /home/iznik/.bashrc \
     && printf '. ~/.bashrc\n' > /home/iznik/.bash_profile \
     && chown iznik:iznik /home/iznik/.bashrc /home/iznik/.bash_profile

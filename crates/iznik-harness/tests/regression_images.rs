@@ -58,7 +58,7 @@ struct Container(String);
 
 impl Drop for Container {
     fn drop(&mut self) {
-        let _removed = podman(&["rm", "--force", &self.0]);
+        let _removed = podman(&["rm", "--force", "--time", "0", &self.0]);
     }
 }
 
@@ -286,6 +286,17 @@ fn regression_images_host_runs_a_root_sshd_that_accepts_a_connection() {
         text(&prompt).trim(),
         "[$ ]",
         "the login shell's prompt is not the predictable bytes"
+    );
+    let shadow = podman(&["exec", &name, "getent", "shadow", "iznik"])
+        .unwrap_or_else(|error| panic!("`podman exec` in the host failed: {error}"));
+    let field = text(&shadow)
+        .split(':')
+        .nth(1)
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        !field.starts_with('!'),
+        "the login account is `!`-locked, so sshd with UsePAM no refuses even a key: `{field}`"
     );
     let banner = || {
         podman(&[

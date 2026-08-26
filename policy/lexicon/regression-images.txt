@@ -22,7 +22,9 @@ programs
 pure
 purpose
 rebuild
+shadow
 sshd
+staged
 twice
 unprivileged
 wrapper
