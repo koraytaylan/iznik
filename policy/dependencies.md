@@ -1,0 +1,124 @@
+# Dependencies
+
+> Every package `cargo metadata --format-version 1 --locked` resolves for the
+> workspace, one line each: a direct dependency says what it is for, and a
+> transitive one names the direct dependency it is reached from. The set
+> below must equal the resolved set exactly, in both directions — a package
+> nobody declared fails the build, and so does a listed one nothing uses
+> (`xtask/tests/policy_dependencies.rs`). Adding a dependency is an
+> architecture change: it lands with its justification here, never alone.
+
+## Workspace
+
+- `aho-corasick` — reached from `regex` and `tracing-subscriber`.
+- `anstream` — reached from `libtest-mimic`.
+- `anstyle` — reached from `libtest-mimic`.
+- `anstyle-parse` — reached from `libtest-mimic`.
+- `anstyle-query` — reached from `libtest-mimic`.
+- `anstyle-wincon` — reached from `libtest-mimic`.
+- `anyhow` — reached from `portable-pty`.
+- `bitflags` — reached from `cbindgen`, `libghostty-vt`, `nix` and `portable-pty`.
+- `block-buffer` — reached from `sha2`.
+- `bytes` — reached from `tokio`.
+- `cbindgen` — generates `include/iznik.h` from the FFI crate, so the C ABI is golden-pinned rather than hand-copied.
+- `cc` — reached from `zstd`.
+- `cfg-if` — reached from `cbindgen`, `nix`, `portable-pty`, `sha2`, `tracing-subscriber` and `zstd`.
+- `cfg_aliases` — reached from `nix` and `portable-pty`.
+- `clap` — reached from `libtest-mimic`.
+- `clap_builder` — reached from `libtest-mimic`.
+- `clap_derive` — reached from `libtest-mimic`.
+- `clap_lex` — reached from `libtest-mimic`.
+- `colorchoice` — reached from `libtest-mimic`.
+- `const-oid` — reached from `sha2`.
+- `cpufeatures` — reached from `sha2`.
+- `crypto-common` — reached from `sha2`.
+- `digest` — reached from `sha2`.
+- `downcast-rs` — reached from `portable-pty`.
+- `equivalent` — reached from `cbindgen` and `toml`.
+- `errno` — reached from `cbindgen` and `tokio`.
+- `escape8259` — reached from `libtest-mimic`.
+- `fastrand` — reached from `cbindgen`.
+- `filedescriptor` — reached from `portable-pty`.
+- `find-msvc-tools` — reached from `zstd`.
+- `getrandom` — reached from `cbindgen` and `zstd`.
+- `hashbrown` — reached from `cbindgen` and `toml`.
+- `heck` — reached from `cbindgen` and `libtest-mimic`.
+- `hybrid-array` — reached from `sha2`.
+- `indexmap` — reached from `cbindgen` and `toml`.
+- `int-enum` — reached from `libghostty-vt`.
+- `is_terminal_polyfill` — reached from `libtest-mimic`.
+- `itoa` — reached from `cbindgen` and `serde_json`.
+- `jobserver` — reached from `zstd`.
+- `lazy_static` — reached from `portable-pty` and `tracing-subscriber`.
+- `libc` — reached from `cbindgen`, `nix`, `portable-pty`, `sha2`, `tokio` and `zstd`.
+- `libghostty-vt` — the terminal emulator the macOS application renders with, so the server's mirror and the test oracle run the same engine.
+- `libghostty-vt-sys` — reached from `libghostty-vt`.
+- `libtest-mimic` — registers every regression scenario as a nextest test from a `harness = false` binary.
+- `linux-raw-sys` — reached from `cbindgen`.
+- `log` — reached from `cbindgen`, `portable-pty` and `tracing-subscriber`.
+- `matchers` — reached from `tracing-subscriber`.
+- `memchr` — reached from `cbindgen`, `regex`, `serde_json` and `tracing-subscriber`.
+- `mio` — reached from `tokio`.
+- `nix` — process groups, signals, user lookups and file locks as safe wrappers, so no crate but the FFI boundary needs `unsafe`.
+- `nu-ansi-term` — reached from `tracing-subscriber`.
+- `once_cell` — reached from `cbindgen`, `tracing` and `tracing-subscriber`.
+- `once_cell_polyfill` — reached from `libtest-mimic`.
+- `pin-project-lite` — reached from `tokio`, `tracing` and `tracing-subscriber`.
+- `pkg-config` — reached from `zstd`.
+- `portable-pty` — opens pseudoterminal pairs and spawns children on them, owning the fork-and-exec `unsafe`.
+- `proc-macro2` — the token and span types under `syn`, named directly for the `span-locations` feature that gives the policy checks their line numbers.
+- `proc-macro2-diagnostics` — reached from `libghostty-vt`.
+- `quote` — reached from `cbindgen`, `libghostty-vt`, `libtest-mimic`, `portable-pty`, `serde`, `serde_json`, `syn`, `tokio`, `toml`, `tracing` and `tracing-subscriber`.
+- `r-efi` — reached from `cbindgen` and `zstd`.
+- `regex` — the `stdout_matches` and `stderr_matches` scenario assertions.
+- `regex-automata` — reached from `regex` and `tracing-subscriber`.
+- `regex-syntax` — reached from `regex` and `tracing-subscriber`.
+- `rustix` — reached from `cbindgen`.
+- `serde` — derived deserialization of scenario tables, claims files and step tables.
+- `serde_core` — reached from `cbindgen`, `serde`, `serde_json` and `toml`.
+- `serde_derive` — reached from `cbindgen`, `serde`, `serde_json` and `toml`.
+- `serde_json` — JSONL goldens, NDJSON step records, `cargo metadata`, and the CLI's structured output.
+- `serde_spanned` — reached from `cbindgen` and `toml`.
+- `serial2` — reached from `portable-pty`.
+- `sha2` — the SHA-256 digests that name container images, staged binaries and uploaded artifacts.
+- `sharded-slab` — reached from `tracing-subscriber`.
+- `shared_library` — reached from `portable-pty`.
+- `shell-words` — reached from `portable-pty`.
+- `shlex` — reached from `zstd`.
+- `signal-hook-registry` — reached from `tokio`.
+- `smallvec` — reached from `tracing-subscriber`.
+- `socket2` — reached from `tokio`.
+- `strsim` — reached from `libtest-mimic`.
+- `syn` — parses every source file for the policy checks clippy cannot express.
+- `tempfile` — reached from `cbindgen`.
+- `thiserror` — reached from `portable-pty`.
+- `thiserror-impl` — reached from `portable-pty`.
+- `thread_local` — reached from `tracing-subscriber`.
+- `tokio` — the async runtime both product ends and the test client are written on.
+- `tokio-macros` — reached from `tokio`.
+- `toml` — scenarios, claims, the Makina configuration and the manifests the policy checks read.
+- `toml_datetime` — reached from `cbindgen` and `toml`.
+- `toml_parser` — reached from `cbindgen` and `toml`.
+- `toml_writer` — reached from `cbindgen` and `toml`.
+- `tracing` — the daemon's and the client engine's structured logging.
+- `tracing-attributes` — reached from `tracing` and `tracing-subscriber`.
+- `tracing-core` — reached from `tracing` and `tracing-subscriber`.
+- `tracing-log` — reached from `tracing-subscriber`.
+- `tracing-subscriber` — the log writer and the level filter behind `IZNIK_LOG`.
+- `typenum` — reached from `sha2`.
+- `unicode-ident` — reached from `cbindgen`, `libghostty-vt`, `libtest-mimic`, `portable-pty`, `proc-macro2`, `serde`, `serde_json`, `syn`, `tokio`, `toml`, `tracing` and `tracing-subscriber`.
+- `utf8parse` — reached from `libtest-mimic`.
+- `valuable` — reached from `tracing` and `tracing-subscriber`.
+- `version_check` — reached from `libghostty-vt`.
+- `wasi` — reached from `tokio`.
+- `winapi` — reached from `portable-pty`.
+- `winapi-i686-pc-windows-gnu` — reached from `portable-pty`.
+- `winapi-x86_64-pc-windows-gnu` — reached from `portable-pty`.
+- `windows-link` — reached from `cbindgen`, `libtest-mimic`, `portable-pty`, `tokio` and `tracing-subscriber`.
+- `windows-sys` — reached from `cbindgen`, `libtest-mimic`, `portable-pty`, `tokio` and `tracing-subscriber`.
+- `winnow` — reached from `cbindgen` and `toml`.
+- `winreg` — reached from `portable-pty`.
+- `zmij` — reached from `cbindgen` and `serde_json`.
+- `zstd` — streaming compression of the link, negotiated in `Hello`.
+- `zstd-safe` — reached from `zstd`.
+- `zstd-sys` — reached from `zstd`.

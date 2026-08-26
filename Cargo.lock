@@ -1121,6 +1121,7 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "iznik-harness",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",

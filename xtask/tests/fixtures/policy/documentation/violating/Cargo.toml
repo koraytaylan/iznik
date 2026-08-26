@@ -1,0 +1,2 @@
+[workspace]
+members = ["crates/alpha", "crates/beta", "crates/gamma", "crates/delta", "crates/epsilon", "crates/zeta"]
