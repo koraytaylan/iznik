@@ -104,6 +104,22 @@ fn pty_harness_the_cap_is_never_an_empty_success() {
     );
 }
 
+/// A child that closes its terminal having produced nothing is `Closed`,
+/// never an empty success.
+///
+/// # Panics
+///
+/// When the read succeeds or reports anything but `Closed`.
+#[test]
+fn pty_harness_a_silent_exit_is_closed_not_an_empty_success() {
+    let mut child = PtyChild::spawn("sh", &["-c", "exit 0"], COLUMNS, ROWS).expect("sh spawns");
+    let outcome = child.read_until_quiet(QUIET, CAP);
+    assert!(
+        matches!(&outcome, Err(PtyError::Closed { received }) if received.is_empty()),
+        "{outcome:?}"
+    );
+}
+
 /// A `sh` script that traps `WINCH` and prints `stty size` reports the new
 /// columns and rows after `resize`.
 ///

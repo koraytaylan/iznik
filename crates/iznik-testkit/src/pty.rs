@@ -56,8 +56,8 @@ pub enum PtyError {
         /// The bytes seen before the cap, escaped for a message.
         received: String,
     },
-    /// The child closed its terminal before anything, or before falling
-    /// quiet, with nothing more to come.
+    /// The child closed its terminal having produced nothing; a child that
+    /// produced something and then closed is a success carrying it.
     Closed {
         /// The bytes seen before the close, escaped for a message.
         received: String,
@@ -336,6 +336,7 @@ fn relay(mut reader: Box<dyn Read + Send>, sender: &mpsc::Sender<Vec<u8>>) {
     let mut buffer = vec![0; READ_LENGTH];
     loop {
         match reader.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Ok(0) | Err(_) => return,
             Ok(count) => {
                 let chunk = buffer.get(..count).unwrap_or_default().to_vec();
