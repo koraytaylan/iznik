@@ -179,6 +179,14 @@ like everything else. Note that `arithmetic_side_effects` and
 `non_ascii_literal` have no test-scope relaxation: test code writes
 `count.checked_add(1)` and `"\u{6F22}"` like the rest of the workspace.
 
+A second lint is absent because the toolchain removed it:
+`clippy::string_to_string` no longer exists in the pinned clippy, which
+reports it as removed and covered by `clippy::implicit_clone` — a pedantic
+lint this workspace already denies — on every crate it compiles. Denying a
+lint that does not exist is a warning on every build and enforces nothing, so
+the table omits it; `pedantic`, which the table denies, already carries the
+replacement.
+
 **There is no `#[allow]` and no `#[expect]` anywhere.** A lint that fires
 on correct code is either a bug in the code's shape — restructure — or a lint
 that is wrong for this codebase — remove it from `Cargo.toml` for everyone,
