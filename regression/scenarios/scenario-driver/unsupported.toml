@@ -17,4 +17,4 @@ timeout_seconds = 10
 [[expect]]
 step = "not-yet"
 exit = 2
-stderr_contains = "plan 0003"
+stderr_contains = "plan 0005"
