@@ -1,0 +1,52 @@
+# A pseudoterminal is a kernel object, identical on the host container and on
+# the machine these tests run on, so each claim is proven by an in-process test;
+# a container adds nothing. The musl binary's own behavior is covered by
+# `fidelity-suite`.
+
+[[claim]]
+id = "pty-spawn-login-shell"
+statement = "A pane's login shell initializes as a login shell."
+test = "iznik-server::pty_spawn::pty_spawn_the_login_shell_initializes_as_one"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-own-session"
+statement = "A spawned child leads its own session on its controlling pseudoterminal."
+test = "iznik-server::pty_spawn::pty_spawn_the_child_leads_its_own_session_on_the_terminal"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-environment"
+statement = "A pane's environment carries the ghostty terminal identity."
+test = "iznik-server::pty_spawn::pty_spawn_the_environment_is_the_panes"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-working-directory"
+statement = "A pane starts in its working directory, and a missing one fails the spawn."
+test = "iznik-server::pty_spawn::pty_spawn_the_working_directory_is_honored_or_named"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-missing-program"
+statement = "A program that does not exist fails the spawn, naming it, and spawns nothing."
+test = "iznik-server::pty_spawn::pty_spawn_a_missing_program_fails_naming_it"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-resize"
+statement = "A resize is delivered to the child as its new terminal size."
+test = "iznik-server::pty_spawn::pty_spawn_a_resize_is_seen_by_the_child"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-exit-status"
+statement = "An exit status is the code the child chose or the signal that ended it, never a fake code."
+test = "iznik-server::pty_spawn::pty_spawn_exit_statuses_tell_the_truth"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-spawn-drop-kills"
+statement = "Dropping a pane kills its child; nothing it spawned outlives it."
+test = "iznik-server::pty_spawn::pty_spawn_a_drop_kills_the_child"
+because = "a pseudoterminal is a kernel object, identical on the host container and here; the musl binary is covered by fidelity-suite"
