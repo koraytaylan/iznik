@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/pty_spawn.rs"
   - "regression/claims/pty-spawn.toml"
   - "policy/lexicon/pty-spawn.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # PTY Spawn
