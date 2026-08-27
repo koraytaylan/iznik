@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-testkit/assets/shell-integration.bash"
   - "regression/claims/shell-integration-marks.toml"
   - "policy/lexicon/shell-integration-marks.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Shell Integration Marks
