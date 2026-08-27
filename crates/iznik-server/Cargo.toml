@@ -31,3 +31,8 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 iznik-testkit = { path = "../iznik-testkit" }
+# Beyond the architecture's development list for this crate, as `iznik-link`'s
+# tests already are: the pty-streams tests drive the async `OutputStream` and
+# run concurrent writers, so they need a runtime. The package and its version
+# are already in the tree through the crate's own dependency.
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time"] }

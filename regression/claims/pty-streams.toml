@@ -1,0 +1,34 @@
+# The streaming is Rust over a kernel pseudoterminal, identical on the host
+# container and on the machine these tests run on, so each claim is proven by an
+# in-process test; a container adds nothing. The musl binary's own behavior is
+# covered by `fidelity-suite`.
+
+[[claim]]
+id = "pty-streams-byte-identity"
+statement = "Output is carried byte-for-byte, whatever chunk boundaries the stream chooses."
+test = "iznik-server::pty_streams::pty_streams_bytes_are_carried_identically"
+because = "the stream is Rust over a kernel pseudoterminal, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-streams-atomicity"
+statement = "Bytes submitted in one write are written whole, never interleaved with another caller's."
+test = "iznik-server::pty_streams::pty_streams_concurrent_writes_stay_whole"
+because = "the stream is Rust over a kernel pseudoterminal, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-streams-backlog"
+statement = "A stalled child backs input up to a cap and refuses more, dropping nothing."
+test = "iznik-server::pty_streams::pty_streams_a_stall_backs_up_and_never_drops"
+because = "the stream is Rust over a kernel pseudoterminal, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-streams-end-of-stream"
+statement = "The output stream ends exactly at the child's last byte, never before."
+test = "iznik-server::pty_streams::pty_streams_the_stream_ends_at_the_last_byte"
+because = "the stream is Rust over a kernel pseudoterminal, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pty-streams-isolation"
+statement = "A pane whose output nobody reads does not slow another pane's round trip."
+test = "iznik-server::pty_streams::pty_streams_a_blocked_pane_does_not_stall_another"
+because = "the stream is Rust over a kernel pseudoterminal, identical on the host container and here; the musl binary is covered by fidelity-suite"
