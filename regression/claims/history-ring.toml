@@ -1,0 +1,45 @@
+# The history ring is pure in-memory logic — no pseudoterminal, no kernel, no
+# container — so each claim is proven by an in-process test; a container adds
+# nothing.
+
+[[claim]]
+id = "history-ring-serves-since-a-sequence"
+statement = "A ring serves exactly the bytes appended since any sequence it still holds."
+test = "iznik-server::history_ring::history_ring_serves_exactly_the_bytes_since_a_sequence"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-ages-out-by-name"
+statement = "A sequence older than the oldest held is refused, naming the oldest still held."
+test = "iznik-server::history_ring::history_ring_an_aged_out_sequence_is_named"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-bounded"
+statement = "A ring holds exactly the newest capacity bytes, and no more."
+test = "iznik-server::history_ring::history_ring_holds_exactly_the_newest_capacity"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-two-slices"
+statement = "A wrapped ring serves its bytes as two contiguous slices."
+test = "iznik-server::history_ring::history_ring_wraps_into_two_contiguous_slices"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-budget-evicts-least-recent"
+statement = "The shared budget shrinks the least recently focused pane's ring first, and a touch changes which."
+test = "iznik-server::history_ring::history_ring_the_budget_shrinks_the_least_recently_focused_first"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-no-per-byte-allocation"
+statement = "Appending to a ring at capacity allocates a number of times independent of the bytes."
+test = "iznik-server::history_ring::history_ring_appends_do_not_allocate_in_steady_state"
+because = "the history ring is pure in-memory logic; a container adds nothing"
+
+[[claim]]
+id = "history-ring-budget-reinsert-replaces"
+statement = "Re-inserting a pane replaces its ring rather than double-counting it against the budget."
+test = "iznik-server::history_ring::history_ring_re_inserting_a_pane_replaces_its_ring"
+because = "the history ring is pure in-memory logic; a container adds nothing"
