@@ -257,6 +257,11 @@ impl Mirror {
             .is_ok_and(|screen| screen == Screen::Alternate)
     }
 
+    /// The emulator itself, for the screen serializer to format its state.
+    pub(crate) fn terminal(&self) -> &Terminal<'static, 'static> {
+        &self.terminal
+    }
+
     /// Records how many clients are subscribed. With any subscriber, the pending
     /// responses are discarded — the attached client's own emulator answers.
     pub fn set_subscriber_count(&mut self, count: usize) {

@@ -1,0 +1,34 @@
+# The serializer is Rust over the `libghostty-vt` emulator and its formatter,
+# deterministic and identical on the host container and on the machine these
+# tests run on, so each claim is proven by an in-process test; a container adds
+# nothing. The musl binary's own behavior is covered by `fidelity-suite`.
+
+[[claim]]
+id = "screen-serializer-reproduces-the-mirror"
+statement = "Feeding a serialized screen into a fresh emulator of the same size reproduces the mirror's visible screen — size, cursor, working directory, scrollback count and every visible row's text — across the corpus and hundreds of random positioned-write streams; per-cell styles are proven by screen-serializer-styles-survive."
+test = "iznik-server::screen_serializer::screen_serializer_reproduces_the_mirror"
+because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "screen-serializer-no-palette"
+statement = "The serialized output never contains an OSC 4 palette sequence — the server's palette is not the client's."
+test = "iznik-server::screen_serializer::screen_serializer_emits_no_palette"
+because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "screen-serializer-styles-survive"
+statement = "Bold, italic, underline, the exact 256-color index and the exact 24-bit color channels survive into the reproduction's cells."
+test = "iznik-server::screen_serializer::screen_serializer_preserves_styles"
+because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "screen-serializer-alternate-screen"
+statement = "A ScreenState remembers the primary screen across an alternate-screen switch, serializing the primary, the switch, then the live alternate, so leaving the alternate reveals the primary."
+test = "iznik-server::screen_serializer::screen_serializer_remembers_the_primary_across_the_alternate_screen"
+because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "screen-serializer-bounded"
+statement = "The serialized output is at most MAXIMUM_SCREEN_BYTES; when the whole screen would exceed it, the serializer drops its oldest scrollback rows to fit, so the newest rows still reproduce while the oldest are gone."
+test = "iznik-server::screen_serializer::screen_serializer_bounds_the_output"
+because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
