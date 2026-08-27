@@ -1,0 +1,40 @@
+# The mirror is Rust over the `libghostty-vt` emulator, deterministic and
+# identical on the host container and on the machine these tests run on, so each
+# claim is proven by an in-process test; a container adds nothing. The musl
+# binary's own behavior is covered by `fidelity-suite`.
+
+[[claim]]
+id = "terminal-mirror-cursor-position"
+statement = "A cursor-position report is collected only while nobody is subscribed."
+test = "iznik-server::terminal_mirror::terminal_mirror_reports_cursor_position_only_without_subscribers"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "terminal-mirror-embedder-queries"
+statement = "Every embedder-side query is answered from iznik's fixed values only while nobody is subscribed."
+test = "iznik-server::terminal_mirror::terminal_mirror_answers_embedder_queries_only_without_subscribers"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "terminal-mirror-ignored-effects"
+statement = "A bell, a clipboard write, a title and a directory report produce no response, and titles and directories are still recorded."
+test = "iznik-server::terminal_mirror::terminal_mirror_ignores_the_clients_effects"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "terminal-mirror-bounded-scrollback"
+statement = "The mirror's scrollback is bounded: far more input than its budget does not grow it past the budget."
+test = "iznik-server::terminal_mirror::terminal_mirror_bounds_its_scrollback"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "terminal-mirror-agrees-with-oracle"
+statement = "For every fidelity-corpus construct, the mirror's title, directory, dimensions and alternate-screen flag match the reference emulator's."
+test = "iznik-server::terminal_mirror::terminal_mirror_agrees_with_the_oracle"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "terminal-mirror-thread-isolation"
+statement = "The mirror thread runs each pane's !Send task, and a pane flooding megabytes does not delay a neighbor's single feed."
+test = "iznik-server::terminal_mirror::terminal_mirror_thread_runs_panes_without_one_delaying_another"
+because = "the mirror is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
