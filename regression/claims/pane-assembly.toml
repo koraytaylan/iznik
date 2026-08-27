@@ -1,0 +1,65 @@
+# The pane is Rust over the `libghostty-vt` emulator, a real pseudoterminal and a
+# real `bash` with the shell-integration asset — deterministic in what it holds
+# together, and identical on the host container and on the machine these tests
+# run on, so each claim is proven by an in-process test; a container adds nothing.
+# The same behavior through the static musl binary is covered by `fidelity-suite`.
+
+[[claim]]
+id = "pane-assembly-round-trips-the-screen"
+statement = "A command's output round-trips: after its CommandFinished mark, the pane's serialized screen fed into a fresh emulator shows the echoed line."
+test = "iznik-server::pane::pane_round_trips_a_command_through_the_screen"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-history-is-the-stream"
+statement = "The history ring is the byte stream: a large cat's bytes are byte-identical in read_history from sequence zero, and the published newest equals their length."
+test = "iznik-server::pane::pane_history_is_the_byte_stream"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-sequences-are-exact"
+statement = "The screen's sequence is the published newest at the moment of the call, and bytes produced afterward begin at that sequence."
+test = "iznik-server::pane::pane_sequences_are_exact"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-answers-only-without-subscribers"
+statement = "The mirror answers the child's cursor-position query — writing the reply to its input — with no subscriber, and answers nothing once a client subscribes."
+test = "iznik-server::pane::pane_answers_queries_only_without_subscribers"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-marks-flow"
+statement = "The four OSC 133 marks and the OSC 7 working-directory report from the integration shell arrive on the pane's marks for a command."
+test = "iznik-server::pane::pane_marks_flow_from_the_shell"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-remembers-the-alternate-screen"
+statement = "Entering the alternate screen is remembered: the serialized screen reproduces the alternate content and reveals the primary on leaving."
+test = "iznik-server::pane::pane_remembers_the_alternate_screen"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-resize-is-observed"
+statement = "A resize reaches the child — which reports the new width — and the pane's published state."
+test = "iznik-server::pane::pane_resize_reaches_the_child_and_the_state"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-exits-and-leaves-nothing"
+statement = "After close the exit status resolves and the state shows exited, and dropping a pane whose child still runs leaves no process behind."
+test = "iznik-server::pane::pane_exits_and_leaves_nothing"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-shares-one-thread"
+statement = "Many panes share one mirror thread — the production configuration — each round-tripping a command whose output the typed line cannot contain, so a stall of a pane's pipeline on the shared thread is caught."
+test = "iznik-server::pane::pane_many_share_one_thread"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-remembers-repeated-alternate-switches"
+statement = "Repeated alternate-screen switches in one command — enter, leave, enter — are remembered in order: the reproduction is the last alternate content and reveals the primary as it stood at the last enter."
+test = "iznik-server::pane::pane_remembers_repeated_alternate_switches"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
