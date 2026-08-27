@@ -34,7 +34,7 @@
 use core::fmt::{self, Display, Formatter, Write as _};
 
 use libghostty_vt::error::Error as EngineError;
-use libghostty_vt::screen::{Cell as EngineCell, CellContentTag, CellWide, GridRef};
+use libghostty_vt::screen::{Cell as EngineCell, CellContentTag, CellWide, GridRef, Screen};
 use libghostty_vt::style::{StyleColor, Underline as EngineUnderline};
 use libghostty_vt::terminal::{Options, Point, PointCoordinate, Terminal};
 
@@ -465,6 +465,17 @@ impl Vt {
     /// [`VtError`] when the engine refuses the query.
     pub fn working_directory(&self) -> Result<String, VtError> {
         engine("Terminal::pwd", self.terminal.pwd()).map(str::to_owned)
+    }
+
+    /// Whether the alternate screen — the one a full-screen program switches to
+    /// and that never reflows — is the active one.
+    ///
+    /// # Errors
+    ///
+    /// [`VtError`] when the engine refuses the query.
+    pub fn in_alternate_screen(&self) -> Result<bool, VtError> {
+        let screen = engine("Terminal::active_screen", self.terminal.active_screen())?;
+        Ok(screen == Screen::Alternate)
     }
 
     /// How many rows have scrolled off the top of the screen.
