@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/history_ring.rs"
   - "regression/claims/history-ring.toml"
   - "policy/lexicon/history-ring.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # History Ring
