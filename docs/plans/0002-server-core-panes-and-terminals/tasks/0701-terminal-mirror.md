@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/terminal_mirror.rs"
   - "regression/claims/terminal-mirror.toml"
   - "policy/lexicon/terminal-mirror.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Terminal Mirror
