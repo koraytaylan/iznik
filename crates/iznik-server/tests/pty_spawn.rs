@@ -21,6 +21,11 @@ const QUIET: Duration = Duration::from_millis(300);
 /// The most a read waits for any output at all.
 const CAP: Duration = Duration::from_secs(5);
 
+/// The control byte a script brackets its output with. `printf` writes it, but
+/// the shell's echo of the `\001` in the command text does not, so the read can
+/// tell the command's output from its echo.
+const OUTPUT_MARKER: u8 = 0x01;
+
 /// Anything that went wrong setting a session up.
 type Setup = Box<dyn Error + Send + Sync>;
 
@@ -72,6 +77,32 @@ impl Reader {
             }
         }
         String::from_utf8_lossy(&seen).into_owned()
+    }
+
+    /// Reads until two `marker` bytes have arrived, or the cap elapses. A lull
+    /// while a login shell is still starting, or right after it echoes the
+    /// command, does not end the read early the way `read_until_quiet` would, so
+    /// the command's own output — bracketed by `marker` bytes a shell echo does
+    /// not carry — is always waited for.
+    fn read_until_pair(&self, marker: u8) -> Vec<u8> {
+        let start = Instant::now();
+        let mut seen = Vec::new();
+        while start.elapsed() < CAP {
+            let remaining = CAP.saturating_sub(start.elapsed());
+            match self.chunks.recv_timeout(QUIET.min(remaining)) {
+                Ok(chunk) => {
+                    seen.extend_from_slice(&chunk);
+                    // A third split segment means both bracketing markers have
+                    // arrived — the output between them is complete.
+                    if seen.split(|&byte| byte == marker).nth(2).is_some() {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        seen
     }
 }
 
@@ -170,10 +201,14 @@ fn pty_spawn_the_login_shell_initializes_as_one() {
     };
     let mut session = Session::start(&options).expect("the login shell starts");
     session
-        .send_line("printf 'Z%sZ\\n' \"$0\"")
+        .send_line("printf '\\001%s\\001\\n' \"$0\"")
         .expect("the command is written");
-    let output = session.reader.read_until_quiet();
-    let name = marked(&output).unwrap_or_else(|| panic!("no marked name in {output:?}"));
+    let output = session.reader.read_until_pair(OUTPUT_MARKER);
+    let name = output
+        .split(|&byte| byte == OUTPUT_MARKER)
+        .nth(1)
+        .unwrap_or_else(|| panic!("no marked name in {output:?}"));
+    let name = String::from_utf8_lossy(name);
     assert!(
         name.starts_with('-'),
         "a login shell's $0 begins with -: {name:?}"
