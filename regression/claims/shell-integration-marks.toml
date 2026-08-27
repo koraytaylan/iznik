@@ -1,0 +1,53 @@
+# The observer is deterministic byte-scanning with no I/O, and the asset is a
+# real bash on a pseudoterminal — both identical on the host container and on the
+# machine these tests run on, so each claim is proven by an in-process test; a
+# container adds nothing. The musl binary's own behavior is covered by
+# `fidelity-suite`.
+
+[[claim]]
+id = "shell-integration-marks-each-sequence"
+statement = "Each recognized sequence yields one event of the right kind, at the first byte's absolute sequence, with its byte length."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_each_sequence_yields_one_event"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-split-any-byte"
+statement = "A stream of every mark split into two chunks at any byte yields the identical events."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_split_at_every_byte_is_identical"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-pass-through"
+statement = "The observer returns only events, never bytes, and an event arrives with the chunk that completes its sequence."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_events_come_with_the_completing_chunk"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-oversize-abandoned"
+statement = "An OSC past the length cap yields no event, and the next well-formed mark is still recognized."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_an_oversize_osc_is_abandoned"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-noise-ignored"
+statement = "Noise — including the payloads a naive parser aborts on — is ignored without event or error."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_noise_is_ignored"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-asset-emits"
+statement = "A real bash with the integration asset, given one command, emits the four OSC 133 marks and a working-directory report through the observer."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_the_asset_emits_the_marks"
+because = "a real bash on a pseudoterminal emits the same marks on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-absolute-sequences"
+statement = "A mark reports the absolute sequence of its first byte, not an offset within the chunk it completed in."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_report_absolute_sequences"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "shell-integration-marks-unterminated-then-mark"
+statement = "A mark that follows a sequence left unterminated, ended only by the escape of the next, is still recognized."
+test = "iznik-server::shell_integration_marks::shell_integration_marks_a_mark_after_an_unterminated_sequence_survives"
+because = "the observer is deterministic byte-scanning identical on the host container and here; the musl binary is covered by fidelity-suite"
