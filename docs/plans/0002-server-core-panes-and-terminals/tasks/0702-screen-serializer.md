@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/screen_serializer.rs"
   - "regression/claims/screen-serializer.toml"
   - "policy/lexicon/screen-serializer.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Screen Serializer
