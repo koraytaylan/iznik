@@ -14,7 +14,7 @@ touches:
   - "crates/iznik-server/tests/pane.rs"
   - "regression/claims/pane-assembly.toml"
   - "policy/lexicon/pane-assembly.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Pane Assembly
