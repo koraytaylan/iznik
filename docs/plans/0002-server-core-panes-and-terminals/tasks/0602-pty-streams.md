@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/pty_streams.rs"
   - "regression/claims/pty-streams.toml"
   - "policy/lexicon/pty-streams.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # PTY Streams
