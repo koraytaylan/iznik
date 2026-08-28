@@ -1,0 +1,33 @@
+name = "attach-over-ssh"
+claims = ["harness-attaches-over-ssh"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "attach"
+container = "engine"
+timeout_seconds = 60
+
+[steps.client]
+command = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --stdio"
+until_quiet_milliseconds = 400
+actions = [
+  { kind = "hello" },
+  { kind = "auto_credit", on = true },
+  { kind = "create_session", name = "work", columns = 80, rows = 24 },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo attached\n" },
+  { kind = "await_bytes", pane = 1, contains = "attached" },
+  { kind = "capture_to", pane = 1, path = "/tmp/attach-bytes.bin" },
+  { kind = "screen_to", pane = 1, path = "/tmp/attach-screen.bin" },
+  { kind = "expect_reassembly", pane = 1, pieces = ["/tmp/attach-screen.bin", "/tmp/attach-bytes.bin"] },
+]
+
+[[expect]]
+step = "attach"
+exit = 0

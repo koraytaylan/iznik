@@ -1,0 +1,67 @@
+name = "reconnect-over-ssh"
+claims = ["harness-reconnects-over-ssh"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "attach-and-hold-the-sequence"
+container = "engine"
+timeout_seconds = 60
+
+[steps.client]
+command = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --stdio"
+until_quiet_milliseconds = 400
+actions = [
+  { kind = "hello" },
+  { kind = "auto_credit", on = true },
+  { kind = "create_session", name = "work", columns = 80, rows = 24 },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo before\n" },
+  { kind = "await_bytes", pane = 1, contains = "before" },
+  { kind = "screen_to", pane = 1, path = "/tmp/reconnect-screen.bin" },
+  { kind = "capture_to", pane = 1, path = "/tmp/reconnect-first.bin" },
+  { kind = "resume_point_to", pane = 1, path = "/tmp/reconnect-point.txt" },
+]
+
+[[steps]]
+id = "drop-the-network"
+container = "host0"
+fault = "disconnect-network"
+timeout_seconds = 20
+
+[[steps]]
+id = "bring-it-back"
+container = "host0"
+fault = "reconnect-network"
+timeout_seconds = 20
+
+[[steps]]
+id = "resume-and-reassemble"
+container = "engine"
+timeout_seconds = 60
+
+[steps.client]
+command = "ssh -o BatchMode=yes -o ConnectTimeout=10 host0 /iznik/bin/iznik-server --stdio"
+until_quiet_milliseconds = 400
+actions = [
+  { kind = "hello" },
+  { kind = "auto_credit", on = true },
+  { kind = "resume", pane = 1, from_file = "/tmp/reconnect-point.txt" },
+  { kind = "input", pane = 1, text = "echo after\n" },
+  { kind = "await_bytes", pane = 1, contains = "after" },
+  { kind = "capture_to", pane = 1, path = "/tmp/reconnect-second.bin" },
+  { kind = "expect_reassembly", pane = 1, pieces = ["/tmp/reconnect-screen.bin", "/tmp/reconnect-first.bin", "/tmp/reconnect-second.bin"] },
+]
+
+[[expect]]
+step = "attach-and-hold-the-sequence"
+exit = 0
+
+[[expect]]
+step = "resume-and-reassemble"
+exit = 0

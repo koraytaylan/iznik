@@ -1,0 +1,42 @@
+# The harness every later integration test is written against, and the client
+# step that lets a scenario on the engine attach to the daemon on the host
+# through real SSH before a client engine exists.
+#
+# The two scenarios are where the SSH, the container and the dropped network
+# are; the rest are `test` proofs, because a temporary directory, a missing
+# path and a credit window are the same everywhere and a container would only
+# make them slower.
+
+[[claim]]
+id = "harness-starts-and-leaves-nothing"
+statement = "A stack answers on its socket within its startup ceiling, and when it is dropped its daemon, its socket and its runtime directory all go — on a clean end and on a panic alike."
+test = "iznik-testkit::stack::a_stack_starts_within_its_ceiling_and_leaves_nothing"
+because = "starting a daemon and removing a directory are this process's own; a container adds nothing but a second of image start"
+
+[[claim]]
+id = "harness-names-a-binary-that-is-not-there"
+statement = "A stack asked for a binary that is not there fails at once with the path it was given, rather than waiting out its startup ceiling on a daemon that was never started."
+test = "iznik-testkit::stack::a_binary_that_is_not_there_is_named_and_not_waited_for"
+because = "a path that does not exist is the same path in a container"
+
+[[claim]]
+id = "harness-makes-a-round-trip"
+statement = "Through the stack, a command creates a session, a subscription is announced on a pane channel before the truth it begins with, and a line typed into the pane comes back — the screen and the bytes after it showing it through the oracle."
+test = "iznik-testkit::stack::a_session_makes_a_round_trip_through_the_stack"
+because = "the shell is a real process and the oracle is the same emulator; only the socket is shorter"
+
+[[claim]]
+id = "harness-credit-keeps-a-flood-flowing"
+statement = "A client that returns nothing is sent its window and no more; one credit moves it again, and a client that returns credit as it arrives keeps it moving."
+test = "iznik-testkit::stack::credit_is_what_keeps_a_flood_flowing"
+because = "the window is the server's own arithmetic, and a network between the two would only add noise to it"
+
+[[claim]]
+id = "harness-attaches-over-ssh"
+statement = "From the engine, through `ssh host0 iznik-server --stdio`, a client creates a session, subscribes, types a line and sees it come back — and the screen it was given plus the bytes that followed reassemble, through the oracle, to what the pane's own mirror shows."
+scenario = "attach-over-ssh"
+
+[[claim]]
+id = "harness-reconnects-over-ssh"
+statement = "A client that captured a pane's screen, its bytes and the sequence it held, then lost the network entirely and came back, resumes from that sequence and the three pieces reassemble to what the pane's own mirror shows: a reconnect loses nothing."
+scenario = "reconnect-over-ssh"
