@@ -1,0 +1,40 @@
+# The channel table and the credit windows are pure tables: no pane, no sink,
+# no runtime. Every claim here is proven by an in-process test running in
+# milliseconds, and the pump that uses the tables is proven by
+# multiplexer-assembly.
+
+[[claim]]
+id = "channels-are-handed-out-once-and-then-refused"
+statement = "Subscriptions receive distinct channels from one upward, the table agrees with itself in both directions, and the two hundred and fifty-sixth is refused with nothing assigned."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_hands_out_every_channel_once_and_then_refuses"
+because = "the channel table is a pure table; a container adds nothing"
+
+[[claim]]
+id = "a-released-channel-waits-for-the-client"
+statement = "A released channel is not handed out again until the client acknowledges it, so a frame still in flight cannot be painted into a new pane; acknowledging a channel that was not released is refused by name."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_holds_a_released_channel_until_it_is_acknowledged"
+because = "the channel table is a pure table; a container adds nothing"
+
+[[claim]]
+id = "credit-cannot-be-overdrawn-or-overflowed"
+statement = "A credit window never gives out more than it holds, saturates rather than wraps on refill, starts at the background size or the focused one, and never takes back credit a client has already granted."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_credit_cannot_be_overdrawn_or_overflowed"
+because = "a credit window is arithmetic on one number; a container adds nothing"
+
+[[claim]]
+id = "a-cursor-knows-how-far-behind-it-is"
+statement = "A cursor's lag is the bytes between it and the pane's newest, and never reads as negative."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_a_cursor_knows_how_far_behind_it_is"
+because = "a cursor is a value; a container adds nothing"
+
+[[claim]]
+id = "the-multiplexer-constants-keep-their-relation"
+statement = "A pane frame fits a protocol frame, a background window carries at least one frame, the focused window is the larger, and the stale threshold is at least the focused window — so no later edit can make a frame unsendable or a stale mark unreachable."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_the_constants_keep_their_relation"
+because = "the relation is between constants; a container adds nothing"
+
+[[claim]]
+id = "a-link-failure-is-a-multiplexer-refusal"
+statement = "A sink failure converts to a multiplexer refusal that carries what the link said, and every refusal names the pane or channel it is about."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_a_link_failure_is_a_refusal"
+because = "the conversion is between values; a container adds nothing"
