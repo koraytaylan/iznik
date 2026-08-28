@@ -1,0 +1,52 @@
+# Performance in this repository is a measured, committed number and never an
+# adjective. Every claim here is a `test` proof under the `regression` profile,
+# because what is being bounded is a property of the process — a scheduler that
+# does not starve a keystroke, a ring that does not hold a flood — and a
+# container between the client and the daemon would measure the container.
+#
+# The measured figures, and the machine they were taken on, are in
+# `docs/notes/baseline.md`. The ceilings here are generous on purpose: a
+# regression test that fails on a noisy machine gets deleted, and then there is
+# none. What they catch is a change of kind.
+
+[[claim]]
+id = "baseline-idle-latency"
+statement = "A keystroke's round trip through the daemon over a unix socket, with nothing else happening, is under five milliseconds at the ninety-ninth percentile over a thousand samples."
+test = "iznik-server::regression_baseline::baseline_idle_latency_is_under_its_ceiling"
+profile = "regression"
+because = "it bounds the daemon's own scheduling; a network between the client and it would be measuring the network"
+
+[[claim]]
+id = "baseline-flood-latency"
+statement = "The same round trip beside a pane flooding at line rate is under thirty milliseconds at the ninety-ninth percentile, with the distribution in the assertion message — the case the whole scheduler exists for."
+test = "iznik-server::regression_baseline::baseline_flood_latency_is_under_its_ceiling"
+profile = "regression"
+because = "the flood and the keystroke share one link inside the process; adding a network would blur what the scheduler decided"
+
+[[claim]]
+id = "baseline-throughput"
+statement = "One pane sustains at least fifty mebibytes a second through the socket, and eight panes together sustain more than one — which is what says the scheduler shares rather than serializes."
+test = "iznik-server::regression_baseline::baseline_throughput_is_over_its_floor"
+profile = "regression"
+because = "a socket's throughput is the process's; a container's network would cap it below what is being asserted"
+
+[[claim]]
+id = "baseline-memory"
+statement = "The daemon's resident memory is under thirty-two mebibytes holding nothing and under two hundred and fifty-six holding fifty idle panes: a ring is allocated as it fills, not as it is declared."
+test = "iznik-server::regression_baseline::baseline_memory_is_under_its_ceilings"
+profile = "regression"
+because = "resident memory is read from this process's own `/proc`; a container adds its own pages to the number"
+
+[[claim]]
+id = "baseline-startup"
+statement = "A daemon takes under five hundred milliseconds from `--foreground` to a socket that answers, which is what the relay and every first use of a host wait for."
+test = "iznik-server::regression_baseline::baseline_startup_is_under_its_ceiling"
+profile = "regression"
+because = "it is one process starting; an image start would be measured with it"
+
+[[claim]]
+id = "baseline-notes-are-current"
+statement = "The committed table in `docs/notes/baseline.md` carries every figure the benchmark reports, so a figure that is added or renamed cannot leave the notes quietly stale."
+test = "iznik-server::regression_baseline::baseline_notes_carry_every_figure"
+profile = "regression"
+because = "it reads a file in this repository and compares it with the benchmark's own table"

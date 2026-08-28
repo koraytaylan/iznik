@@ -83,8 +83,9 @@ impl Home {
 
 impl Drop for Home {
     fn drop(&mut self) {
-        if let Some(holder) = iznik_server::daemon::lock::holder(&self.lock())
-            && let Ok(pid) = i32::try_from(holder)
+        if let iznik_server::daemon::lock::Holder::Held { process_id } =
+            iznik_server::daemon::lock::held_by(&self.lock())
+            && let Ok(pid) = i32::try_from(process_id)
         {
             let _told = nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(pid),

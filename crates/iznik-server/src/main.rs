@@ -24,13 +24,20 @@ fn main() -> ExitCode {
     else {
         return ExitCode::FAILURE;
     };
+    let relaying = arguments.first().and_then(|argument| argument.to_str()) == Some("--stdio");
     let status = runtime.block_on(dispatch(&arguments));
-    // The relay reads standard input on a blocking thread, and a client that
-    // has stopped writing leaves that read parked for ever. Dropping the
-    // runtime would wait for it, so a relay whose daemon has gone would hang
-    // holding a terminal open. Every entry point has said what it has to say
-    // and flushed it by here; nothing is waiting to be written.
-    runtime.shutdown_background();
+    // Only the relay. It reads standard input on a blocking thread, and a
+    // client that has stopped writing leaves that read parked for ever:
+    // dropping the runtime would wait for it, so a relay whose daemon had gone
+    // would hang holding a terminal open. It has flushed what it had to say by
+    // here. Every other entry point drops its runtime properly, because the
+    // daemon's does the work that matters on the way out — every pane's
+    // process group is killed when the registry behind the last connection is
+    // dropped, and the last log line is written by a task that must be let
+    // finish.
+    if relaying {
+        runtime.shutdown_background();
+    }
     status
 }
 

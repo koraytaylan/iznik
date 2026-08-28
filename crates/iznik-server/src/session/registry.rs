@@ -44,10 +44,12 @@ pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
 /// waited for for ever.
 const ENDING_LOOK_INTERVAL: Duration = Duration::from_millis(10);
 
-/// How many such looks: five times the attempts [`Registry::ingest`] needs to
-/// give up on a status, because a notification that lands on a permit already
-/// there is a look nobody takes.
-const ENDING_LOOKS: usize = 5 * EXIT_STATUS_ATTEMPTS;
+/// How many such looks: exactly the attempts [`Registry::ingest`] needs before
+/// it gives up on a status, and no more — every look costs whoever is waiting a
+/// write lock, and a session of thirty panes closing pays for all of them.
+/// Waking the waiters as well as leaving a permit is what makes one look
+/// enough, so the headroom that would otherwise be needed is not.
+const ENDING_LOOKS: usize = EXIT_STATUS_ATTEMPTS;
 
 /// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;

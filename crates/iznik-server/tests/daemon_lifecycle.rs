@@ -125,8 +125,9 @@ impl Home {
 impl Drop for Home {
     fn drop(&mut self) {
         // Whatever is still holding it is told to go before the directory does.
-        if let Some(holder) = iznik_server::daemon::lock::holder(&self.lock())
-            && let Ok(pid) = i32::try_from(holder)
+        if let iznik_server::daemon::lock::Holder::Held { process_id } =
+            iznik_server::daemon::lock::held_by(&self.lock())
+            && let Ok(pid) = i32::try_from(process_id)
         {
             let _told = nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(pid),
@@ -457,7 +458,10 @@ async fn a_daemon_touched_between_looks_is_not_idle() {
         // A count sampled once a second would see none of them.
         let started = Instant::now();
         while started.elapsed() < PROBING_FOR {
-            let _probe = tokio::net::UnixStream::connect(&socket).await;
+            // Dropped at once: a binding that lived across the sleep would
+            // keep the client count above zero and prove nothing about a
+            // connection that comes and goes between two looks.
+            drop(tokio::net::UnixStream::connect(&socket).await);
             tokio::time::sleep(PROBE_INTERVAL).await;
         }
         assert!(

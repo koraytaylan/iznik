@@ -598,23 +598,27 @@ enum Ready {
 /// which has already gone is not waited out.
 async fn answers_within(socket: &Path, child: &mut tokio::process::Child, cap: Duration) -> Ready {
     let started = std::time::Instant::now();
+    let mut ended = None;
     while started.elapsed() < cap {
         if socket::answering(socket).await {
             return Ready::Answered;
         }
-        if let Ok(Some(status)) = child.try_wait() {
-            // It may have answered on its way out; the socket has the last word.
-            if socket::answering(socket).await {
-                return Ready::Answered;
-            }
-            return Ready::Ended { status };
+        // A child that has gone is remembered but not answered with: two
+        // starts at once are an ordinary race, and the one that lost the lock
+        // exits in milliseconds while the one that won is still binding.
+        if ended.is_none()
+            && let Ok(Some(status)) = child.try_wait()
+        {
+            ended = Some(status);
         }
         tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
     }
     if socket::answering(socket).await {
-        Ready::Answered
-    } else {
-        Ready::Silent
+        return Ready::Answered;
+    }
+    match ended {
+        Some(status) => Ready::Ended { status },
+        None => Ready::Silent,
     }
 }
 
@@ -709,16 +713,22 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
     };
     // The lock is the truth and the recorded id is a courtesy: a daemon that
     // was killed leaves the file behind with an id the system will hand to
-    // somebody else, and signalling that would be signalling a stranger.
-    let holder = match Lock::acquire(&paths.lock) {
-        Ok(nobody) => {
-            nobody.release();
+    // somebody else, and signalling that would be signalling a stranger. It is
+    // only looked at, never taken: taking it would create the file and write
+    // this process's id into it, which a second `--stop` would then read and
+    // signal, and would refuse a `--daemon` starting in that same moment.
+    let holder = match lock::held_by(&paths.lock) {
+        lock::Holder::Nobody => {
             complain("no iznik-server is running here").await;
             return ExitCode::from(FAILED);
         }
-        Err(LockError::Held { process_id }) => process_id,
-        Err(error) => {
-            complain(&error.to_string()).await;
+        lock::Holder::Held { process_id } => process_id,
+        lock::Holder::Unknown { source } => {
+            complain(&format!(
+                "the lock {} could not be looked at: {source}",
+                paths.lock.display()
+            ))
+            .await;
             return ExitCode::from(FAILED);
         }
     };
@@ -742,7 +752,8 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
     // let the next `--daemon` start a child that dies holding nothing.
     let started = std::time::Instant::now();
     while started.elapsed() < options.stop_cap {
-        if !paths.socket.exists() && lock::held_by(&paths.lock).is_none() {
+        let free = matches!(lock::held_by(&paths.lock), lock::Holder::Nobody);
+        if !paths.socket.exists() && free {
             return ExitCode::SUCCESS;
         }
         tokio::time::sleep(SOCKET_POLL_INTERVAL).await;

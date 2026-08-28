@@ -54,8 +54,17 @@ async fn reach(paths: &RuntimePaths, cap: Duration) -> Result<UnixStream, String
         .stderr(std::process::Stdio::null())
         .status()
         .await;
-    if let Err(error) = started {
-        return Err(format!("the daemon could not be started: {error}"));
+    match started {
+        Err(error) => return Err(format!("the daemon could not be started: {error}")),
+        // Waiting out the cap for a daemon that has already failed adds ten
+        // seconds to a bootstrap and throws away the reason.
+        Ok(status) if !status.success() => {
+            return Err(format!(
+                "the daemon exited with {status} rather than starting; see {}",
+                paths.log.display()
+            ));
+        }
+        Ok(_started) => {}
     }
     let waited = Instant::now();
     while waited.elapsed() < cap {

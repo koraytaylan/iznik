@@ -143,6 +143,24 @@ impl Lock {
     }
 }
 
+/// What a look at the lock found.
+#[derive(Debug)]
+pub enum Holder {
+    /// Nobody holds it, and the file may not even be there.
+    Nobody,
+    /// Somebody does.
+    Held {
+        /// The process id it records, or zero when the file said nothing.
+        process_id: u32,
+    },
+    /// It could not be looked at, which is not the same as nobody holding it:
+    /// a permission or a descriptor limit says nothing about who is running.
+    Unknown {
+        /// What the operating system said.
+        source: std::io::Error,
+    },
+}
+
 /// Who holds the lock, without taking it and without leaving anything behind:
 /// it does not create the file, and it writes nothing into it.
 ///
@@ -150,12 +168,18 @@ impl Lock {
 /// own process id in the file for the next reader — or for a second `--stop`,
 /// which would then signal it.
 #[must_use]
-pub fn held_by(path: &Path) -> Option<u32> {
-    let opened = OpenOptions::new().read(true).open(path).ok()?;
+pub fn held_by(path: &Path) -> Holder {
+    let opened = match OpenOptions::new().read(true).open(path) {
+        Ok(opened) => opened,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Holder::Nobody,
+        Err(source) => return Holder::Unknown { source },
+    };
     match Flock::lock(opened, FlockArg::LockExclusiveNonblock) {
         // Taken and let go at once: nobody was holding it.
-        Ok(_taken) => None,
-        Err((_file, _errno)) => Some(holder(path).unwrap_or_default()),
+        Ok(_taken) => Holder::Nobody,
+        Err((_file, _errno)) => Holder::Held {
+            process_id: holder(path).unwrap_or_default(),
+        },
     }
 }
 
