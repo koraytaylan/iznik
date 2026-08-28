@@ -23,7 +23,7 @@
 //! approximate; and hyperlinks (OSC 8) are not emitted at all even with them
 //! enabled. The formatter also emits the cursor before its tabstops pass, which
 //! moves the cursor while setting each stop, so [`serialize`] re-emits the cursor
-//! last (see [`append_cursor`]).
+//! last (see `append_cursor`).
 
 use iznik_protocol::identity::Sequence;
 use libghostty_vt::Error as EmulatorError;
@@ -39,7 +39,7 @@ use crate::terminal::mirror::Mirror;
 /// [`ScreenState::serialize`]'s remembered-primary-plus-alternate concatenation.
 pub const MAXIMUM_SCREEN_BYTES: usize = 768 * 1024;
 
-/// The most bytes the cursor position [`append_cursor`] adds can take:
+/// The most bytes the cursor position `append_cursor` adds can take:
 /// `ESC [ 65536 ; 65536 H`.
 const MAXIMUM_CURSOR_BYTES: usize = 14;
 

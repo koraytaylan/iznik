@@ -338,7 +338,7 @@ impl Pane {
     }
 
     /// Ends the child by hanging up its terminal with `SIGHUP`, then escalating to
-    /// `SIGKILL` after [`CLOSE_ESCALATION`] if it has not gone — an interactive
+    /// `SIGKILL` after `CLOSE_ESCALATION` if it has not gone — an interactive
     /// shell may ignore a bare `SIGHUP`, so close always ends the pane.
     /// [`Pane::exit_status`] resolves once the child has gone. Must be called
     /// within a Tokio runtime, which schedules the escalation.
