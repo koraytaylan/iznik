@@ -57,6 +57,6 @@ because = "one subscriber to a process is the logging library's rule wherever it
 
 [[claim]]
 id = "surface-names-a-pane-and-the-size-its-screen-was-drawn-at"
-statement = "A pane's screen carries the pane it belongs to and the size it was drawn at, because a surface reset to the wrong size puts every byte after it in the wrong cell — and the size a pane was last told to be is not always the size the screen in hand was drawn at. A pane that has gone has a kind of its own and names itself, rather than arriving as a sentence about the host's state that a person would read where the connection belongs."
+statement = "A pane's screen carries the pane it belongs to and the size it was drawn at, because a surface reset to the wrong size puts every byte after it in the wrong cell — and the size a pane was last told to be is not always the size the screen in hand was drawn at. A pane that has gone has a kind of its own and names itself, rather than arriving as a sentence about the host's state that a person would read where the connection belongs; and it points at nothing at all rather than at a pointer that is neither null nor anything, which is what a caller testing whether there are bytes is asking."
 test = "iznik-ffi::ffi_surface::ffi_surface_names_a_pane_and_the_size_its_screen_was_drawn_at"
 because = "what each kind carries is this boundary's own shaping, and the pane behind it is a real shell on a real pseudoterminal"

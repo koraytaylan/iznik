@@ -32,6 +32,11 @@ pub enum EventKind {
     /// `Mark` carrying the pane, the sequence and what happened.
     Mark = 4,
     /// Something worth telling a person, as UTF-8.
+    ///
+    /// When it is about a command — one the host never answered, or one whose
+    /// answer could not be read — that command's own number is in
+    /// `command_id`, so whoever is waiting on it is released rather than left
+    /// waiting on an answer that will not come in the shape they expected.
     Notification = 5,
     /// A pane's own bytes, straight from the host. The pane is in `pane` and
     /// the byte the first of them is, is in `sequence`.
@@ -79,8 +84,8 @@ pub struct Event {
     /// given it here — it is what `iznik_protocol`'s `apply` wants beside the
     /// bytes, and what says whether anything was missed.
     pub generation: u64,
-    /// This client's number for a command, for `CommandResult`; zero
-    /// otherwise.
+    /// This client's number for a command, on `CommandResult` and on a
+    /// `Notification` that is about one; zero otherwise.
     pub command_id: u64,
     /// The bytes, whose meaning `kind` decides.
     pub payload: *const u8,

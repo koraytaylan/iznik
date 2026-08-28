@@ -127,6 +127,18 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   event of iznik's own into one of the application's is `shape.rs` now, and
   the root does the pointer work.
 
+- **Review of `8f7ef2d`:** three, and none of them deep, which is where this
+  stopped. An event about a command that could not be encoded carries the
+  command's number on a kind whose documentation said the number was only ever
+  on an answer — so an application reading the contract would still have
+  waited for ever, which is the thing that fix existed to prevent. An empty
+  payload crossed as a pointer that is aligned, not null, and not anything
+  either, which a C caller testing `if (event->payload)` would read; no bytes
+  is null now, everywhere at the boundary. And what a manager refuses before
+  its log is installed is never in that log, which is right — those are
+  returned to a caller who is still there to read them, and the log is for
+  what happens afterwards with nobody waiting — but the code did not say so.
+
 - **Carried back into 0005:** `pane-byte-pipe` found that a host's task let
   what a host was saying starve the orders already waiting for it, so a burst
   of input went out one to a round trip — a hundred lines took seconds instead

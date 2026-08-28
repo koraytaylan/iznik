@@ -529,6 +529,12 @@ impl HostManager {
         // failed to be built would be claimed for the life of the program,
         // and the next attempt — with the configuration corrected — would be
         // refused for a client that never existed.
+        //
+        // So nothing about the two above it is ever in the file, and that is
+        // the right way round: they are returned to whoever called, who is
+        // still there to read them. What the log is for is everything after
+        // this line, which happens on tasks of its own with nobody waiting on
+        // a return value.
         write_to(options.log_path.as_deref())?;
         let shared = Arc::new(Shared {
             model: Mutex::new(ClientModel::default()),

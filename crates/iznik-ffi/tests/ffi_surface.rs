@@ -62,6 +62,8 @@ struct Told {
     /// Its bytes, copied while they were valid, because that is the rule the
     /// boundary states.
     payload: Vec<u8>,
+    /// Whether it pointed at nothing at all, which is what no bytes is.
+    nothing: bool,
     /// The pane it named, or zero.
     pane: u64,
     /// The size a screen was drawn at, or zeroes.
@@ -96,6 +98,7 @@ extern "C" fn record(event: *const Event, context: *mut c_void) {
         kind: held.kind,
         host,
         payload,
+        nothing: held.payload.is_null(),
         pane: held.pane,
         size: (held.columns, held.rows),
         command: held.command_id,
@@ -720,8 +723,9 @@ fn ffi_surface_names_a_pane_and_the_size_its_screen_was_drawn_at() {
                 .ok_or("the pane going was seen")?;
             assert_eq!(gone.pane, PANE, "the pane that went is named");
             assert!(
-                gone.payload.is_empty(),
-                "and nothing is said about it that a person would read as the host's state"
+                gone.payload.is_empty() && gone.nothing,
+                "and nothing is said about it: a null pointer, which is what a C \
+                 caller asking whether there are bytes is asking"
             );
         }
         // SAFETY: it came from `iznik_client_new` and is freed once.

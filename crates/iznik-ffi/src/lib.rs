@@ -423,7 +423,7 @@ fn to_the_pane(watching: &Attached, event: &ManagerEvent) -> bool {
     match event {
         ManagerEvent::Bytes { bytes, .. } => match watching.callbacks.output {
             Some(output) => {
-                output(context, bytes.as_ptr(), bytes.len());
+                output(context, held_or_null(bytes), bytes.len());
                 true
             }
             None => false,
@@ -441,7 +441,7 @@ fn to_the_pane(watching: &Attached, event: &ManagerEvent) -> bool {
                     sequence.0,
                     *columns,
                     *rows,
-                    bytes.as_ptr(),
+                    held_or_null(bytes),
                     bytes.len(),
                 );
                 true
@@ -481,8 +481,20 @@ fn marked(watching: &Attached, notification: &Notification, context: *mut c_void
     }) else {
         return false;
     };
-    mark(context, sequence.0, payload.as_ptr(), payload.len());
+    mark(context, sequence.0, held_or_null(&payload), payload.len());
     true
+}
+
+/// Where some bytes begin, or null when there are none.
+///
+/// An empty `Vec` answers a pointer that is aligned and not null and not
+/// anything either — which a C caller testing `if (event->payload)` would take
+/// for bytes and read. No bytes is null, which is what that test is asking.
+fn held_or_null(bytes: &[u8]) -> *const u8 {
+    if bytes.is_empty() {
+        return core::ptr::null();
+    }
+    bytes.as_ptr()
 }
 
 /// Hands one event over, with every pointer in it alive for exactly the call.
@@ -506,7 +518,7 @@ fn carry(
         rows: shaped.rows,
         generation: shaped.generation,
         command_id: shaped.command,
-        payload: shaped.payload.as_ptr(),
+        payload: held_or_null(&shaped.payload),
         payload_length: shaped.payload.len(),
     };
     callback(&raw const held, context.0);
