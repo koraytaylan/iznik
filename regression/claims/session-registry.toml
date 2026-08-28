@@ -1,0 +1,52 @@
+# The registry holds real panes on real pseudoterminals, so these are not pure
+# claims — but they are all about what the registry does with what a pane says,
+# on one machine, in process. The same paths over a real link are plans 0004
+# and 0005; a container adds a network, not an answer.
+
+[[claim]]
+id = "registry-deltas-rebuild-the-model"
+statement = "Over two hundred generated sequences of twenty operations, applying every delta the registry emits to a copy of the last snapshot arrives at exactly the next snapshot, every snapshot holds together, and the whole case takes under a second."
+test = "iznik-server::session_registry::session_registry_deltas_rebuild_the_model"
+because = "the property is between a model in memory and the deltas that describe it; a container adds nothing"
+
+[[claim]]
+id = "registry-each-operation-emits-its-deltas-in-order"
+statement = "Each operation emits exactly the deltas the architecture lists, in that order, with one generation per delta."
+test = "iznik-server::session_registry::session_registry_each_operation_emits_its_deltas_in_order"
+because = "the order is between a call and a channel in one process; a container adds nothing"
+
+[[claim]]
+id = "registry-a-pane-exit-cascades"
+statement = "A pane whose shell exits is removed with the status it ended by, its tab goes when it was the last pane, and its session goes when that was the last tab — in that order."
+test = "iznik-server::session_registry::session_registry_a_pane_exit_cascades"
+because = "the shell is a real process on a real pseudoterminal on this machine; a container adds nothing to what its exit means"
+
+[[claim]]
+id = "registry-placement-arranges-and-flattens"
+statement = "A pane placed before or after its target, in either direction, arranges the tab as asked; one placed into a split that already divides that way is flattened into it rather than nested inside it."
+test = "iznik-server::session_registry::session_registry_placement_arranges_and_flattens"
+because = "the arrangement is a pure function over a tree; a container adds nothing"
+
+[[claim]]
+id = "registry-a-layout-must-place-exactly-the-tabs-panes"
+statement = "A layout whose leaves are not the tab's panes is refused and changes nothing, not the model and not the delta stream; a valid layout is stored canonical however it was written."
+test = "iznik-server::session_registry::session_registry_a_layout_must_place_exactly_the_tabs_panes"
+because = "the check is a pure function over a tree; a container adds nothing"
+
+[[claim]]
+id = "registry-ids-are-never-reused"
+statement = "A session, tab or pane created, closed and created again is a different one: no id ever comes round, so nothing a client holds comes to mean something else."
+test = "iznik-server::session_registry::session_registry_ids_are_never_reused"
+because = "identity is minted from counters in memory; a container adds nothing"
+
+[[claim]]
+id = "registry-a-lagging-receiver-disturbs-nothing"
+statement = "A receiver that falls further behind than the delta channel holds is told so, and the registry is not disturbed by it; a fresh receiver takes up from there, which is what a client that asked for a snapshot does."
+test = "iznik-server::session_registry::session_registry_a_lagging_receiver_disturbs_nothing"
+because = "the channel is in one process; a container adds nothing"
+
+[[claim]]
+id = "registry-what-a-pane-says-becomes-deltas"
+statement = "A title and a working directory a real shell with the integration asset reports, and a size a resize sets, become PaneTitle, PaneWorkingDirectory and PaneResized deltas and reach the model."
+test = "iznik-server::session_registry::session_registry_what_a_pane_says_becomes_deltas"
+because = "the shell is a real bash on a real pseudoterminal on this machine; a container adds nothing to what it reports"
