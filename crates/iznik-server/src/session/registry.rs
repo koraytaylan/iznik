@@ -44,6 +44,11 @@ pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
 /// waited for for ever.
 const ENDING_LOOK_INTERVAL: Duration = Duration::from_millis(10);
 
+/// How many such looks: five times the attempts [`Registry::ingest`] needs to
+/// give up on a status, because a notification that lands on a permit already
+/// there is a look nobody takes.
+const ENDING_LOOKS: usize = 5 * EXIT_STATUS_ATTEMPTS;
+
 /// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;
 
@@ -270,7 +275,14 @@ impl Registry {
             // records how it ended a moment later. Without these last looks
             // the one change that matters most — a pane going — would be the
             // one nobody was ever told to ingest.
-            for _look in 0..EXIT_STATUS_ATTEMPTS {
+            //
+            // Both ways of notifying, and far more looks than the attempts
+            // `ingest_state` needs: a stored permit reaches a waiter that is
+            // between registrations, waking the waiters reaches all of them at
+            // once rather than one, and the headroom is because a permit that
+            // lands on an existing one is a look nobody takes.
+            for _look in 0..ENDING_LOOKS {
+                signal.notify_waiters();
                 signal.notify_one();
                 tokio::time::sleep(ENDING_LOOK_INTERVAL).await;
             }

@@ -1,0 +1,31 @@
+name = "relays-over-ssh"
+claims = ["relay-carries-the-protocol-over-ssh"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "start-the-daemon"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --daemon --idle-shutdown-seconds 120 && printf started"
+timeout_seconds = 20
+
+[[steps]]
+id = "the-handshake-comes-back"
+container = "engine"
+run = "printf '\\013\\000\\000\\000\\000\\000\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000' | ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --stdio | head -c 6 | od -An -v -tx1 | tr -d ' \\n'"
+timeout_seconds = 25
+
+[[expect]]
+step = "start-the-daemon"
+exit = 0
+stdout_equals = "started"
+
+[[expect]]
+step = "the-handshake-comes-back"
+exit = 0
+stdout_matches = "^[0-9a-f]{8}0000$"

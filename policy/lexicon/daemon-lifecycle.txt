@@ -1,6 +1,7 @@
 acquire
 allows
 answering
+arrivals
 arrive
 believes
 bind
@@ -22,6 +23,7 @@ instance
 lifecycle
 listener
 live
+looked
 looking
 measures
 nobody
@@ -30,6 +32,7 @@ outlives
 patient
 predecessor
 prints
+probing
 respected
 rotating
 say

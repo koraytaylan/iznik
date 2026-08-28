@@ -42,6 +42,12 @@ test = "iznik-server::daemon_lifecycle::a_busy_daemon_measures_idleness_from_whe
 because = "the failure is a timer rearmed by unrelated work, which is visible only where the work is"
 
 [[claim]]
+id = "daemon-touched-between-looks-is-not-idle"
+statement = "A daemon nothing stays connected to but something keeps connecting to has not been idle: a client that arrives and goes between two looks at the idle clock is counted, so a daemon serving a readiness probe every second is not one nobody has touched all day."
+test = "iznik-server::daemon_lifecycle::a_daemon_touched_between_looks_is_not_idle"
+because = "the failure is a count sampled on a timer, which is visible only where the timer is"
+
+[[claim]]
 id = "daemon-log-is-capped"
 statement = "A log written past its cap is rotated and the two files together are under twice the cap, so a remote daemon nobody is watching cannot fill a disk."
 test = "iznik-server::daemon_lifecycle::the_log_is_capped_and_rotated"
@@ -61,7 +67,7 @@ because = "a signal and a socket are the operating system's, and the same on any
 
 [[claim]]
 id = "daemon-stop-believes-the-lock"
-statement = "`--stop` decides by the lock and not by the file: a lock file a killed daemon left behind, naming a process that is no longer there, is answered with `no iznik-server is running` and nothing is signalled — the recorded id is a courtesy, and a system that has recycled it would otherwise be handed a stranger's process."
+statement = "`--stop` decides by the lock and not by the file: a lock file a killed daemon left behind, naming a process that is no longer there, is answered with `no iznik-server is running` and nothing is signalled — the recorded id is a courtesy, and a system that has recycled it would otherwise be handed a stranger's process. It looks at the lock without taking it, so it leaves no file behind for the next `--stop` to read its own id out of."
 test = "iznik-server::daemon_lifecycle::stop_believes_the_lock_and_not_the_file"
 because = "it is a file with a number in it and a lock nobody holds, which is the same everywhere"
 

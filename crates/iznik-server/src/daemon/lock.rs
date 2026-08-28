@@ -143,6 +143,22 @@ impl Lock {
     }
 }
 
+/// Who holds the lock, without taking it and without leaving anything behind:
+/// it does not create the file, and it writes nothing into it.
+///
+/// [`Lock::acquire`] would do both, and a `--stop` that used it would put its
+/// own process id in the file for the next reader — or for a second `--stop`,
+/// which would then signal it.
+#[must_use]
+pub fn held_by(path: &Path) -> Option<u32> {
+    let opened = OpenOptions::new().read(true).open(path).ok()?;
+    match Flock::lock(opened, FlockArg::LockExclusiveNonblock) {
+        // Taken and let go at once: nobody was holding it.
+        Ok(_taken) => None,
+        Err((_file, _errno)) => Some(holder(path).unwrap_or_default()),
+    }
+}
+
 /// The process id a lock file records, if it records one this system could
 /// have handed out.
 #[must_use]

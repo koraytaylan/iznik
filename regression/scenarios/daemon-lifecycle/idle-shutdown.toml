@@ -17,7 +17,7 @@ timeout_seconds = 20
 [[steps]]
 id = "it-goes-on-its-own"
 container = "engine"
-run = "ssh -o BatchMode=yes host0 'socket=\"${XDG_RUNTIME_DIR:-/tmp/iznik-$(id -u)}/iznik/server.sock\"; for turn in $(seq 30); do test -S \"$socket\" || { printf gone; exit 0; }; sleep 1; done; printf still-there; exit 1'"
+run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then socket=\"$XDG_RUNTIME_DIR/iznik/server.sock\"; else socket=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.sock\"; fi; for turn in $(seq 30); do test -S \"$socket\" || { printf gone; exit 0; }; sleep 1; done; printf still-there; exit 1'"
 timeout_seconds = 35
 
 [[expect]]

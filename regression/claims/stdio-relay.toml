@@ -1,0 +1,44 @@
+# The only command a bootstrap ever runs on a host. Two of these are
+# scenarios, because what they prove is that a process reached over real SSH
+# carries a protocol and leaves a daemon behind it; the rest are `test`
+# proofs, because a pipe is a pipe and a closed one is closed everywhere.
+
+[[claim]]
+id = "relay-carries-the-protocol"
+statement = "Against a running daemon, a handshake and the liveness round trip that follows it go through the relay's standard streams untouched in both directions."
+test = "iznik-server::stdio_relay::it_carries_the_protocol_to_a_running_daemon"
+because = "the relay speaks nothing itself; what is proven is that it changes nothing, and a pipe is where that is visible"
+
+[[claim]]
+id = "relay-starts-one-on-first-use"
+statement = "With no daemon running, the relay starts one, shakes hands through it, and the daemon it started is still listening after the relay has gone."
+test = "iznik-server::stdio_relay::it_starts_the_daemon_and_the_daemon_outlives_it"
+because = "starting a process and outliving another is the operating system's, and the same on any Linux"
+
+[[claim]]
+id = "relay-ends-with-its-client"
+statement = "A client that closes its end is a half-close and not a departure: the daemon is told, what it says back is still carried, and the relay then exits cleanly."
+test = "iznik-server::stdio_relay::it_ends_when_its_client_goes"
+because = "the asymmetry between the two directions is the relay's own, and a pipe shows it exactly"
+
+[[claim]]
+id = "relay-ends-with-its-daemon"
+statement = "A daemon that goes ends the relay, whether or not its client is still holding a terminal open, and the relay exits cleanly rather than reporting a failure."
+test = "iznik-server::stdio_relay::it_ends_when_the_daemon_goes"
+because = "a socket closing under a process is the same everywhere; a container would only slow it"
+
+[[claim]]
+id = "relay-fails-audibly"
+statement = "A relay that cannot make its runtime directory exits non-zero and names the path it could not use, rather than hanging or failing silently in the middle of somebody's first bootstrap."
+test = "iznik-server::stdio_relay::it_fails_audibly_when_it_cannot_make_its_directory"
+because = "a file where a directory must be is the locked-down host reproduced exactly, and needs no container"
+
+[[claim]]
+id = "relay-starts-the-daemon"
+statement = "Over real SSH with nothing running, a `Hello` written to `ssh host0 /iznik/bin/iznik-server --stdio` is answered with the server's own, and the daemon it started is still listening after that SSH session has ended."
+scenario = "starts-the-daemon"
+
+[[claim]]
+id = "relay-carries-the-protocol-over-ssh"
+statement = "Over real SSH against a daemon already running, a `Hello` written to the relay's standard input is answered with the server's `Hello` on its standard output."
+scenario = "relays-over-ssh"

@@ -1,0 +1,42 @@
+name = "starts-the-daemon"
+claims = ["relay-starts-the-daemon"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "nothing-is-running"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then socket=\"$XDG_RUNTIME_DIR/iznik/server.sock\"; else socket=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.sock\"; fi; test -S \"$socket\" && exit 1; printf quiet'"
+timeout_seconds = 15
+
+[[steps]]
+id = "the-relay-starts-one"
+container = "engine"
+run = "printf '\\013\\000\\000\\000\\000\\000\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000' | ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --stdio | head -c 6 | od -An -v -tx1 | tr -d ' \\n'"
+timeout_seconds = 25
+
+[[steps]]
+id = "and-it-outlives-the-session"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then socket=\"$XDG_RUNTIME_DIR/iznik/server.sock\"; else socket=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.sock\"; fi; test -S \"$socket\" && printf listening'"
+timeout_seconds = 15
+
+[[expect]]
+step = "nothing-is-running"
+exit = 0
+stdout_equals = "quiet"
+
+[[expect]]
+step = "the-relay-starts-one"
+exit = 0
+stdout_matches = "^[0-9a-f]{8}0000$"
+
+[[expect]]
+step = "and-it-outlives-the-session"
+exit = 0
+stdout_equals = "listening"

@@ -24,7 +24,14 @@ fn main() -> ExitCode {
     else {
         return ExitCode::FAILURE;
     };
-    runtime.block_on(dispatch(&arguments))
+    let status = runtime.block_on(dispatch(&arguments));
+    // The relay reads standard input on a blocking thread, and a client that
+    // has stopped writing leaves that read parked for ever. Dropping the
+    // runtime would wait for it, so a relay whose daemon has gone would hang
+    // holding a terminal open. Every entry point has said what it has to say
+    // and flushed it by here; nothing is waiting to be written.
+    runtime.shutdown_background();
+    status
 }
 
 /// Routes by the first argument. The owning module receives every argument after

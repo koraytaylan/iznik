@@ -134,9 +134,18 @@ impl Sink {
             path: self.path.clone(),
             source,
         };
-        tokio::fs::rename(&self.path, predecessor(&self.path))
+        // A rename that cannot happen — the predecessor's path is not
+        // writable, the directory has gone — must not wedge the log for the
+        // life of the daemon. Emptying what is there keeps the promise that
+        // matters, which is that a log cannot fill a disk.
+        if tokio::fs::rename(&self.path, predecessor(&self.path))
             .await
-            .map_err(refused)?;
+            .is_err()
+        {
+            self.file.set_len(0).await.map_err(refused)?;
+            self.bytes = 0;
+            return Ok(());
+        }
         self.file = append(&self.path).await?;
         self.bytes = 0;
         Ok(())

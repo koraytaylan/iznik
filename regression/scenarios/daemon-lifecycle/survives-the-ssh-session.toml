@@ -17,7 +17,7 @@ timeout_seconds = 20
 [[steps]]
 id = "socket-outlives-the-session"
 container = "engine"
-run = "ssh -o BatchMode=yes host0 'test -S \"${XDG_RUNTIME_DIR:-/tmp/iznik-$(id -u)}/iznik/server.sock\" || test -S \"/tmp/iznik-$(id -u)/server.sock\"' && printf listening"
+run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then socket=\"$XDG_RUNTIME_DIR/iznik/server.sock\"; else socket=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.sock\"; fi; test -S \"$socket\" && printf listening'"
 timeout_seconds = 20
 
 [[steps]]

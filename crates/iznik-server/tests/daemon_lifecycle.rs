@@ -39,6 +39,14 @@ const BUSY_FOR: Duration = Duration::from_secs(2);
 /// inside [`PATIENT`] and well past a tick.
 const SETTLE: Duration = Duration::from_millis(1500);
 
+/// How long the probing case keeps connecting, which is longer than
+/// [`PATIENT`].
+const PROBING_FOR: Duration = Duration::from_millis(3500);
+
+/// How long between those connections, which is longer than the interval the
+/// daemon looks at its idleness on.
+const PROBE_INTERVAL: Duration = Duration::from_millis(1200);
+
 /// How long a case waits for something a daemon should do at once.
 const PROMPT: Duration = Duration::from_secs(10);
 
@@ -417,6 +425,44 @@ async fn stop_believes_the_lock_and_not_the_file() {
         assert!(
             said.contains("no iznik-server is running"),
             "and says nothing is running rather than signalling a stranger: {said}"
+        );
+
+        // And it leaves nothing behind: a `--stop` that took the lock to look
+        // at it would have written its own process id into the file, which the
+        // next one would read and signal.
+        let empty = Home::new("no-lock")?;
+        std::fs::create_dir_all(empty.directory())?;
+        let looked = empty.server().arg("--stop").output().await?;
+        assert!(!looked.status.success(), "with no lock file it fails too");
+        assert!(
+            !empty.lock().exists(),
+            "and makes no lock file for the next one to believe"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a daemon that is touched between two looks at its idleness counts as
+/// having been idle for the whole time between them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_daemon_touched_between_looks_is_not_idle() {
+    let case = async {
+        let home = Home::new("probed")?;
+        start(&home, PATIENT).await?;
+        let socket = home.socket();
+        // Brief connections and nothing else: no pane, no client that stays.
+        // A count sampled once a second would see none of them.
+        let started = Instant::now();
+        while started.elapsed() < PROBING_FOR {
+            let _probe = tokio::net::UnixStream::connect(&socket).await;
+            tokio::time::sleep(PROBE_INTERVAL).await;
+        }
+        assert!(
+            answering(&socket).await,
+            "a daemon something keeps connecting to has not been idle"
         );
         Ok::<(), Failed>(())
     };

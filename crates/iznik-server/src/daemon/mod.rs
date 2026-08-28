@@ -314,7 +314,7 @@ async fn spent(
     interval: Duration,
 ) -> bool {
     registry.write().await.ingest();
-    idling.observe(panes_of(registry).await, attached.count());
+    idling.observe(panes_of(registry).await, attached.busy());
     idling.expired(interval)
 }
 
@@ -336,20 +336,29 @@ async fn panes_of(registry: &Arc<RwLock<Registry>>) -> usize {
 struct Attached {
     /// The count, shared with every connection task.
     count: Arc<AtomicUsize>,
+    /// How many have arrived since idleness was last looked at. A count taken
+    /// once a second would miss a client that connects and goes between two
+    /// looks — a readiness probe is exactly that — and a daemon it had served
+    /// all day would exit as if nobody had touched it.
+    arrivals: Arc<AtomicUsize>,
 }
 
 impl Attached {
     /// A guard that counts one client while it lives.
     fn arrive(&self) -> Arrived {
         let _before = self.count.fetch_add(1, Ordering::Relaxed);
+        let _arrived = self.arrivals.fetch_add(1, Ordering::Relaxed);
         Arrived {
             count: Arc::clone(&self.count),
         }
     }
 
-    /// How many are attached now.
-    fn count(&self) -> usize {
-        self.count.load(Ordering::Relaxed)
+    /// How many are attached now, and how many came and went since the last
+    /// look, which together are what says the daemon was not idle.
+    fn busy(&self) -> usize {
+        self.count
+            .load(Ordering::Relaxed)
+            .saturating_add(self.arrivals.swap(0, Ordering::Relaxed))
     }
 }
 
@@ -530,8 +539,15 @@ async fn version() -> ExitCode {
 /// `--foreground`: the accept loop in this process.
 ///
 /// It leaves its parent's session first, so that the SSH session which
-/// launched it cannot hang it up when it ends. A process that is already a
-/// group leader cannot, and does not need to.
+/// launched it cannot hang it up when it ends. That is what `--daemon`'s child
+/// needs and what it always gets: `--daemon` spawns it in its own process
+/// group, and a process that is not a group leader can always start a session.
+///
+/// Run **directly** from an interactive shell it is a different matter: job
+/// control has already made it a group leader, `setsid` refuses, and it stays
+/// in that shell's session and is hung up with it. `--foreground` is for a
+/// daemon in the foreground, not for detaching; `--daemon` is the detaching
+/// command, and the one the relay and the bootstrap use.
 async fn foreground(arguments: &[OsString]) -> ExitCode {
     let options = match options_from(arguments) {
         Ok(options) => options,
@@ -540,7 +556,9 @@ async fn foreground(arguments: &[OsString]) -> ExitCode {
             return ExitCode::from(crate::USAGE_EXIT_CODE);
         }
     };
-    let _own_session = setsid();
+    if let Err(error) = setsid() {
+        tracing::debug!(%error, "this process kept its caller's session");
+    }
     let paths = match RuntimePaths::resolve() {
         Ok(paths) => paths,
         Err(error) => {
@@ -553,22 +571,51 @@ async fn foreground(arguments: &[OsString]) -> ExitCode {
     match serve(&paths, options, shutdown).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            // Both: the log is where a daemon started with its streams on
+            // `/dev/null` can be heard at all.
+            tracing::error!(%error, "the daemon could not run");
             complain(&error.to_string()).await;
             ExitCode::from(FAILED)
         }
     }
 }
 
-/// Waits for the socket to answer, up to `cap`.
-async fn answers_within(socket: &Path, cap: Duration) -> bool {
+/// How a wait for a daemon to answer ended.
+#[derive(Debug)]
+enum Ready {
+    /// Its socket answered.
+    Answered,
+    /// The child it was waiting for ended first.
+    Ended {
+        /// What it exited with.
+        status: std::process::ExitStatus,
+    },
+    /// The cap ran out with the child still there and still silent.
+    Silent,
+}
+
+/// Waits for the socket to answer, up to `cap`, watching the child so that one
+/// which has already gone is not waited out.
+async fn answers_within(socket: &Path, child: &mut tokio::process::Child, cap: Duration) -> Ready {
     let started = std::time::Instant::now();
     while started.elapsed() < cap {
         if socket::answering(socket).await {
-            return true;
+            return Ready::Answered;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            // It may have answered on its way out; the socket has the last word.
+            if socket::answering(socket).await {
+                return Ready::Answered;
+            }
+            return Ready::Ended { status };
         }
         tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
     }
-    socket::answering(socket).await
+    if socket::answering(socket).await {
+        Ready::Answered
+    } else {
+        Ready::Silent
+    }
 }
 
 /// `--daemon`: start one if there is not one already, and return as soon as
@@ -612,20 +659,36 @@ async fn start(arguments: &[OsString]) -> ExitCode {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
-    if let Err(error) = spawned {
-        complain(&format!("the daemon could not be started: {error}")).await;
-        return ExitCode::from(FAILED);
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            complain(&format!("the daemon could not be started: {error}")).await;
+            return ExitCode::from(FAILED);
+        }
+    };
+    match answers_within(&paths.socket, &mut child, options.socket_ready_cap).await {
+        Ready::Answered => ExitCode::SUCCESS,
+        // Waiting out the cap for a child that has already gone throws away
+        // the one thing that says why; its own words are in the log.
+        Ready::Ended { status } => {
+            complain(&format!(
+                "the daemon exited with {status} before answering on {}; see {}",
+                paths.socket.display(),
+                paths.log.display()
+            ))
+            .await;
+            ExitCode::from(FAILED)
+        }
+        Ready::Silent => {
+            complain(&format!(
+                "the daemon did not answer on {} within {:?}",
+                paths.socket.display(),
+                options.socket_ready_cap
+            ))
+            .await;
+            ExitCode::from(FAILED)
+        }
     }
-    if answers_within(&paths.socket, options.socket_ready_cap).await {
-        return ExitCode::SUCCESS;
-    }
-    complain(&format!(
-        "the daemon did not answer on {} within {:?}",
-        paths.socket.display(),
-        options.socket_ready_cap
-    ))
-    .await;
-    ExitCode::from(FAILED)
 }
 
 /// `--stop`: end a running daemon and wait for its socket to go.
@@ -674,15 +737,18 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
         .await;
         return ExitCode::from(FAILED);
     }
+    // Both, and in this order: the daemon removes its socket and only then
+    // releases its lock, so a `--stop` that returned on the socket alone would
+    // let the next `--daemon` start a child that dies holding nothing.
     let started = std::time::Instant::now();
     while started.elapsed() < options.stop_cap {
-        if !paths.socket.exists() {
+        if !paths.socket.exists() && lock::held_by(&paths.lock).is_none() {
             return ExitCode::SUCCESS;
         }
         tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
     }
     complain(&format!(
-        "process {holder} was told to stop and its socket is still there"
+        "process {holder} was told to stop and has not let go"
     ))
     .await;
     ExitCode::from(FAILED)
