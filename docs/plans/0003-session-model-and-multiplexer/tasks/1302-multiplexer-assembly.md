@@ -14,7 +14,7 @@ touches:
   - "crates/iznik-server/tests/multiplexer_assembly.rs"
   - "regression/claims/multiplexer-assembly.toml"
   - "policy/lexicon/multiplexer-assembly.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Multiplexer Assembly
