@@ -13,14 +13,16 @@ use core::time::Duration;
 use std::time::Instant;
 
 use iznik_client::commands::{
-    Confirmed, PENDING_COMMAND_TIMEOUT, Submission, confirm, expire, submit,
+    Confirmed, PENDING_COMMAND_TIMEOUT, Submission, confirm, expire, settled, submit,
 };
 use iznik_client::host::identity::HostId;
-use iznik_client::model::HostView;
+use iznik_client::model::{ClientModel, HostView};
 use iznik_client::reduce::Notification;
+use iznik_client::reduce::reduce;
 use iznik_protocol::command::{CommandOutcome, Created, Placement, RejectionCode, SessionCommand};
-use iznik_protocol::delta::{Delta, RemovalReason};
+use iznik_protocol::delta::{Delta, RemovalReason, encode_delta};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, SessionId, TabId};
+use iznik_protocol::message::ToClient;
 use iznik_protocol::model::{HostModel, LayoutNode, SplitDirection};
 use iznik_protocol::reconcile::apply_change;
 use iznik_testkit::generate::ModelGenerator;
@@ -522,6 +524,108 @@ fn optimistic_commands_never_give_one_number_twice() {
             vec![1, 2, 3],
             "each number is given once: {numbers:?}"
         );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When the host announcing the change a command asked for disturbs what the
+/// command already showed.
+#[test]
+fn optimistic_commands_survive_the_host_saying_the_same_thing() {
+    let case = || -> Result<(), Failed> {
+        let mut generator = ModelGenerator::new(SEED);
+        let model = generator.model();
+        let session = a_session(&model)?;
+        let tab = a_tab(&model)?;
+        let pane = a_pane(&model)?;
+        let Some(held) = model
+            .sessions
+            .first()
+            .and_then(|found| found.tabs.first())
+            .cloned()
+        else {
+            return Err("the generated model has no tab".into());
+        };
+        let mut closing = vec![Delta::PaneRemoved {
+            pane,
+            reason: RemovalReason::Closed,
+        }];
+        if let Some(arranged) = held.layout.clone().remove_leaf(pane) {
+            closing.push(Delta::LayoutChanged {
+                tab,
+                layout: arranged,
+            });
+        } else {
+            closing.push(Delta::TabRemoved { tab });
+        }
+        // Every optimistic command, and the change the host announces for it.
+        // The host announces it to the client that asked as well as to the
+        // others, so what a command showed must survive its own delta.
+        let table: Vec<(SessionCommand, Vec<Delta>)> = vec![
+            (
+                SessionCommand::RenameSession {
+                    session,
+                    name: RENAMED.to_owned(),
+                },
+                vec![Delta::SessionRenamed {
+                    session,
+                    name: RENAMED.to_owned(),
+                }],
+            ),
+            (
+                SessionCommand::CloseSession { session },
+                vec![Delta::SessionRemoved { session }],
+            ),
+            (SessionCommand::ClosePane { pane }, closing),
+        ];
+        for (command, deltas) in table {
+            let host = work();
+            let mut client = ClientModel::default();
+            let _first = client.insert(host.clone(), HostView::of(model.clone()));
+            let Some(view) = client.host_mut(&host) else {
+                return Err("the host is known".into());
+            };
+            let submission = submit(view, command.clone(), moment());
+            let shown = view.model.clone();
+            // The host says the same thing, numbered.
+            for delta in &deltas {
+                let Some(standing) = client.host(&host) else {
+                    return Err("the host is known".into());
+                };
+                let at = settled(standing).generation;
+                let taken = reduce(
+                    &mut client,
+                    &host,
+                    &ToClient::Delta {
+                        generation: Generation(at.0.saturating_add(1)),
+                        payload: encode_delta(delta)?,
+                    },
+                );
+                assert!(
+                    taken.is_empty(),
+                    "{command:?}: the host's own change asked for nothing: {taken:?}"
+                );
+            }
+            let Some(after) = client.host_mut(&host) else {
+                return Err("the host is known".into());
+            };
+            assert!(
+                same_but_for_the_generation(&after.model, &shown),
+                "{command:?}: what was shown is still shown once the host says it"
+            );
+            assert_eq!(
+                confirm(after, submission.id, &applied()),
+                Confirmed::Applied,
+                "and the answer retires it"
+            );
+            assert!(
+                same_but_for_the_generation(&after.model, &as_the_host_would(&model, &deltas)?),
+                "{command:?}: and the model is the host's own"
+            );
+        }
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

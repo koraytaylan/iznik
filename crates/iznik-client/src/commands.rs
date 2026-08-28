@@ -15,7 +15,13 @@
 //! change, through the same reconciler, that the host will send back. That is
 //! what makes the two agree — and it is applied without advancing the
 //! generation, because the authoritative delta that follows carries the number.
-//! When the two ever disagree, the delta wins.
+//!
+//! Two models are kept apart to make "the delta always wins" true rather than
+//! hopeful. What the host has said is one model; what this client is showing
+//! is that model with everything still in flight applied on top. A delta from
+//! the host is applied to the first and the pending effects are put back over
+//! it, so the host never has to reconcile a change it has not made, and a
+//! refusal never undoes one it has.
 
 use core::time::Duration;
 use std::time::Instant;
@@ -127,6 +133,39 @@ pub fn expire(
     told
 }
 
+/// The model as the host last said it stands, before anything this client is
+/// still waiting on was applied to it.
+///
+/// Every pending entry holds the model from before its own effect, refreshed
+/// whenever the host says something, so the first one holds the model from
+/// before all of them.
+#[must_use]
+pub fn settled(view: &HostView) -> HostModel {
+    view.pending
+        .first()
+        .map_or_else(|| view.model.clone(), |held| held.rollback.clone())
+}
+
+/// Applies every command still in flight on top of what the model now holds,
+/// and refreshes what each of them would be rolled back to.
+///
+/// This is what keeps the two truths apart. The host's own changes are applied
+/// to the settled model, and what this client is still waiting on is put back
+/// on top afterwards — so an authoritative delta never has to be reconciled
+/// against a change the host has not made yet, and a refusal never has to undo
+/// a change the host *has* made.
+pub fn replay(view: &mut HostView) {
+    let mut standing = std::mem::take(&mut view.pending);
+    for held in &mut standing {
+        held.rollback = view.model.clone();
+        // A command whose effect the host has already announced applies to
+        // nothing and leaves the model where it is, which is right: the model
+        // already shows it.
+        let _applied = locally(&mut view.model, &held.command);
+    }
+    view.pending = standing;
+}
+
 /// Puts back what one pending command showed, and re-applies the ones that
 /// came after it.
 ///
@@ -138,11 +177,16 @@ fn roll_back(view: &mut HostView, command: CommandId) -> bool {
         return false;
     };
     let entry = view.pending.remove(at);
+    // What it was put on top of, which is what the host said plus every
+    // command in flight before it — both kept up to date by `replay`.
     view.model = entry.rollback;
-    for later in view.pending.iter_mut().skip(at) {
-        later.rollback = view.model.clone();
-        let _applied = locally(&mut view.model, &later.command);
+    let mut later = view.pending.split_off(at);
+    let mut standing = std::mem::take(&mut later);
+    for held in &mut standing {
+        held.rollback = view.model.clone();
+        let _applied = locally(&mut view.model, &held.command);
     }
+    view.pending.extend(standing);
     true
 }
 

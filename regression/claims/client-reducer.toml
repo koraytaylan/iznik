@@ -45,6 +45,6 @@ because = "bytes that are not a delta are bytes no server sends, which no contai
 
 [[claim]]
 id = "reducer-gives-a-channel-to-one-pane-at-a-time"
-statement = "When a host reassigns a channel number to another pane, bytes on it move that pane's cursor and no other's — the pane that used to hold it having lost a claim that is no longer true. Advancing both would have the pane that sent nothing resume from a byte it never reached, which is exactly the output a resume exists to keep."
+statement = "When a host reassigns a channel number to another pane, bytes on it move that pane's cursor and no other's. The pane that used to hold it loses the claim and keeps everything else — its subscription, the byte it stands at, the focus if it had it — because that byte is exactly what its own announcement, or the next resume, will need. Advancing both would have the pane that sent nothing resume from a byte it never reached, which is the output a resume exists to keep."
 test = "iznik-client::client_reducer::client_reducer_gives_a_channel_to_one_pane_at_a_time"
 because = "a reassignment is two announcements and a length, and no host is needed to make them"

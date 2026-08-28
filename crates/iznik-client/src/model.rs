@@ -22,6 +22,14 @@ use iznik_protocol::model::{HostModel, ModelError};
 
 use crate::host::identity::HostId;
 
+/// What a subscription's channel is when it has none of its own just now.
+///
+/// Channel zero carries the control messages and is never a pane's, so it is
+/// free to stand for "the host has not said where this pane's bytes come from"
+/// — which is true of a pane whose number was taken by another and whose own
+/// announcement has not arrived yet.
+pub const NO_CHANNEL: u8 = 0;
+
 /// One subscribed pane: where its bytes arrive, how far they have been read,
 /// and how much this client has told the server it may send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,16 +164,24 @@ impl HostView {
     /// just said which channel its bytes come on and where they start, and
     /// that is more recent than anything this held.
     ///
-    /// It also drops any *other* pane's claim on that channel. A host
-    /// reassigns channel numbers as panes come and go, and after a
+    /// It also takes that channel away from any *other* pane holding it. A
+    /// host reassigns channel numbers as panes come and go, and after a
     /// reconnection it re-announces every resumed pane on whatever is free —
     /// so a pane not yet re-announced can be left holding a number that now
     /// belongs to another. Bytes arriving on it would then move the wrong
     /// pane's cursor, and the pane whose bytes they were would resume from a
     /// byte it never reached. The host has just said whose channel this is.
+    ///
+    /// The other pane keeps its subscription, its cursor and the focus if it
+    /// had it: what it has lost is a claim that is no longer true, and the
+    /// byte it stands at is exactly what its own announcement — or the resume
+    /// after the next drop — will need.
     pub fn subscribe(&mut self, pane: PaneId, channel: u8, from: Sequence) -> Subscription {
-        self.subscriptions
-            .retain(|held, found| *held == pane || found.channel != channel);
+        for (held, found) in &mut self.subscriptions {
+            if *held != pane && found.channel == channel {
+                found.channel = NO_CHANNEL;
+            }
+        }
         let opened = Subscription::opened(channel, from);
         let _replaced = self.subscriptions.insert(pane, opened);
         opened
@@ -174,6 +190,9 @@ impl HostView {
     /// The pane whose bytes arrive on `channel`, when exactly one does.
     #[must_use]
     pub fn carrying(&self, channel: u8) -> Option<PaneId> {
+        if channel == NO_CHANNEL {
+            return None;
+        }
         let mut found = self
             .subscriptions
             .iter()

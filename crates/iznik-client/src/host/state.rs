@@ -112,6 +112,10 @@ pub enum HostState {
     Reconnecting {
         /// How many times it has failed since it was last connected.
         attempt: u32,
+        /// What went wrong the last time, when it was not simply a link that
+        /// went quiet — so that a host failing for good says why rather than
+        /// counting for ever.
+        trouble: Option<String>,
         /// When it will be tried again.
         retry_at: Instant,
     },
@@ -134,9 +138,16 @@ impl Display for HostState {
             HostState::Connected { server_version, .. } => {
                 write!(formatter, "connected to {server_version}")
             }
-            HostState::Reconnecting { attempt, .. } => {
-                write!(formatter, "reconnecting, attempt {attempt}")
-            }
+            HostState::Reconnecting {
+                attempt,
+                trouble: None,
+                ..
+            } => write!(formatter, "reconnecting, attempt {attempt}"),
+            HostState::Reconnecting {
+                attempt,
+                trouble: Some(said),
+                ..
+            } => write!(formatter, "reconnecting, attempt {attempt}: {said}"),
             HostState::Failed { error, .. } => write!(formatter, "failed: {error}"),
         }
     }
@@ -295,6 +306,20 @@ impl HostStateMachine {
         }
     }
 
+    /// Tears down whatever the host was holding and forgets everything about
+    /// it, so that adding it again is adding it for the first time.
+    ///
+    /// The count and the reason go with it: a host somebody removed and added
+    /// again is not one that has been failing, and a backoff carried over
+    /// would have it wait minutes for a first attempt.
+    fn forget(&mut self) -> Vec<Action> {
+        let torn = HostStateMachine::teardown(&self.state);
+        self.state = HostState::Disconnected;
+        self.reconnecting = false;
+        self.failures = 0;
+        torn
+    }
+
     /// Begins a bootstrap, whatever the host was doing before.
     fn begin(&mut self) -> Vec<Action> {
         self.state = HostState::Probing;
@@ -311,6 +336,7 @@ impl HostStateMachine {
         self.state = if self.reconnecting {
             HostState::Reconnecting {
                 attempt: self.failures,
+                trouble: Some(error),
                 retry_at,
             }
         } else {
@@ -352,11 +378,7 @@ impl HostStateMachine {
             HostEvent::Failed { error } | HostEvent::LinkDead { detail: error } => {
                 self.hold(error, now)
             }
-            HostEvent::Removed => {
-                let torn = HostStateMachine::teardown(&self.state);
-                self.state = HostState::Disconnected;
-                torn
-            }
+            HostEvent::Removed => self.forget(),
             // It is already being tried; asking again changes nothing, and a
             // retry that fires late must not start a second bootstrap.
             HostEvent::Added | HostEvent::RetryDue => Vec::new(),
@@ -371,6 +393,7 @@ impl HostStateMachine {
                 let retry_at = self.schedule(now);
                 self.state = HostState::Reconnecting {
                     attempt: self.failures,
+                    trouble: None,
                     retry_at,
                 };
                 vec![Action::CloseChannel, Action::RetryAt(retry_at)]
@@ -393,11 +416,7 @@ impl HostStateMachine {
                 };
                 Vec::new()
             }
-            HostEvent::Removed => {
-                let torn = HostStateMachine::teardown(&self.state);
-                self.state = HostState::Disconnected;
-                torn
-            }
+            HostEvent::Removed => self.forget(),
             HostEvent::Added | HostEvent::Reached { .. } | HostEvent::RetryDue => Vec::new(),
         }
     }
@@ -407,12 +426,7 @@ impl HostStateMachine {
         match event {
             // A person asking for it now does not wait out the backoff.
             HostEvent::RetryDue | HostEvent::Added => self.begin(),
-            HostEvent::Removed => {
-                self.state = HostState::Disconnected;
-                self.reconnecting = false;
-                self.failures = 0;
-                vec![Action::Forget]
-            }
+            HostEvent::Removed => self.forget(),
             _otherwise => Vec::new(),
         }
     }

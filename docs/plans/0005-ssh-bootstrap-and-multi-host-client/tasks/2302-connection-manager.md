@@ -14,7 +14,7 @@ touches:
   - "crates/iznik-client/tests/connection_manager.rs"
   - "regression/claims/connection-manager.toml"
   - "policy/lexicon/connection-manager.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Connection Manager

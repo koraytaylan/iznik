@@ -15,6 +15,7 @@ The client engine the macOS application links: the SSH transport over the system
 | `host` | Multi-host: host identity, the per-host connection state machine, and the manager that runs one task per host. | `host-identity-and-state` (plan 0005) |
 | `host::identity` | `HostId`, the user's alias, and the global pane address `iznik://<host>/<pane>`. | `host-identity-and-state` (plan 0005) |
 | `host::manager` | The host manager: one task per host, isolation between hosts, and the resume that keeps a pane's bytes across a drop. | `connection-manager` (plan 0005) |
+| `host::manager::task` | What one host's own task does, from its first bootstrap to its last: connect, serve, lose the link, wait, connect again. | `connection-manager` (plan 0005) |
 | `host::state` | The per-host connection state machine with exponential backoff and jitter, as a pure table of transitions. | `host-identity-and-state` (plan 0005) |
 | `model` | The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs. | `client-model` (plan 0005) |
 | `reduce` | The reducer that applies every server message to the client model, routed by host first, yielding the effects the engine acts on. | `client-reducer` (plan 0005) |

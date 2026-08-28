@@ -1,0 +1,51 @@
+# Several hosts at once, each on a task of its own.
+#
+# Every claim here is a `test` proof, and the `because` is the same for all of
+# them: isolation and resume are properties of the manager, and a local
+# transport shows them exactly. A `unix:` alias reaches a whole server —
+# a daemon, a socket, real shells on real pseudoterminals — over the same
+# channel the SSH path builds, so what a container would add is a network and a
+# minute, not a fact. The same operations over real SSH against two containers
+# are `end-to-end-ssh`'s, one workstream on.
+
+[[claim]]
+id = "manager-holds-two-hosts-apart"
+statement = "Two hosts are two: a session made on one appears in its own view and not the other's, and each command is answered by the host it was sent to."
+test = "iznik-client::connection_manager::connection_manager_holds_two_hosts_apart"
+because = "the two servers are whole servers; only the socket is shorter than a network"
+
+[[claim]]
+id = "manager-keeps-a-stuck-host-to-itself"
+statement = "With one host stuck — a socket that accepts and never speaks, which is what a daemon stopped where it stands looks like — a keystroke on a healthy host still comes back inside a latency budget, and no operation on it waits for the other."
+test = "iznik-client::connection_manager::connection_manager_keeps_a_stuck_host_to_itself"
+because = "a host that answers nothing is written to answer nothing, which no real daemon does and no container could arrange"
+
+[[claim]]
+id = "manager-resumes-a-pane-where-it-left-off"
+statement = "A link cut under a subscribed pane is reconnected inside two seconds, and the pane's stream carries on from the byte the client held rather than starting again — under the same `iznik://<host>/<pane>` it had before."
+test = "iznik-client::connection_manager::connection_manager_resumes_a_pane_where_it_left_off"
+because = "the cut is made by a relay standing in front of the daemon, because nothing else can drop a connection without also taking away the server a resume needs"
+
+[[claim]]
+id = "manager-shows-a-rename-before-the-host-agrees"
+statement = "A rename is in `model()` before the host has answered and is still there once it agrees; one the host refuses is put back, and what was there stands."
+test = "iznik-client::connection_manager::connection_manager_shows_a_rename_before_the_host_agrees"
+because = "the refusal is the host's own, from a real daemon asked to rename a session it does not hold"
+
+[[claim]]
+id = "manager-gives-up-on-a-host-that-never-answers"
+statement = "A command sent into a link that has stopped carrying is given up on by name after its timeout and what it showed is put back — wherever the host is by then, connected or waiting out a backoff."
+test = "iznik-client::connection_manager::connection_manager_gives_up_on_a_host_that_never_answers"
+because = "the link is cut by the relay, and what is proven is that the manager does not need a live host to keep its own promise"
+
+[[claim]]
+id = "manager-does-not-let-four-hosts-retry-at-once"
+statement = "Four hosts that failed at the same moment schedule their retries at four different moments, because each host's jitter is drawn from a seed of its own — which is what a laptop closing on four hosts needs."
+test = "iznik-client::connection_manager::connection_manager_does_not_let_four_hosts_retry_at_once"
+because = "four hosts that are not there fail at once here as surely as anywhere, and the moments are values"
+
+[[claim]]
+id = "manager-reports-every-state-in-order"
+statement = "The states a host goes through are reported on `events()` in the order it went through them — probing first, connected last — and `model()` holds what the host said by then."
+test = "iznik-client::connection_manager::connection_manager_reports_every_state_in_order"
+because = "the events are the manager's own, and a container would only make them slower"

@@ -1,3 +1,4 @@
+after
 again
 aligned
 answered
@@ -40,14 +41,18 @@ renamed
 roll
 rollback
 rolled
+saying
 sent
 settled
 show
+shown
 shows
 soon
+standing
 submission
 submit
 submitted
+survive
 thing
 timeout
 told

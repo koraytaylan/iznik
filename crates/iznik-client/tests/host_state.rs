@@ -320,8 +320,12 @@ fn table() -> [Row; 7] {
                 ("connected to 0.1.0", &[]),
                 ("connected to 0.1.0", &[]),
                 // It was connected, whatever went wrong, so it is coming back
-                // rather than arriving.
-                ("reconnecting, attempt 1", &["close-channel", "retry-at"]),
+                // rather than arriving — and a failure with a reason keeps it,
+                // while a link that simply went quiet has none to keep.
+                (
+                    "reconnecting, attempt 1: no route",
+                    &["close-channel", "retry-at"],
+                ),
                 ("reconnecting, attempt 1", &["close-channel", "retry-at"]),
                 ("connected to 0.1.0", &[]),
                 ("disconnected", &["close-channel", "forget"]),
@@ -417,8 +421,8 @@ fn host_state_counts_a_reconnection_that_keeps_failing() {
         );
         assert_eq!(
             machine.state().to_string(),
-            format!("reconnecting, attempt {attempt}"),
-            "and the count goes on"
+            format!("reconnecting, attempt {attempt}: no route"),
+            "and the count goes on, carrying why"
         );
     }
     // A host that was never reached waits as a failure, with the reason.

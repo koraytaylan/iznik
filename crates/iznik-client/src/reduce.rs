@@ -20,6 +20,7 @@ use iznik_protocol::message::{ErrorCode, MarkKind, ToClient};
 use iznik_protocol::model::decode_host_model;
 use iznik_protocol::reconcile::{ReconcileError, apply};
 
+use crate::commands::{replay, settled};
 use crate::host::identity::HostId;
 use crate::model::{ClientModel, HostView};
 
@@ -215,8 +216,11 @@ fn replace(
         Some(view) => {
             // The subscriptions, the focus and the commands in flight are this
             // client's own and outlive a snapshot; only the host's model is
-            // replaced by it.
+            // replaced by it — and what is still in flight goes back on top,
+            // because a snapshot is what the host has said and not what this
+            // client has asked for.
             view.model = replaced;
+            replay(view);
         }
         None => {
             let _first = model.insert(host.clone(), HostView::of(replaced));
@@ -236,8 +240,17 @@ fn reconcile(
         Ok(delta) => delta,
         Err(source) => return unreadable(host, &format!("a change could not be read: {source}")),
     };
-    match apply(&mut view.model, generation, &delta) {
-        Ok(()) => Vec::new(),
+    // Against what the host last said, not against what this client is
+    // showing: a change already applied optimistically would be refused as one
+    // the model cannot take, and a snapshot would be asked for after every
+    // close that worked.
+    let mut standing = settled(view);
+    match apply(&mut standing, generation, &delta) {
+        Ok(()) => {
+            view.model = standing;
+            replay(view);
+            Vec::new()
+        }
         // A number was missed. Nothing is guessed and nothing is applied: the
         // host is asked for the whole of it, which is the one recovery that
         // cannot be wrong.

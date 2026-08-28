@@ -38,9 +38,15 @@ pub const PING_INTERVAL: Duration = Duration::from_secs(5);
 /// How long it may hear nothing at all before the link is dead.
 pub const PONG_DEADLINE: Duration = Duration::from_secs(10);
 
-/// How long opening one may take: the transport, the remote command and the
-/// handshake together.
+/// How long getting a link may take: the transport and the remote command.
 pub const OPEN_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long a server that is there has to say hello.
+///
+/// One round trip on a link that is already up, so far shorter than the
+/// opening: a server that has started and not greeted in this long is one that
+/// is not going to.
+pub const GREETING_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How many bytes of the remote's complaints are kept. A host that says
 /// nothing useful in its first kibibyte is a host whose message was not the

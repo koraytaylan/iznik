@@ -37,7 +37,7 @@ because = "it is the one form this crate owns, and recognizing it is a prefix te
 id = "host-state-is-the-table-it-says-it-is"
 statement = "All forty-nine pairs of the seven states and the seven events produce the state and the actions the architecture says — every one of them written down, so that what the machine ignores is asserted rather than assumed."
 test = "iznik-client::host_state::host_state_is_the_table_it_says_it_is"
-because = "the machine reads no clock and no random device, so the table is the whole of its behaviour"
+because = "the machine reads no clock and no random device; what it does keep beside the state — whether it was ever connected, and how many times it has failed — is what `host-state-counts-a-reconnection-that-keeps-failing` walks"
 
 [[claim]]
 id = "host-state-tears-down-what-each-state-holds"

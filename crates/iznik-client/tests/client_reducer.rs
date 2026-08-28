@@ -12,7 +12,7 @@ use core::time::Duration;
 use std::time::Instant;
 
 use iznik_client::host::identity::HostId;
-use iznik_client::model::{ClientModel, HostView};
+use iznik_client::model::{ClientModel, HostView, NO_CHANNEL};
 use iznik_client::reduce::{Effect, Notification, arrived, reduce};
 use iznik_protocol::command::{CommandOutcome, Created, encode_command_outcome};
 use iznik_protocol::delta::{Delta, encode_delta};
@@ -483,12 +483,18 @@ fn client_reducer_gives_a_channel_to_one_pane_at_a_time() {
             Some(Sequence(FROM.0.saturating_add(u64::try_from(ARRIVED)?))),
             "the pane the channel now belongs to moved"
         );
+        let Some(kept) = view.subscription(PANE) else {
+            panic!("the pane that lost the channel keeps its subscription");
+        };
         assert_eq!(
-            view.subscription(PANE),
-            None,
-            "and the one that used to hold it no longer claims a channel that \
-             is not its own: its own announcement is still coming, and would \
-             have brought the byte it stands at with it"
+            kept.cursor, FROM,
+            "the pane that lost the channel did not move, and keeps the byte \
+             it stands at: its own announcement is still coming, and a resume \
+             before then would need exactly this"
+        );
+        assert_eq!(
+            kept.channel, NO_CHANNEL,
+            "but it no longer claims a channel that is not its own"
         );
         Ok(())
     };

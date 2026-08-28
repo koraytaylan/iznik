@@ -11,7 +11,7 @@
 id = "optimistic-shows-exactly-what-the-host-would-send"
 statement = "Renaming a session or a tab, reordering a session's tabs and closing a session each show at once, and what they show is the same model the host's own change would produce — checked against the deltas applied to a copy through the protocol's reconciler, over two hundred generated models."
 test = "iznik-client::optimistic_commands::optimistic_commands_show_exactly_what_the_host_would_send"
-because = "the far end is built by the reconciler the host uses, so a host would restate the same arithmetic more slowly"
+because = "the far end is built by the reconciler the host uses, from the deltas this case writes out for itself; what ties those to the host is `optimistic-survives-the-host-saying-the-same-thing` and, over a real one, `manager-shows-a-rename-before-the-host-agrees`"
 
 [[claim]]
 id = "optimistic-shows-the-cascade-a-pane-causes"
@@ -48,3 +48,9 @@ id = "optimistic-never-gives-one-number-twice"
 statement = "Command numbers are minted in order and never reused, even after every one of them has been retired — because an answer to a command that was given up on must not settle whichever later command had been given its number."
 test = "iznik-client::optimistic_commands::optimistic_commands_never_give_one_number_twice"
 because = "the counter is the view's own, and reuse is a property of the counter"
+
+[[claim]]
+id = "optimistic-survives-the-host-saying-the-same-thing"
+statement = "The host announces the change to the client that asked for it as well as to the others, and what the command already showed survives its own delta: nothing is refused, no snapshot is asked for, and once the answer retires the command the model is the host's own. A rename, a close and the cascade a pane's going causes are each walked through."
+test = "iznik-client::optimistic_commands::optimistic_commands_survive_the_host_saying_the_same_thing"
+because = "the delta is applied to what the host last said rather than to what is being shown, which is arithmetic over two models and needs no host to check"
