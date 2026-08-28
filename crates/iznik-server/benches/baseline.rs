@@ -94,10 +94,12 @@ const SAMPLE_DEADLINE: Duration = Duration::from_secs(5);
 /// How long between two looks at what a daemon holds.
 const SETTLE_INTERVAL: Duration = Duration::from_millis(100);
 
-/// How many looks before the figure is taken as it stands. Twenty at that
-/// interval is two seconds, which is longer than fifty shells take to stop
-/// allocating and short enough that a measurement is still a measurement.
-const SETTLE_LOOKS: usize = 20;
+/// How many looks before it gives up. A hundred at that interval is ten
+/// seconds, which is many times what fifty shells take to stop faulting their
+/// pages in on any machine that could run this at all — wide, because giving
+/// up is now a failed measurement rather than a slightly high figure, and a
+/// gate that fails on a loaded machine is a gate that gets deleted.
+const SETTLE_LOOKS: usize = 100;
 
 /// What counts as settled: two consecutive samples within this of each other.
 /// Sixteen pages, a fortieth of a percent of the fifty-pane ceiling — smaller

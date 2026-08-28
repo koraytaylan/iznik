@@ -67,8 +67,10 @@ shares rather than serializes.
 then holding fifty idle panes. Both are sampled once they have stopped moving:
 a pane's shell allocates as it starts, and fifty started one after another are
 still doing it when the last is made, so the figure is asked again every
-hundred milliseconds until two consecutive answers agree within 64 KiB. That is
-what makes it a number about holding rather than about starting. The difference
+hundred milliseconds until two consecutive answers agree within 64 KiB — and if
+they have not agreed after ten seconds the measurement fails rather than
+reports. That is what makes it a number about holding rather than about
+starting. The difference
 between the two rows is the cost of a pane, which is the history ring's floor
 and not its capacity, since a ring is allocated as it fills.
 

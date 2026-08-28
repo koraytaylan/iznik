@@ -9,6 +9,7 @@
 
 pub mod darwin;
 pub mod linux;
+pub mod shape;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -143,6 +144,16 @@ pub fn digest_of(path: &Path) -> Result<String, DistributionError> {
 /// absent, [`DistributionError::Io`] when a file cannot be written, and
 /// [`DistributionError::Oversize`] when the result is over the ceiling.
 pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
+    let directory = target_directory(root)
+        .join(DISTRIBUTION_DIRECTORY)
+        .join(target);
+    // Before the build, not after a refusal: what must never be on disk is a
+    // distribution directory that does not correspond to this invocation. An
+    // earlier build's is complete, verifies against its own checksums and
+    // uploads exactly as though it were this one's, so a build that fails for
+    // any reason — a missing cross-linker as much as a size ceiling — must not
+    // leave it there to be taken for the answer.
+    clear(&directory)?;
     let built = if linux::TARGETS.contains(&target) {
         linux::build(root, target)?
     } else if darwin::TARGETS.contains(&target) {
@@ -152,14 +163,8 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
             target: target.to_owned(),
         });
     };
-    let directory = target_directory(root)
-        .join(DISTRIBUTION_DIRECTORY)
-        .join(target);
-    // Measured where cargo put it, before the directory is even made: what a
-    // refusal must not leave behind is a distribution directory a later
-    // `sha256sum -c` or an upload glob would take for this build's. An earlier
-    // build's is cleared for the same reason — it is complete, it verifies,
-    // and it is not what the source now says.
+    // Measured where cargo put it, before the directory is even made, so an
+    // artifact over the ceiling leaves nothing beside it either.
     let bytes = std::fs::metadata(&built)
         .map_err(|source| DistributionError::Io {
             path: built.clone(),
@@ -167,7 +172,6 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
         })?
         .len();
     if bytes > ARTIFACT_SIZE_CEILING {
-        clear(&directory);
         return Err(DistributionError::Oversize {
             bytes,
             ceiling: ARTIFACT_SIZE_CEILING,
@@ -192,12 +196,27 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
     Ok(artifact)
 }
 
-/// Removes what a previous build of this target left, so a refusal leaves
-/// nothing that looks like an answer. What is not there is not an error.
-fn clear(directory: &Path) {
+/// Removes what a previous build of this target left, so that whatever is
+/// there afterwards is this build's or nothing.
+///
+/// A file that is not there is not an error. A file that is there and cannot
+/// be removed is: silently leaving a stale artifact where a fresh one was
+/// asked for is the failure this exists to prevent, and it must not itself
+/// fail quietly.
+///
+/// # Errors
+///
+/// [`DistributionError::Io`] when a file is there and cannot be removed.
+fn clear(directory: &Path) -> Result<(), DistributionError> {
     for name in [BINARY, CHECKSUMS, MANIFEST] {
-        let _gone = std::fs::remove_file(directory.join(name));
+        let path = directory.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(DistributionError::Io { path, source }),
+        }
     }
+    Ok(())
 }
 
 /// Writes the checksum file and the manifest beside an artifact.
@@ -241,6 +260,11 @@ const PROTOCOL_DECLARATION: &str = "pub const PROTOCOL_VERSION: u16 = ";
 /// rather than from the crate: a tooling crate reaches neither the emulator
 /// nor the product, and the workspace has a test that says so.
 ///
+/// Public because the artifact case holds the manifest to it, and a second
+/// scrape written beside that case would be a second implementation of one
+/// fact — which is what a manifest carrying the wrong version would be made
+/// of.
+///
 /// A failure here is a failure of the whole command. Scraping a source file is
 /// brittle by nature — widening the constant, or moving it, or a formatting
 /// change is enough to miss it — and a manifest that shipped `0` because the
@@ -251,7 +275,7 @@ const PROTOCOL_DECLARATION: &str = "pub const PROTOCOL_VERSION: u16 = ";
 ///
 /// [`DistributionError::Unreadable`] when the declaration is not where this
 /// expects it, naming the file and what it looked for.
-fn protocol_version(root: &Path) -> Result<u16, DistributionError> {
+pub fn protocol_version(root: &Path) -> Result<u16, DistributionError> {
     let path = root.join(PROTOCOL_SOURCE);
     let source = std::fs::read_to_string(&path).map_err(|source| DistributionError::Io {
         path: path.clone(),

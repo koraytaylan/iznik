@@ -28,5 +28,5 @@ because = "the artifact under test is built by the test, so the container is sta
 [[claim]]
 id = "linux-artifacts-header-walk-is-really-read"
 statement = "The walk the artifact case leans on finds a program header naming a loader and a section header naming a symbol table, each read where its own table carries it, and refuses a file whose tables it cannot walk."
-test = "xtask::regression_distribution_linux::elf_shape_reads_both_header_tables"
+test = "xtask::artifact_shape::elf_shape_reads_both_header_tables"
 because = "no build of this workspace produces a dynamically linked or unstripped artifact, so the two answers the case asserts can only be told apart against a file made to have them"

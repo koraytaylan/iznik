@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod deadline;
+pub mod documents;
 pub mod fixture;
 pub mod images;
 pub mod process;

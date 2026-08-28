@@ -23,5 +23,5 @@ because = "the artifact under test is built by the test, and only a Mac can buil
 [[claim]]
 id = "darwin-link-surface-is-really-read"
 statement = "The load-command walk the artifact case leans on reads exactly the libraries a Mach-O file names, and refuses a file that is not one at all."
-test = "xtask::regression_distribution_darwin::mach_shape_reads_what_a_file_names"
+test = "xtask::artifact_shape::mach_shape_reads_what_a_file_names"
 because = "the artifact case is deferred to a Mac, and a walk that silently found nothing would pass there with the allowlist never consulted"

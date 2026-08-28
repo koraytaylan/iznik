@@ -109,9 +109,10 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
 ///
 /// [`DistributionError::Unreadable`] when `.cargo/config.toml` is there but
 /// cannot be read or parsed. Falling back to no flags is the one thing this
-/// must not do: `RUSTFLAGS` replaces the configured ones, so an empty answer
-/// silently drops `link-self-contained=no` and the musl link dies on a
-/// duplicate `_start` — the failure this function exists to prevent.
+/// must not do: what is set replaces the configured flags rather than adding
+/// to them, so an empty answer silently drops `link-self-contained=no` and the
+/// musl link dies on a duplicate `_start` — the failure this exists to
+/// prevent.
 pub fn rustflags(root: &Path, target: &str) -> Result<String, DistributionError> {
     let mut flags = configured(root, target)?;
     flags.push(format!("--remap-path-prefix={}={REMAPPED}", root.display()));

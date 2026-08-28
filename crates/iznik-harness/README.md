@@ -6,6 +6,7 @@ The bounded process runner, the deadline helpers, the container images, staging,
 
 | Module | Holds | Landed by |
 |---|---|---|
+| `documents` | Holding a binary and the documents that name its commands to each other: which commands it routes, which the documents name, and that each answers `--help` with what it takes. | `daemon-documentation` (plan 0004) |
 | `deadline` | The two deadline helpers every fixture wait is written with: a capped body and a polled condition, each naming what it waited for. | `gate-runner` (plan 0001) |
 | `fixture` | The two-container fixture: per-run credentials, readiness under a cap, commands, faults, a measured start time, and orphans made impossible to keep. | `regression-fixture` (plan 0001) |
 | `images` | The container images pinned by digest and tagged by content hash, built only when missing. | `regression-images` (plan 0001) |

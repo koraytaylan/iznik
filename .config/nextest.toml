@@ -12,14 +12,14 @@ slow-timeout = { period = "5s", terminate-after = 12 }
 #
 # Every distribution case builds a release artifact, and two cargo invocations
 # at once wait on each other for the package-cache lock, so they run one at a
-# time and a wait is not counted against a deadline. An hour, rather than the
-# ten minutes every other `regression_*` binary gets: a release build of this
+# time and a wait is not counted against a deadline. Ninety minutes, rather
+# than the ten every other `regression_*` binary gets: a release build of this
 # workspace is fat link-time optimization at one codegen unit, for one or two
 # musl targets, and on a cold cache it builds the emulator with Zig after
 # cloning it. `linux.rs` budgets thirty minutes for exactly that, and a runner
 # that killed the case at ten would be reporting the machine rather than the
-# artifact. Ninety minutes, which is above what one case may spend inside its
-# own deadlines: two thirty-minute builds and a clean between them.
+# artifact. Ninety is above what one case may spend inside its own deadlines:
+# two thirty-minute builds and a clean between them.
 [[profile.default.overrides]]
 filter = 'binary(/^regression_distribution_/)'
 test-group = 'distribution'

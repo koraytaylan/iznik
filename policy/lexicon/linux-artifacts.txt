@@ -13,6 +13,7 @@ dynamic
 elf
 flags
 headers
+identification
 interpreted
 interpreter
 machine
@@ -33,4 +34,6 @@ symbols
 targeted
 triples
 unreadable
+unstripped
+unwalkable
 x86

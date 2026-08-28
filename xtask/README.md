@@ -14,6 +14,7 @@ The gates, the policy checks clippy cannot express, the claims registry, the con
 | `claims::verify` | Building the nextest filterset, running the proofs under the `claims` profile, and reading the `JUnit` report. | `claims-registry` (plan 0001) |
 | `distribution` | `xtask distribution --target <triple>`: reproducible release artifacts with checksums and a manifest naming the crate version, the protocol version, the triple and the digest. | `linux-artifacts` (plan 0004) |
 | `distribution::darwin` | The two Darwin targets, the toolchain they need written out, and the refusal that names the missing SDK rather than reporting a link error from inside cargo. | `darwin-artifacts` (plan 0004) |
+| `distribution::shape` | What an artifact's own headers say: an ELF file's machine, whether it names a loader and whether it still carries a symbol table; a Mach-O file's CPU type and every library it names. | `linux-artifacts` (plan 0004) |
 | `distribution::linux` | The two musl targets built under the release profile, stripped, byte-identical across builds, with the workspace's own configured flags carried through rather than replaced. | `linux-artifacts` (plan 0004) |
 | `doctor` | `xtask doctor`: every prerequisite with a probe and an install hint, reported by name when missing. | `gate-runner` (plan 0001) |
 | `gate` | `xtask check` and `xtask gate <name>`: the five gates in order, each under its deadline, stopping at the first failure with its name. | `gate-runner` (plan 0001) |
@@ -33,4 +34,4 @@ The gates, the policy checks clippy cannot express, the claims registry, the con
 
 ## Tests
 
-`tests/skeleton.rs` is the scaffold's own acceptance; the policy, gate, doctor and claims tests arrive with the tasks that fill the modules, and every one of them runs in the `test` gate. `readme_commands.rs` runs every command the READMEs name with `--help`. The two `regression_distribution_*` binaries are ignored by default, because each builds release artifacts; they share a nextest group of one thread, since two release builds at once wait on each other for cargo's package-cache lock.
+`tests/skeleton.rs` is the scaffold's own acceptance; the policy, gate, doctor and claims tests arrive with the tasks that fill the modules, and every one of them runs in the `test` gate. `readme_commands.rs` runs every command the READMEs name with `--help`, on the one rule `iznik_harness::documents` holds; `artifact_shape.rs` holds the ELF and Mach-O readers to files made to have each shape, and builds nothing. The two `regression_distribution_*` binaries are ignored by default, because each builds release artifacts; they share a nextest group of one thread, since two release builds at once wait on each other for cargo's package-cache lock.
