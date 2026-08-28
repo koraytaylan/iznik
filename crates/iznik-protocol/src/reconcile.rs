@@ -151,10 +151,16 @@ pub fn apply(
 
 /// Applies the change a delta describes, leaving the generation alone.
 ///
+/// Public because a client applies a command's effect before the server has
+/// numbered it: an optimistic rename must show at once and must *not* advance
+/// the generation, or the authoritative delta that follows would arrive as a
+/// gap. What the client applies here is the same change the server will send,
+/// through the same code, which is what makes the two agree.
+///
 /// # Errors
 ///
 /// The refusals [`apply`] documents, save the generation gap.
-fn apply_change(model: &mut HostModel, delta: &Delta) -> Result<(), ReconcileError> {
+pub fn apply_change(model: &mut HostModel, delta: &Delta) -> Result<(), ReconcileError> {
     match delta {
         Delta::SessionAdded { session } => add_session(model, session),
         Delta::SessionRenamed { session, name } => rename_session(model, *session, name),

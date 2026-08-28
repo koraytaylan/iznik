@@ -307,13 +307,13 @@ pub(crate) fn refused(host: &str, stage: Stage, detail: &impl Display) -> Bootst
 /// disagreed is a version problem.
 fn stage_of(source: &ChannelError) -> Stage {
     match source {
-        // A link that opened and then disagreed, said the wrong thing, or said
-        // nothing at all is the handshake. Time was given and the greeting did
-        // not come; a server that could not be started closes the link instead
-        // and says why on its standard error.
+        // A link that came up and then disagreed, said the wrong thing, or
+        // said nothing is the handshake. A link that never came up at all is
+        // the launch, and `Deadline` is that one: the channel times the two
+        // halves apart so that this can tell them apart.
         ChannelError::ProtocolVersion { .. }
         | ChannelError::Unexpected { .. }
-        | ChannelError::Deadline { .. } => Stage::Handshake,
+        | ChannelError::Silent { .. } => Stage::Handshake,
         _other => Stage::Launch,
     }
 }

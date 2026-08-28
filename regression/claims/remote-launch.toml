@@ -92,7 +92,7 @@ scenario = "upgrade-refused-for-live-panes"
 
 [[claim]]
 id = "launch-replaces-a-server-when-it-is-asked-to"
-statement = "The same host, asked with force, has its daemon stopped and the artifact installed over the shim — and the version that answers afterwards is the one this build carries."
+statement = "The same host, asked with force, has its daemon stopped and the artifact installed over the shim; the upgrade itself refuses unless the daemon that answers afterwards is the version this build carries, the file at that name is an ELF binary rather than the shell script the shim was, and a bootstrap that follows decides there is nothing left to do."
 scenario = "upgrade-forced"
 
 [[claim]]

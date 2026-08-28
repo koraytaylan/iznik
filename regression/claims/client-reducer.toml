@@ -42,3 +42,9 @@ id = "reducer-says-when-it-cannot-read-what-arrived"
 statement = "A change the client cannot decode is not passed over in silence: it names the host, asks for the whole model — the one recovery that cannot be wrong when the two have diverged — and leaves the model exactly as it was."
 test = "iznik-client::client_reducer::client_reducer_says_when_it_cannot_read_what_arrived"
 because = "bytes that are not a delta are bytes no server sends, which no container could arrange"
+
+[[claim]]
+id = "reducer-gives-a-channel-to-one-pane-at-a-time"
+statement = "When a host reassigns a channel number to another pane, bytes on it move that pane's cursor and no other's — the pane that used to hold it having lost a claim that is no longer true. Advancing both would have the pane that sent nothing resume from a byte it never reached, which is exactly the output a resume exists to keep."
+test = "iznik-client::client_reducer::client_reducer_gives_a_channel_to_one_pane_at_a_time"
+because = "a reassignment is two announcements and a length, and no host is needed to make them"

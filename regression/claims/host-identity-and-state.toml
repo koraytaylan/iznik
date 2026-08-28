@@ -23,7 +23,7 @@ because = "the round trip is a property of the two functions, not of any host"
 
 [[claim]]
 id = "identity-refuses-what-is-not-an-address"
-statement = "A string with no scheme, no host, no pane, a pane that is not a number, or an escape that is not two hexadecimal digits is refused, and the refusal names which part could not be read."
+statement = "A string with no scheme, no host, no pane, a pane that is not a number, an escape that is not exactly two hexadecimal digits — a sign is not one — or a second separator where one host was wanted is refused, and the refusal names which part could not be read."
 test = "iznik-client::host_state::host_identity_refuses_what_is_not_an_address"
 because = "same: what is proven is what the parser does with bad input"
 
@@ -35,7 +35,7 @@ because = "it is the one form this crate owns, and recognizing it is a prefix te
 
 [[claim]]
 id = "host-state-is-the-table-it-says-it-is"
-statement = "Every pair of state and event the architecture defines produces the state and the actions it says — a bootstrap failing at any of its stages, a link dying under a connected host, a retry firing, and somebody asking for a waiting host without waiting out its backoff."
+statement = "All forty-nine pairs of the seven states and the seven events produce the state and the actions the architecture says — every one of them written down, so that what the machine ignores is asserted rather than assumed."
 test = "iznik-client::host_state::host_state_is_the_table_it_says_it_is"
 because = "the machine reads no clock and no random device, so the table is the whole of its behaviour"
 
@@ -74,3 +74,9 @@ id = "host-state-defaults-to-the-policy-the-architecture-names"
 statement = "The backoff starts at one second and stops at one minute unless somebody says otherwise."
 test = "iznik-client::host_state::host_state_defaults_to_the_policy_the_architecture_names"
 because = "they are constants"
+
+[[claim]]
+id = "host-state-counts-a-reconnection-that-keeps-failing"
+statement = "A host that was reached once and lost goes on counting its attempts in `Reconnecting` however many times it fails afterwards; one that was never reached waits in `Failed`, carrying why. The two are different things to whoever is watching, and the count is what says which."
+test = "iznik-client::host_state::host_state_counts_a_reconnection_that_keeps_failing"
+because = "it is the machine's own memory of whether it ever arrived"

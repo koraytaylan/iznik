@@ -187,6 +187,10 @@ fn host_identity_refuses_what_is_not_an_address() {
         ("iznik://work/seven", "a pane that is not a number"),
         ("iznik://wo%zz/7", "an escape that is not hexadecimal"),
         ("iznik://wo%f/7", "an escape cut short"),
+        ("iznik://wo%+7/7", "an escape with a sign in it"),
+        // The host is one segment: a separator inside it was escaped on the
+        // way out, so a raw one is not an address this ever wrote.
+        ("iznik://a/b/7", "two segments where one host was wanted"),
     ];
     for (given, why) in refused {
         assert!(
@@ -221,6 +225,137 @@ fn host_identity_knows_a_socket_from_a_host() {
     assert!(remote.is_remote(), "and is reached over SSH");
 }
 
+/// One event by name, so a table can be written as strings.
+fn event(named: &str) -> HostEvent {
+    match named {
+        "added" => HostEvent::Added,
+        "reached" => HostEvent::Reached {
+            stage: Stage::Upload,
+        },
+        "connected" => connected(),
+        "failed" => HostEvent::Failed {
+            error: "no route".to_owned(),
+        },
+        "dead" => HostEvent::LinkDead {
+            detail: "silent".to_owned(),
+        },
+        "retry-due" => HostEvent::RetryDue,
+        _removed => HostEvent::Removed,
+    }
+}
+
+/// Every event there is, in the order the table walks them.
+const EVENTS: [&str; 7] = [
+    "added",
+    "reached",
+    "connected",
+    "failed",
+    "dead",
+    "retry-due",
+    "removed",
+];
+
+/// What one state does with each of the seven events: the state it reaches,
+/// and the actions it takes, in the order [`EVENTS`] walks them.
+type Row = (&'static str, [(&'static str, &'static [&'static str]); 7]);
+
+/// Every state against every event: seven by seven, nothing left to a
+/// reader's assumption about what the machine ignores.
+fn table() -> [Row; 7] {
+    [
+        (
+            "disconnected",
+            [
+                ("probing", &["bootstrap"]),
+                ("disconnected", &[]),
+                ("disconnected", &[]),
+                ("disconnected", &[]),
+                ("disconnected", &[]),
+                ("disconnected", &[]),
+                ("disconnected", &["forget"]),
+            ],
+        ),
+        (
+            "probing",
+            [
+                // It is already being tried; asking again changes nothing,
+                // and a retry that fires late must not start a second one.
+                ("probing", &[]),
+                ("bootstrapping, uploading", &[]),
+                ("connected to 0.1.0", &["resume"]),
+                ("failed: no route", &["retry-at"]),
+                ("failed: silent", &["retry-at"]),
+                ("probing", &[]),
+                ("disconnected", &["stop-bootstrap", "forget"]),
+            ],
+        ),
+        (
+            "bootstrapping",
+            [
+                ("bootstrapping, uploading", &[]),
+                ("bootstrapping, uploading", &[]),
+                ("connected to 0.1.0", &["resume"]),
+                ("failed: no route", &["retry-at"]),
+                ("failed: silent", &["retry-at"]),
+                ("bootstrapping, uploading", &[]),
+                ("disconnected", &["stop-bootstrap", "forget"]),
+            ],
+        ),
+        (
+            "connecting",
+            [
+                ("connecting", &[]),
+                ("bootstrapping, uploading", &[]),
+                ("connected to 0.1.0", &["resume"]),
+                ("failed: no route", &["retry-at"]),
+                ("failed: silent", &["retry-at"]),
+                ("connecting", &[]),
+                ("disconnected", &["stop-bootstrap", "forget"]),
+            ],
+        ),
+        (
+            "connected",
+            [
+                ("connected to 0.1.0", &[]),
+                ("connected to 0.1.0", &[]),
+                ("connected to 0.1.0", &[]),
+                // It was connected, whatever went wrong, so it is coming back
+                // rather than arriving.
+                ("reconnecting, attempt 1", &["close-channel", "retry-at"]),
+                ("reconnecting, attempt 1", &["close-channel", "retry-at"]),
+                ("connected to 0.1.0", &[]),
+                ("disconnected", &["close-channel", "forget"]),
+            ],
+        ),
+        (
+            "reconnecting",
+            [
+                // Somebody asking for a waiting host does not wait out its
+                // backoff.
+                ("probing", &["bootstrap"]),
+                ("reconnecting, attempt 1", &[]),
+                ("reconnecting, attempt 1", &[]),
+                ("reconnecting, attempt 1", &[]),
+                ("reconnecting, attempt 1", &[]),
+                ("probing", &["bootstrap"]),
+                ("disconnected", &["forget"]),
+            ],
+        ),
+        (
+            "failed",
+            [
+                ("probing", &["bootstrap"]),
+                ("failed: no route", &[]),
+                ("failed: no route", &[]),
+                ("failed: no route", &[]),
+                ("failed: no route", &[]),
+                ("probing", &["bootstrap"]),
+                ("disconnected", &["forget"]),
+            ],
+        ),
+    ]
+}
+
 /// # Panics
 ///
 /// When any pair of state and event does not produce the state and the actions
@@ -228,106 +363,78 @@ fn host_identity_knows_a_socket_from_a_host() {
 #[test]
 fn host_state_is_the_table_it_says_it_is() {
     let now = Instant::now();
-    let table: &[(&str, HostEvent, &str, &[&str])] = &[
-        ("disconnected", HostEvent::Added, "probing", &["bootstrap"]),
-        ("disconnected", HostEvent::RetryDue, "disconnected", &[]),
-        // Every stage of a bootstrap moves it, and the two that are about
-        // reaching the server are one state from outside.
-        (
-            "probing",
-            HostEvent::Reached {
-                stage: Stage::Upload,
-            },
-            "bootstrapping, uploading",
-            &[],
-        ),
-        (
-            "bootstrapping",
-            HostEvent::Reached {
-                stage: Stage::Launch,
-            },
-            "connecting",
-            &[],
-        ),
-        (
-            "bootstrapping",
-            HostEvent::Reached {
-                stage: Stage::Handshake,
-            },
-            "connecting",
-            &[],
-        ),
-        // Failure at any stage holds it with a time to try again.
-        (
-            "probing",
+    for (from, expected) in table() {
+        for (at, named) in EVENTS.iter().enumerate() {
+            let Some((wanted, actions)) = expected.get(at) else {
+                panic!("the table has a row for every event");
+            };
+            let mut machine = machine_in(from, now);
+            let taken = machine.on(event(named), now);
+            assert_eq!(
+                machine.state().to_string(),
+                *wanted,
+                "{from} + {named} goes to {wanted}"
+            );
+            assert_eq!(
+                shapes(&taken),
+                *actions,
+                "{from} + {named} does exactly that"
+            );
+        }
+    }
+}
+
+/// # Panics
+///
+/// When a host that was connected once does not go on counting its attempts.
+#[test]
+fn host_state_counts_a_reconnection_that_keeps_failing() {
+    let now = Instant::now();
+    let mut machine = HostStateMachine::new(BackoffPolicy::default());
+    let _started = machine.on(HostEvent::Added, now);
+    let _greeted = machine.on(connected(), now);
+    let _dead = machine.on(
+        HostEvent::LinkDead {
+            detail: "silent".to_owned(),
+        },
+        now,
+    );
+    assert_eq!(
+        machine.state().to_string(),
+        "reconnecting, attempt 1",
+        "the link went once"
+    );
+    // A host that has been reached is coming back, not arriving: every failed
+    // attempt after the first is another attempt at the same thing, and a
+    // person watching wants the count.
+    for attempt in 2..=4_u32 {
+        let _tried = machine.on(HostEvent::RetryDue, now);
+        let _failed = machine.on(
             HostEvent::Failed {
                 error: "no route".to_owned(),
             },
-            "failed: no route",
-            &["retry-at"],
-        ),
-        (
-            "bootstrapping",
-            HostEvent::Failed {
-                error: "disk full".to_owned(),
-            },
-            "failed: disk full",
-            &["retry-at"],
-        ),
-        (
-            "connecting",
-            HostEvent::Failed {
-                error: "another version".to_owned(),
-            },
-            "failed: another version",
-            &["retry-at"],
-        ),
-        (
-            "connecting",
-            connected(),
-            "connected to 0.1.0",
-            // Every subscription is resumed at the byte the model holds.
-            &["resume"],
-        ),
-        // A link that dies under a connected host is the case the whole
-        // backoff exists for.
-        (
-            "connected",
-            HostEvent::LinkDead {
-                detail: "silent for 10s".to_owned(),
-            },
-            "reconnecting, attempt 1",
-            &["close-channel", "retry-at"],
-        ),
-        (
-            "reconnecting",
-            HostEvent::RetryDue,
-            "probing",
-            &["bootstrap"],
-        ),
-        // Somebody asking for a waiting host does not wait out its backoff.
-        ("reconnecting", HostEvent::Added, "probing", &["bootstrap"]),
-        ("failed", HostEvent::Added, "probing", &["bootstrap"]),
-        ("failed", HostEvent::RetryDue, "probing", &["bootstrap"]),
-        // A retry that fires late must not start a second bootstrap.
-        ("probing", HostEvent::RetryDue, "probing", &[]),
-        ("probing", HostEvent::Added, "probing", &[]),
-        ("connected", HostEvent::Added, "connected to 0.1.0", &[]),
-    ];
-    for (from, event, wanted, actions) in table {
-        let mut machine = machine_in(from, now);
-        let taken = machine.on(event.clone(), now);
+            now,
+        );
         assert_eq!(
             machine.state().to_string(),
-            *wanted,
-            "{from} + {event:?} goes to {wanted}"
-        );
-        assert_eq!(
-            shapes(&taken),
-            *actions,
-            "{from} + {event:?} does exactly that"
+            format!("reconnecting, attempt {attempt}"),
+            "and the count goes on"
         );
     }
+    // A host that was never reached waits as a failure, with the reason.
+    let mut fresh = HostStateMachine::new(BackoffPolicy::default());
+    let _asked = fresh.on(HostEvent::Added, now);
+    let _never = fresh.on(
+        HostEvent::Failed {
+            error: "no route".to_owned(),
+        },
+        now,
+    );
+    assert_eq!(
+        fresh.state().to_string(),
+        "failed: no route",
+        "and one that never arrived says why"
+    );
 }
 
 /// # Panics
@@ -433,10 +540,11 @@ fn host_state_waits_longer_each_time_and_never_past_the_maximum() {
                 fail_again(&mut machine, now)?
             };
             let waited = moment.saturating_duration_since(now);
-            let doubled = QUICK_INITIAL.saturating_mul(2_u32.saturating_pow(attempt - 1));
+            let doubled =
+                QUICK_INITIAL.saturating_mul(2_u32.saturating_pow(attempt.saturating_sub(1)));
             let base = doubled.min(QUICK_MAXIMUM);
             assert!(
-                waited <= base && waited >= base / 2,
+                waited <= base && waited >= base.checked_div(2).unwrap_or(base),
                 "attempt {attempt} waits within half its base and its base: {waited:?} of {base:?}"
             );
             assert!(

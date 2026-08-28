@@ -2,11 +2,13 @@ address
 again
 alias
 apart
+asked
 backoff
 band
 bootstrapping
 carries
 connecting
+counts
 delay
 delays
 disconnected
@@ -20,10 +22,12 @@ err
 escape
 escaped
 escaping
+events
 failing
 failures
 first
 forgets
+fresh
 global
 golden
 gone
@@ -33,6 +37,7 @@ holds
 idle
 initial
 jitter
+keeps
 knows
 life
 longer
@@ -52,11 +57,13 @@ prelude
 probing
 reached
 reconnecting
+reconnection
 refuses
 removed
 renders
 retried
 retry
+row
 schedule
 scheduled
 scheme
@@ -69,6 +76,7 @@ shift
 shifts
 starting
 state
+table
 teardown
 tears
 third

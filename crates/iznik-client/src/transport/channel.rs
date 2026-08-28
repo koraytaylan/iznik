@@ -129,6 +129,13 @@ pub enum ChannelError {
         /// What it said it speaks.
         server: u16,
     },
+    /// The link came up and the server never greeted.
+    Silent {
+        /// The host.
+        host: String,
+        /// How long it was given to say hello.
+        waited: Duration,
+    },
     /// Nothing has arrived for longer than the pong deadline.
     Dead {
         /// The host.
@@ -173,6 +180,10 @@ impl Display for ChannelError {
                 formatter,
                 "{host} speaks iznik/{server} and this client speaks iznik/{PROTOCOL_VERSION}. \
                  The server holds the sessions, so it is not replaced without being asked."
+            ),
+            ChannelError::Silent { host, waited } => write!(
+                formatter,
+                "{host} started a server and it said nothing in {waited:?}"
             ),
             ChannelError::Dead { host, silent_for } => write!(
                 formatter,
@@ -339,28 +350,42 @@ impl RemoteChannel {
         options: ChannelOptions,
     ) -> Result<RemoteChannel, ChannelError> {
         let host = transport.alias();
-        let opening = RemoteChannel::begin(transport, server, options.clone(), host.clone());
-        tokio::time::timeout(options.open_deadline, opening)
+        let expires = Instant::now()
+            .checked_add(options.open_deadline)
+            .unwrap_or_else(Instant::now);
+        // The two halves are timed apart, because they fail for two different
+        // reasons and a caller is told which. A link that never came up is a
+        // path, a network or an `ssh` that could not start; a link that came
+        // up and then said nothing is a server that is there and will not
+        // speak. One deadline over both could only ever report the second.
+        let dialing = RemoteChannel::dial(transport, server, host.clone());
+        let (link, child, complaints) = tokio::time::timeout(options.open_deadline, dialing)
             .await
             .unwrap_or_else(|_elapsed| {
                 Err(ChannelError::Deadline {
-                    host,
+                    host: host.clone(),
                     waited: options.open_deadline,
                 })
-            })
+            })?;
+        let left = expires.saturating_duration_since(Instant::now());
+        let greeting = RemoteChannel::shake_hands(link, options, host.clone(), child, complaints);
+        tokio::time::timeout(left, greeting)
+            .await
+            .unwrap_or_else(|_elapsed| Err(ChannelError::Silent { host, waited: left }))
     }
 
-    /// The opening itself, which [`RemoteChannel::open`] puts a deadline on.
+    /// Gets a stream to the server, however this transport reaches one.
     ///
     /// # Errors
     ///
-    /// As [`RemoteChannel::open`], less the deadline it does not impose.
-    async fn begin(
+    /// [`ChannelError::Transport`] when `ssh` cannot be started,
+    /// [`ChannelError::Io`] when a socket cannot be reached, and
+    /// [`ChannelError::Closed`] when the child has no streams to take.
+    async fn dial(
         transport: &Transport,
         server: Option<&Path>,
-        options: ChannelOptions,
         host: String,
-    ) -> Result<RemoteChannel, ChannelError> {
+    ) -> Result<(FramedLink<Wire>, Option<SshChild>, Arc<Mutex<String>>), ChannelError> {
         let complaints = Arc::new(Mutex::new(String::new()));
         let (wire, child): (Wire, Option<SshChild>) = match transport {
             Transport::Ssh(ssh) => {
@@ -392,7 +417,7 @@ impl RemoteChannel {
                 (Box::new(stream), None)
             }
         };
-        RemoteChannel::shake_hands(FramedLink::new(wire), options, host, child, complaints).await
+        Ok((FramedLink::new(wire), child, complaints))
     }
 
     /// Says hello, hears the answer, and puts compression under the link when

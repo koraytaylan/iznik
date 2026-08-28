@@ -203,6 +203,14 @@ pub struct HostStateMachine {
     policy: BackoffPolicy,
     /// How many times it has failed since it was last connected.
     failures: u32,
+    /// Whether it has been connected since it was last asked for.
+    ///
+    /// What tells a host coming back from one that never arrived: the first
+    /// keeps counting its attempts in [`HostState::Reconnecting`], the second
+    /// waits in [`HostState::Failed`]. Without it every attempt after the
+    /// first would land in `Failed`, and `Reconnecting` could only ever say
+    /// "attempt 1".
+    reconnecting: bool,
     /// The jitter's own state, walked once per delay.
     drawn: u64,
 }
@@ -216,6 +224,7 @@ impl HostStateMachine {
             drawn: backoff.seed,
             policy: backoff,
             failures: 0,
+            reconnecting: false,
         }
     }
 
@@ -292,10 +301,21 @@ impl HostStateMachine {
         vec![Action::Bootstrap]
     }
 
-    /// Puts the host into a failure with a time to try again.
+    /// Puts the host into a wait with a time to try again.
+    ///
+    /// Which wait it is depends on whether the host was ever reached: one that
+    /// was is reconnecting, and its attempts are counted; one that never was
+    /// has failed, and what matters about it is why.
     fn hold(&mut self, error: String, now: Instant) -> Vec<Action> {
         let retry_at = self.schedule(now);
-        self.state = HostState::Failed { error, retry_at };
+        self.state = if self.reconnecting {
+            HostState::Reconnecting {
+                attempt: self.failures,
+                retry_at,
+            }
+        } else {
+            HostState::Failed { error, retry_at }
+        };
         vec![Action::RetryAt(retry_at)]
     }
 
@@ -320,6 +340,7 @@ impl HostStateMachine {
                 upgrade,
             } => {
                 self.failures = 0;
+                self.reconnecting = false;
                 self.state = HostState::Connected {
                     server_version,
                     upgrade,
@@ -346,6 +367,7 @@ impl HostStateMachine {
     fn connected(&mut self, event: HostEvent, now: Instant) -> Vec<Action> {
         match event {
             HostEvent::LinkDead { .. } => {
+                self.reconnecting = true;
                 let retry_at = self.schedule(now);
                 self.state = HostState::Reconnecting {
                     attempt: self.failures,
@@ -354,6 +376,9 @@ impl HostStateMachine {
                 vec![Action::CloseChannel, Action::RetryAt(retry_at)]
             }
             HostEvent::Failed { error } => {
+                // It was connected, whatever went wrong: it is coming back,
+                // not arriving for the first time.
+                self.reconnecting = true;
                 let mut held = vec![Action::CloseChannel];
                 held.extend(self.hold(error, now));
                 held
@@ -384,6 +409,8 @@ impl HostStateMachine {
             HostEvent::RetryDue | HostEvent::Added => self.begin(),
             HostEvent::Removed => {
                 self.state = HostState::Disconnected;
+                self.reconnecting = false;
+                self.failures = 0;
                 vec![Action::Forget]
             }
             _otherwise => Vec::new(),

@@ -33,20 +33,25 @@ const PLACES: [&str; 3] = [
     "/run/user/1000/iznik",
 ];
 
+/// One candidate as these cases write it: where it is, whether it may be
+/// written, the version a server there printed, and whether iznik's terminfo
+/// is compiled there.
+type Candidate<'held> = (&'held str, &'held str, &'held str, &'held str);
+
 /// A host's answer, built from what each field says. Each candidate carries
-/// the version an iznik server *there* printed, or nothing.
-fn answer(
-    system: &str,
-    machine: &str,
-    tic: &str,
-    terminfo: &str,
-    candidates: &[(&str, &str, &str)],
-) -> String {
-    let mut said = format!("system {system}\nmachine {machine}\ntic {tic}\nterminfo {terminfo}\n");
-    for (at, (path, writable, server)) in candidates.iter().enumerate() {
-        // Three labelled lines each, as the script prints them: writing to a
+/// the version an iznik server *there* printed, or nothing, and says for
+/// itself whether the terminfo is there.
+fn answer(system: &str, machine: &str, tic: &str, candidates: &[Candidate<'_>]) -> String {
+    let mut said = format!("system {system}\nmachine {machine}\ntic {tic}\n");
+    for (at, (path, writable, server, terminfo)) in candidates.iter().enumerate() {
+        // Four labelled lines each, as the script prints them: writing to a
         // `String` cannot fail.
-        for (name, value) in [("writable", writable), ("version", server), ("path", path)] {
+        for (name, value) in [
+            ("writable", writable),
+            ("version", server),
+            ("terminfo", terminfo),
+            ("path", path),
+        ] {
             let _written = writeln!(said, "candidate {at} {name} {value}");
         }
     }
@@ -57,7 +62,7 @@ fn answer(
 fn three<'held>(
     writable: [&'held str; 3],
     server_at: Option<(usize, &'held str)>,
-) -> Vec<(&'held str, &'held str, &'held str)> {
+) -> Vec<Candidate<'held>> {
     PLACES
         .iter()
         .enumerate()
@@ -66,7 +71,7 @@ fn three<'held>(
                 Some((named, version)) if named == at => version,
                 _elsewhere => "-",
             };
-            (*path, writable.get(at).copied().unwrap_or("no"), said)
+            (*path, writable.get(at).copied().unwrap_or("no"), said, "no")
         })
         .collect()
 }
@@ -75,13 +80,7 @@ fn three<'held>(
 /// server at the first place if one is named.
 fn linux(data: &str, home: &str, runtime: &str, server: &str) -> String {
     let at = (server != "-").then_some((0, server));
-    answer(
-        "Linux",
-        "x86_64",
-        "yes",
-        "no",
-        &three([data, home, runtime], at),
-    )
+    answer("Linux", "x86_64", "yes", &three([data, home, runtime], at))
 }
 
 /// A runner that counts how many commands it was asked to run and always says
@@ -146,7 +145,6 @@ fn host_probe_knows_the_machines_it_serves() {
             system,
             machine,
             "yes",
-            "no",
             &three(["yes", "yes", "yes"], None),
         ))
     };
@@ -254,7 +252,6 @@ fn host_probe_reads_the_server_at_the_prefix_it_chose() {
         "Linux",
         "x86_64",
         "yes",
-        "no",
         &three(
             ["no", "yes", "no"],
             Some((0, "iznik-server 0.0.1 protocol 1")),
@@ -276,7 +273,6 @@ fn host_probe_reads_the_server_at_the_prefix_it_chose() {
         "Linux",
         "x86_64",
         "yes",
-        "no",
         &three(
             ["no", "yes", "no"],
             Some((1, "iznik-server 0.0.1 protocol 1")),
@@ -306,8 +302,7 @@ fn host_probe_reads_a_prefix_with_a_space_in_it() {
         "Linux",
         "x86_64",
         "yes",
-        "no",
-        &[(spaced, "yes", "iznik-server 0.1.0 protocol 1")],
+        &[(spaced, "yes", "iznik-server 0.1.0 protocol 1", "no")],
     );
     let read = parse(&said).expect("a probe");
     assert_eq!(
@@ -319,6 +314,39 @@ fn host_probe_reads_a_prefix_with_a_space_in_it() {
         read.server.map(|held| held.crate_version),
         Some("0.1.0".to_owned()),
         "and the server there is still read"
+    );
+}
+
+/// # Panics
+///
+/// When the terminfo reported is one under a prefix that was not chosen.
+#[test]
+fn host_probe_reads_the_terminfo_at_the_prefix_it_chose() {
+    // An entry under a prefix this user cannot write is not the entry a pane
+    // on this host will be told about: what the bootstrap names is
+    // `<chosen>/terminfo`, and reporting one from elsewhere would have the
+    // server pointed at a directory that is not there.
+    let mut candidates = three(["no", "yes", "no"], None);
+    if let Some(first) = candidates.first_mut() {
+        first.3 = "yes";
+    }
+    let read = parse(&answer("Linux", "x86_64", "yes", &candidates)).expect("a probe");
+    assert_eq!(
+        read.prefix.as_path(),
+        Path::new(PLACES[1]),
+        "the prefix is the first one the host allows"
+    );
+    assert!(
+        !read.terminfo_installed,
+        "and the terminfo there is the one reported, which is none"
+    );
+    if let Some(second) = candidates.get_mut(1) {
+        second.3 = "yes";
+    }
+    let chosen = parse(&answer("Linux", "x86_64", "yes", &candidates)).expect("a probe");
+    assert!(
+        chosen.terminfo_installed,
+        "and when the chosen prefix has one, it is reported"
     );
 }
 
@@ -359,18 +387,17 @@ fn host_probe_reads_what_the_terminal_needs() {
     // asset is compiled under, and under a prefix of iznik's own rather than
     // wherever the host's own ncurses keeps its database.
     assert!(
-        PROBE_SCRIPT.contains(&format!("/terminfo/x/{TERMINAL_NAME}")),
-        "the script looks for iznik's own compiled entry: {PROBE_SCRIPT}"
+        PROBE_SCRIPT.contains(&format!("/terminfo/*/{TERMINAL_NAME}")),
+        "the script looks for iznik's own compiled entry, under whichever \
+         directory the host's own ncurses writes it in — a letter on Linux, a \
+         number where filenames do not keep their case: {PROBE_SCRIPT}"
     );
     for (tic, terminfo) in [("yes", "yes"), ("yes", "no"), ("no", "no"), ("no", "yes")] {
-        let read = parse(&answer(
-            "Linux",
-            "x86_64",
-            tic,
-            terminfo,
-            &three(["yes", "yes", "yes"], None),
-        ))
-        .expect("a probe");
+        let mut candidates = three(["yes", "yes", "yes"], None);
+        if let Some(first) = candidates.first_mut() {
+            first.3 = terminfo;
+        }
+        let read = parse(&answer("Linux", "x86_64", tic, &candidates)).expect("a probe");
         assert_eq!(read.tic_available, tic == "yes", "tic {tic}");
         assert_eq!(
             read.terminfo_installed,
@@ -385,28 +412,30 @@ fn host_probe_reads_what_the_terminal_needs() {
 /// When an answer missing a field it needs is read as though it were whole.
 #[test]
 fn host_probe_refuses_an_answer_it_cannot_read() {
+    // One whole candidate, for the cases about the fields beside it.
+    let whole = concat!(
+        "candidate 0 writable yes\n",
+        "candidate 0 version -\n",
+        "candidate 0 terminfo no\n",
+        "candidate 0 path /a\n"
+    );
+    // And one that lost a line of its own, which is a candidate that cannot be
+    // read rather than a candidate that answered no.
+    let partial = "candidate 0 writable yes\ncandidate 0 path /a\n";
     for (said, missing) in [
+        (format!("machine x86_64\ntic yes\n{whole}"), "system"),
+        (format!("system Linux\ntic yes\n{whole}"), "machine"),
+        (format!("system Linux\nmachine x86_64\n{whole}"), "tic"),
         (
-            "machine x86_64\ntic yes\nterminfo no\ncandidate /a yes -\n",
-            "system",
+            "system Linux\nmachine x86_64\ntic yes\n".to_owned(),
+            "candidate",
         ),
         (
-            "system Linux\ntic yes\nterminfo no\ncandidate /a yes -\n",
-            "machine",
-        ),
-        (
-            "system Linux\nmachine x86_64\nterminfo no\ncandidate /a yes -\n",
-            "tic",
-        ),
-        (
-            "system Linux\nmachine x86_64\ntic yes\ncandidate /a yes -\n",
-            "terminfo",
-        ),
-        (
-            "system Linux\nmachine x86_64\ntic yes\nterminfo no\n",
+            format!("system Linux\nmachine x86_64\ntic yes\n{partial}"),
             "candidate",
         ),
     ] {
+        let said = said.as_str();
         let refused = parse(said);
         let Err(ProbeError::Malformed { detail }) = refused else {
             panic!("an answer without `{missing}` was read anyway: {refused:?}");

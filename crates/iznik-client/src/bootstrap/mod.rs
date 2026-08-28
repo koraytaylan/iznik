@@ -106,7 +106,28 @@ pub async fn bootstrap(
     options: &BootstrapOptions,
     deadline: Duration,
 ) -> Result<Bootstrapped, BootstrapError> {
+    bootstrap_watched(transport, artifacts, options, deadline, &|_stage| {}).await
+}
+
+/// The same, telling `reached` which stage it has got to.
+///
+/// A bootstrap of a host that has nothing takes as long as the link does, and
+/// something is watching: the manager renders "probing", "uploading",
+/// "connecting" from these, and a person waiting deserves to know which of
+/// them they are waiting through.
+///
+/// # Errors
+///
+/// As [`bootstrap`].
+pub async fn bootstrap_watched(
+    transport: &Transport,
+    artifacts: &upload::ArtifactSet,
+    options: &BootstrapOptions,
+    deadline: Duration,
+    reached: &(dyn Fn(Stage) + Send + Sync),
+) -> Result<Bootstrapped, BootstrapError> {
     let host = transport.alias();
+    reached(Stage::Probe);
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
@@ -118,6 +139,7 @@ pub async fn bootstrap(
     // Where the server is, is where the host said it put it. The two agree,
     // and asking is cheaper than assuming they always will.
     let installed = if decision == Decision::Install {
+        reached(Stage::Upload);
         install(
             transport,
             &found,
@@ -141,6 +163,7 @@ pub async fn bootstrap(
         terminfo,
         terminfo_refused,
     } = installed;
+    reached(Stage::Launch);
     let (channel, snapshot) = launch(transport, Some(&server), options, expires).await?;
     Ok(Bootstrapped {
         decision,
@@ -270,7 +293,24 @@ pub async fn upgrade(
     )
     .await?;
     let (channel, _held) = launch(transport, Some(&installed.server), options, expires).await?;
+    // The daemon *is* the sessions, so what matters is which one is answering
+    // — not which binary is on disk. `--stop` is allowed to fail, because a
+    // host with nothing running is a host with nothing to stop; but if the old
+    // daemon survived it, the new binary's relay has just attached to it and
+    // the upgrade did not happen.
+    let answering = channel.greeting().server_version.clone();
     channel.close();
+    let carried = bundled().crate_version;
+    if answering != carried {
+        return Err(UpgradeError::Bootstrap(BootstrapError {
+            host,
+            stage: Stage::Launch,
+            detail: format!(
+                "the server was replaced but {answering} is still answering, not {carried}: \
+                 the daemon that was there did not stop"
+            ),
+        }));
+    }
     Ok(())
 }
 

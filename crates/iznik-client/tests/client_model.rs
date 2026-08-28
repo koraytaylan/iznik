@@ -145,12 +145,12 @@ fn client_model_advances_a_cursor_exactly_and_forwards() {
     };
     assert_eq!(
         held.advance(ARRIVED),
-        Sequence(FROM.0 + ARRIVED),
+        Sequence(FROM.0.saturating_add(ARRIVED)),
         "and moves on by exactly what arrived"
     );
     assert_eq!(
         held.advance(0),
-        Sequence(FROM.0 + ARRIVED),
+        Sequence(FROM.0.saturating_add(ARRIVED)),
         "nothing arriving moves it nowhere"
     );
     // The cursor is what a resume asks from: wrapping it would ask a host for
@@ -192,7 +192,7 @@ fn client_model_counts_the_credit_it_has_given() {
     held.spend(ARRIVED);
     assert_eq!(
         held.credit_outstanding,
-        CREDIT - ARRIVED,
+        CREDIT.saturating_sub(ARRIVED),
         "less what was spent"
     );
     held.spend(CREDIT);
@@ -233,7 +233,11 @@ fn client_model_takes_the_hosts_latest_announcement() {
     let _first = view.subscribe(PANE, CHANNEL, FROM);
     // A reconnection announces the pane again, on whatever channel is free
     // and from wherever the resume began.
-    let second = view.subscribe(PANE, CHANNEL + 1, Sequence(FROM.0 + ARRIVED));
+    let second = view.subscribe(
+        PANE,
+        CHANNEL.saturating_add(1),
+        Sequence(FROM.0.saturating_add(ARRIVED)),
+    );
     assert_eq!(
         view.subscription(PANE),
         Some(&second),

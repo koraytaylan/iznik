@@ -177,11 +177,16 @@ pub fn arrived(model: &mut ClientModel, host: &HostId, channel: u8, bytes: usize
         return Vec::new();
     };
     let carried = u64::try_from(bytes).unwrap_or(u64::MAX);
-    for held in view.subscriptions.values_mut() {
-        if held.channel == channel {
-            let _reached = held.advance(carried);
-            held.spend(carried);
-        }
+    // The one pane whose bytes these are. Advancing every subscription that
+    // holds the number would move a cursor for a pane that sent nothing, and
+    // that pane would then resume from a byte it never reached — losing
+    // exactly the output a resume exists to keep.
+    let Some(pane) = view.carrying(channel) else {
+        return Vec::new();
+    };
+    if let Some(held) = view.subscription_mut(pane) {
+        let _reached = held.advance(carried);
+        held.spend(carried);
     }
     Vec::new()
 }

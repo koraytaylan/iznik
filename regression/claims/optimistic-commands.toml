@@ -1,0 +1,50 @@
+# Commands that show before the host has agreed to them.
+#
+# `test` proofs, and for the reason the task names: these are pure functions
+# over a host view and a moment. What a case here asks — is the picture on the
+# screen one the host would recognize? — is answered by writing out the deltas
+# the host would send and applying them to a copy through the protocol's own
+# reconciler. A container would add a network and no truth; what it proves
+# about this is one layer up, where a real host answers.
+
+[[claim]]
+id = "optimistic-shows-exactly-what-the-host-would-send"
+statement = "Renaming a session or a tab, reordering a session's tabs and closing a session each show at once, and what they show is the same model the host's own change would produce — checked against the deltas applied to a copy through the protocol's reconciler, over two hundred generated models."
+test = "iznik-client::optimistic_commands::optimistic_commands_show_exactly_what_the_host_would_send"
+because = "the far end is built by the reconciler the host uses, so a host would restate the same arithmetic more slowly"
+
+[[claim]]
+id = "optimistic-shows-the-cascade-a-pane-causes"
+statement = "Closing a pane shows the whole cascade the host would announce — the pane, and then either the layout that no longer places it or the tab it emptied and the session behind that — and what it shows is a model a host could hold."
+test = "iznik-client::optimistic_commands::optimistic_commands_show_the_cascade_a_pane_causes"
+because = "the cascade is read against the host's own registry and applied by the host's own reconciler"
+
+[[claim]]
+id = "optimistic-waits-for-what-only-the-host-can-mint"
+statement = "Creating a session, a tab or a pane, moving a pane and setting a layout are not applied locally and the screen does not move — because each needs an identity or an arrangement only the host can mint, and a placeholder reconciled away a moment later is more flicker than waiting one round trip — while the command still goes and is still waited for."
+test = "iznik-client::optimistic_commands::optimistic_commands_wait_for_what_only_the_host_can_mint"
+because = "what is proven is that the model did not move, which is a comparison of two values"
+
+[[claim]]
+id = "optimistic-puts-back-what-the-host-refuses"
+statement = "A refusal puts the model back exactly as it was and leaves nothing pending; an answer to a command nobody is waiting for is not acted on."
+test = "iznik-client::optimistic_commands::optimistic_commands_put_back_what_the_host_refuses"
+because = "the model kept with the pending entry is the whole of the rollback, and equality is the whole of the claim"
+
+[[claim]]
+id = "optimistic-undoes-one-thing-at-a-time"
+statement = "With two commands on one tab in flight, a refusal of the first undoes its effect and leaves the second's standing — the later ones being re-applied on the corrected model — and refusing the second in its turn returns the model to where it began."
+test = "iznik-client::optimistic_commands::optimistic_commands_undo_one_thing_at_a_time"
+because = "overlapping commands are two calls and a value; nothing about them needs a host"
+
+[[claim]]
+id = "optimistic-gives-up-on-what-is-never-answered"
+statement = "A command still inside its time is left alone; one past it is rolled back and named in a `CommandTimedOut`, because a screen left in a state the host never agreed to is worse than a visible failure. The moment is an argument, so a five-second timeout is proven in microseconds."
+test = "iznik-client::optimistic_commands::optimistic_commands_give_up_on_what_is_never_answered"
+because = "no clock is read, so waiting five seconds would prove nothing the arithmetic does not"
+
+[[claim]]
+id = "optimistic-never-gives-one-number-twice"
+statement = "Command numbers are minted in order and never reused, even after every one of them has been retired — because an answer to a command that was given up on must not settle whichever later command had been given its number."
+test = "iznik-client::optimistic_commands::optimistic_commands_never_give_one_number_twice"
+because = "the counter is the view's own, and reuse is a property of the counter"

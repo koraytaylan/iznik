@@ -50,15 +50,17 @@ filter = 'test(/^scenario::/)'
 test-group = 'shells'
 threads-required = 3
 
-# One case stands six shells up at once and waits on each of them in turn.
-# Inside the group it counted for one, which is the same mistake the scenarios
-# above were making: it is not the size of a case that starves it but the load
-# it brings, and six shells beside eleven other cases' shells is a prompt that
-# does not come inside a deadline written to catch a hang.
+# One case stands six shells up at once and waits on each of them in turn,
+# through one mirror thread they all share. Inside the group it counted for
+# one, which is the same mistake the scenarios above were making: it is not the
+# size of a case that starves it but the load it brings. It takes the group
+# whole — six shells and the thread that serves them are worth as much as
+# twelve threads of anything else — so that a deadline written to catch a hang
+# is not spent measuring what else the machine was doing.
 [[profile.default.overrides]]
 filter = 'test(pane_many_share_one_thread)'
 test-group = 'shells'
-threads-required = 6
+threads-required = 12
 
 # A timing measurement never shares the machine with the rest of the suite.
 [[profile.default.overrides]]

@@ -43,6 +43,12 @@ const DIGIT_MASK: u8 = 0x0f;
 /// The name is the user's, not this program's: an alias from their own SSH
 /// configuration, or `unix:<path>`. Nothing here canonicalizes it, because a
 /// name a person does not recognize is worse than a long one.
+///
+/// The empty name is not one of them. The type admits it — the field is
+/// public, as the architecture asks — but `iznik:///7` is refused when it is
+/// read back, deliberately: whoever wrote that meant to name a host, and
+/// answering with a host called nothing would carry the mistake further than
+/// refusing it does.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HostId(pub String);
 
@@ -168,6 +174,10 @@ pub fn unescaped(held: &str) -> Result<String, AddressError> {
         let digits = after
             .get(ESCAPE.len_utf8()..ESCAPE.len_utf8().saturating_add(ESCAPE_DIGITS))
             .ok_or_else(complain)?;
+        // `from_str_radix` would take a sign, and `%+7` is not an escape.
+        if !digits.bytes().all(|digit| digit.is_ascii_hexdigit()) {
+            return Err(complain());
+        }
         let byte = u8::from_str_radix(digits, HEXADECIMAL).map_err(|_unreadable| complain())?;
         bytes.push(byte);
         rest = after
@@ -216,7 +226,11 @@ impl GlobalPaneId {
                 .ok_or_else(|| AddressError::Host {
                     given: given.to_owned(),
                 })?;
-        if host.is_empty() {
+        // The host is one segment, and a separator inside it was escaped on
+        // the way out. Reading `iznik://a/b/7` as the host `a/b` would give
+        // one host two addresses, only one of which this ever writes — and an
+        // address a program is written against must name one thing.
+        if host.is_empty() || host.contains(ADDRESS_SEPARATOR) {
             return Err(AddressError::Host {
                 given: given.to_owned(),
             });

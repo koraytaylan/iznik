@@ -80,23 +80,24 @@ if command -v tic >/dev/null 2>&1; then printf 'tic yes
 '; else printf 'tic no
 '; fi
 index=0
-terminfo=no
 for candidate in "$data/iznik" "$home/.local/share/iznik" "$runtime"
 do
   said=-
   if [ -x "$candidate/bin/iznik-server" ] && [ -O "$candidate/bin/iznik-server" ]
   then said=$("$candidate/bin/iznik-server" --version 2>/dev/null | head -n 1); fi
+  entry=no
+  for compiled in "$candidate"/terminfo/*/xterm-ghostty
+  do if [ -r "$compiled" ]; then entry=yes; fi; done
   printf 'candidate %s writable %s
 ' "$index" "$(writable "$candidate")"
   printf 'candidate %s version %s
 ' "$index" "$said"
+  printf 'candidate %s terminfo %s
+' "$index" "$entry"
   printf 'candidate %s path %s
 ' "$index" "$candidate"
-  if [ -r "$candidate/terminfo/x/xterm-ghostty" ]; then terminfo=yes; fi
   index=$((index + 1))
 done
-printf 'terminfo %s
-' "$terminfo"
 "#;
 
 /// The operating systems iznik has artifacts for.
@@ -347,6 +348,8 @@ struct Candidate {
     path: PathBuf,
     /// Whether this user may write it.
     writable: bool,
+    /// Whether the terminfo iznik carries is compiled *there*.
+    terminfo: bool,
     /// The server installed *there*, if there is one this can read.
     server: Option<InstalledServer>,
 }
@@ -358,6 +361,8 @@ struct Building {
     writable: Option<bool>,
     /// Its `version` line.
     version: Option<String>,
+    /// Its `terminfo` line.
+    terminfo: Option<bool>,
     /// Its `path` line.
     path: Option<PathBuf>,
 }
@@ -380,6 +385,7 @@ fn read_field(held: &mut BTreeMap<usize, Building>, line: &str) {
     match name {
         "writable" => building.writable = Some(value == YES),
         "version" => building.version = Some(value.to_owned()),
+        "terminfo" => building.terminfo = Some(value == YES),
         "path" => building.path = Some(PathBuf::from(value)),
         _other => {}
     }
@@ -403,6 +409,7 @@ fn candidates(output: &str) -> Vec<Candidate> {
             Some(Candidate {
                 path: building.path?,
                 writable: building.writable?,
+                terminfo: building.terminfo?,
                 server: Some(said.as_str())
                     .filter(|named| *named != NOTHING)
                     .and_then(installed),
@@ -433,10 +440,8 @@ pub fn parse(output: &str) -> Result<HostProbe, ProbeError> {
     // Every field the script prints must be there. A host that answered only
     // half of it is a host something went wrong on, and reading a missing
     // `tic` line as "no tic" would install nothing and say nothing about why.
-    for wanted in ["tic", "terminfo"] {
-        if named(output, wanted).is_none() {
-            return Err(missing(wanted));
-        }
+    if named(output, "tic").is_none() {
+        return Err(missing("tic"));
     }
     let offered = candidates(output);
     if offered.is_empty() {
@@ -457,7 +462,10 @@ pub fn parse(output: &str) -> Result<HostProbe, ProbeError> {
         // candidate: what the bootstrap will run is `<prefix>/bin/iznik-server`,
         // so a server anywhere else is not the one it is deciding about.
         server: chosen.server.clone(),
-        terminfo_installed: said_yes(output, "terminfo"),
+        // The terminfo at the prefix that was chosen, for the same reason the
+        // server is: what a pane will be told about is `<prefix>/terminfo`,
+        // and an entry under a candidate this user cannot write is not it.
+        terminfo_installed: chosen.terminfo,
         tic_available: said_yes(output, "tic"),
         prefix: chosen.path.clone(),
     })

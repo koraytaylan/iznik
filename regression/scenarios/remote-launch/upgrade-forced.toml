@@ -66,10 +66,13 @@ alias = "host0"
 [steps.bootstrap.expect]
 decision = "up to date"
 
+# And the shim itself: a shell script begins `#!`, the artifact begins with
+# ELF's own four bytes. A version pattern would not tell them apart, because
+# the shim answers one.
 [[steps]]
 id = "and-the-shim-is-gone"
 container = "engine"
-run = "ssh -o BatchMode=yes host0 '$HOME/.local/share/iznik/bin/iznik-server --version'"
+run = "ssh -o BatchMode=yes host0 'head -c 4 $HOME/.local/share/iznik/bin/iznik-server | od -An -c | tr -s \" \"'"
 timeout_seconds = 30
 
 [[expect]]
@@ -99,4 +102,4 @@ stdout_contains = "up to date"
 [[expect]]
 step = "and-the-shim-is-gone"
 exit = 0
-stdout_matches = "iznik-server [0-9]+\\.[0-9]+\\.[0-9]+ protocol 1"
+stdout_contains = "177 E L F"

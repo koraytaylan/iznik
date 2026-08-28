@@ -100,6 +100,13 @@ pub struct HostView {
     pub focus: Option<PaneId>,
     /// The commands sent and not yet answered, in the order they were sent.
     pub pending: Vec<PendingCommand>,
+    /// The last number this client gave a command on this host.
+    ///
+    /// Kept rather than derived from `pending`, because a number must never be
+    /// reused: a command given up on is taken out of `pending`, and an answer
+    /// to it that arrives afterwards would otherwise confirm — or roll back —
+    /// whichever later command had been given its number.
+    pub minted: CommandId,
 }
 
 impl Default for HostView {
@@ -121,7 +128,14 @@ impl HostView {
             subscriptions: BTreeMap::new(),
             focus: None,
             pending: Vec::new(),
+            minted: CommandId(0),
         }
+    }
+
+    /// The next number to give a command on this host.
+    pub fn mint(&mut self) -> CommandId {
+        self.minted = CommandId(self.minted.0.saturating_add(1));
+        self.minted
     }
 
     /// The subscription to `pane`, if this client holds one.
@@ -141,10 +155,34 @@ impl HostView {
     /// A second announcement for one pane replaces the first: the host has
     /// just said which channel its bytes come on and where they start, and
     /// that is more recent than anything this held.
+    ///
+    /// It also drops any *other* pane's claim on that channel. A host
+    /// reassigns channel numbers as panes come and go, and after a
+    /// reconnection it re-announces every resumed pane on whatever is free —
+    /// so a pane not yet re-announced can be left holding a number that now
+    /// belongs to another. Bytes arriving on it would then move the wrong
+    /// pane's cursor, and the pane whose bytes they were would resume from a
+    /// byte it never reached. The host has just said whose channel this is.
     pub fn subscribe(&mut self, pane: PaneId, channel: u8, from: Sequence) -> Subscription {
+        self.subscriptions
+            .retain(|held, found| *held == pane || found.channel != channel);
         let opened = Subscription::opened(channel, from);
         let _replaced = self.subscriptions.insert(pane, opened);
         opened
+    }
+
+    /// The pane whose bytes arrive on `channel`, when exactly one does.
+    #[must_use]
+    pub fn carrying(&self, channel: u8) -> Option<PaneId> {
+        let mut found = self
+            .subscriptions
+            .iter()
+            .filter(|(_pane, held)| held.channel == channel)
+            .map(|(pane, _held)| *pane);
+        let first = found.next()?;
+        // Two panes claiming one channel is a state this cannot resolve, and
+        // moving the wrong cursor is worse than moving none.
+        found.next().is_none().then_some(first)
     }
 
     /// Drops the subscription to `pane`, and says what it was.

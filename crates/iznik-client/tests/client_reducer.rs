@@ -234,7 +234,7 @@ fn client_reducer_follows_a_pane_from_its_channel_to_its_screen() {
             .map(|held| held.cursor);
         assert_eq!(
             cursor,
-            Some(Sequence(FROM.0 + u64::try_from(ARRIVED)?)),
+            Some(Sequence(FROM.0.saturating_add(u64::try_from(ARRIVED)?))),
             "the cursor moved by exactly what arrived on its own channel, and not by what \
              arrived on another"
         );
@@ -434,6 +434,61 @@ fn client_reducer_says_when_it_cannot_read_what_arrived() {
             held(&model, &host)?,
             start,
             "and the model is exactly what it was"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a channel a host has reassigned moves the cursor of the pane that used
+/// to hold it.
+#[test]
+fn client_reducer_gives_a_channel_to_one_pane_at_a_time() {
+    let case = || -> Result<(), Failed> {
+        let host = work();
+        let mut generator = ModelGenerator::new(SEED);
+        let mut model = knowing(&host, generator.model());
+        let other = PaneId(2);
+        // Two panes, and then a reconnection: the host resumes them in
+        // whatever order it likes and hands out whatever channel numbers are
+        // free, which can be the ones the other pane held a moment ago.
+        for (pane, channel) in [(PANE, CHANNEL), (other, OTHER_CHANNEL)] {
+            let _opened = reduce(
+                &mut model,
+                &host,
+                &ToClient::PaneChannel {
+                    pane,
+                    channel,
+                    sequence: FROM,
+                },
+            );
+        }
+        let _reassigned = reduce(
+            &mut model,
+            &host,
+            &ToClient::PaneChannel {
+                pane: other,
+                channel: CHANNEL,
+                sequence: FROM,
+            },
+        );
+        let _moved = arrived(&mut model, &host, CHANNEL, ARRIVED);
+        let Some(view) = model.host(&host) else {
+            return Err("the host is known".into());
+        };
+        assert_eq!(
+            view.subscription(other).map(|held| held.cursor),
+            Some(Sequence(FROM.0.saturating_add(u64::try_from(ARRIVED)?))),
+            "the pane the channel now belongs to moved"
+        );
+        assert_eq!(
+            view.subscription(PANE),
+            None,
+            "and the one that used to hold it no longer claims a channel that \
+             is not its own: its own announcement is still coming, and would \
+             have brought the byte it stands at with it"
         );
         Ok(())
     };

@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-client/tests/optimistic_commands.rs"
   - "regression/claims/optimistic-commands.toml"
   - "policy/lexicon/optimistic-commands.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Optimistic Commands
