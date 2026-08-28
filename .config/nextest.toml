@@ -50,6 +50,16 @@ filter = 'test(/^scenario::/)'
 test-group = 'shells'
 threads-required = 3
 
+# One case stands six shells up at once and waits on each of them in turn.
+# Inside the group it counted for one, which is the same mistake the scenarios
+# above were making: it is not the size of a case that starves it but the load
+# it brings, and six shells beside eleven other cases' shells is a prompt that
+# does not come inside a deadline written to catch a hang.
+[[profile.default.overrides]]
+filter = 'test(pane_many_share_one_thread)'
+test-group = 'shells'
+threads-required = 6
+
 # A timing measurement never shares the machine with the rest of the suite.
 [[profile.default.overrides]]
 filter = 'test(/latency|throughput|baseline/)'
@@ -63,6 +73,15 @@ threads-required = 'num-cpus'
 # with the scenarios above, which take three each, keeps a wait a wait.
 [[profile.default.overrides]]
 filter = 'package(iznik-server)'
+test-group = 'shells'
+
+# The client's own cases that stand a whole server up — a daemon, a socket and
+# a real shell on a real pseudoterminal — are the same load as the server's,
+# from another crate. Outside the group they run beside its twelve rather than
+# inside them, and what starves is a pane waiting for a shell to answer a
+# signal, which then fails a deadline meant to catch a hang.
+[[profile.default.overrides]]
+filter = 'binary(remote_channel) + binary(remote_launch)'
 test-group = 'shells'
 
 # The fixture reaper removes every labelled container and network, a sibling

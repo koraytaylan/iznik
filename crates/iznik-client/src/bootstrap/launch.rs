@@ -195,6 +195,13 @@ pub struct Bootstrapped {
     pub decision: Decision,
     /// Where the server is on the host.
     pub server: PathBuf,
+    /// Where the terminfo iznik carries is on the host, when it is anywhere.
+    ///
+    /// A pane on a host that has it is told `xterm-ghostty`; one on a host
+    /// that does not is told `xterm-256color`, which is the nearest lie.
+    pub terminfo: Option<PathBuf>,
+    /// Why there is none, when there is none and a reason is known.
+    pub terminfo_refused: Option<String>,
     /// What the host said it holds.
     pub snapshot: HostModel,
     /// The channel it is reached on.
@@ -300,7 +307,13 @@ pub(crate) fn refused(host: &str, stage: Stage, detail: &impl Display) -> Bootst
 /// disagreed is a version problem.
 fn stage_of(source: &ChannelError) -> Stage {
     match source {
-        ChannelError::ProtocolVersion { .. } | ChannelError::Unexpected { .. } => Stage::Handshake,
+        // A link that opened and then disagreed, said the wrong thing, or said
+        // nothing at all is the handshake. Time was given and the greeting did
+        // not come; a server that could not be started closes the link instead
+        // and says why on its standard error.
+        ChannelError::ProtocolVersion { .. }
+        | ChannelError::Unexpected { .. }
+        | ChannelError::Deadline { .. } => Stage::Handshake,
         _other => Stage::Launch,
     }
 }
@@ -309,9 +322,10 @@ fn stage_of(source: &ChannelError) -> Stage {
 ///
 /// # Errors
 ///
-/// A [`BootstrapError`] at [`Stage::Launch`] when the link cannot be opened,
-/// and at [`Stage::Handshake`] when the server disagrees about the protocol or
-/// will not say what it holds.
+/// A [`BootstrapError`] at [`Stage::Launch`] when the link cannot be opened or
+/// the caller's whole budget is already spent, and at [`Stage::Handshake`]
+/// when the server disagrees about the protocol, says something else, or says
+/// nothing inside the time it was given.
 pub async fn launch(
     transport: &Transport,
     server: Option<&Path>,
@@ -319,8 +333,19 @@ pub async fn launch(
     expires: Instant,
 ) -> Result<(RemoteChannel, HostModel), BootstrapError> {
     let host = transport.alias();
+    let allowed = left(expires, options.channel.open_deadline);
+    if allowed.is_zero() {
+        // Nothing was attempted, so nothing said nothing: a refusal that
+        // called this a handshake would send a person to look at a server that
+        // was never started.
+        return Err(refused(
+            &host,
+            Stage::Launch,
+            &"the whole budget was spent before the server could be started",
+        ));
+    }
     let opening = ChannelOptions {
-        open_deadline: left(expires, options.channel.open_deadline),
+        open_deadline: allowed,
         ..options.channel.clone()
     };
     let mut channel = RemoteChannel::open(transport, server, opening)

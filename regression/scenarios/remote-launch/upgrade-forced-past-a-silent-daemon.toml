@@ -1,0 +1,90 @@
+name = "upgrade-forced-past-a-silent-daemon"
+claims = ["launch-forces-past-a-daemon-it-cannot-reach"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The case a forced upgrade exists for is a daemon this client can no longer
+# speak to: one whose protocol version is not this one's, whose binary will not
+# start, whose handshake never comes. Counting its panes would need the very
+# channel that is broken, so `force` must not ask for the count at all.
+#
+# The shim here answers `--version` like an older server and refuses everything
+# else, which is what any of those looks like from the client's side.
+[[steps]]
+id = "install-the-real-server"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "make-it-older-and-unreachable"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server 0.0.1 protocol 1\\\\n\"; exit 0; fi\\nprintf \"this server will not talk to you\\\\n\" >&2\\nexit 1\\n' > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+# Without force it is refused, because the pane count cannot be had and
+# replacing a daemon that might be holding panes is not this client's call.
+[[steps]]
+id = "an-upgrade-without-force-is-refused"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+force = false
+
+[steps.bootstrap.expect]
+refused = "this server will not talk to you"
+
+[[steps]]
+id = "a-forced-upgrade-goes-through-anyway"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+force = true
+
+[[steps]]
+id = "and-the-host-is-now-up-to-date"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "up to date"
+
+[[expect]]
+step = "install-the-real-server"
+exit = 0
+
+[[expect]]
+step = "make-it-older-and-unreachable"
+exit = 0
+stdout_contains = "iznik-server 0.0.1 protocol 1"
+
+[[expect]]
+step = "an-upgrade-without-force-is-refused"
+exit = 0
+stdout_contains = "refused at"
+
+[[expect]]
+step = "a-forced-upgrade-goes-through-anyway"
+exit = 0
+stdout_contains = "upgraded"
+
+[[expect]]
+step = "and-the-host-is-now-up-to-date"
+exit = 0
+stdout_contains = "up to date"

@@ -50,8 +50,24 @@ alias = "host0"
 action = "upgrade"
 force = true
 
+# What proves the shim is gone is not a version pattern — the shim's own
+# `iznik-server 0.0.1 protocol 1` matches any of those — but a bootstrap that
+# reads the host and decides there is nothing to do. That is exactly the
+# statement "the version that answers is the one this build carries", asked of
+# the client rather than of a regular expression.
 [[steps]]
-id = "and-the-version-that-answers-is-this-build"
+id = "and-the-host-is-now-up-to-date"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "up to date"
+
+[[steps]]
+id = "and-the-shim-is-gone"
 container = "engine"
 run = "ssh -o BatchMode=yes host0 '$HOME/.local/share/iznik/bin/iznik-server --version'"
 timeout_seconds = 30
@@ -76,6 +92,11 @@ exit = 0
 stdout_contains = "upgraded"
 
 [[expect]]
-step = "and-the-version-that-answers-is-this-build"
+step = "and-the-host-is-now-up-to-date"
+exit = 0
+stdout_contains = "up to date"
+
+[[expect]]
+step = "and-the-shim-is-gone"
 exit = 0
 stdout_matches = "iznik-server [0-9]+\\.[0-9]+\\.[0-9]+ protocol 1"

@@ -1,0 +1,68 @@
+# Everything the client knows, and nothing it does.
+#
+# Every claim here is a `test` proof, and the reason is the task's own: the
+# model performs no I/O. Hosts being independent, a cursor moving only
+# forwards, a pending command found by its number — all of them are properties
+# of a value, and a container would put that value further away without making
+# any of it more true. What is proven against a host is what the reducer and
+# the manager do with this, one and two layers up.
+
+[[claim]]
+id = "client-model-starts-knowing-nothing"
+statement = "A client that has just started knows no hosts, lists none, subscribes to nothing, and holds nothing that could not have come from a server."
+test = "iznik-client::client_model::client_model_starts_knowing_nothing"
+because = "it is the value `Default` produces"
+
+[[claim]]
+id = "client-model-keeps-its-hosts-independent"
+statement = "Adding a subscription to one host's view, replacing that view wholesale and then removing the host leaves every other host's view exactly as it was — because one host reconnecting, failing or being taken away must not disturb the others."
+test = "iznik-client::client_model::client_model_keeps_its_hosts_independent"
+because = "independence is a property of the structure, and equality over the untouched views is the whole of it"
+
+[[claim]]
+id = "client-model-advances-a-cursor-exactly-and-forwards"
+statement = "A subscription records the channel the host announced and the byte it starts at, moves on by exactly what arrived, moves nowhere when nothing arrives, and never wraps past the end of the stream — because the cursor is what a resume asks from, and one that wrapped would ask a host for bytes it dropped long ago."
+test = "iznik-client::client_model::client_model_advances_a_cursor_exactly_and_forwards"
+because = "it is arithmetic on a value, exact everywhere"
+
+[[claim]]
+id = "client-model-puts-the-cursor-where-a-screen-says"
+statement = "A screen the server sent is the one thing that may move a cursor backwards, and it moves it to the sequence the server named."
+test = "iznik-client::client_model::client_model_puts_the_cursor_where_a_screen_says"
+because = "same: what is proven is which sequence the subscription holds afterwards"
+
+[[claim]]
+id = "client-model-counts-the-credit-it-has-given"
+statement = "Credit granted and credit spent add up, and a server that spent more than it was given leaves none rather than a debt that would read as a grant of sixteen exabytes."
+test = "iznik-client::client_model::client_model_counts_the_credit_it_has_given"
+because = "it is arithmetic that must not wrap, and wrapping is the same everywhere"
+
+[[claim]]
+id = "client-model-drops-the-focus-with-the-subscription"
+statement = "Unsubscribing gives back what the subscription was and leaves nothing focused on a pane there is no subscription to."
+test = "iznik-client::client_model::client_model_drops_the_focus_with_the_subscription"
+because = "the focus and the subscriptions are two fields of one value"
+
+[[claim]]
+id = "client-model-takes-the-hosts-latest-announcement"
+statement = "A second announcement for one pane replaces the first and leaves one subscription — because a reconnection announces the pane again, on whatever channel is free and from wherever the resume began, and that is more recent than anything the client held."
+test = "iznik-client::client_model::client_model_takes_the_hosts_latest_announcement"
+because = "it is what the map does with a second insert"
+
+[[claim]]
+id = "client-model-orders-pending-commands-by-submission"
+statement = "Commands sent and not yet answered are held in the order they were sent — which is the order they must be rolled back in — are each found by their number, and retiring one gives it back and leaves the rest in order."
+test = "iznik-client::client_model::client_model_orders_pending_commands_by_submission"
+because = "the order is a property of the list, and no host is involved in keeping it"
+
+[[claim]]
+id = "client-model-names-the-commands-that-have-waited"
+statement = "Asked which commands were sent before a moment, it names those and not the ones sent since — which is what giving up on a command needs, without a clock of its own."
+test = "iznik-client::client_model::client_model_names_the_commands_that_have_waited"
+because = "the moment is an argument, so the case needs no time to pass"
+
+[[claim]]
+id = "client-model-validates-every-host-it-holds"
+statement = "Every host model it holds is one a server could have sent, and a model that is not — a session with no tabs — is refused naming the host it belongs to, because a client that rendered one would show something the host does not have."
+test = "iznik-client::client_model::client_model_validates_every_host_it_holds"
+because = "the invariants are the protocol's own, proven there; what is proven here is that every host is put through them and that the complaint says which"

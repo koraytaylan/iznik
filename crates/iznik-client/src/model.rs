@@ -1,3 +1,286 @@
-//! The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs.
+//! Everything the client knows, and nothing it does.
 //!
-//! Filled by task `client-model` of plan 0005; until then this module holds only its documentation.
+//! One host model per host — the server's own, replaced whole or reconciled —
+//! and beside it the things the server does not hold: which panes this client
+//! subscribes to, the byte each subscription has reached, which pane has the
+//! focus, and the commands that have been sent and not yet answered.
+//!
+//! The cursor is the point of the whole file. A link that dies is a link that
+//! comes back, and what makes a pane's stream survive that is knowing, for
+//! every subscribed pane, the sequence this client holds — so the resume asks
+//! for the next byte rather than for a screen. Nothing here does any I/O; it
+//! is a value, and the reducer and the manager are what move it.
+
+use std::collections::BTreeMap;
+use std::time::Instant;
+
+use core::fmt::{self, Display, Formatter};
+
+use iznik_protocol::command::SessionCommand;
+use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::model::{HostModel, ModelError};
+
+use crate::host::identity::HostId;
+
+/// One subscribed pane: where its bytes arrive, how far they have been read,
+/// and how much this client has told the server it may send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Subscription {
+    /// The channel the host announced for it.
+    pub channel: u8,
+    /// The next byte this client has not seen.
+    pub cursor: Sequence,
+    /// How many bytes of credit the server has been granted and not spent.
+    pub credit_outstanding: u64,
+}
+
+impl Subscription {
+    /// A subscription that has just been announced, holding nothing yet.
+    #[must_use]
+    pub fn opened(channel: u8, from: Sequence) -> Subscription {
+        Subscription {
+            channel,
+            cursor: from,
+            credit_outstanding: 0,
+        }
+    }
+
+    /// Moves the cursor on by what arrived.
+    ///
+    /// Forwards only. The cursor is what a resume asks from, so a count that
+    /// would carry it past what a `u64` holds leaves it where it is rather
+    /// than wrapping to the beginning of the stream.
+    pub fn advance(&mut self, bytes: u64) -> Sequence {
+        self.cursor = Sequence(self.cursor.0.saturating_add(bytes));
+        self.cursor
+    }
+
+    /// Puts the cursor where a screen the server sent begins.
+    ///
+    /// The one thing that may move it backwards, and only because the server
+    /// said so: a client too far behind to be caught up byte by byte is given
+    /// a screen and the sequence it stands at.
+    pub fn resume_at(&mut self, sequence: Sequence) {
+        self.cursor = sequence;
+    }
+
+    /// Records credit given to the server.
+    pub fn grant(&mut self, bytes: u64) {
+        self.credit_outstanding = self.credit_outstanding.saturating_add(bytes);
+    }
+
+    /// Records credit the server has spent.
+    pub fn spend(&mut self, bytes: u64) {
+        self.credit_outstanding = self.credit_outstanding.saturating_sub(bytes);
+    }
+}
+
+/// A command sent to a host and not yet answered, with the model to put back
+/// if the host refuses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingCommand {
+    /// This client's number for it.
+    pub id: CommandId,
+    /// What was asked.
+    pub command: SessionCommand,
+    /// The model as it stood before the local effect was applied.
+    pub rollback: HostModel,
+    /// When it was sent, so it can be given up on.
+    pub submitted_at: Instant,
+}
+
+/// One host, as this client sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostView {
+    /// The host's own model, as the server last said it stands.
+    pub model: HostModel,
+    /// The panes this client subscribes to, by pane.
+    pub subscriptions: BTreeMap<PaneId, Subscription>,
+    /// The pane this client is showing, when it is showing one.
+    pub focus: Option<PaneId>,
+    /// The commands sent and not yet answered, in the order they were sent.
+    pub pending: Vec<PendingCommand>,
+}
+
+impl Default for HostView {
+    fn default() -> HostView {
+        HostView::of(HostModel {
+            generation: Generation(0),
+            sessions: Vec::new(),
+        })
+    }
+}
+
+impl HostView {
+    /// A view of a host whose model is `model` and about which nothing else is
+    /// known yet.
+    #[must_use]
+    pub fn of(model: HostModel) -> HostView {
+        HostView {
+            model,
+            subscriptions: BTreeMap::new(),
+            focus: None,
+            pending: Vec::new(),
+        }
+    }
+
+    /// The subscription to `pane`, if this client holds one.
+    #[must_use]
+    pub fn subscription(&self, pane: PaneId) -> Option<&Subscription> {
+        self.subscriptions.get(&pane)
+    }
+
+    /// The same, to be moved on.
+    pub fn subscription_mut(&mut self, pane: PaneId) -> Option<&mut Subscription> {
+        self.subscriptions.get_mut(&pane)
+    }
+
+    /// Opens a subscription to `pane` on `channel` from `from`, replacing any
+    /// that was there.
+    ///
+    /// A second announcement for one pane replaces the first: the host has
+    /// just said which channel its bytes come on and where they start, and
+    /// that is more recent than anything this held.
+    pub fn subscribe(&mut self, pane: PaneId, channel: u8, from: Sequence) -> Subscription {
+        let opened = Subscription::opened(channel, from);
+        let _replaced = self.subscriptions.insert(pane, opened);
+        opened
+    }
+
+    /// Drops the subscription to `pane`, and says what it was.
+    pub fn unsubscribe(&mut self, pane: PaneId) -> Option<Subscription> {
+        let dropped = self.subscriptions.remove(&pane);
+        if self.focus == Some(pane) {
+            self.focus = None;
+        }
+        dropped
+    }
+
+    /// The pending command with this number.
+    #[must_use]
+    pub fn awaiting(&self, id: CommandId) -> Option<&PendingCommand> {
+        self.pending.iter().find(|held| held.id == id)
+    }
+
+    /// Records a command as sent and not yet answered.
+    ///
+    /// Appended, so the order of `pending` is the order they were sent — which
+    /// is the order they must be rolled back in.
+    pub fn record(&mut self, pending: PendingCommand) {
+        self.pending.push(pending);
+    }
+
+    /// Takes the pending command with this number out, and says what it was.
+    pub fn retire(&mut self, id: CommandId) -> Option<PendingCommand> {
+        let at = self.pending.iter().position(|held| held.id == id)?;
+        Some(self.pending.remove(at))
+    }
+
+    /// Every command sent before `moment`, oldest first.
+    #[must_use]
+    pub fn sent_before(&self, moment: Instant) -> Vec<CommandId> {
+        self.pending
+            .iter()
+            .filter(|held| held.submitted_at < moment)
+            .map(|held| held.id)
+            .collect()
+    }
+
+    /// Whether the model it holds is one the server could have sent.
+    ///
+    /// # Errors
+    ///
+    /// The [`ModelError`] of the first invariant it breaks.
+    pub fn validate(&self) -> Result<(), ModelError> {
+        self.model.validate()
+    }
+}
+
+/// A host whose model is not one the server could have sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidHost {
+    /// Which host.
+    pub host: HostId,
+    /// What is wrong with its model.
+    pub source: ModelError,
+}
+
+impl Display for InvalidHost {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        let InvalidHost { host, source } = self;
+        write!(formatter, "{host}: {source}")
+    }
+}
+
+impl core::error::Error for InvalidHost {}
+
+/// Everything this client knows, host by host.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClientModel {
+    /// One view per host, ordered by the alias its user gave it.
+    pub hosts: BTreeMap<HostId, HostView>,
+}
+
+impl ClientModel {
+    /// The view of one host.
+    #[must_use]
+    pub fn host(&self, host: &HostId) -> Option<&HostView> {
+        self.hosts.get(host)
+    }
+
+    /// The same, to be changed.
+    pub fn host_mut(&mut self, host: &HostId) -> Option<&mut HostView> {
+        self.hosts.get_mut(host)
+    }
+
+    /// Puts a view in, and says what was there.
+    ///
+    /// Nothing about any other host is touched, which is the property the
+    /// whole shape exists for: one host reconnecting, failing or being removed
+    /// leaves the others exactly as they were.
+    pub fn insert(&mut self, host: HostId, view: HostView) -> Option<HostView> {
+        self.hosts.insert(host, view)
+    }
+
+    /// Takes a host out, and says what it held.
+    pub fn remove(&mut self, host: &HostId) -> Option<HostView> {
+        self.hosts.remove(host)
+    }
+
+    /// Every host, in the order they are listed.
+    #[must_use]
+    pub fn aliases(&self) -> Vec<&HostId> {
+        self.hosts.keys().collect()
+    }
+
+    /// Whether it knows about any host at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty()
+    }
+
+    /// How many panes this client subscribes to, across every host.
+    #[must_use]
+    pub fn subscribed(&self) -> usize {
+        self.hosts
+            .values()
+            .map(|view| view.subscriptions.len())
+            .sum()
+    }
+
+    /// Whether every host model it holds is one a server could have sent.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidHost`] naming the first host whose model is not, and what is
+    /// wrong with it.
+    pub fn validate(&self) -> Result<(), InvalidHost> {
+        for (host, view) in &self.hosts {
+            view.validate().map_err(|source| InvalidHost {
+                host: host.clone(),
+                source,
+            })?;
+        }
+        Ok(())
+    }
+}

@@ -13,7 +13,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iznik_client::transport::channel::{ChannelError, ChannelOptions, RemoteChannel};
+use iznik_client::transport::channel::{
+    ChannelError, ChannelOptions, RemoteChannel, relay_command,
+};
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
 use iznik_link::framed::FramedLink;
@@ -469,4 +471,33 @@ async fn await_bytes(
             held.extend(frame.payload);
         }
     }
+}
+
+/// # Panics
+///
+/// When the command a channel asks a host to run would be split by the host's
+/// own shell.
+#[test]
+fn a_channel_quotes_the_server_it_asks_for() {
+    // The path is the host's, not this program's: the probe offers
+    // `$XDG_DATA_HOME` and `$TMPDIR` among its candidates, and both are
+    // whatever somebody set them to. `ssh` hands its argument to a remote
+    // shell, so an unquoted path with a space in it becomes a program that
+    // does not exist and two arguments.
+    let spaced = PathBuf::from("/mnt/My Data/iznik/bin/iznik-server");
+    let asked = relay_command(Some(&spaced));
+    assert_eq!(
+        asked, "'/mnt/My Data/iznik/bin/iznik-server' --stdio",
+        "the whole path is one word to the remote shell"
+    );
+    let awkward = PathBuf::from("/home/o'brien/iznik/bin/iznik-server");
+    let quoted = relay_command(Some(&awkward));
+    assert!(
+        quoted.starts_with("'/home/o'\\''brien/"),
+        "and a quote in it is escaped rather than ending the word: {quoted}"
+    );
+    assert!(
+        relay_command(None).contains("iznik-server"),
+        "and a channel told nothing runs whatever the host's path finds"
+    );
 }

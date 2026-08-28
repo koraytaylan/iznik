@@ -79,11 +79,8 @@ printf 'machine %s
 if command -v tic >/dev/null 2>&1; then printf 'tic yes
 '; else printf 'tic no
 '; fi
-if command -v infocmp >/dev/null 2>&1 && TERMINFO_DIRS="$data/iznik/terminfo:$home/.local/share/iznik/terminfo:$runtime/terminfo" infocmp xterm-ghostty >/dev/null 2>&1
-then printf 'terminfo yes
-'; else printf 'terminfo no
-'; fi
 index=0
+terminfo=no
 for candidate in "$data/iznik" "$home/.local/share/iznik" "$runtime"
 do
   said=-
@@ -95,8 +92,11 @@ do
 ' "$index" "$said"
   printf 'candidate %s path %s
 ' "$index" "$candidate"
+  if [ -r "$candidate/terminfo/x/xterm-ghostty" ]; then terminfo=yes; fi
   index=$((index + 1))
 done
+printf 'terminfo %s
+' "$terminfo"
 "#;
 
 /// The operating systems iznik has artifacts for.
@@ -135,7 +135,14 @@ pub struct HostProbe {
     pub architecture: Architecture,
     /// The server already there, if there is one.
     pub server: Option<InstalledServer>,
-    /// Whether the terminal's terminfo is already installed.
+    /// Whether the terminfo iznik carries is already under one of the
+    /// candidate prefixes.
+    ///
+    /// Asked as a file under a prefix rather than through `infocmp`, because
+    /// `TERMINFO_DIRS` is where ncurses looks *first* and not where it looks
+    /// *only*: a host whose own ncurses ships an `xterm-ghostty` would answer
+    /// yes with nothing of iznik's anywhere, and an upload that read the
+    /// answer would report a directory that does not exist.
     pub terminfo_installed: bool,
     /// Whether `tic` is there to install it.
     pub tic_available: bool,

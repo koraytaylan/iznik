@@ -314,6 +314,91 @@ async fn remote_launch_names_the_handshake_when_the_server_refuses() {
     case.await.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// Accepts one connection and says nothing at all, which is what a server that
+/// started and never greeted looks like.
+///
+/// # Errors
+///
+/// When the socket cannot be bound.
+fn silent(socket: &Path) -> Result<tokio::task::JoinHandle<()>, Failed> {
+    let listener = UnixListener::bind(socket)?;
+    Ok(tokio::spawn(async move {
+        let Ok((stream, _from)) = listener.accept().await else {
+            return;
+        };
+        // Held, because a socket that closed would be a link that went rather
+        // than a greeting that never came.
+        tokio::time::sleep(PROMPT).await;
+        drop(stream);
+    }))
+}
+
+/// # Panics
+///
+/// When a server that opened a link and then said nothing is not reported at
+/// the handshake.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_launch_names_the_handshake_when_the_server_says_nothing() {
+    let case = async {
+        let held = scratch("silent", &[])?;
+        let socket = held.path.join("mute.sock");
+        let answering = silent(&socket)?;
+        let transport = local(&held, &socket)?;
+        let started = Instant::now();
+        let refused = launch(&transport, None, &brisk(), expiry(PROMPT)).await;
+        let taken = started.elapsed();
+        answering.abort();
+        let Err(error) = refused else {
+            return Err("a server that never greeted was accepted".into());
+        };
+        // The link was made and time was given; what did not come is the
+        // greeting. Calling this a launch would send somebody to look at a
+        // path for a server that started perfectly well.
+        assert_eq!(
+            error.stage,
+            Stage::Handshake,
+            "silence after a link opens is the handshake: {error}"
+        );
+        assert!(
+            taken < PROMPT,
+            "and it says so inside the deadline it was given: {taken:?}"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a budget already spent is reported as a server that would not answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_launch_refuses_a_budget_already_spent() {
+    let case = async {
+        let held = scratch("spent", &[])?;
+        let socket = held.path.join("never.sock");
+        let transport = local(&held, &socket)?;
+        // Every stage takes the lesser of its own deadline and what remains of
+        // the whole budget. With nothing remaining, nothing is attempted — and
+        // saying the handshake failed would be a refusal about a server that
+        // was never started.
+        let refused = launch(&transport, None, &brisk(), Instant::now()).await;
+        let Err(error) = refused else {
+            return Err("a bootstrap with no budget left opened a channel".into());
+        };
+        assert_eq!(
+            error.stage,
+            Stage::Launch,
+            "the stage is the launch: {error}"
+        );
+        assert!(
+            error.detail.contains("budget"),
+            "and it says the budget was spent: {error}"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// # Panics
 ///
 /// When a daemon that is there does not hand back a snapshot to launch from.

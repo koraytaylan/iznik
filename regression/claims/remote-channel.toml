@@ -64,3 +64,9 @@ id = "channel-compresses-only-when-the-server-does"
 statement = "A server that offers no compression is taken at its word and the link stays plain; the daemon, which offers it, is met with it — and a request still comes back answered through it."
 test = "iznik-client::remote_channel::a_channel_compresses_only_when_the_server_does"
 because = "the server that declines is written to decline, which no real daemon does and no container could arrange"
+
+[[claim]]
+id = "channel-quotes-the-server-it-asks-for"
+statement = "The command a channel asks a host to run carries the server's path as one word, quoted, with a quote inside it escaped rather than ending it — because that path is the host's own, chosen from candidates that are whatever somebody set `XDG_DATA_HOME` and `TMPDIR` to, and `ssh` hands its argument to a remote shell."
+test = "iznik-client::remote_channel::a_channel_quotes_the_server_it_asks_for"
+because = "it is the text that is sent, and reading it needs no host to send it to"

@@ -1,0 +1,76 @@
+# What a host is called, how a pane anywhere is addressed, and what happens to
+# a host when its link dies.
+#
+# Every claim here is a `test` proof, and that is the point of the task rather
+# than a convenience: a state machine that takes the moment as an argument and
+# draws its jitter from a seed is a table, and a table is checked in
+# microseconds. The alternative — waiting out a real backoff against a real
+# host — would be a case nobody runs and so a case that proves nothing. What
+# needs a host is `connection-manager`'s, one layer up, where these decisions
+# are carried out rather than made.
+
+[[claim]]
+id = "identity-renders-and-parses-one-address"
+statement = "A pane anywhere renders as `iznik://<host>/<pane>` and parses back to exactly the host and pane it named."
+test = "iznik-client::host_state::host_identity_renders_and_parses_one_address"
+because = "it is a string and a parser, and both are the same everywhere"
+
+[[claim]]
+id = "identity-carries-an-alias-that-needs-escaping"
+statement = "An alias holding a slash, a colon, a space, a percent sign or a character outside ASCII — `unix:/tmp/iznik.sock` holds three of them — is escaped on the way out and comes back exactly, so the address is an address for every host a person can name rather than for the convenient ones."
+test = "iznik-client::host_state::host_identity_carries_an_alias_that_needs_escaping"
+because = "the round trip is a property of the two functions, not of any host"
+
+[[claim]]
+id = "identity-refuses-what-is-not-an-address"
+statement = "A string with no scheme, no host, no pane, a pane that is not a number, or an escape that is not two hexadecimal digits is refused, and the refusal names which part could not be read."
+test = "iznik-client::host_state::host_identity_refuses_what_is_not_an_address"
+because = "same: what is proven is what the parser does with bad input"
+
+[[claim]]
+id = "identity-knows-a-socket-from-a-host"
+statement = "A `unix:` alias names a socket on this machine and is not reached over SSH; anything else is."
+test = "iznik-client::host_state::host_identity_knows_a_socket_from_a_host"
+because = "it is the one form this crate owns, and recognizing it is a prefix test"
+
+[[claim]]
+id = "host-state-is-the-table-it-says-it-is"
+statement = "Every pair of state and event the architecture defines produces the state and the actions it says — a bootstrap failing at any of its stages, a link dying under a connected host, a retry firing, and somebody asking for a waiting host without waiting out its backoff."
+test = "iznik-client::host_state::host_state_is_the_table_it_says_it_is"
+because = "the machine reads no clock and no random device, so the table is the whole of its behaviour"
+
+[[claim]]
+id = "host-state-tears-down-what-each-state-holds"
+statement = "Removing a host yields exactly the teardown its state requires: a bootstrap in flight is stopped, a channel is closed, a host that holds only a timer is simply forgotten."
+test = "iznik-client::host_state::host_state_tears_down_what_each_state_holds"
+because = "which actions a state owes is a property of the machine"
+
+[[claim]]
+id = "host-state-waits-longer-each-time"
+statement = "Successive failures wait longer, each delay between half its doubling and the whole of it, never past the maximum, and jittered rather than a fixed ladder — checked over six failures in microseconds, because the machine is given its moments rather than waiting for them."
+test = "iznik-client::host_state::host_state_waits_longer_each_time_and_never_past_the_maximum"
+because = "a real backoff would take minutes and prove the same arithmetic"
+
+[[claim]]
+id = "host-state-keeps-hosts-that-failed-together-apart"
+statement = "Two hosts whose links died at the same moment do not schedule their retries for the same moment, because the jitter is drawn from a seed the manager gives each host — which is what a laptop closing on four hosts at once needs."
+test = "iznik-client::host_state::host_state_keeps_two_hosts_that_failed_together_apart"
+because = "the seed is an input, so two of them are two arguments rather than two machines"
+
+[[claim]]
+id = "host-state-forgets-the-failures-once-connected"
+statement = "A host that came back starts counting again: after six failures and a connection, the next dead link is attempt one."
+test = "iznik-client::host_state::host_state_forgets_the_failures_once_it_is_connected"
+because = "it is the machine's own counter"
+
+[[claim]]
+id = "host-state-carries-the-upgrade-it-was-offered"
+statement = "A connected host holds what its server said it is and, when this build carries a newer one, both versions — because the daemon is the sessions and an older one is connected to as it is."
+test = "iznik-client::host_state::host_state_carries_the_upgrade_it_was_offered"
+because = "the offer is data the machine carries, and `remote-launch` proves against a real host that it is only ever an offer"
+
+[[claim]]
+id = "host-state-defaults-to-the-policy-the-architecture-names"
+statement = "The backoff starts at one second and stops at one minute unless somebody says otherwise."
+test = "iznik-client::host_state::host_state_defaults_to_the_policy_the_architecture_names"
+because = "they are constants"

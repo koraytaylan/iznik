@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-client/tests/client_reducer.rs"
   - "regression/claims/client-reducer.toml"
   - "policy/lexicon/client-reducer.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Client Reducer

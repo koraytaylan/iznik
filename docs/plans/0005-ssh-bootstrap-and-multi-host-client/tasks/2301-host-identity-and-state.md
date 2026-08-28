@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-client/tests/host_state.rs"
   - "regression/claims/host-identity-and-state.toml"
   - "policy/lexicon/host-identity-and-state.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Host Identity and State

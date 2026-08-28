@@ -71,7 +71,9 @@ const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 /// Two things it refuses. A prefix or a `bin` that is a symbolic link, or that
 /// this user does not own: the probe chose the prefix from what it saw, and
 /// what it saw can change before this runs — a world-writable parent lets
-/// somebody else make the directory first and own what lands in it. And a host
+/// somebody else make the directory first and own what lands in it. Each is
+/// checked the moment it exists and before anything under it is made, so a
+/// prefix that was replaced has nothing put inside it, not even a directory. And a host
 /// with no way to take a SHA-256: the digest check exists to be the one thing
 /// standing between a truncated download and an executable, so it fails closed
 /// rather than comparing against a value nothing computed.
@@ -81,14 +83,16 @@ const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 /// nothing to do with iznik.
 pub const REMOTE_UPLOAD_SCRIPT: &str = r#"
 set -e
+own() {
+  if [ -L "$1" ] || [ ! -d "$1" ] || [ ! -O "$1" ]
+  then printf 'not a directory owned by this user: %s\n' "$1" >&2; exit 1; fi
+}
 prefix="$IZNIK_PREFIX"
 into="$prefix/bin"
+mkdir -p "$prefix"
+own "$prefix"
 mkdir -p "$into"
-for held in "$prefix" "$into"
-do
-  if [ -L "$held" ] || [ ! -d "$held" ] || [ ! -O "$held" ]
-  then printf 'not a directory owned by this user: %s\n' "$held" >&2; exit 1; fi
-done
+own "$into"
 find "$into" -name '.partial-*' -type f -mmin +60 -exec rm -f {} + 2>/dev/null || true
 partial=$(mktemp "$into/.partial-XXXXXX")
 trap 'rm -f "$partial"' EXIT

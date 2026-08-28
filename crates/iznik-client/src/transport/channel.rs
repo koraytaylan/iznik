@@ -56,6 +56,25 @@ const LEAST_PING_INTERVAL: Duration = Duration::from_millis(10);
 /// What the bootstrap runs on a host, and what a channel talks to.
 const STDIO_FLAG: &str = "--stdio";
 
+/// The server a channel runs when it is not told which.
+const DEFAULT_SERVER: &str = "iznik-server";
+
+/// The command a channel asks a host to run.
+///
+/// The path is quoted, because it is a path the *host* chose: the probe
+/// offers `$XDG_DATA_HOME` and `$TMPDIR` among its candidates and both are
+/// whatever somebody set them to. `ssh` hands its argument to a remote shell,
+/// so an unquoted `/mnt/My Data/iznik/bin/iznik-server` would be split into a
+/// program that does not exist and two arguments.
+#[must_use]
+pub fn relay_command(server: Option<&Path>) -> String {
+    let named = server.unwrap_or_else(|| Path::new(DEFAULT_SERVER));
+    format!(
+        "{} {STDIO_FLAG}",
+        crate::bootstrap::upload::quoted(&named.display().to_string())
+    )
+}
+
 /// Every timing a channel runs under, so a test can shorten any of them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelOptions {
@@ -345,8 +364,7 @@ impl RemoteChannel {
         let complaints = Arc::new(Mutex::new(String::new()));
         let (wire, child): (Wire, Option<SshChild>) = match transport {
             Transport::Ssh(ssh) => {
-                let named = server.unwrap_or_else(|| Path::new("iznik-server"));
-                let command = format!("{} {STDIO_FLAG}", named.display());
+                let command = relay_command(server);
                 let mut spawned = ssh.spawn(&[command]).map_err(ChannelError::Transport)?;
                 let stdin = spawned
                     .child

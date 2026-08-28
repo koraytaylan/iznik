@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iznik_client::bootstrap::launch::{
-    BOOTSTRAP_DEADLINE, BootstrapError, BootstrapOptions, UpgradeError, live_panes,
+    BOOTSTRAP_DEADLINE, BootstrapError, BootstrapOptions, FAST_RECONNECT_BUDGET, UpgradeError,
+    live_panes,
 };
 use iznik_client::bootstrap::upload::ArtifactSet;
 use iznik_client::bootstrap::{bootstrap, uninstall, upgrade};
@@ -77,6 +78,12 @@ struct Body {
     /// rather than a number a person reads afterwards.
     #[serde(default)]
     budget_milliseconds: Option<u64>,
+    /// Run it under [`FAST_RECONNECT_BUDGET`], whatever that is.
+    ///
+    /// A scenario that wrote the number itself would go on passing at the old
+    /// one after the constant changed, and the claim is about the constant.
+    #[serde(default)]
+    fast: bool,
     /// What it must have done.
     #[serde(default)]
     expect: Expect,
@@ -242,9 +249,11 @@ async fn drive(body: &Body) -> Result<String, String> {
     let paths = ClientRuntimePaths::resolve().map_err(|error| error.to_string())?;
     let transport = Transport::for_alias(&body.alias, &paths, SshOptions::default());
     let options = BootstrapOptions::default();
-    let deadline = body
-        .budget_milliseconds
-        .map_or(BOOTSTRAP_DEADLINE, Duration::from_millis);
+    let deadline = match (body.fast, body.budget_milliseconds) {
+        (true, _named) => FAST_RECONNECT_BUDGET,
+        (false, Some(milliseconds)) => Duration::from_millis(milliseconds),
+        (false, None) => BOOTSTRAP_DEADLINE,
+    };
     match body.action {
         Action::Bootstrap => connect(&transport, body, &options, deadline).await,
         Action::Upgrade => replace(&transport, body, &options, deadline).await,

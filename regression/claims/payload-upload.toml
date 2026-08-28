@@ -71,10 +71,16 @@ test = "iznik-client::upload_script::upload_script_sweeps_only_a_partial_nothing
 because = "it is a property of the sweep and of a file's modification time"
 
 [[claim]]
-id = "upload-script-refuses-a-prefix-that-is-not-this-users"
-statement = "It refuses a prefix that is a symbolic link or that this user does not own, installing nothing through it — because the probe chose the prefix from what it saw, and under a directory anybody may write what it saw can be replaced before the upload runs."
+id = "upload-script-refuses-a-prefix-reached-through-a-link"
+statement = "It refuses a prefix that is a symbolic link and makes nothing through it — not even the `bin` directory, because the guard runs before anything is created — since the probe chose the prefix from what it saw and under a directory anybody may write what it saw can be replaced before the upload runs."
 test = "iznik-client::upload_script::upload_script_refuses_a_prefix_that_is_not_this_user_own"
-because = "ownership and symbolic links are the same test on any POSIX host"
+because = "a symbolic link and a filesystem are the same on any POSIX host"
+
+[[claim]]
+id = "upload-script-refuses-a-prefix-this-user-does-not-own"
+statement = "It refuses a prefix that exists and belongs to somebody else, installing nothing there — which is the other half of the hole a world-writable parent opens: a directory another local user created first and owns."
+test = "iznik-client::upload_script::upload_script_refuses_a_prefix_this_user_does_not_own"
+because = "`/usr` belongs to root on every machine these run on, and they refuse to run as root"
 
 [[claim]]
 id = "upload-script-fails-closed-without-a-digest-program"

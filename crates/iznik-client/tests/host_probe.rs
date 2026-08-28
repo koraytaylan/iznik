@@ -18,6 +18,7 @@ use iznik_client::bootstrap::probe::{
     Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_SCRIPT, ProbeError,
     RunsRemotely, parse, probe,
 };
+use iznik_client::bootstrap::terminfo::TERMINAL_NAME;
 
 /// The deadline these cases hand the probe; nothing here waits for anything.
 const AT_ONCE: Duration = Duration::from_secs(1);
@@ -354,6 +355,13 @@ fn host_probe_reads_an_installed_server() {
 /// When `tic` and the terminfo are not read as the host reported them.
 #[test]
 fn host_probe_reads_what_the_terminal_needs() {
+    // The script asks about the terminal iznik renders with, by the name the
+    // asset is compiled under, and under a prefix of iznik's own rather than
+    // wherever the host's own ncurses keeps its database.
+    assert!(
+        PROBE_SCRIPT.contains(&format!("/terminfo/x/{TERMINAL_NAME}")),
+        "the script looks for iznik's own compiled entry: {PROBE_SCRIPT}"
+    );
     for (tic, terminfo) in [("yes", "yes"), ("yes", "no"), ("no", "no"), ("no", "yes")] {
         let read = parse(&answer(
             "Linux",

@@ -1,0 +1,44 @@
+# The server's messages applied to the client's model.
+#
+# `test` proofs throughout, and the convergence one is the reason the whole
+# design is shaped this way: the reducer calls the protocol's own reconciler,
+# which plan 0003 proved against models the generator built directly, so a
+# thousand sequences are walked here in milliseconds rather than against a host
+# in minutes. What a container proves about this is one layer up, where the
+# manager feeds it what really came over a wire.
+
+[[claim]]
+id = "reducer-converges-on-the-model-the-host-holds"
+statement = "A client made to know a host by a snapshot and then fed its deltas — with a second snapshot halfway through, which a reconnection sends — arrives at exactly the model the generator built directly, over a thousand generated sequences and inside the five seconds section 8 calls the limit of a case worth running."
+test = "iznik-client::client_reducer::client_reducer_converges_on_the_model_the_host_holds"
+because = "the reconciler is the protocol's own and the generator builds the far end without applying anything, so a host would add a network and no truth"
+
+[[claim]]
+id = "reducer-asks-rather-than-guesses-at-a-gap"
+statement = "A delta numbered past the model's next yields a request for the whole model and changes nothing — nothing is guessed at and nothing is half-applied — and the snapshot that follows settles it."
+test = "iznik-client::client_reducer::client_reducer_asks_for_a_snapshot_when_it_misses_a_number"
+because = "the gap is a number and the recovery is an effect, both values"
+
+[[claim]]
+id = "reducer-follows-a-pane-from-its-channel-to-its-screen"
+statement = "A pane's announcement opens a subscription on the channel the host named at the byte it named; bytes arriving on that channel move its cursor by exactly their length and bytes on another channel do not; a screen puts the cursor where the server says and is passed on with it; and a detachment drops the subscription and gives the channel number back."
+test = "iznik-client::client_reducer::client_reducer_follows_a_pane_from_its_channel_to_its_screen"
+because = "every step of it is a message and a value, and the cursor is what makes a resume possible"
+
+[[claim]]
+id = "reducer-routes-by-host-before-anything-else"
+statement = "Deltas, an announcement and a pane's bytes addressed to one host leave every other host's view exactly as it was, and a message for a host this client has never heard of does nothing and makes no view — because a snapshot is what makes a host known."
+test = "iznik-client::client_reducer::client_reducer_routes_by_host_before_anything_else"
+because = "routing is the first thing the function does, and equality over the untouched view is the whole of the claim"
+
+[[claim]]
+id = "reducer-notifies-about-commands-and-marks"
+statement = "An answered command and a shell-integration event each reach whoever is watching, carrying the host and the identity — this client's number for the command, or the pane and where in its stream the event sits."
+test = "iznik-client::client_reducer::client_reducer_notifies_about_commands_and_marks"
+because = "the notification is the value returned, and no host is needed to read it"
+
+[[claim]]
+id = "reducer-says-when-it-cannot-read-what-arrived"
+statement = "A change the client cannot decode is not passed over in silence: it names the host, asks for the whole model — the one recovery that cannot be wrong when the two have diverged — and leaves the model exactly as it was."
+test = "iznik-client::client_reducer::client_reducer_says_when_it_cannot_read_what_arrived"
+because = "bytes that are not a delta are bytes no server sends, which no container could arrange"

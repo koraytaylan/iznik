@@ -58,10 +58,22 @@ test = "iznik-client::remote_launch::remote_launch_takes_a_snapshot_from_the_dae
 because = "the daemon behind it is the real one; only the socket is shorter than a network"
 
 [[claim]]
-id = "launch-keeps-every-stage-inside-the-budget"
-statement = "No stage of a bootstrap outlasts what is left of the caller's whole budget, nor its own deadline — which is how a refusal names the stage it happened in rather than a timeout that could have been any of them."
+id = "launch-shares-one-budget-between-its-stages"
+statement = "The share a stage is given is never more than what is left of the caller's whole budget, never more than that stage's own deadline, and nothing at all once the budget is spent."
 test = "iznik-client::remote_launch::remote_launch_gives_each_stage_what_is_left_of_the_budget"
-because = "it is arithmetic over two deadlines and a clock"
+because = "it is arithmetic over two deadlines and a clock, and the claim is about the arithmetic"
+
+[[claim]]
+id = "launch-refuses-a-budget-already-spent"
+statement = "A bootstrap whose whole budget is gone before the server could be started is refused at the launch, saying the budget was spent — and not at the handshake, which would send somebody to look at a server that was never run."
+test = "iznik-client::remote_launch::remote_launch_refuses_a_budget_already_spent"
+because = "what is proven is which stage a refusal names, and no host is involved in the answer"
+
+[[claim]]
+id = "launch-names-the-handshake-when-a-server-says-nothing"
+statement = "A server that opened a link and then said nothing inside the time it was given fails at the handshake, and says so within that time rather than after a transport timeout."
+test = "iznik-client::remote_launch::remote_launch_names_the_handshake_when_the_server_says_nothing"
+because = "a server written to say nothing is not something a real daemon or a container does"
 
 [[claim]]
 id = "launch-installs-and-connects-to-a-fresh-host"
@@ -87,3 +99,8 @@ scenario = "upgrade-forced"
 id = "launch-takes-itself-off-again"
 statement = "Uninstalling stops the daemon and leaves the host as it was: no prefix, no runtime directory, and no `iznik-server` process."
 scenario = "uninstall"
+
+[[claim]]
+id = "launch-forces-past-a-daemon-it-cannot-reach"
+statement = "With a server on the host that answers `--version` and refuses everything else — which is what a protocol mismatch, a binary that will not start and a handshake that never comes all look like from here — an upgrade without force is refused carrying what the remote said, and an upgrade with force goes through anyway and leaves the host up to date. Counting the panes would need the very channel that is broken, so force does not ask for the count at all."
+scenario = "upgrade-forced-past-a-silent-daemon"

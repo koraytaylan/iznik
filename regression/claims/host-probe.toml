@@ -70,6 +70,6 @@ because = "which candidate a version came from is a property of the answer and o
 
 [[claim]]
 id = "probe-reads-a-prefix-with-a-space-in-it"
-statement = "A candidate whose path contains a space is read whole, path and version both, rather than cut at the space into an unwritable stump — so a host whose `XDG_DATA_HOME` is `/mnt/My Data` is bootstrapped rather than refused with a reason that is not the reason."
+statement = "A candidate whose path contains a space is read whole, path and version both, rather than cut at the space into an unwritable stump that would have the host refused for a reason that is not the reason. What is then run under that prefix is quoted by the channel, which is `channel-quotes-the-server-it-asks-for`."
 test = "iznik-client::host_probe::host_probe_reads_a_prefix_with_a_space_in_it"
 because = "it is a property of the line the script prints and the function that reads it"

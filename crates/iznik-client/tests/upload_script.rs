@@ -35,6 +35,10 @@ const ARTIFACT: &[u8] = b"#!/bin/sh\nexit 0\n";
 /// The places a tool this script needs is found on a host.
 const TOOL_DIRECTORIES: [&str; 4] = ["/usr/bin", "/bin", "/usr/local/bin", "/usr/sbin"];
 
+/// A directory that exists on every machine these cases run on and that the
+/// user running them does not own.
+const NOT_OURS: &str = "/usr";
+
 /// Everything the script needs beyond a way to take a `SHA-256`.
 const TOOLS: [&str; 8] = ["cat", "chmod", "mkdir", "mv", "mktemp", "find", "dd", "rm"];
 
@@ -297,8 +301,9 @@ fn upload_script_refuses_a_prefix_that_is_not_this_user_own() {
             "and says why: {said}"
         );
         assert!(
-            !real.join("bin").join(BINARY_NAME).exists(),
-            "and nothing was installed through the link"
+            !real.join("bin").exists(),
+            "and nothing at all was made through it, not even a directory: the \
+             guard runs before anything is created"
         );
         Ok(())
     };
@@ -335,6 +340,40 @@ fn upload_script_fails_closed_with_no_way_to_take_a_digest() {
             !held.server().exists(),
             "and installs nothing it could not check"
         );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When the script writes into a directory this user does not own.
+#[test]
+fn upload_script_refuses_a_prefix_this_user_does_not_own() {
+    let case = || -> Result<(), Failed> {
+        // The other half of the guard, and the half the `/tmp` hole was: a
+        // directory that exists, that this user may not own, and that somebody
+        // else could therefore have put there first. `/usr` is one on every
+        // machine these cases run on.
+        assert!(
+            !nix::unistd::Uid::effective().is_root(),
+            "these cases must not be run as root: as root every directory is \
+             this user's own and the guard would have nothing to refuse"
+        );
+        let (held, payload) = scratch("unowned")?;
+        let theirs = Path::new(NOT_OURS);
+        assert!(theirs.is_dir(), "{NOT_OURS} is a directory on this machine");
+        let (status, said) = refusal(run_script(theirs, &digest_of(ARTIFACT), &payload, None))?;
+        assert_eq!(status, Some(REFUSED), "it refuses: {said}");
+        assert!(
+            said.contains("not a directory owned by this user"),
+            "and says why: {said}"
+        );
+        assert!(
+            !theirs.join("bin").join(BINARY_NAME).exists(),
+            "and nothing was installed there"
+        );
+        drop(held);
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

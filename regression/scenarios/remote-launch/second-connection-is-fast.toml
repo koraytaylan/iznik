@@ -11,8 +11,8 @@ files = []
 # The first connection to a host uploads a binary and is as slow as the link.
 # Every one after it is this, and this is the one a person waits through. The
 # budget is enforced rather than measured: the second bootstrap is run under
-# two seconds and fails if it runs past, so the claim cannot rot into a number
-# somebody reads and shrugs at.
+# `FAST_RECONNECT_BUDGET` itself — the step takes the constant, not a number
+# retyped here that would go on passing after the constant changed.
 [[steps]]
 id = "install-it-once"
 container = "engine"
@@ -31,7 +31,7 @@ timeout_seconds = 60
 
 [steps.bootstrap]
 alias = "host0"
-budget_milliseconds = 2000
+fast = true
 
 [steps.bootstrap.expect]
 decision = "up to date"

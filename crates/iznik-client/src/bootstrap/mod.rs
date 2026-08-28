@@ -21,7 +21,7 @@ use crate::bootstrap::launch::{
     expiry, launch, left, live_panes, refused, server_path, triple_of,
 };
 use crate::bootstrap::probe::{HostProbe, probe};
-use crate::bootstrap::upload::{PREFIX_VARIABLE, quoted, upload};
+use crate::bootstrap::upload::{Installed, PREFIX_VARIABLE, TERMINFO_DIRECTORY, quoted, upload};
 use crate::transport::Transport;
 
 /// The remote script that ends a daemon before its server is replaced.
@@ -40,19 +40,21 @@ printf 'stopped %s\n' "$IZNIK_PREFIX"
 /// It names what it installed rather than sweeping the prefix away, because a
 /// probed prefix may be a directory iznik was given rather than one it made —
 /// `XDG_RUNTIME_DIR` is one of the candidates — and nothing of somebody else's
-/// is this program's to delete. The prefix itself goes when it is empty, which
-/// is every case where iznik made it.
+/// is this program's to delete. The prefix itself goes when it is empty — and
+/// never when it *is* the runtime directory, which is the one candidate iznik
+/// is lent rather than makes, and which a person's session put there.
 pub const REMOTE_UNINSTALL_SCRIPT: &str = r#"
 server="$IZNIK_PREFIX/bin/iznik-server"
 if [ -x "$server" ]; then "$server" --stop >/dev/null 2>&1 || true; fi
-rm -f "$server" "$IZNIK_PREFIX/bin"/.partial-*
-rm -rf "$IZNIK_PREFIX/terminfo" "$IZNIK_PREFIX/.terminfo-source"
+rm -f "$server" "$IZNIK_PREFIX/bin"/.partial-* "$IZNIK_PREFIX"/.terminfo-*
+rm -rf "$IZNIK_PREFIX/terminfo"
 if [ -n "${XDG_RUNTIME_DIR:-}" ]
 then runtime="$XDG_RUNTIME_DIR/iznik"
 else runtime="${TMPDIR:-/tmp}/iznik-$(id -u)"; fi
 rm -rf "$runtime"
 rmdir "$IZNIK_PREFIX/bin" 2>/dev/null || true
-rmdir "$IZNIK_PREFIX" 2>/dev/null || true
+if [ "$IZNIK_PREFIX" != "${XDG_RUNTIME_DIR:-}" ]
+then rmdir "$IZNIK_PREFIX" 2>/dev/null || true; fi
 printf 'removed %s\n' "$IZNIK_PREFIX"
 printf 'runtime %s\n' "$runtime"
 "#;
@@ -115,7 +117,7 @@ pub async fn bootstrap(
     }
     // Where the server is, is where the host said it put it. The two agree,
     // and asking is cheaper than assuming they always will.
-    let server = if decision == Decision::Install {
+    let installed = if decision == Decision::Install {
         install(
             transport,
             &found,
@@ -124,12 +126,27 @@ pub async fn bootstrap(
         )
         .await?
     } else {
-        server_path(&found)
+        // Nothing was installed, so what the host has is what the probe found.
+        Installed {
+            server: server_path(&found),
+            terminfo: found
+                .terminfo_installed
+                .then(|| found.prefix.join(TERMINFO_DIRECTORY)),
+            terminfo_refused: (!found.terminfo_installed)
+                .then(|| "the host has no terminfo of iznik's under its prefix".to_owned()),
+        }
     };
+    let Installed {
+        server,
+        terminfo,
+        terminfo_refused,
+    } = installed;
     let (channel, snapshot) = launch(transport, Some(&server), options, expires).await?;
     Ok(Bootstrapped {
         decision,
         server,
+        terminfo,
+        terminfo_refused,
         snapshot,
         channel,
     })
@@ -139,22 +156,21 @@ pub async fn bootstrap(
 ///
 /// # Errors
 ///
-/// A [`BootstrapError`] at [`Stage::Upload`], and the path it went to.
+/// A [`BootstrapError`] at [`Stage::Upload`], and what it left otherwise.
 async fn install(
     transport: &Transport,
     found: &HostProbe,
     artifacts: &upload::ArtifactSet,
     deadline: Duration,
-) -> Result<PathBuf, BootstrapError> {
+) -> Result<Installed, BootstrapError> {
     let host = transport.alias();
     let triple = triple_of(found);
     let artifact = artifacts
         .for_triple(&triple)
         .map_err(|source| refused(&host, Stage::Upload, &source))?;
-    let installed = upload(transport, artifact, found, deadline)
+    upload(transport, artifact, found, deadline)
         .await
-        .map_err(|source| refused(&host, Stage::Upload, &source))?;
-    Ok(installed.server)
+        .map_err(|source| refused(&host, Stage::Upload, &source))
 }
 
 /// Ends the daemon on a host, if one is running.
@@ -176,12 +192,13 @@ async fn stop(
 }
 
 /// Whether the daemon that is there may be replaced, by asking it what it
-/// holds.
+/// holds — unless it has already been said that it may be.
 ///
 /// # Errors
 ///
-/// [`UpgradeError::LivePanes`] when it holds panes and `force` is not set, and
-/// [`UpgradeError::Bootstrap`] when it could not be asked at all.
+/// [`UpgradeError::LivePanes`] when it holds panes, and
+/// [`UpgradeError::Bootstrap`] when it could not be asked at all. Neither when
+/// `force` is set, which is what makes an unreachable daemon replaceable.
 async fn may_replace(
     transport: &Transport,
     found: &HostProbe,
@@ -189,11 +206,20 @@ async fn may_replace(
     force: bool,
     expires: Instant,
 ) -> Result<(), UpgradeError> {
+    if force {
+        // Somebody has already said they mean it, so the count would change
+        // nothing — and asking for it must not be what stops them. The case a
+        // forced upgrade exists for is a daemon this client can no longer
+        // speak to at all: one whose protocol version is not this one's,
+        // whose binary will not start, whose handshake never comes. Every one
+        // of those fails the very channel that would have counted the panes.
+        return Ok(());
+    }
     let host = transport.alias();
     let (channel, held) = launch(transport, Some(&server_path(found)), options, expires).await?;
     let count = live_panes(&held);
     channel.close();
-    if count > 0 && !force {
+    if count > 0 {
         return Err(UpgradeError::LivePanes { host, count });
     }
     Ok(())
@@ -236,14 +262,14 @@ pub async fn upgrade(
             .await?;
         }
     }
-    let server = install(
+    let installed = install(
         transport,
         &found,
         artifacts,
         left(expires, options.upload_deadline),
     )
     .await?;
-    let (channel, _held) = launch(transport, Some(&server), options, expires).await?;
+    let (channel, _held) = launch(transport, Some(&installed.server), options, expires).await?;
     channel.close();
     Ok(())
 }

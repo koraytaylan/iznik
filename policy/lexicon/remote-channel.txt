@@ -1,5 +1,6 @@
 answers
 asking
+awkward
 brisk
 bytes
 carries
@@ -24,7 +25,9 @@ patience
 ping
 pong
 prompt
+quotes
 refuses
+relay
 remote
 resumed
 said
@@ -32,6 +35,7 @@ scripted
 shakes
 signal
 silent
+spaced
 stay
 stdin
 stdout
