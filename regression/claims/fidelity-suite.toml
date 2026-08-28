@@ -1,0 +1,20 @@
+# The fidelity argument is proven where it matters — on the statically linked
+# musl binary, on an image a real host resembles, inside the two-container
+# fixture — so every claim here is a scenario, never a `test` proof; a container
+# is exactly what these add. The same behavior is exercised fast in process by
+# `iznik-server`'s `fidelity` tests.
+
+[[claim]]
+id = "fidelity-suite-byte-identity"
+statement = "For every corpus construct, the bytes read from the pane's history are byte-identical to what the child wrote, on the static musl binary inside the fixture."
+scenario = "byte-identity"
+
+[[claim]]
+id = "fidelity-suite-screen-reproduction"
+statement = "For every corpus construct, the pane's serialized screen reproduces the construct's screen on a fresh emulator, on the static musl binary inside the fixture."
+scenario = "screen-reproduction"
+
+[[claim]]
+id = "fidelity-suite-flood"
+statement = "A sixty-four mebibyte flood arrives byte-identical in the ring's held tail, bounded to the ring's capacity, with resident memory under its ceiling, on the static musl binary inside the fixture."
+scenario = "flood"

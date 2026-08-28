@@ -1,0 +1,22 @@
+name = "screen-reproduction"
+claims = ["fidelity-suite-screen-reproduction"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "constructs"
+container = "host0"
+timeout_seconds = 100
+
+[steps.pane]
+corpus = "constructs"
+check = "screen"
+
+[[expect]]
+step = "constructs"
+exit = 0

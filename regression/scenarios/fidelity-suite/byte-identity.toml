@@ -1,0 +1,22 @@
+name = "byte-identity"
+claims = ["fidelity-suite-byte-identity"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "constructs"
+container = "host0"
+timeout_seconds = 100
+
+[steps.pane]
+corpus = "constructs"
+check = "bytes"
+
+[[expect]]
+step = "constructs"
+exit = 0
