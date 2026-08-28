@@ -13,7 +13,7 @@ touches:
   - "crates/iznik-regression/README.md"
   - "docs/notes/terminal-mirror.md"
   - "policy/lexicon/server-core-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Server Core Documentation
