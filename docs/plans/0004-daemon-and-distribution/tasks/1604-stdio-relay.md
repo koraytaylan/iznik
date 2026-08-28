@@ -12,7 +12,7 @@ touches:
   - "regression/claims/stdio-relay.toml"
   - "regression/scenarios/stdio-relay/**"
   - "policy/lexicon/stdio-relay.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Stdio Relay
