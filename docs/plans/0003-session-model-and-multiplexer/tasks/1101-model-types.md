@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-protocol/tests/fixtures/model.jsonl"
   - "regression/claims/model-types.toml"
   - "policy/lexicon/model-types.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Model Types
