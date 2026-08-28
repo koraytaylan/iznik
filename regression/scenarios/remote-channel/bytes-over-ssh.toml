@@ -1,0 +1,29 @@
+name = "bytes-over-ssh"
+claims = ["channel-carries-a-pane-over-ssh"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "a-line-typed-comes-back"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/iznik/bin/iznik-server"
+actions = [
+  { kind = "create_session", name = "work" },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo over-the-channel\n" },
+  { kind = "await_bytes", pane = 1, contains = "over-the-channel" },
+]
+
+[[expect]]
+step = "a-line-typed-comes-back"
+exit = 0
+stdout_contains = "4 actions"

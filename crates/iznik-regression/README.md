@@ -10,7 +10,7 @@ The binary `iznik-regression step` reads one step as TOML on standard input and 
 |---|---|---|
 | `step` | The step dispatcher: one step read as TOML on standard input, executed in its own process group under its deadline, reported as one NDJSON record. | `scenario-driver` (plan 0001) |
 | `step::bootstrap` | `[steps.bootstrap]`: bootstrap, upgrade and uninstall against a host, including the older-looking shim. | `remote-launch` (plan 0005) |
-| `step::channel` | `[steps.channel]`: the remote channel and its liveness under a dead link. | `remote-channel` (plan 0005) |
+| `step::channel` | `[steps.channel]`: a channel opened through `iznik-server --stdio` on a real host, a pane driven over it, and a link cut in the middle reported dead inside its own deadline. | `remote-channel` (plan 0005) |
 | `step::client` | `[steps.client]`: a protocol client over a process that speaks `iznik/1`, with reassembly checked through the oracle. | `integration-harness` (plan 0004) |
 | `step::manager` | `[steps.manager]`: a host manager inside the engine container driving several hosts end to end. | `end-to-end-ssh` (plan 0005) |
 | `step::pane` | `[steps.pane]`: a pane driven inside the host container, with its screen reproduction checked through the oracle. | `fidelity-suite` (plan 0002) |

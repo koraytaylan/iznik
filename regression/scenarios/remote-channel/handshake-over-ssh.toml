@@ -1,0 +1,23 @@
+name = "handshake-over-ssh"
+claims = ["channel-shakes-hands-over-ssh"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "the-channel-opens"
+container = "engine"
+timeout_seconds = 40
+
+[steps.channel]
+alias = "host0"
+server = "/iznik/bin/iznik-server"
+
+[[expect]]
+step = "the-channel-opens"
+exit = 0
+stdout_contains = "iznik/1"

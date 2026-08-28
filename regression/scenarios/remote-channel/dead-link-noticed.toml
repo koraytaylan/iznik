@@ -1,0 +1,64 @@
+name = "dead-link-noticed"
+claims = ["channel-notices-a-dead-link"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The silence and the noticing are one step, because they have to be: each step
+# is its own process, so a channel opened in one is gone by the next, and a
+# network cut between them would be met by the opening of a second channel
+# rather than by the silence of the first. The step stops the daemon itself —
+# the relay stays up, the socket stays open, and nothing answers — which is the
+# link this is about.
+[[steps]]
+id = "a-stopped-server-is-a-dead-link"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/iznik/bin/iznik-server"
+ping_interval_milliseconds = 200
+pong_deadline_milliseconds = 500
+expect_dead_within_milliseconds = 5000
+actions = [
+  { kind = "create_session", name = "held" },
+  { kind = "subscribe", pane = 1 },
+  { kind = "pause_server" },
+]
+
+# And the daemon answers again, so the next scenario on this image is not met
+# by a stopped one.
+[[steps]]
+id = "let-it-answer-again"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then lock=\"$XDG_RUNTIME_DIR/iznik/server.lock\"; else lock=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.lock\"; fi; kill -CONT \"$(cat \"$lock\")\" && printf resumed'"
+timeout_seconds = 20
+
+[[steps]]
+id = "a-new-channel-opens-after-it"
+container = "engine"
+timeout_seconds = 40
+
+[steps.channel]
+alias = "host0"
+server = "/iznik/bin/iznik-server"
+
+[[expect]]
+step = "a-stopped-server-is-a-dead-link"
+exit = 0
+duration_under_seconds = 30
+
+[[expect]]
+step = "let-it-answer-again"
+exit = 0
+stdout_equals = "resumed"
+
+[[expect]]
+step = "a-new-channel-opens-after-it"
+exit = 0
+stdout_contains = "iznik/1"

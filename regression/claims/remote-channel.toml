@@ -1,0 +1,46 @@
+# One channel to one host, and what it does when the host stops answering.
+#
+# The handshake, the version refusal and the liveness are `test` proofs over
+# the `unix:` alias, because a socket on this machine is the same link the SSH
+# path builds and a container would only make it longer. What needs SSH — the
+# channel opened through `iznik-server --stdio` on a real host, and a link cut
+# in the middle of a subscription — is a scenario.
+
+[[claim]]
+id = "channel-shakes-hands-with-the-daemon"
+statement = "A channel opened to a daemon over a local socket completes the handshake, agrees with it about the protocol version, and hears the compression it asked for offered back."
+test = "iznik-client::remote_channel::a_channel_shakes_hands_with_the_daemon"
+because = "a socket on this machine is the same link the SSH path builds, and the handshake is the same bytes either way"
+
+[[claim]]
+id = "channel-refuses-another-protocol-version"
+statement = "A server that says it speaks another protocol version is refused by name, with the version it said and the host it is — because the daemon holds the sessions and is never replaced without being asked."
+test = "iznik-client::remote_channel::a_channel_refuses_another_protocol_version"
+because = "the server is written to say the wrong thing, which no real daemon does and no container could arrange"
+
+[[claim]]
+id = "channel-notices-silence-at-once"
+statement = "A link that has stopped answering is reported dead within its pong deadline and one ping interval — under a second where the timings are set in hundreds of milliseconds — naming the host and how long it was silent."
+test = "iznik-client::remote_channel::a_silent_link_is_dead_within_its_deadline"
+because = "what is proven is a deadline this client imposes, and a server that answers nothing is the same silence over any transport"
+
+[[claim]]
+id = "channel-carries-what-the-server-answers"
+statement = "A request sent on the channel comes back answered on the control channel, decoded as the message it was asked for."
+test = "iznik-client::remote_channel::a_channel_carries_what_the_server_answers"
+because = "the daemon behind it is the real one; only the socket is shorter than a network"
+
+[[claim]]
+id = "channel-shakes-hands-over-ssh"
+statement = "From the engine container, a channel opened through `ssh host0 iznik-server --stdio` completes the handshake and reports the protocol version it agreed on."
+scenario = "handshake-over-ssh"
+
+[[claim]]
+id = "channel-carries-a-pane-over-ssh"
+statement = "Over that channel a session is made, a pane subscribed, a line typed, and the line comes back on the pane's own channel."
+scenario = "bytes-over-ssh"
+
+[[claim]]
+id = "channel-notices-a-dead-link"
+statement = "With the host's network cut under a held subscription, the channel reports itself dead inside the deadline it was given rather than after a transport timeout, and a new channel opens once the network is back."
+scenario = "dead-link-noticed"

@@ -38,11 +38,17 @@ threads-required = 'num-cpus'
 filter = 'binary(/^regression_/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
-# Every scenario owns three containers; four at a time keeps podman contention
-# out of the scenario overhead ceiling.
+# Every scenario owns three containers, each running real shells over real
+# SSH — the same thing the server's own tests do, one layer down. They share
+# the group below, and each counts for three of it, because they are the same
+# load and not the same size: `xtask claims coverage` runs every proof there
+# is, and four scenarios beside four shell-driving tests is twelve containers
+# and their shells at once, which starves one of them past a deadline meant to
+# catch a hang rather than to measure a machine.
 [[profile.default.overrides]]
 filter = 'test(/^scenario::/)'
-test-group = 'scenarios'
+test-group = 'shells'
+threads-required = 3
 
 # A timing measurement never shares the machine with the rest of the suite.
 [[profile.default.overrides]]
@@ -53,8 +59,8 @@ threads-required = 'num-cpus'
 # and waits on what it prints, so what it measures is not its own work but the
 # machine's willingness to run a shell. Sixteen of those at once, beside the
 # rest of the suite, starves one past its own deadline and turns the suite's
-# parallelism into a failure rather than a slower run. Four at a time keeps a
-# wait a wait.
+# parallelism into a failure rather than a slower run. Four at a time — the
+# scenarios included, above — keeps a wait a wait.
 [[profile.default.overrides]]
 filter = 'package(iznik-server)'
 test-group = 'shells'
@@ -64,9 +70,6 @@ test-group = 'shells'
 [[profile.default.overrides]]
 filter = 'test(/regression_fixture_reaper_/)'
 threads-required = 'num-cpus'
-
-[test-groups.scenarios]
-max-threads = 4
 
 [test-groups.shells]
 max-threads = 4

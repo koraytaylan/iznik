@@ -13,7 +13,7 @@ touches:
   - "regression/claims/remote-channel.toml"
   - "regression/scenarios/remote-channel/**"
   - "policy/lexicon/remote-channel.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Remote Channel
