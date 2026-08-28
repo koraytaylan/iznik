@@ -36,9 +36,14 @@ pub enum EventKind {
     /// A pane's own bytes, straight from the host. The pane is in `pane` and
     /// the byte the first of them is, is in `sequence`.
     PaneBytes = 6,
-    /// A pane's screen, as the bytes that reproduce it. The pane is in `pane`
-    /// and the byte it is exact at, is in `sequence`.
+    /// A pane's screen, as the bytes that reproduce it. The pane is in `pane`,
+    /// the byte it is exact at is in `sequence`, and the size to reset a
+    /// surface to before feeding them is in `columns` and `rows`.
     Screen = 7,
+    /// The host has stopped sending a pane's output. The pane is in `pane`,
+    /// and there is no payload: a pane that has gone is not a state anybody
+    /// reads, it is a pane nothing more will arrive for.
+    PaneDetached = 8,
 }
 
 /// One thing that happened.
@@ -57,6 +62,15 @@ pub struct Event {
     /// Where in a pane's stream it sits, for the kinds that say; zero
     /// otherwise.
     pub sequence: u64,
+    /// How wide a `Screen` is, in cells; zero otherwise.
+    ///
+    /// A screen is drawn at a size, and a surface reset to the wrong one puts
+    /// every byte after it in the wrong cell — so the size travels with the
+    /// bytes rather than being remembered from whenever the pane was last
+    /// sized.
+    pub columns: u16,
+    /// How tall it is, in cells; zero otherwise.
+    pub rows: u16,
     /// Which generation of the host's model a `Snapshot` is, or a `Delta`
     /// produces; zero otherwise.
     ///

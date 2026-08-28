@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use iznik::error::{Error, INVALID_ARGUMENT, Layer, OK};
 use iznik::model::{Event, EventKind};
+use iznik::pane::{PaneCallbacks, iznik_pane_attach, iznik_pane_input};
 use iznik::{
     Client, Configuration, iznik_client_free, iznik_client_new, iznik_command, iznik_host_add,
     iznik_host_uninstall, iznik_set_event_callback,
@@ -35,6 +36,9 @@ const COLUMNS: u16 = 80;
 
 /// Its height.
 const ROWS: u16 = 24;
+
+/// The pane a session comes with.
+const PANE: u64 = 1;
 
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
@@ -58,6 +62,10 @@ struct Told {
     /// Its bytes, copied while they were valid, because that is the rule the
     /// boundary states.
     payload: Vec<u8>,
+    /// The pane it named, or zero.
+    pane: u64,
+    /// The size a screen was drawn at, or zeroes.
+    size: (u16, u16),
     /// The command it answered, or zero.
     command: u64,
     /// The generation it carried, or zero.
@@ -88,6 +96,8 @@ extern "C" fn record(event: *const Event, context: *mut c_void) {
         kind: held.kind,
         host,
         payload,
+        pane: held.pane,
+        size: (held.columns, held.rows),
         command: held.command_id,
         generation: held.generation,
     });
@@ -598,6 +608,127 @@ fn ffi_surface_refuses_a_second_log() {
         assert!(!more.is_null(), "the same log again: {}", said(&error));
         // SAFETY: it came from `iznik_client_new` and is freed once.
         unsafe { iznik_client_free(more) };
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a pane's screen arrives without the size it was drawn at, or a pane
+/// that has gone is reported as something a person reads about the host.
+#[test]
+fn ffi_surface_names_a_pane_and_the_size_its_screen_was_drawn_at() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("pane-events")?;
+        let runtime = runtime()?;
+        let stack = runtime.block_on(Stack::start(StackOptions::default()))?;
+        let made = client(&held)?;
+        let seen: *mut Mutex<Seen> = Box::into_raw(Box::new(Mutex::new(Seen::default())));
+        // SAFETY: the client is live and the context outlives it.
+        unsafe { iznik_set_event_callback(made, Some(record), seen.cast::<c_void>()) };
+        let alias = CString::new(format!("unix:{}", stack.socket().display()))?;
+        let mut error = blank();
+        // SAFETY: the client is live, the alias null-terminated.
+        let added = unsafe { iznik_host_add(made, alias.as_ptr(), &raw mut error) };
+        assert_eq!(added, OK, "the host is taken: {}", said(&error));
+        await_seen(seen, "a snapshot", |kept| saw(kept, EventKind::Snapshot))?;
+        let asked = encode_session_command(&SessionCommand::CreateSession {
+            name: "work".to_owned(),
+            columns: COLUMNS,
+            rows: ROWS,
+            working_directory: None,
+        })?;
+        let mut number: u64 = 0;
+        // SAFETY: every pointer is alive for the call.
+        let sent = unsafe {
+            iznik_command(
+                made,
+                alias.as_ptr(),
+                asked.as_ptr(),
+                asked.len(),
+                &raw mut number,
+                &raw mut error,
+            )
+        };
+        assert_eq!(sent, OK, "the session is asked for: {}", said(&error));
+        await_seen(seen, "the session", |kept| saw(kept, EventKind::Delta))?;
+        // Attached with no handlers of its own, so everything about the pane
+        // comes out of the one callback — which is where an application that
+        // watches a host without drawing a pane sees it.
+        let handlers = PaneCallbacks {
+            output: None,
+            screen: None,
+            mark: None,
+            detached: None,
+        };
+        // SAFETY: the client is live and the alias null-terminated; the
+        // context is null, which this boundary allows.
+        let taken = unsafe {
+            iznik_pane_attach(
+                made,
+                alias.as_ptr(),
+                PANE,
+                handlers,
+                core::ptr::null_mut(),
+                &raw mut error,
+            )
+        };
+        assert_eq!(taken, OK, "the pane is taken: {}", said(&error));
+        await_seen(seen, "the pane's screen", |kept| {
+            saw(kept, EventKind::Screen)
+        })?;
+        {
+            // SAFETY: this case's own box, alive here.
+            let kept = unsafe { &*seen }.lock().map_err(|_broken| "the record")?;
+            let screen = kept
+                .events
+                .iter()
+                .find(|told| told.kind == EventKind::Screen)
+                .ok_or("a screen was seen")?;
+            assert_eq!(screen.pane, PANE, "the screen names its pane");
+            assert_eq!(
+                screen.size,
+                (COLUMNS, ROWS),
+                "and the size it was drawn at, which is what a surface is reset to"
+            );
+        }
+        // A shell that leaves takes its pane with it.
+        let leaving = "exit\n";
+        // SAFETY: every pointer is alive for the call.
+        let typed = unsafe {
+            iznik_pane_input(
+                made,
+                alias.as_ptr(),
+                PANE,
+                leaving.as_ptr(),
+                leaving.len(),
+                &raw mut error,
+            )
+        };
+        assert_eq!(typed, OK, "the shell is told to go: {}", said(&error));
+        await_seen(seen, "the pane going", |kept| {
+            saw(kept, EventKind::PaneDetached)
+        })?;
+        {
+            // SAFETY: this case's own box, alive here.
+            let kept = unsafe { &*seen }.lock().map_err(|_broken| "the record")?;
+            let gone = kept
+                .events
+                .iter()
+                .find(|told| told.kind == EventKind::PaneDetached)
+                .ok_or("the pane going was seen")?;
+            assert_eq!(gone.pane, PANE, "the pane that went is named");
+            assert!(
+                gone.payload.is_empty(),
+                "and nothing is said about it that a person would read as the host's state"
+            );
+        }
+        // SAFETY: it came from `iznik_client_new` and is freed once.
+        unsafe { iznik_client_free(made) };
+        // SAFETY: the box this case made, taken back once.
+        drop(unsafe { Box::from_raw(seen) });
+        drop(stack);
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

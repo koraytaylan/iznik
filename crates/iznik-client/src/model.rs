@@ -83,8 +83,12 @@ impl Subscription {
     }
 }
 
-/// A command sent to a host and not yet answered, with the model to put back
-/// if the host refuses it.
+/// A command this client sent and is still showing the effect of.
+///
+/// It stays here while the host has not answered, and after an answer that
+/// applied it while the host has not yet announced the change — so what puts
+/// it back if the host refuses it is not a model kept beside it, but the
+/// settled model with everything still in flight replayed on top.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingCommand {
     /// This client's number for it.
@@ -257,10 +261,22 @@ impl HostView {
         self.pending.push(pending);
     }
 
-    /// Takes the pending command with this number out, and says what it was.
-    pub fn retire(&mut self, id: CommandId) -> Option<PendingCommand> {
-        let at = self.pending.iter().position(|held| held.id == id)?;
-        Some(self.pending.remove(at))
+    /// Gives up on every command this host answered and never announced.
+    ///
+    /// What a new connection does with them. The answer said the host reached
+    /// a generation; either it is the same host, in which case the snapshot
+    /// this arrives with is at that generation or past it and the change is
+    /// the host's own, or it is another daemon, which never did it. Both are
+    /// reasons to stop showing it, and neither can be told from the other by
+    /// the number alone — a daemon that starts again does not always start
+    /// below where the last one stopped.
+    pub fn forget_answered(&mut self) -> Vec<CommandId> {
+        let (kept, gone): (Vec<PendingCommand>, Vec<PendingCommand>) =
+            std::mem::take(&mut self.pending)
+                .into_iter()
+                .partition(|standing| standing.answered.is_none());
+        self.pending = kept;
+        gone.iter().map(|standing| standing.id).collect()
     }
 
     /// Every command sent before `moment` and not yet answered, oldest first.

@@ -345,7 +345,11 @@ async fn accept(
                 // whose answer was lost with the link is still this client's
                 // to show, and its rollback must be the model that came back
                 // rather than the one from before the drop.
+                // The snapshot first, then what no answer can settle any
+                // more: this connection is not the one the announcement was
+                // owed on, and nothing else takes such a command out.
                 given_up = view.settle(snapshot);
+                given_up.extend(view.forget_answered());
                 replay(view);
             }
             None => {

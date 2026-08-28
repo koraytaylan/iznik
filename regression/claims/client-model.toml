@@ -84,3 +84,9 @@ id = "client-model-says-a-pane-has-no-channel-once-another-takes-it"
 statement = "A pane whose channel number another pane has taken has no channel, rather than channel zero — which is the control channel, where credit would be a message the host cannot route and a window this client believes it returned and never did."
 test = "iznik-client::client_model::client_model_says_a_pane_has_no_channel_once_another_takes_it"
 because = "which pane holds which channel is the model's own bookkeeping, and a host is not needed to renumber one"
+
+[[claim]]
+id = "client-model-gives-up-on-what-no-answer-can-settle"
+statement = "A new connection gives up on every command the host answered and never announced, whatever generation it comes back at. The announcement was owed on the link that is gone: if it is the same host, the snapshot this arrives with is at that generation or past it and the change is the host's own; if it is another daemon, it never did it. A daemon that starts again does not always start below where the last one stopped, so the number alone cannot tell the two apart."
+test = "iznik-client::client_model::client_model_gives_up_on_what_no_answer_can_settle"
+because = "it is a decision about what a view holds when a connection begins, and both are values"

@@ -95,6 +95,38 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   snapshot. The rule names the two refusals instead, and a case drives a
   daemon that answers a command and then starts again to hold it there.
 
+- **Review of `f264838`:** eight, and three of them were about what an event
+  says. A pane that had gone arrived as a host state carrying "pane 7
+  detached", which an application showing states where the connection belongs
+  would print in place of "connected"; it has a kind of its own and names its
+  pane. A screen arrived without the size it was drawn at, though the pane
+  path's own obligation is to reset a surface to that size before feeding it
+  the bytes — so an application watching without a pane handler repainted into
+  a surface of the old size and put every byte after it in the wrong cell. And
+  an answer that could not be encoded was dropped silently, leaving whoever
+  held its number waiting for ever; it comes through in words instead.
+
+  Two were about process-wide state and time. The log was claimed before the
+  runtime and the artifacts, so a client that failed to be built for another
+  reason left the file claimed for the life of the program and every corrected
+  retry refused; it is claimed last, when nothing else can refuse. And giving
+  up on what a replaced daemon answered was decided by the generation going
+  backwards, which a daemon that starts again does not always do — a new
+  connection gives up on every command it answered and never announced,
+  because the announcement was owed on the link that is gone.
+
+  The rest: `PendingCommand`'s documentation still described a field this work
+  removed; `HostView::retire` had lost its only caller and, unlike its
+  siblings, had not been taught that a command can be answered and still
+  showing, so the next caller to reach for the obvious name would have dropped
+  one; and the boundary never said that its events carry what the host has
+  said and never what this client is showing ahead of it, which is what an
+  application needs to know to decide whether to show a change of its own.
+
+  The crate root passed a thousand lines under the fixes, so what turns an
+  event of iznik's own into one of the application's is `shape.rs` now, and
+  the root does the pointer work.
+
 - **Carried back into 0005:** `pane-byte-pipe` found that a host's task let
   what a host was saying starve the orders already waiting for it, so a burst
   of input went out one to a round trip — a hundred lines took seconds instead

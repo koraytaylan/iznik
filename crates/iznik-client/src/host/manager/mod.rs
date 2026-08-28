@@ -518,13 +518,18 @@ impl HostManager {
     /// and [`ManagerError::Log`] when a log was asked for and cannot be
     /// written.
     pub fn new(options: ManagerOptions) -> Result<HostManager, ManagerError> {
-        write_to(options.log_path.as_deref())?;
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|source| ManagerError::Runtime { source })?;
         let artifacts = ArtifactSet::load(&options.artifacts_directory)
             .map_err(|source| ManagerError::Artifacts { source })?;
+        // Last of the three that can refuse, because it is the only one that
+        // leaves a mark on the process: a log claimed by a manager that then
+        // failed to be built would be claimed for the life of the program,
+        // and the next attempt — with the configuration corrected — would be
+        // refused for a client that never existed.
+        write_to(options.log_path.as_deref())?;
         let shared = Arc::new(Shared {
             model: Mutex::new(ClientModel::default()),
             listeners: Mutex::new(Vec::new()),

@@ -54,3 +54,9 @@ id = "surface-refuses-a-second-log"
 statement = "Where this process writes what iznik says is settled once and outlives the client that asked for it, so a second client naming a second file is refused — naming both, and leaving nothing at the file it would not write. The same file again is what the process already has, and is no refusal at all."
 test = "iznik-ffi::ffi_surface::ffi_surface_refuses_a_second_log"
 because = "one subscriber to a process is the logging library's rule wherever it runs, and both files are on this machine"
+
+[[claim]]
+id = "surface-names-a-pane-and-the-size-its-screen-was-drawn-at"
+statement = "A pane's screen carries the pane it belongs to and the size it was drawn at, because a surface reset to the wrong size puts every byte after it in the wrong cell — and the size a pane was last told to be is not always the size the screen in hand was drawn at. A pane that has gone has a kind of its own and names itself, rather than arriving as a sentence about the host's state that a person would read where the connection belongs."
+test = "iznik-ffi::ffi_surface::ffi_surface_names_a_pane_and_the_size_its_screen_was_drawn_at"
+because = "what each kind carries is this boundary's own shaping, and the pane behind it is a real shell on a real pseudoterminal"

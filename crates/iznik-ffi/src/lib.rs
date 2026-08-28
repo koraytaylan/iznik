@@ -4,6 +4,7 @@
 pub mod error;
 pub mod model;
 pub mod pane;
+mod shape;
 
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::BTreeMap;
@@ -23,7 +24,7 @@ use iznik_protocol::identity::PaneId;
 use iznik_protocol::message::{ToClient, encode_to_client};
 
 use crate::error::{Error, INVALID_ARGUMENT, Layer, OK, REFUSED, UNKNOWN_HOST};
-use crate::model::{Event, EventCallback, EventKind};
+use crate::model::{Event, EventCallback};
 use crate::pane::PaneCallbacks;
 
 /// The directory artifacts are looked for in when the application names none.
@@ -490,150 +491,25 @@ fn carry(
     context: Carried,
     event: &ManagerEvent,
 ) {
-    let Some((kind, host, payload)) = shaped(event) else {
+    let Some(shaped) = shape::shaped(event) else {
         return;
     };
-    let Ok(named) = CString::new(host) else {
+    let Ok(named) = CString::new(shaped.host) else {
         return;
     };
     let held = Event {
-        kind,
+        kind: shaped.kind,
         host: named.as_ptr(),
-        pane: pane_of(event),
-        sequence: sequence_of(event),
-        generation: generation_of(event),
-        command_id: command_of(event),
-        payload: payload.as_ptr(),
-        payload_length: payload.len(),
+        pane: shaped.pane,
+        sequence: shaped.sequence,
+        columns: shaped.columns,
+        rows: shaped.rows,
+        generation: shaped.generation,
+        command_id: shaped.command,
+        payload: shaped.payload.as_ptr(),
+        payload_length: shaped.payload.len(),
     };
     callback(&raw const held, context.0);
-}
-
-/// What kind an event is, whose host it is about, and the bytes it carries.
-fn shaped(event: &ManagerEvent) -> Option<(EventKind, String, Vec<u8>)> {
-    match event {
-        ManagerEvent::Moved { host, state } => Some((
-            EventKind::HostState,
-            host.0.clone(),
-            state.to_string().into_bytes(),
-        )),
-        ManagerEvent::Snapshot { host, payload, .. } => {
-            Some((EventKind::Snapshot, host.0.clone(), payload.clone()))
-        }
-        ManagerEvent::Delta { host, payload, .. } => {
-            Some((EventKind::Delta, host.0.clone(), payload.clone()))
-        }
-        ManagerEvent::Bytes { host, bytes, .. } => {
-            Some((EventKind::PaneBytes, host.0.clone(), bytes.clone()))
-        }
-        ManagerEvent::Screen { host, bytes, .. } => {
-            Some((EventKind::Screen, host.0.clone(), bytes.clone()))
-        }
-        // A pane nobody attached to has stopped: the state it belongs to is
-        // what an application watching from a distance reads.
-        ManagerEvent::Detached { host, pane } => Some((
-            EventKind::HostState,
-            host.0.clone(),
-            format!("pane {} detached", pane.0).into_bytes(),
-        )),
-        ManagerEvent::Notify(notification) => told(notification),
-        // A host nobody holds any more is not an event with a payload; the
-        // application learns it from the state that came before it.
-        ManagerEvent::Removed { host } => Some((
-            EventKind::HostState,
-            host.0.clone(),
-            "removed".to_owned().into_bytes(),
-        )),
-    }
-}
-
-/// One notification as a kind and a payload.
-fn told(notification: &Notification) -> Option<(EventKind, String, Vec<u8>)> {
-    match notification {
-        Notification::CommandFinished { host, outcome, .. } => {
-            let payload = iznik_protocol::command::encode_command_outcome(outcome).ok()?;
-            Some((EventKind::CommandResult, host.0.clone(), payload))
-        }
-        Notification::Mark {
-            host,
-            pane,
-            sequence,
-            kind,
-        } => {
-            let payload = encode_to_client(&ToClient::Mark {
-                pane: *pane,
-                sequence: *sequence,
-                kind: kind.clone(),
-            })
-            .ok()?;
-            Some((EventKind::Mark, host.0.clone(), payload))
-        }
-        Notification::CommandTimedOut { host, command } => Some((
-            EventKind::Notification,
-            host.0.clone(),
-            format!("command {} was never answered", command.0).into_bytes(),
-        )),
-        Notification::Refused {
-            host,
-            code,
-            message,
-        } => Some((
-            EventKind::Notification,
-            host.0.clone(),
-            format!("{code:?}: {message}").into_bytes(),
-        )),
-        Notification::Malformed { host, detail } => Some((
-            EventKind::Notification,
-            host.0.clone(),
-            detail.clone().into_bytes(),
-        )),
-    }
-}
-
-/// The pane an event is about, or zero.
-fn pane_of(event: &ManagerEvent) -> u64 {
-    match event {
-        ManagerEvent::Bytes { pane, .. }
-        | ManagerEvent::Screen { pane, .. }
-        | ManagerEvent::Notify(Notification::Mark { pane, .. }) => pane.0,
-        _elsewhere => 0,
-    }
-}
-
-/// The number a model event carries, or zero.
-///
-/// A change is applied to the generation before it and to no other, so an
-/// application that keeps a model of its own cannot use one without the
-/// number it belongs to: `iznik_protocol`'s own `apply` takes both, and the
-/// encoded change does not carry it.
-fn generation_of(event: &ManagerEvent) -> u64 {
-    match event {
-        ManagerEvent::Snapshot { generation, .. } | ManagerEvent::Delta { generation, .. } => {
-            generation.0
-        }
-        _elsewhere => 0,
-    }
-}
-
-/// Where in a pane's stream an event sits, or zero.
-fn sequence_of(event: &ManagerEvent) -> u64 {
-    match event {
-        ManagerEvent::Bytes { sequence, .. }
-        | ManagerEvent::Screen { sequence, .. }
-        | ManagerEvent::Notify(Notification::Mark { sequence, .. }) => sequence.0,
-        _elsewhere => 0,
-    }
-}
-
-/// This client's number for the command an event is about, or zero.
-fn command_of(event: &ManagerEvent) -> u64 {
-    match event {
-        ManagerEvent::Notify(
-            Notification::CommandFinished { command, .. }
-            | Notification::CommandTimedOut { command, .. },
-        ) => command.0,
-        _elsewhere => 0,
-    }
 }
 
 /// Which layer a refusal came from.
@@ -830,6 +706,13 @@ pub unsafe extern "C" fn iznik_host_uninstall(
 
 /// Sends a session command, encoded as the protocol encodes it, and gives back
 /// the number its answer will carry.
+///
+/// The answer arrives as a `CommandResult` event carrying that number, and
+/// what the command did arrives as a `Delta`. The events carry what the host
+/// has said and only that — never a change this client is showing ahead of
+/// it — so an application that wants a rename on the screen before the host
+/// has agreed to it makes that change itself, and puts it back when the
+/// `CommandResult` for its number says the host refused.
 ///
 /// **Obligation:** the bytes are the application's and may be freed as soon as
 /// this returns; iznik reads them before it does.

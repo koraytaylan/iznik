@@ -286,21 +286,6 @@ fn client_model_orders_pending_commands_by_submission() {
         None,
         "and one that was never sent is not"
     );
-    let retired = view.retire(CommandId(2));
-    assert_eq!(
-        retired.map(|held| held.id),
-        Some(CommandId(2)),
-        "retiring gives it back"
-    );
-    assert_eq!(
-        view.pending
-            .iter()
-            .map(|held| held.id.0)
-            .collect::<Vec<u64>>(),
-        vec![1, 3],
-        "and leaves the rest in order"
-    );
-    assert_eq!(view.retire(CommandId(2)), None, "and a second time says so");
 }
 
 /// # Panics
@@ -424,5 +409,33 @@ fn client_model_says_a_pane_has_no_channel_once_another_takes_it() {
         view.carried(OTHER),
         Some(CHANNEL),
         "while the pane that took it does"
+    );
+}
+
+/// # Panics
+///
+/// When a new connection keeps showing what an answer can no longer settle.
+#[test]
+fn client_model_gives_up_on_what_no_answer_can_settle() {
+    let now = Instant::now();
+    let mut view = HostView::of(one_pane(5));
+    let mut answered = sent(1, "answered", now);
+    // Answered above where the host that comes back begins, which is the case
+    // a generation going backwards does not catch: a daemon that starts again
+    // does not always start below where the last one stopped.
+    answered.answered = Some(Generation(9));
+    view.record(answered);
+    view.record(sent(2, "waiting", now));
+    let _same = view.settle(one_pane(5));
+    let given_up = view.forget_answered();
+    assert_eq!(
+        given_up,
+        vec![CommandId(1)],
+        "the answered one is given up on when the connection is new"
+    );
+    assert_eq!(
+        view.pending.iter().map(|held| held.id).collect::<Vec<_>>(),
+        vec![CommandId(2)],
+        "and the one nobody answered stays, to time out in its own time"
     );
 }
