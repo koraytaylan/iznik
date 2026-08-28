@@ -1,0 +1,38 @@
+{"description": "create a session, with a working directory", "command": {"CreateSession": {"name": "work", "columns": 80, "rows": 24, "working_directory": "/home/user"}}, "hex": "0004000000776f726b50001800010a0000002f686f6d652f75736572"}
+{"description": "create a session with no working directory and a name that is not ASCII", "command": {"CreateSession": {"name": "séance", "columns": 200, "rows": 60, "working_directory": null}}, "hex": "000700000073c3a9616e6365c8003c0000"}
+{"description": "rename a session", "command": {"RenameSession": {"session": 3, "name": "away"}}, "hex": "0103000000000000000400000061776179"}
+{"description": "close a session", "command": {"CloseSession": {"session": 3}}, "hex": "020300000000000000"}
+{"description": "create a tab", "command": {"CreateTab": {"session": 3, "name": "edit", "columns": 80, "rows": 24, "working_directory": "/tmp"}}, "hex": "03030000000000000004000000656469745000180001040000002f746d70"}
+{"description": "rename a tab", "command": {"RenameTab": {"tab": 5, "name": "édition"}}, "hex": "04050000000000000008000000c3a9646974696f6e"}
+{"description": "close a tab", "command": {"CloseTab": {"tab": 5}}, "hex": "050500000000000000"}
+{"description": "put a session's tabs in another order, carried whole", "command": {"ReorderTabs": {"session": 3, "order": [9, 5, 7]}}, "hex": "06030000000000000003000000090000000000000005000000000000000700000000000000"}
+{"description": "put a session's tabs in no order at all", "command": {"ReorderTabs": {"session": 3, "order": []}}, "hex": "06030000000000000000000000"}
+{"description": "create a pane after its target, side by side", "command": {"CreatePane": {"tab": 5, "placement": {"target": 11, "direction": "Horizontal", "before": false}, "columns": 40, "rows": 24, "working_directory": null}}, "hex": "0705000000000000000b0000000000000000002800180000"}
+{"description": "create a pane before its target, stacked", "command": {"CreatePane": {"tab": 5, "placement": {"target": 11, "direction": "Vertical", "before": true}, "columns": 40, "rows": 12, "working_directory": "/var"}}, "hex": "0705000000000000000b00000000000000010128000c0001040000002f766172"}
+{"description": "close a pane", "command": {"ClosePane": {"pane": 11}}, "hex": "080b00000000000000"}
+{"description": "move a pane before its target, side by side", "command": {"MovePane": {"pane": 11, "to_tab": 9, "placement": {"target": 13, "direction": "Horizontal", "before": true}}}, "hex": "090b0000000000000009000000000000000d000000000000000001"}
+{"description": "move a pane after its target, stacked", "command": {"MovePane": {"pane": 11, "to_tab": 9, "placement": {"target": 13, "direction": "Vertical", "before": false}}}, "hex": "090b0000000000000009000000000000000d000000000000000100"}
+{"description": "set a tab's layout, carried whole", "command": {"SetLayout": {"tab": 5, "layout": {"Split": {"direction": "Horizontal", "children": [{"node": {"Leaf": 11}, "weight": 2}, {"node": {"Leaf": 13}, "weight": 1}]}}}}, "hex": "0a0500000000000000000002000000010b0000000000000002000000010d0000000000000001000000"}
+{"description": "applied, creating nothing", "outcome": {"Applied": {"generation": 7, "created": "Nothing"}}, "hex": "00070000000000000000"}
+{"description": "applied, creating a session", "outcome": {"Applied": {"generation": 8, "created": {"Session": 3}}}, "hex": "000800000000000000010300000000000000"}
+{"description": "applied, creating a tab", "outcome": {"Applied": {"generation": 9, "created": {"Tab": 5}}}, "hex": "000900000000000000020500000000000000"}
+{"description": "applied, creating a pane", "outcome": {"Applied": {"generation": 10, "created": {"Pane": 11}}}, "hex": "000a00000000000000030b00000000000000"}
+{"description": "rejected: UnknownSession", "outcome": {"Rejected": {"code": "UnknownSession", "message": "no 0"}}, "hex": "0100040000006e6f2030"}
+{"description": "rejected: UnknownTab", "outcome": {"Rejected": {"code": "UnknownTab", "message": "no 1"}}, "hex": "0101040000006e6f2031"}
+{"description": "rejected: UnknownPane", "outcome": {"Rejected": {"code": "UnknownPane", "message": "no 2"}}, "hex": "0102040000006e6f2032"}
+{"description": "rejected: EmptyName", "outcome": {"Rejected": {"code": "EmptyName", "message": "no 3"}}, "hex": "0103040000006e6f2033"}
+{"description": "rejected: InvalidOrder", "outcome": {"Rejected": {"code": "InvalidOrder", "message": "no 4"}}, "hex": "0104040000006e6f2034"}
+{"description": "rejected: InvalidLayout", "outcome": {"Rejected": {"code": "InvalidLayout", "message": "no 5"}}, "hex": "0105040000006e6f2035"}
+{"description": "rejected: SpawnFailed", "outcome": {"Rejected": {"code": "SpawnFailed", "message": "no 6"}}, "hex": "0106040000006e6f2036"}
+{"description": "rejected with an empty message", "outcome": {"Rejected": {"code": "SpawnFailed", "message": ""}}, "hex": "010600000000"}
+{"description": "an empty command ends before its discriminant", "kind": "command", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
+{"description": "a discriminant no command claims", "kind": "command", "hex": "0b", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 11}}}
+{"description": "a close whose session id is cut short", "kind": "command", "hex": "020300", "error": {"Truncated": {"discriminant": 2, "needed": 8, "available": 2}}}
+{"description": "a byte after a command's last field", "kind": "command", "hex": "080b00000000000000ff", "error": {"TrailingBytes": {"discriminant": 8, "count": 1}}}
+{"description": "a name that is not UTF-8", "kind": "command", "hex": "04050000000000000002000000fffe", "error": {"Utf8": {"discriminant": 4}}}
+{"description": "a placement direction no direction claims", "kind": "command", "hex": "0705000000000000000b0000000000000002", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
+{"description": "a placement side that is neither before nor after", "kind": "command", "hex": "0705000000000000000b000000000000000002", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
+{"description": "an empty outcome ends before its discriminant", "kind": "outcome", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
+{"description": "a discriminant no outcome claims", "kind": "outcome", "hex": "02", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
+{"description": "a created form no variant claims", "kind": "outcome", "hex": "00070000000000000004", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 4}}}
+{"description": "a rejection code no variant claims", "kind": "outcome", "hex": "0107", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 7}}}
