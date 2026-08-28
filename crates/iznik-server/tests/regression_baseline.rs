@@ -18,38 +18,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use baseline::{
-    FIFTY_PANE_MEMORY_CEILING, FLOOD_LATENCY_CEILING, Failed, Figures, IDLE_LATENCY_CEILING,
-    RESTING_MEMORY_CEILING, SINGLE_PANE_THROUGHPUT_FLOOR, latency, memory, panes_throughput,
-    startup, table,
+    AGGREGATE_PANES, AT, FIFTY_PANE_MEMORY_CEILING, FLOOD_LATENCY_CEILING, Failed, Figures,
+    IDLE_LATENCY_CEILING, MANY_PANES, MIDDLE, OF, RESTING_MEMORY_CEILING,
+    SINGLE_PANE_THROUGHPUT_FLOOR, latency, memory, panes_throughput, percentile, startup, table,
 };
 use iznik_testkit::stack::STARTUP_CEILING;
 
-/// The percentile every latency ceiling is stated at, over [`OF`].
-const AT: usize = 99;
-
-/// What it is a percentile of.
-const OF: usize = 100;
-
-/// How many panes the aggregate throughput is taken across.
-const AGGREGATE_PANES: usize = 8;
-
-/// How many panes the second memory figure is taken with.
-const MANY_PANES: usize = 50;
-
 /// The committed table, relative to this crate.
 const NOTES: &str = "../../docs/notes/baseline.md";
-
-/// The value `upper` parts in `lower` of the way through a sorted set.
-fn percentile(sorted: &[Duration], upper: usize, lower: usize) -> Duration {
-    let last = sorted.len().saturating_sub(1);
-    sorted
-        .len()
-        .saturating_mul(upper)
-        .checked_div(lower)
-        .and_then(|at| sorted.get(at.min(last)))
-        .copied()
-        .unwrap_or_default()
-}
 
 /// # Panics
 ///
@@ -64,7 +40,7 @@ async fn baseline_idle_latency_is_under_its_ceiling() {
         assert!(
             tail < IDLE_LATENCY_CEILING,
             "p{AT} {tail:?} against {IDLE_LATENCY_CEILING:?} (median {:?}, worst {:?})",
-            percentile(&trips, 50, OF),
+            percentile(&trips, MIDDLE, OF),
             trips.last()
         );
         Ok::<(), Failed>(())
@@ -85,7 +61,7 @@ async fn baseline_flood_latency_is_under_its_ceiling() {
         assert!(
             tail < FLOOD_LATENCY_CEILING,
             "p{AT} {tail:?} against {FLOOD_LATENCY_CEILING:?} (median {:?}, worst {:?})",
-            percentile(&trips, 50, OF),
+            percentile(&trips, MIDDLE, OF),
             trips.last()
         );
         Ok::<(), Failed>(())

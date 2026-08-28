@@ -28,13 +28,13 @@ fn main() -> ExitCode {
     let status = runtime.block_on(dispatch(&arguments));
     // Only the relay. It reads standard input on a blocking thread, and a
     // client that has stopped writing leaves that read parked for ever:
-    // dropping the runtime would wait for it, so a relay whose daemon had gone
-    // would hang holding a terminal open. It has flushed what it had to say by
-    // here. Every other entry point drops its runtime properly, because the
-    // daemon's does the work that matters on the way out — every pane's
-    // process group is killed when the registry behind the last connection is
-    // dropped, and the last log line is written by a task that must be let
-    // finish.
+    // dropping the runtime waits for every blocking call to return, so a relay
+    // whose daemon had gone would hang holding a terminal open. It has flushed
+    // what it had to say by here and has nothing else to finish.
+    //
+    // The daemon does. Its runtime is dropped, which waits for the blocking
+    // work still in flight — a pane's reaper among it — so that what it was
+    // doing on the way out is done rather than abandoned.
     if relaying {
         runtime.shutdown_background();
     }

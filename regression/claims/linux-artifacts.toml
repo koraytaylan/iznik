@@ -1,0 +1,26 @@
+# The bootstrap uploads one file to a host whose libc version it does not know.
+# What is claimed here is what makes that safe: statically linked, stripped,
+# small, reproducible, and — for the one this machine can also run — able to
+# say its version inside a container that resembles a real host.
+#
+# Every claim is a `test` proof, because the artifact under test is built by
+# the test: a scenario would have to be handed an artifact from somewhere else,
+# and then it would be proving something about that one.
+
+[[claim]]
+id = "linux-artifacts-are-static-and-small"
+statement = "Both musl targets build to a stripped executable that names no loader — statically linked, so a host's libc version does not matter — declaring the machine it is for, and each is under the twenty-four mebibyte ceiling."
+test = "xtask::regression_distribution_linux::distribution_builds_both_musl_targets"
+because = "the artifact under test is built by the test, and its ELF header is read where it is written"
+
+[[claim]]
+id = "linux-artifacts-are-reproducible"
+statement = "Two builds of one commit produce byte-identical binaries and an identical checksum file, and the manifest records the crate version, the protocol version, the triple and a digest that is the file's own."
+test = "xtask::regression_distribution_linux::distribution_is_reproducible_and_recorded"
+because = "reproducibility is a property of one machine building twice; two machines would be proving something else"
+
+[[claim]]
+id = "linux-artifacts-run-in-the-container"
+statement = "A staging tree assembled around the x86_64 artifact runs it inside the host container, where it says its own version and the protocol's — which is the only place its static linking is really tested."
+test = "xtask::regression_distribution_linux::distribution_runs_inside_the_host_container"
+because = "the artifact under test is built by the test, so the container is started around it rather than the other way about"

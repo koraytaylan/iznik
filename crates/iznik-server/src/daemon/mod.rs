@@ -69,6 +69,11 @@ const OWNER_ONLY: u32 = 0o700;
 /// The flag that shortens the idle interval, so a test can watch a daemon go.
 const IDLE_FLAG: &str = "--idle-shutdown-seconds";
 
+/// The flag that says what a pane runs. The product's default is the login
+/// shell; a measurement says `sh`, because a figure that depends on whose
+/// machine it was taken on is not a figure.
+const PROGRAM_FLAG: &str = "--program";
+
 /// The subcommand each entry point answers to.
 const DAEMON: &str = "--daemon";
 
@@ -394,7 +399,7 @@ pub async fn serve(
     options: DaemonOptions,
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), DaemonError> {
-    let held = Lock::acquire(&paths.lock)?;
+    let held = Lock::acquire(&paths.lock).await?;
     let listener = socket::bind(&paths.socket)?;
     let registry = Arc::new(RwLock::new(Registry::new(
         RegistryDefaults {
@@ -511,17 +516,28 @@ fn options_from(arguments: &[OsString]) -> Result<DaemonOptions, String> {
     let mut rest = arguments.iter().skip(1);
     while let Some(argument) = rest.next() {
         let named = argument.to_string_lossy().into_owned();
-        if named != IDLE_FLAG {
-            return Err(format!("{named}: unknown flag"));
+        match named.as_str() {
+            IDLE_FLAG => {
+                let seconds = rest
+                    .next()
+                    .ok_or_else(|| format!("{IDLE_FLAG}: a number of seconds must follow"))?;
+                let parsed: u64 = seconds
+                    .to_string_lossy()
+                    .parse()
+                    .map_err(|_unparsed| format!("{IDLE_FLAG}: not a number of seconds"))?;
+                options.idle_shutdown = Duration::from_secs(parsed);
+            }
+            PROGRAM_FLAG => {
+                let path = rest
+                    .next()
+                    .ok_or_else(|| format!("{PROGRAM_FLAG}: a program must follow"))?;
+                options.program = Program::Command {
+                    path: PathBuf::from(path),
+                    arguments: Vec::new(),
+                };
+            }
+            _unknown => return Err(format!("{named}: unknown flag")),
         }
-        let seconds = rest
-            .next()
-            .ok_or_else(|| format!("{IDLE_FLAG}: a number of seconds must follow"))?;
-        let parsed: u64 = seconds
-            .to_string_lossy()
-            .parse()
-            .map_err(|_unparsed| format!("{IDLE_FLAG}: not a number of seconds"))?;
-        options.idle_shutdown = Duration::from_secs(parsed);
     }
     Ok(options)
 }

@@ -19,6 +19,13 @@ use nix::fcntl::{Flock, FlockArg};
 /// The mode the lock file is created with: the owner's, and nobody else's.
 const OWNER_ONLY: u32 = 0o600;
 
+/// How many times a refused attempt is tried again before it is called a
+/// holder. A daemon going, or a probe looking, holds this for microseconds.
+const CONTENTION_ATTEMPTS: usize = 20;
+
+/// How long between those attempts.
+const CONTENTION_PAUSE: core::time::Duration = core::time::Duration::from_millis(5);
+
 /// Why a lock could not be taken.
 #[derive(Debug)]
 pub enum LockError {
@@ -66,11 +73,14 @@ pub struct Lock {
 impl Lock {
     /// Takes the lock, or says who holds it.
     ///
+    /// Asynchronous because a refusal is asked again after a pause, and this
+    /// server does not block a worker thread to wait for anything.
+    ///
     /// # Errors
     ///
     /// [`LockError::Held`] naming the holder when another daemon has it, and
     /// [`LockError::Io`] when the file cannot be opened or written.
-    pub fn acquire(path: &Path) -> Result<Lock, LockError> {
+    pub async fn acquire(path: &Path) -> Result<Lock, LockError> {
         let opened = OpenOptions::new()
             .read(true)
             .write(true)
@@ -83,11 +93,21 @@ impl Lock {
                 source,
             })?;
         let mut file = opened;
+        let mut patience = CONTENTION_ATTEMPTS;
         let held = loop {
             match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
                 Ok(held) => break held,
                 // An interrupted attempt is not a refusal: it is asked again.
                 Err((again, Errno::EINTR)) => file = again,
+                // Nor is a moment's contention. A daemon on its way out, or a
+                // `--stop` looking to see whether one is there, holds this for
+                // microseconds; a start that gave up on the first refusal
+                // would be losing a race rather than finding a holder.
+                Err((again, Errno::EWOULDBLOCK)) if patience > 0 => {
+                    patience = patience.saturating_sub(1);
+                    tokio::time::sleep(CONTENTION_PAUSE).await;
+                    file = again;
+                }
                 Err((_file, Errno::EWOULDBLOCK)) => {
                     return Err(LockError::Held {
                         process_id: holder(path).unwrap_or_default(),
@@ -174,7 +194,9 @@ pub fn held_by(path: &Path) -> Holder {
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Holder::Nobody,
         Err(source) => return Holder::Unknown { source },
     };
-    match Flock::lock(opened, FlockArg::LockExclusiveNonblock) {
+    // Shared, not exclusive: it still fails against a daemon's exclusive hold,
+    // which is the question, and two probes at once do not refuse each other.
+    match Flock::lock(opened, FlockArg::LockSharedNonblock) {
         // Taken and let go at once: nobody was holding it.
         Ok(_taken) => Holder::Nobody,
         Err((_file, _errno)) => Holder::Held {

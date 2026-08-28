@@ -49,3 +49,13 @@ max-threads = 4
 # `xtask claims verify` reads the outcome of every proof from this report.
 [profile.claims.junit]
 path = "claims.xml"
+
+# Every distribution case builds a release artifact, and two cargo invocations
+# at once contend on the package-cache lock and one of them fails. They run one
+# at a time.
+[[profile.default.overrides]]
+filter = 'binary(/^regression_distribution_/)'
+test-group = 'distribution'
+
+[test-groups.distribution]
+max-threads = 1

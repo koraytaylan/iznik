@@ -9,6 +9,7 @@ brisk
 busy
 collector
 complain
+contention
 debug
 due
 elsewhere
@@ -29,6 +30,7 @@ measures
 nobody
 older
 outlives
+patience
 patient
 predecessor
 prints

@@ -46,22 +46,22 @@ pub const FIFTY_PANE_MEMORY_CEILING: u64 = 256 * 1024 * 1024;
 const SAMPLES: usize = 1000;
 
 /// The percentile the tail is reported at, over [`OF`].
-const AT: usize = 99;
+pub const AT: usize = 99;
 
 /// The middle, reported beside it.
-const MIDDLE: usize = 50;
+pub const MIDDLE: usize = 50;
 
 /// What both are percentiles of.
-const OF: usize = 100;
+pub const OF: usize = 100;
 
 /// How much one pane is flooded with when throughput is measured.
 const THROUGHPUT_MEBIBYTES: usize = 16;
 
 /// How many panes the aggregate figure is taken across.
-const AGGREGATE_PANES: usize = 8;
+pub const AGGREGATE_PANES: usize = 8;
 
 /// How many panes the second memory figure is taken with.
-const MANY_PANES: usize = 50;
+pub const MANY_PANES: usize = 50;
 
 /// The size every pane is made at.
 const COLUMNS: u16 = 80;
@@ -118,7 +118,8 @@ pub struct Figures {
 }
 
 /// The value `upper` parts in `lower` of the way through a sorted set.
-fn percentile(sorted: &[Duration], upper: usize, lower: usize) -> Duration {
+#[must_use]
+pub fn percentile(sorted: &[Duration], upper: usize, lower: usize) -> Duration {
     let last = sorted.len().saturating_sub(1);
     sorted
         .len()
@@ -273,12 +274,18 @@ pub async fn throughput(
     panes: &[PaneId],
 ) -> Result<u64, Failed> {
     client.auto_credit(true);
-    let mut wanted = 0_usize;
     for pane in panes {
         client.subscribe(*pane).await?;
+    }
+    // The clock starts before the first request, not after the last: bytes a
+    // pane produced while the others were still being asked are bytes that
+    // arrived during the measurement, and counting them against a shorter
+    // window would make eight panes look faster than they are.
+    let started = Instant::now();
+    let mut wanted = 0_usize;
+    for pane in panes {
         wanted = wanted.saturating_add(flood(client, *pane, THROUGHPUT_MEBIBYTES).await?);
     }
-    let started = Instant::now();
     let mut carried = 0_usize;
     for _attempt in 0..READ_ATTEMPTS {
         if carried >= wanted {
@@ -290,6 +297,13 @@ pub async fn throughput(
         carried = panes.iter().fold(0, |held, pane| {
             held.saturating_add(client.bytes_of(*pane).len())
         });
+    }
+    if carried < wanted {
+        return Err(format!(
+            "{} panes produced {carried} of the {wanted} bytes they were asked for",
+            panes.len()
+        )
+        .into());
     }
     // In whole milliseconds and whole bytes: a rate is a ratio of two counts,
     // and a float would only add a conversion nothing here needs.
@@ -320,11 +334,18 @@ pub async fn memory(panes: usize) -> Result<(u64, u64), Failed> {
     Ok((resting, holding))
 }
 
-/// How long from `--foreground` to a socket that answers.
+/// How long from asking for a stack to a socket that answers: a temporary
+/// runtime directory made, the binary run with `--foreground`, and the first
+/// connection accepted.
+///
+/// The directory is part of it because it is part of what a host does on its
+/// first use, and separating the two would report a number nobody waits for.
 ///
 /// # Errors
 ///
-/// When the daemon will not start.
+/// When the daemon will not start, or does not answer inside
+/// [`STARTUP_CEILING`] — which is the ceiling, so a daemon slower than it
+/// fails here rather than being reported as slow.
 pub async fn startup() -> Result<Duration, Failed> {
     let started = Instant::now();
     let stack = Stack::start(StackOptions {

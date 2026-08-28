@@ -12,7 +12,7 @@ touches:
   - "xtask/tests/regression_distribution_linux.rs"
   - "regression/claims/linux-artifacts.toml"
   - "policy/lexicon/linux-artifacts.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Linux Artifacts

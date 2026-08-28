@@ -242,10 +242,18 @@ fn begin(options: &StackOptions, home: &Path, paths: &RuntimePaths) -> Result<Ru
             })
         }
         DaemonMode::Binary(path) => {
-            let child = std::process::Command::new(path)
+            let mut running = std::process::Command::new(path);
+            running
                 .arg("--foreground")
                 .arg("--idle-shutdown-seconds")
-                .arg(options.idle_shutdown.as_secs().to_string())
+                .arg(options.idle_shutdown.as_secs().to_string());
+            // Without this the child would run the product's default, which is
+            // whoever's login shell is on the machine, and a stack that said
+            // `sh` would have been measuring something else.
+            if let Program::Command { path: named, .. } = &options.program {
+                running.arg("--program").arg(named);
+            }
+            let child = running
                 .env("XDG_RUNTIME_DIR", home)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())

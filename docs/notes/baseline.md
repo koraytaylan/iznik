@@ -28,21 +28,22 @@ way.
 | Kernel | Linux 7.0.0-29-generic |
 | Toolchain | rustc 1.97.1 (8bab26f4f 2026-07-14) |
 | Profile | `regression` (release, thin codegen units, debug info) |
-| Commit | `ee5893f` |
+| Shell | `sh`, passed to the daemon, so the figures do not depend on whose machine took them |
+| Measured at | `b6067c1` |
 
 ## The figures
 
 | Figure | Measured | Ceiling |
 |---|---|---|
-| Keystroke to echo, at rest, median | 0.056 ms | none |
-| Keystroke to echo, at rest, 99th percentile | 0.095 ms | 5.000 ms |
-| Keystroke to echo, under a flood, median | 0.080 ms | none |
-| Keystroke to echo, under a flood, 99th percentile | 0.158 ms | 30.000 ms |
-| One pane's throughput | 58 MiB/s | at least 50 MiB/s |
-| Eight panes' throughput together | 157 MiB/s | more than one pane's |
+| Keystroke to echo, at rest, median | 0.058 ms | none |
+| Keystroke to echo, at rest, 99th percentile | 0.126 ms | 5.000 ms |
+| Keystroke to echo, under a flood, median | 0.092 ms | none |
+| Keystroke to echo, under a flood, 99th percentile | 0.221 ms | 30.000 ms |
+| One pane's throughput | 86 MiB/s | at least 50 MiB/s |
+| Eight panes' throughput together | 189 MiB/s | more than one pane's |
 | Resident memory at rest | 6 MiB | 32 MiB |
 | Resident memory with fifty idle panes | 18 MiB | 256 MiB |
-| Startup to a socket that answers | 18.811 ms | 500.000 ms |
+| Startup to a socket that answers | 6.414 ms | 500.000 ms |
 
 ## What each one is
 
@@ -50,19 +51,29 @@ way.
 pseudoterminal, timed until its echo arrives on that pane's channel through the
 socket — a thousand round trips, sorted. The flooded figure runs the same
 thousand while another subscribed pane produces at line rate, which is the
-case the whole scheduler exists for: the tail rises from 0.095 ms to 0.158 ms,
-a sixty per cent increase on a number two hundred times under the budget a
+case the whole scheduler exists for: the tail rises from 0.126 ms to 0.221 ms,
+three quarters again on a number more than a hundred times under the budget a
 person can feel.
 
-**Throughput** is sixteen mebibytes from a pane's shell, timed from the request
-to the last byte at the client, with credit returned as it arrives. Eight panes
-together sustain 157 MiB/s — more than one pane's 58, which is what says the
-scheduler shares rather than serializes.
+**Throughput** is sixteen mebibytes from each pane's shell, timed from the
+first request to the last byte at the client, with credit returned as it
+arrives. The clock starts before the first pane is asked, not after the last:
+counting bytes a pane produced during the setup against a shorter window is
+what would make eight panes look faster than they are. Eight together sustain
+189 MiB/s — more than twice one pane's 86, which is what says the scheduler
+shares rather than serializes.
 
 **Resident memory** is the daemon process's own, read from `/proc`, at rest and
-then holding fifty idle panes: 12 MiB for fifty panes, about 240 KiB each, which
-is the history ring's floor and not its capacity — a ring is allocated as it
-fills.
+then holding fifty idle panes — sampled once the shells have stopped
+allocating, so it is a number about holding rather than about starting: 12 MiB
+for fifty panes, about 240 KiB each, which is the history ring's floor and not
+its capacity, since a ring is allocated as it fills.
 
-**Startup** is `--foreground` to a socket that answers, which is what
-`--daemon` and the relay wait for on a host's first use.
+**Startup** is a runtime directory made, `--foreground` run, and the first
+connection accepted — all of what a host does on its first use, which is what
+`--daemon` and the relay wait for. Separating the directory from the daemon
+would report a number nobody waits for.
+
+A file cannot name the commit that adds it. The row above names the commit
+these figures were taken at; the commit that records them is its child, and
+changes nothing they measure.
