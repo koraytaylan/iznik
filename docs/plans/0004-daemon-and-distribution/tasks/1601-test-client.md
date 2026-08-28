@@ -10,7 +10,7 @@ touches:
   - "crates/iznik-testkit/tests/client.rs"
   - "regression/claims/test-client.toml"
   - "policy/lexicon/test-client.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Test Client
