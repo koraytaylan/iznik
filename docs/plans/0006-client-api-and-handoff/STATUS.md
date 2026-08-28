@@ -75,6 +75,26 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   dying link could hold it, though the pile holds four kinds and none of them
   is a keystroke.
 
+- **Review of `e9306aa`:** eight, and one of them was a conflict this session
+  had just written: the burst measurement asks for the machine while the group
+  it had been put in has twelve threads, so it is taken out of the group by
+  name. Two were claims and comments saying more than their proofs did. Three
+  were the log again — a refusal that left an empty file behind, an `# Errors`
+  that named one of its three refusals, and a statement covering a case its
+  test did not reach. One was a line written under the model's lock, which is
+  a file every other caller would be waiting on: what a replaced daemon
+  answered comes back as an effect now, and is written where the lock is not
+  held. One was an attachment that installed itself before the subscription
+  that could refuse it, leaving an application that frees what it passed
+  pointing the boundary at freed memory. And one was a case that watched for a
+  handler that had *ever* begun rather than one running now.
+
+  Making the account an effect turned out to hide a second bug: a snapshot
+  that was applied perfectly well now came back with something to say, and the
+  rule "pass on what was taken" read that as a refusal and swallowed the
+  snapshot. The rule names the two refusals instead, and a case drives a
+  daemon that answers a command and then starts again to hold it there.
+
 - **Carried back into 0005:** `pane-byte-pipe` found that a host's task let
   what a host was saying starve the orders already waiting for it, so a burst
   of input went out one to a round trip — a hundred lines took seconds instead

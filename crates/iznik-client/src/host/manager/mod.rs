@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::SessionCommand;
@@ -415,7 +415,12 @@ pub struct HostManager {
 /// freed does not give the file back. Remembering which file it was given is
 /// what lets the second client be told the truth, that its own file will never
 /// be written, rather than be handed a client and an empty file.
-static WRITING: OnceLock<PathBuf> = OnceLock::new();
+///
+/// A lock rather than a cell written once, because looking, installing and
+/// remembering have to be one act: two clients starting at once would
+/// otherwise leave the one that lost the race told that something unnamed had
+/// taken the log, which is true of nothing it could act on.
+static WRITING: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Sends what this crate says to a file, when one was asked for.
 ///
@@ -427,13 +432,18 @@ static WRITING: OnceLock<PathBuf> = OnceLock::new();
 ///
 /// # Errors
 ///
-/// [`ManagerError::Log`] when the file cannot be opened for appending.
+/// [`ManagerError::Log`] when the file cannot be opened for appending, when
+/// this process is already writing its log somewhere else, and when something
+/// outside this crate has already taken what it says — each of them a log
+/// that will not be written, which is the one thing the caller must not be
+/// left to discover by reading nothing.
 fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
     let Some(path) = path else {
         return Ok(());
     };
-    if let Some(already) = WRITING.get() {
-        return taken(path, already);
+    let mut writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(already) = writing.as_deref() {
+        return taken(path, Some(already));
     }
     if let Some(holding) = path.parent() {
         std::fs::create_dir_all(holding).map_err(|source| ManagerError::Log {
@@ -441,6 +451,11 @@ fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
             detail: source.to_string(),
         })?;
     }
+    // Whether the file was already there decides what a refusal below may
+    // clear up: a log somebody has been writing to is not this call's to
+    // remove, and an empty one this call made is exactly what it must not
+    // leave.
+    let existed = path.exists();
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -455,37 +470,41 @@ fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
         .try_init()
         .is_err()
     {
-        // Something else took it: another manager between the look above and
-        // here, or the program this is embedded in. Which of those it was is
-        // the difference between a log that is being written and one that
-        // never will be.
-        return taken(path, WRITING.get().unwrap_or(&PathBuf::new()));
+        // Nothing of this crate's took it, because this holds the lock that
+        // would have: it is the program iznik is embedded in, and the
+        // subscriber it installed is the one that stays. The file this call
+        // made for a log that will not be written goes with the refusal.
+        if !existed {
+            let _cleared = std::fs::remove_file(path);
+        }
+        return taken(path, None);
     }
-    let _first = WRITING.set(path.to_path_buf());
+    *writing = Some(path.to_path_buf());
     Ok(())
 }
 
-/// Whether a log already being written to `already` satisfies a request for
-/// `path`.
+/// Whether a log already being written — to `already`, or by somebody this
+/// crate cannot name — satisfies a request for `path`.
 ///
 /// # Errors
 ///
 /// [`ManagerError::Log`] when it is a different file, because that one will
 /// never be written and the caller would find out by reading nothing.
-fn taken(path: &std::path::Path, already: &std::path::Path) -> Result<(), ManagerError> {
-    if already == path {
+fn taken(path: &std::path::Path, already: Option<&std::path::Path>) -> Result<(), ManagerError> {
+    if already == Some(path) {
         return Ok(());
     }
     Err(ManagerError::Log {
         path: path.to_path_buf(),
-        detail: if already.as_os_str().is_empty() {
-            "something else in this process is already taking what iznik says".to_owned()
-        } else {
-            format!(
-                "this process is already writing its log to {}",
-                already.display()
-            )
-        },
+        detail: already.map_or_else(
+            || "something else in this program is already taking what iznik says".to_owned(),
+            |named| {
+                format!(
+                    "this process is already writing its log to {}",
+                    named.display()
+                )
+            },
+        ),
     })
 }
 

@@ -57,14 +57,11 @@ const TYPISTS: usize = 100;
 
 /// What the shell is asked to run before they start typing.
 ///
-/// A shell of its own would keep only some of a burst, and not the same some
-/// twice: it re-arms its terminal before each line it reads, and the call it
-/// uses throws away input that arrived but has not been read yet. That is the
-/// shell's doing, not this boundary's, and a case that measured it would be
-/// measuring how far the shell had got. `cat` re-arms nothing and reads
-/// everything, so what a hundred callers typed is all there to be read — and
-/// twice over, once as the terminal echoed it and once as `cat` wrote it
-/// back.
+/// A shell keeps only some of a burst, and not the same some twice: it re-arms
+/// its terminal before each line it reads, and what it uses throws away input
+/// that arrived unread. That is the shell's doing, not this boundary's. `cat`
+/// re-arms nothing, so what a hundred callers typed is all there to be read —
+/// twice over, once echoed by the terminal and once written back by `cat`.
 const READER: &str = "cat\n";
 
 /// How many times each of them repeats its own pattern.
@@ -77,17 +74,15 @@ const REPEATS: usize = 2;
 const WIDTH: usize = 2;
 
 /// What every caller's line begins with: a comment, which the shell reads and
-/// discards. A line it would try to run costs a fork and a failed exec — most
-/// of a second each, which would make this a case about how fast a shell
-/// gives up rather than about what arrived.
+/// discards. A line it would try to run costs a fork and a failed exec, which
+/// would make this a case about how fast a shell gives up.
 const SILENT: char = '#';
 
-/// A line typed before they start, whose coming back twice is what says the
-/// reader is reading.
+/// A line typed before they start, whose coming back twice says the reader is
+/// reading.
 ///
 /// Letters, deliberately: every four-digit line whose halves match is some
-/// caller's own, so a probe of that shape would be caller ninety-nine's, and
-/// its arrival would prove theirs.
+/// caller's own, so a probe of that shape would be caller ninety-nine's.
 const PROBE: &str = "ready";
 
 /// How many times a line comes back: once as the terminal echoed it, once as
@@ -96,12 +91,11 @@ const TWICE: usize = 2;
 
 /// What the shell says before it is given something to run.
 ///
-/// It is written by the shell while the terminal is echoing what arrives, so
-/// it lands wherever it lands — in the middle of a caller's line as readily as
-/// between two. Taking it out is what leaves the callers' own bytes to be
-/// read: an echo interrupted by the shell's prompt is the terminal's doing,
-/// and an echo interrupted by another caller's bytes would be this
-/// boundary's.
+/// Written while the terminal is echoing what arrives, so it lands wherever it
+/// lands — in the middle of a caller's line as readily as between two. Taking
+/// it out leaves the callers' own bytes to be read: an echo interrupted by the
+/// prompt is the terminal's doing, one interrupted by another caller's bytes
+/// would be this boundary's.
 const PROMPTED: &str = "$ ";
 
 /// Anything a case can fail on.
@@ -128,13 +122,15 @@ const DAWDLE: Duration = Duration::from_millis(400);
 
 /// How much of that letting go must have waited for it to have waited at all.
 ///
-/// Well under the whole, because the case notices the handler has begun some
-/// way into it; far above nothing, which is what a call that did not wait
-/// would take.
+/// Well under the whole, since the case notices the handler some way into it;
+/// far above nothing, which is what a call that did not wait would take.
 const WAITED: Duration = Duration::from_millis(100);
 
-/// What the case about waiting passes to its handler: whether one has begun.
-struct Dawdling(Mutex<bool>);
+/// What the case about waiting passes to its handler: how many are inside it.
+///
+/// A count rather than a flag that one has begun: what has to be caught is a
+/// handler running *now*, and one that has been and gone would look the same.
+struct Dawdling(Mutex<usize>);
 
 /// A handler that takes its time.
 extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize) {
@@ -143,10 +139,13 @@ extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize) {
     }
     // SAFETY: this case's own box, alive until the case ends.
     let dawdling = unsafe { &*context.cast::<Dawdling>() };
-    if let Ok(mut begun) = dawdling.0.lock() {
-        *begun = true;
+    if let Ok(mut inside) = dawdling.0.lock() {
+        *inside = inside.saturating_add(1);
     }
     std::thread::sleep(DAWDLE);
+    if let Ok(mut inside) = dawdling.0.lock() {
+        *inside = inside.saturating_sub(1);
+    }
 }
 
 /// What the case that lets a pane go from inside a handler passes to it.
@@ -171,8 +170,8 @@ struct Left {
 /// A handler that lets its own pane go, from inside the call.
 ///
 /// The one call that must not wait for the call it is inside: waiting for a
-/// handler to finish is exactly what makes an application able to free what it
-/// gave, and a handler doing it to itself would wait for ever.
+/// handler is what lets an application free what it gave, and a handler doing
+/// it to itself would wait for ever.
 extern "C" fn leaves(context: *mut c_void, _bytes: *const u8, _length: usize) {
     if context.is_null() {
         return;
@@ -503,14 +502,12 @@ fn pattern(index: usize) -> String {
 }
 
 /// Every line a caller typed, as the echo has it: what follows one of their
-/// marks, up to the end of the line it is on, with the shell's own prompt
-/// taken out.
+/// marks, up to the end of that line, with the shell's own prompt taken out.
 ///
-/// A line is found by its mark rather than by beginning with one, because the
-/// shell writes on the same line as the echo. Nothing is filtered: a line that
-/// is not one caller's own pattern is what this case is looking for, so it has
-/// to be returned rather than passed over. The last line is left out while it
-/// has no end yet — it is still being echoed, not malformed.
+/// Found by the mark rather than by beginning with one, because the shell
+/// writes on the same line as the echo. Nothing is filtered — a line that is
+/// not one caller's own pattern is what this case looks for — and the last is
+/// left out while it has no end yet, being echoed rather than malformed.
 fn typed_lines(output: &[u8]) -> Vec<String> {
     let said = String::from_utf8_lossy(output).replace(PROMPTED, "");
     said.split(SILENT)
@@ -937,7 +934,7 @@ fn pane_byte_pipe_waits_for_a_handler_before_it_lets_go() {
         let held = scratch("waiting")?;
         let runtime = runtime()?;
         let (stack, client, alias) = connected(&held, &runtime)?;
-        let dawdling: *mut Dawdling = Box::into_raw(Box::new(Dawdling(Mutex::new(false))));
+        let dawdling: *mut Dawdling = Box::into_raw(Box::new(Dawdling(Mutex::new(0))));
         let handlers = PaneCallbacks {
             output: Some(dawdles),
             screen: None,
@@ -962,13 +959,18 @@ fn pane_byte_pipe_waits_for_a_handler_before_it_lets_go() {
         // Waited for closely, so that most of the handler's own wait is still
         // ahead of it when the letting go begins.
         let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
-        while Instant::now() < expires {
+        let mut inside = false;
+        while Instant::now() < expires && !inside {
             // SAFETY: this case's own box, alive here.
-            if unsafe { &*dawdling }.0.lock().is_ok_and(|begun| *begun) {
-                break;
+            inside = unsafe { &*dawdling }
+                .0
+                .lock()
+                .is_ok_and(|running| *running > 0);
+            if !inside {
+                std::thread::sleep(Duration::from_millis(1));
             }
-            std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(inside, "a handler is running, which is what is waited for");
         let started = Instant::now();
         // SAFETY: the client is live and the alias null-terminated.
         let gone = unsafe { iznik_pane_detach(client, alias.as_ptr(), PANE, &raw mut error) };

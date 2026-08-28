@@ -61,3 +61,9 @@ id = "manager-passes-on-no-change-it-could-not-take"
 statement = "A change numbered past the one that would follow is not passed on. This client applies nothing it cannot fit and asks for the whole of the model instead, and an application handed that change would have applied what this one refused — so the two would part until the snapshot arrived. What goes up is what went in, and an application that applies every change in turn holds what this client holds."
 test = "iznik-client::manager_traffic::manager_traffic_passes_on_no_change_it_could_not_take"
 because = "the host is scripted because no real one sends a number it did not reach; what is being asked is what this client does when one does"
+
+[[claim]]
+id = "manager-passes-on-the-model-a-replaced-daemon-sends"
+statement = "A host that answered a command and then came back as another daemon — the same socket, a model numbered below the one it had — has its model passed on all the same, and what the daemon that is gone answered stops being shown. Giving up on a command is not a reason to keep a host's own account of itself from whoever is watching, which is the difference between a message this client refused and one it took and had something to say about."
+test = "iznik-client::manager_traffic::manager_traffic_passes_on_the_model_a_replaced_daemon_sends"
+because = "no real daemon can be made to answer and then start again inside one case; what is being asked is what this client does when one does"

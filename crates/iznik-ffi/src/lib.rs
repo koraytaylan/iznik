@@ -126,16 +126,40 @@ impl Client {
         self.manager.as_ref()
     }
 
-    /// Begins watching a pane.
-    fn attach(&self, host: &str, pane: PaneId, callbacks: PaneCallbacks, context: *mut c_void) {
+    /// Begins watching a pane, and gives back whoever was watching it.
+    fn attach(
+        &self,
+        host: &str,
+        pane: PaneId,
+        callbacks: PaneCallbacks,
+        context: *mut c_void,
+    ) -> Option<Attached> {
+        let mut held = self.attached.lock().ok()?;
+        held.insert(
+            (HostId(host.to_owned()), pane),
+            Attached {
+                callbacks,
+                context: Carried(context),
+            },
+        )
+    }
+
+    /// Puts back whoever was watching a pane before an attachment that failed.
+    ///
+    /// An attachment that answers a refusal must leave nothing of itself
+    /// behind: the application is about to free what it passed, having been
+    /// told the call did not happen.
+    fn restore(&self, host: &str, pane: PaneId, before: Option<Attached>) {
         if let Ok(mut held) = self.attached.lock() {
-            let _before = held.insert(
-                (HostId(host.to_owned()), pane),
-                Attached {
-                    callbacks,
-                    context: Carried(context),
-                },
-            );
+            let named = (HostId(host.to_owned()), pane);
+            match before {
+                Some(watching) => {
+                    let _replaced = held.insert(named, watching);
+                }
+                None => {
+                    let _gone = held.remove(&named);
+                }
+            }
         }
     }
 

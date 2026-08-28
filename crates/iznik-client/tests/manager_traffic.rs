@@ -24,7 +24,7 @@ use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_link::framed::FramedLink;
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::command::{CommandOutcome, SessionCommand};
+use iznik_protocol::command::{CommandOutcome, Created, SessionCommand, encode_command_outcome};
 use iznik_protocol::delta::{Delta, encode_delta};
 use iznik_protocol::identity::{Generation, PaneId, SessionId};
 use iznik_protocol::message::{
@@ -62,6 +62,13 @@ const SETTLED: u64 = 1;
 
 /// And the one its change claims to produce, which is not the one after it.
 const SKIPPED: u64 = 99;
+
+/// The generation a scripted host says a command reached.
+const ANSWERED: u64 = 6;
+
+/// And the one it comes back with after it has been replaced: a daemon that
+/// was upgraded, or restarted, begins again at nothing.
+const AGAIN: u64 = 0;
 
 /// How many times the scripted host has been asked for its model when the
 /// asking that follows a gap has happened.
@@ -548,6 +555,141 @@ fn manager_traffic_passes_on_no_change_it_could_not_take() {
             asked.load(Ordering::Acquire) > TWICE_ASKED,
             "and the whole of it is asked for again, which is what a gap leaves to do"
         );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A host that answers a command and then comes back as a different daemon:
+/// the same socket, a model numbered below the one it had.
+///
+/// # Errors
+///
+/// When the socket cannot be bound.
+fn starts_again(runtime: &Runtime, socket: &std::path::Path) -> Result<(), Failed> {
+    let listener = runtime.block_on(async { UnixListener::bind(socket) })?;
+    let _serving = runtime.spawn(async move {
+        let Ok((stream, _from)) = listener.accept().await else {
+            return;
+        };
+        let mut link = FramedLink::new(stream);
+        loop {
+            let heard = {
+                let Ok(Some(frame)) = link.next_frame().await else {
+                    return;
+                };
+                decode_to_server(frame.payload)
+            };
+            let said = match heard {
+                Ok(ToServer::Hello { .. }) => encode_to_client(&ToClient::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                    server_version: "scripted".to_owned(),
+                    capabilities: Capabilities::from_bits(0),
+                }),
+                Ok(ToServer::SnapshotRequest) => model_at(SETTLED),
+                // Answered, and then never announced: the window this client
+                // holds a command applied in, which is where a daemon that
+                // goes away leaves one for ever if nothing notices.
+                Ok(ToServer::Command { command_id, .. }) => {
+                    let Ok(payload) = encode_command_outcome(&CommandOutcome::Applied {
+                        generation: Generation(ANSWERED),
+                        created: Created::Nothing,
+                    }) else {
+                        return;
+                    };
+                    let answer = encode_to_client(&ToClient::CommandResult {
+                        command_id,
+                        payload,
+                    });
+                    let Ok(answer) = answer else {
+                        return;
+                    };
+                    let _answered = link.send(CHANNEL_CONTROL, &answer).await;
+                    // And now it is another daemon, with another model.
+                    model_at(AGAIN)
+                }
+                Ok(_otherwise) => continue,
+                Err(_unreadable) => return,
+            };
+            let Ok(said) = said else {
+                return;
+            };
+            let _sent = link.send(CHANNEL_CONTROL, &said).await;
+        }
+    });
+    Ok(())
+}
+
+/// A snapshot of an empty model at one generation, encoded.
+///
+/// # Errors
+///
+/// When it cannot be encoded, which is what the caller stops on.
+fn model_at(generation: u64) -> Result<Vec<u8>, iznik_protocol::message::MessageError> {
+    let held = HostModel {
+        generation: Generation(generation),
+        sessions: Vec::new(),
+    };
+    let payload = encode_host_model(&held)?;
+    encode_to_client(&ToClient::Snapshot {
+        generation: Generation(generation),
+        payload,
+    })
+}
+
+/// # Panics
+///
+/// When a host that came back as another daemon is not passed on, or when
+/// what the daemon that is gone answered goes on being shown.
+#[test]
+fn manager_traffic_passes_on_the_model_a_replaced_daemon_sends() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("again")?;
+        let runtime = runtime()?;
+        let socket = held.path.join("scripted.sock");
+        starts_again(&runtime, &socket)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        let host = alias(&socket);
+        manager.add_host(&host);
+        await_connected(&events, &[&host])?;
+        // A command the host answers and never announces, which is what this
+        // client keeps applied until the model reaches the generation the
+        // answer named — a generation the daemon that comes back never had.
+        let submission = manager.command(
+            &host,
+            SessionCommand::RenameSession {
+                session: SessionId(1),
+                name: "renamed".to_owned(),
+            },
+        )?;
+        assert!(submission.id.0 > 0, "the command was given a number");
+        // The snapshot from the daemon that replaced it reaches the
+        // application: giving up on a command is not a reason to keep the
+        // host's own account of itself from whoever is watching.
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        let mut replaced = false;
+        while Instant::now() < expires && !replaced {
+            let left = expires.saturating_duration_since(Instant::now());
+            match events.recv_timeout(left) {
+                Ok(ManagerEvent::Snapshot { generation, .. }) => {
+                    replaced = generation == Generation(AGAIN);
+                }
+                Ok(_otherwise) => {}
+                Err(_nothing) => break,
+            }
+        }
+        assert!(
+            replaced,
+            "the model the daemon that replaced it sent is passed on"
+        );
+        // And nothing of the daemon that is gone is still in flight.
+        let waiting = manager
+            .model()
+            .host(&HostId(host.clone()))
+            .map_or(0, |view| view.pending.len());
+        assert_eq!(waiting, 0, "and what it answered stops being shown");
         drop(manager);
         Ok(())
     };

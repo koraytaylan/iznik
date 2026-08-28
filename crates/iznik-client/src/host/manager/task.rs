@@ -558,13 +558,6 @@ async fn heard(
         // layer above this one hands those bytes to an application that
         // decodes them with the protocol's own reader.
         //
-        // Except a change this client could not take. A gap in the numbering
-        // or a change that did not fit leaves the model exactly as it was and
-        // asks for the whole of it; passing the change on regardless would
-        // have the application apply what this client refused, and the two
-        // would part until the snapshot arrived. What is passed on is what
-        // was applied, so an application that applies every change in turn
-        // holds what this client holds.
         // Except what this client could not take. A gap in the numbering, a
         // change that did not fit, a model that could not be read: each leaves
         // the model exactly as it was, and each asks for something. Passing it
@@ -572,7 +565,7 @@ async fn heard(
         // refused, and the two would part until the snapshot arrived. What is
         // passed on is what was applied, so an application that applies every
         // one in turn holds what this client holds.
-        if taken.is_empty() || !carries_a_model(&message) {
+        if !refused(&taken) || !carries_a_model(&message) {
             announced(host, shared, &message);
         }
         taken
@@ -626,6 +619,22 @@ fn told_the_model(host: &HostId, shared: &Arc<Shared>, model: &iznik_protocol::m
         generation: model.generation,
         payload,
     });
+}
+
+/// Whether what came back from a reduction says the message was not taken.
+///
+/// The two ways a message carrying a model is refused: a number that did not
+/// follow the last, which asks for the whole of it, and bytes that could not
+/// be read, which say so. Anything else came back from a message that *was*
+/// taken — the account of what a replaced daemon answered among them, which a
+/// snapshot that was applied perfectly well produces.
+fn refused(taken: &[Effect]) -> bool {
+    taken.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::RequestSnapshot | Effect::Notify(Notification::Malformed { .. })
+        )
+    })
 }
 
 /// Whether a message is one of the two that say what the host's model is.
@@ -689,6 +698,13 @@ async fn act(
 ) -> bool {
     match effect {
         Effect::RequestSnapshot => write(channel, &ToServer::SnapshotRequest).await.is_ok(),
+        // Written down here, where the model's lock is not held: a log is a
+        // file, and a file is something every other caller would be waiting
+        // on if it were written from inside a reduction.
+        Effect::Abandoned { commands } => {
+            abandoned(host, &commands);
+            true
+        }
         Effect::ReleaseChannel { channel: number } => {
             write(channel, &ToServer::ChannelReleased { channel: number })
                 .await

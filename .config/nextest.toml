@@ -92,8 +92,12 @@ test-group = 'shells'
 # from another crate. Outside the group they run beside its twelve rather than
 # inside them, and what starves is a pane waiting for a shell to answer a
 # signal, which then fails a deadline meant to catch a hang.
+#
+# All but one: the burst measurement above asks for the machine, which is more
+# threads than this group has to give, so it is taken out here rather than
+# left to be resolved by whichever rule nextest reads first.
 [[profile.default.overrides]]
-filter = 'binary(remote_channel) + binary(remote_launch) + binary(connection_manager) + binary(manager_traffic)'
+filter = 'binary(remote_channel) + binary(remote_launch) + binary(connection_manager) + (binary(manager_traffic) - test(manager_traffic_carries_a_burst_as_fast_as_it_is_given))'
 test-group = 'shells'
 
 # The boundary's own cases stand the same thing up from further out: a daemon,

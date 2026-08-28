@@ -539,3 +539,66 @@ fn ffi_surface_refuses_a_log_it_cannot_write() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a second client naming a second log is handed a client and a file
+/// nothing will ever be written to.
+#[test]
+fn ffi_surface_refuses_a_second_log() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("second")?;
+        let runtime_directory = CString::new(held.path.join("runtime").display().to_string())?;
+        let first = held.path.join("first.log");
+        let second = held.path.join("second.log");
+        let named = CString::new(first.display().to_string())?;
+        let configuration = Configuration {
+            runtime_directory: runtime_directory.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: named.as_ptr(),
+        };
+        let mut error = blank();
+        // SAFETY: the configuration and its strings are alive for this call.
+        let made = unsafe { iznik_client_new(&raw const configuration, &raw mut error) };
+        assert!(!made.is_null(), "the first log is taken: {}", said(&error));
+        // Freed, and the file is still this process's: a subscriber is
+        // installed once and outlives whatever asked for it.
+        // SAFETY: it came from `iznik_client_new` and is freed once.
+        unsafe { iznik_client_free(made) };
+        let other = CString::new(second.display().to_string())?;
+        let elsewhere = Configuration {
+            runtime_directory: runtime_directory.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: other.as_ptr(),
+        };
+        // SAFETY: as above.
+        let again = unsafe { iznik_client_new(&raw const elsewhere, &raw mut error) };
+        assert!(again.is_null(), "and the second is refused, not swallowed");
+        let complaint = said(&error);
+        assert!(
+            complaint.contains("second.log") && complaint.contains("first.log"),
+            "naming the file it will not write and the one it is writing: {complaint}"
+        );
+        assert!(
+            !std::fs::exists(&second).unwrap_or(true),
+            "and nothing is left at the file it refused"
+        );
+        // The same file again is what this process already has, so it is no
+        // refusal at all.
+        let same = Configuration {
+            runtime_directory: runtime_directory.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: named.as_ptr(),
+        };
+        // SAFETY: as above.
+        let more = unsafe { iznik_client_new(&raw const same, &raw mut error) };
+        assert!(!more.is_null(), "the same log again: {}", said(&error));
+        // SAFETY: it came from `iznik_client_new` and is freed once.
+        unsafe { iznik_client_free(more) };
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

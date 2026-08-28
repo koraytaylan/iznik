@@ -78,9 +78,17 @@ pub unsafe extern "C" fn iznik_pane_attach(
     // SAFETY: the caller's obligations, above.
     let outcome = unsafe {
         with_pane(client, host, error, |held, named| {
-            held.attach(named, PaneId(pane), callbacks, context);
-            held.manager()
-                .map_or(Ok(()), |manager| manager.subscribe(named, PaneId(pane)))
+            let before = held.attach(named, PaneId(pane), callbacks, context);
+            let taken = held
+                .manager()
+                .map_or(Ok(()), |manager| manager.subscribe(named, PaneId(pane)));
+            if taken.is_err() {
+                // A refusal leaves nothing of this attachment behind: the
+                // application was told the call did not happen, and is about
+                // to free what it passed.
+                held.restore(named, PaneId(pane), before);
+            }
+            taken
         })
     };
     // Attaching over an attachment takes the one before it away, so it owes

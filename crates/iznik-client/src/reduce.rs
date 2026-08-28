@@ -20,7 +20,7 @@ use iznik_protocol::message::{ErrorCode, MarkKind, ToClient};
 use iznik_protocol::model::decode_host_model;
 use iznik_protocol::reconcile::{ReconcileError, apply};
 
-use crate::commands::{abandoned, replay};
+use crate::commands::replay;
 use crate::host::identity::HostId;
 use crate::model::{ClientModel, HostView};
 
@@ -49,6 +49,16 @@ pub enum Effect {
         rows: u16,
         /// The bytes that reproduce it.
         bytes: Vec<u8>,
+    },
+    /// Commands a host that is gone answered, which stop being shown.
+    ///
+    /// An effect rather than a line written here: this module returns what it
+    /// did and writes nothing, and the model's lock is held for the whole of
+    /// a reduction — so a log written from inside it would be a file being
+    /// waited on by every caller who wanted the model.
+    Abandoned {
+        /// Their numbers, in the order they were sent.
+        commands: Vec<CommandId>,
     },
     /// Something a person, or the layer above, is told.
     Notify(Notification),
@@ -234,8 +244,11 @@ fn replace(
             // replaced by it — and what is still in flight goes back on top,
             // because a snapshot is what the host has said and not what this
             // client has asked for.
-            abandoned(host, &view.settle(replaced));
+            let commands = view.settle(replaced);
             replay(view);
+            if !commands.is_empty() {
+                return vec![Effect::Abandoned { commands }];
+            }
         }
         None => {
             let _first = model.insert(host.clone(), HostView::of(replaced));
