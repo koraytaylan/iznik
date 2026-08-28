@@ -393,10 +393,16 @@ Each pane channel has a credit window in bytes. The server may send at most
 what the window holds; the client returns credit with `Credit { channel,
 bytes }` as it consumes.
 
-| Constant | Value | Meaning |
+**A client never needs to know the sizes.** It returns credit for what it has
+received and the window follows; the figures below are this server's policy,
+not the protocol's, and they live in `crates/iznik-server/src/multiplexer/`
+`credit.rs`. They are stated here for orientation, and a client that depends
+on them is depending on something it was never told.
+
+| Window | Value | Meaning |
 |---|---|---|
-| Background window | 262 144 (256 KiB) | What an unfocused pane's channel starts with. |
-| Focused window | 1 048 576 (1 MiB) | What the pane the client is looking at holds. |
+| Background | 262 144 (256 KiB) | What an unfocused pane's channel starts with. |
+| Focused | 1 048 576 (1 MiB) | What the pane the client is looking at holds. |
 | Frame payload | 65 536 (64 KiB) | The most one pane frame carries, so a keystroke echo waits behind at most one frame per active pane. |
 | Stale threshold | 4 194 304 (4 MiB) | The lag past which a background channel stops being streamed. |
 
@@ -410,10 +416,12 @@ ceiling.
 
 A channel at zero credit is skipped, never waited on. A background channel
 that falls further behind than the stale threshold stops being streamed
-altogether; its history is kept, and when the client focuses it, it is sent a
-`PaneChannel` at the newest byte and a `Screen` rather than the megabytes it
-missed. A client may still `Resume` from an older sequence afterwards: the
-ring keeps every byte it holds regardless.
+altogether; its history is kept, and rather than the megabytes it missed it is
+sent a `PaneChannel` at the newest byte and a `Screen` — as soon as it is next
+served with credit to spend, and immediately when the client focuses it. A
+client must therefore be ready for a `PaneChannel` and a `Screen` on a channel
+it is not looking at. It may still `Resume` from an older sequence afterwards:
+the ring keeps every byte it holds regardless.
 
 The acceptance figure for all of this is measured, not asserted: with one pane
 flooding at line rate and another echoing keystrokes, both subscribed, the

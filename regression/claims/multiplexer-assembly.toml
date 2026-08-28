@@ -7,6 +7,15 @@
 # in-memory sink. The same paths over a real link are proven in plans 0004 and
 # 0005; what is proven here is the scheduler, and a container adds nothing to
 # it but noise in the latency figure it turns on.
+#
+# What is deliberately not claimed here, because an in-memory sink cannot
+# reach it, and what `client-connections` in plan 0004 must therefore reach:
+# a sink that refuses a frame — which is where a delta returns to its queue
+# rather than vanishing, where a mark stays the only copy of itself, where a
+# subscription that fails before announcing its channel frees the number
+# outright, and where a pane that cannot answer detaches one pane instead of
+# the connection. Each of those is a fix this task's own review produced, and
+# each is written against a sink that has no way to fail.
 
 [[claim]]
 id = "multiplexer-deltas-arrive-in-order"

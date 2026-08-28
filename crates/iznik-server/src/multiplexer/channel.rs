@@ -80,6 +80,15 @@ pub enum MultiplexerError {
         /// What the codec said.
         detail: String,
     },
+    /// The pane itself could not answer: its mirror has gone, or its screen
+    /// could not be serialized. That is the pane's failure and not the
+    /// client's, so it detaches one pane rather than the connection.
+    Pane {
+        /// The pane that could not answer.
+        pane: PaneId,
+        /// What the pane said.
+        detail: String,
+    },
     /// The link under the multiplexer could not take a frame.
     Sink(SinkError),
 }
@@ -106,6 +115,9 @@ impl Display for MultiplexerError {
             ),
             MultiplexerError::Encoding { detail } => {
                 write!(formatter, "a frame could not be built: {detail}")
+            }
+            MultiplexerError::Pane { pane, detail } => {
+                write!(formatter, "pane {} could not answer: {detail}", pane.0)
             }
             MultiplexerError::Sink(error) => write!(formatter, "{error}"),
         }
@@ -186,6 +198,19 @@ impl ChannelTable {
             }
             let _added = self.released_pending.insert(channel);
         }
+    }
+
+    /// Frees a channel nothing was ever announced on, without waiting for an
+    /// acknowledgement the client has no reason to send. A subscription that
+    /// fails before its `PaneChannel` goes out has put nothing on the wire, so
+    /// holding the number back would leak one per attempt.
+    pub fn discard(&mut self, channel: u8) {
+        if let Some(pane) = self.panes.remove(&channel)
+            && self.channels.get(&pane) == Some(&channel)
+        {
+            let _released = self.channels.remove(&pane);
+        }
+        let _held = self.released_pending.remove(&channel);
     }
 
     /// Returns a released channel to the free set: the client has said nothing

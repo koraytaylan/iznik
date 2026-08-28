@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iznik_protocol::delta::{Delta, encode_delta};
-use iznik_protocol::identity::{PaneId, Sequence};
+use iznik_protocol::identity::{Generation, PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, ToClient, encode_to_client};
 use iznik_protocol::model::encode_host_model;
 use tokio::sync::{Notify, RwLock, broadcast};
@@ -102,6 +102,9 @@ pub struct Multiplexer<Sink: FrameSink> {
     owed_marks: VecDeque<(PaneId, MarkEvent)>,
     /// Whether the client must be sent the whole model before anything else.
     owed_snapshot: bool,
+    /// The generation of the last whole model sent, so a delta the snapshot
+    /// already carries is dropped rather than replayed on top of it.
+    told_through: Option<Generation>,
     /// The pane this client is looking at.
     focused: Option<PaneId>,
     /// Where the round-robin starts, so the unfocused panes take turns.
@@ -139,6 +142,7 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             waiting: VecDeque::new(),
             owed_marks: VecDeque::new(),
             owed_snapshot: false,
+            told_through: None,
             focused: None,
             turn: 0,
             frame: Vec::new(),
@@ -181,11 +185,18 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
     async fn tell_the_model(&mut self) -> Result<(), MultiplexerError> {
         let model = self.registry.read().await.snapshot();
         let payload = encode_host_model(&model)?;
+        let generation = model.generation;
         self.tell(&ToClient::Snapshot {
-            generation: model.generation,
+            generation,
             payload,
         })
-        .await
+        .await?;
+        // The registry may have applied and broadcast a change between the
+        // decision to snapshot and the read: that change is in this model and
+        // still in the receiver, and sending it after would look to the
+        // client's reconciler like a generation it has already applied.
+        self.told_through = Some(generation);
+        Ok(())
     }
 }
 
@@ -211,7 +222,7 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             Ok(()) => Ok(()),
             Err(refused) => {
                 if !standing {
-                    self.forget(pane);
+                    self.abandon(pane);
                 }
                 Err(refused)
             }
@@ -266,11 +277,13 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
                 // Serialized first: the mirror can advance between deciding
                 // and serializing, and what the channel announces has to be
                 // where the bytes that follow actually begin.
-                let screen = held.screen().await.map_err(|error| {
-                    MultiplexerError::Sink(SinkError::Refused {
+                let screen = held
+                    .screen()
+                    .await
+                    .map_err(|error| MultiplexerError::Pane {
+                        pane,
                         detail: error.to_string(),
-                    })
-                })?;
+                    })?;
                 self.tell(&ToClient::PaneChannel {
                     pane,
                     channel,
@@ -318,14 +331,35 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         Ok(())
     }
 
-    /// Forgets everything about a subscription but the channel, which waits.
+    /// Forgets everything about a subscription but the channel, which waits
+    /// for the client to say the frames already on it have arrived.
     fn forget(&mut self, pane: PaneId) {
         if let Some(channel) = self.channels.channel_of(pane) {
             self.channels.release(channel);
         }
+        self.drop_state(pane);
+    }
+
+    /// Forgets a subscription that was never announced, freeing its channel
+    /// outright. Nothing went out on it, so there is nothing in flight and the
+    /// client has no reason to acknowledge it — held back, the number would be
+    /// lost for the life of the connection, one per attempt.
+    fn abandon(&mut self, pane: PaneId) {
+        if let Some(channel) = self.channels.channel_of(pane) {
+            self.channels.discard(channel);
+        }
+        self.drop_state(pane);
+    }
+
+    /// Everything a subscription holds but its channel.
+    fn drop_state(&mut self, pane: PaneId) {
         let _cursor = self.cursors.remove(&pane);
         let _subscription = self.subscriptions.remove(&pane);
         let _marks = self.marks.remove(&pane);
+        // A mark taken off the receiver but not yet sent would otherwise go
+        // out for a pane the client has been told is detached, on a channel it
+        // has already released.
+        self.owed_marks.retain(|(held, _event)| *held != pane);
         if let Some(watcher) = self.watchers.remove(&pane) {
             watcher.abort();
         }
@@ -471,6 +505,12 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
                 // waiting is dropped rather than applied on top of it.
                 continue;
             }
+            if self
+                .told_through
+                .is_some_and(|told| numbered.generation <= told)
+            {
+                continue;
+            }
             let payload = match encode_delta(&numbered.value) {
                 Ok(payload) => payload,
                 Err(refused) => {
@@ -558,7 +598,17 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         self.turn = self.turn.wrapping_add(1);
         let mut sent = false;
         for pane in order {
-            sent |= self.serve(pane).await?;
+            match self.serve(pane).await {
+                Ok(served) => sent |= served,
+                // One pane that cannot answer must not stop the rest: it is
+                // detached, and every other cursor is served this round.
+                Err(MultiplexerError::Pane { pane, detail }) => {
+                    tracing::warn!(pane = pane.0, detail, "a pane could not answer");
+                    self.unsubscribe(pane).await?;
+                    sent = true;
+                }
+                Err(refused) => return Err(refused),
+            }
         }
         Ok(sent)
     }
@@ -584,15 +634,19 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         let state = held.state();
         let focused = self.focused == Some(pane);
 
-        if cursor.stale {
-            if focused || cursor.credit.available() > 0 {
-                return self.catch_up(pane, &held).await.map(|()| true);
-            }
-            return Ok(false);
-        }
-        if scheduler::has_fallen_behind(&cursor, state.newest, focused) {
+        let mut behind = cursor.stale;
+        if !behind && scheduler::has_fallen_behind(&cursor, state.newest, focused) {
             if let Some(marked) = self.cursors.get_mut(&pane) {
                 marked.stale = true;
+            }
+            behind = true;
+        }
+        if behind {
+            // In the same round it is marked, when it can be: a pane that has
+            // just finished flooding says nothing more, so a cursor left to
+            // wait for its next byte would wait for ever.
+            if focused || cursor.credit.available() > 0 {
+                return self.catch_up(pane, &held).await.map(|()| true);
             }
             return Ok(false);
         }
@@ -636,11 +690,13 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         let Some(channel) = self.channels.channel_of(pane) else {
             return Err(MultiplexerError::NotSubscribed { pane });
         };
-        let screen = held.screen().await.map_err(|error| {
-            MultiplexerError::Sink(SinkError::Refused {
+        let screen = held
+            .screen()
+            .await
+            .map_err(|error| MultiplexerError::Pane {
+                pane,
                 detail: error.to_string(),
-            })
-        })?;
+            })?;
         self.tell(&ToClient::PaneChannel {
             pane,
             channel,
