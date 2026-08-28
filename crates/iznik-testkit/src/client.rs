@@ -11,7 +11,7 @@
 //! order on its channel. A method that waits for one answer — a snapshot, a
 //! command's result — records everything it passes over on the way.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -25,8 +25,8 @@ use iznik_protocol::command::{
 use iznik_protocol::delta::{Delta, decode_delta};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, MessageError, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client,
-    encode_to_server,
+    CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
+    decode_to_client, encode_to_server,
 };
 use iznik_protocol::model::{HostModel, decode_host_model};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -61,6 +61,15 @@ pub enum ClientError {
     },
     /// The server closed the connection.
     Closed,
+    /// The server refused what was asked. A method waiting for one answer
+    /// stops on this rather than waiting out its deadline for an answer that
+    /// is never coming.
+    Refused {
+        /// Why.
+        code: ErrorCode,
+        /// The server's words.
+        message: String,
+    },
     /// The server said something else where one thing was expected.
     Unexpected {
         /// What was expected.
@@ -80,6 +89,9 @@ impl std::fmt::Display for ClientError {
                 write!(formatter, "nothing arrived in {waited:?}")
             }
             ClientError::Closed => write!(formatter, "the server closed the connection"),
+            ClientError::Refused { code, message } => {
+                write!(formatter, "the server refused it ({code:?}): {message}")
+            }
             ClientError::Unexpected { wanted, received } => {
                 write!(formatter, "expected {wanted}, received {received}")
             }
@@ -152,6 +164,14 @@ pub struct TestClient<Stream: Duplex> {
     next_command: u64,
     /// Which pane each channel carries, learned from `PaneChannel`.
     channels: BTreeMap<u8, PaneId>,
+    /// The sequence each pane's channel was last announced at, so a caller can
+    /// say where to resume from without counting bytes by hand.
+    starts: BTreeMap<PaneId, Sequence>,
+    /// Channels detached but not yet released. A frame already in flight when
+    /// the server detached the pane arrives here and is dropped, which is what
+    /// the release handshake exists for; a frame on a channel that was never
+    /// announced is a server out of step, and is refused.
+    detached: BTreeSet<u8>,
     /// Every pane's bytes, in the order they arrived.
     bytes: BTreeMap<PaneId, Vec<u8>>,
     /// Every delta received, in the order it arrived.
@@ -182,6 +202,8 @@ impl<Stream: Duplex> TestClient<Stream> {
             link: Some(Link::Plain(FramedLink::new(stream))),
             next_command: 0,
             channels: BTreeMap::new(),
+            starts: BTreeMap::new(),
+            detached: BTreeSet::new(),
             bytes: BTreeMap::new(),
             deltas: Vec::new(),
             kept: VecDeque::new(),
@@ -196,10 +218,22 @@ impl<Stream: Duplex> TestClient<Stream> {
         self.auto_credit = returning;
     }
 
-    /// Everything received on a pane's channel since it was subscribed.
+    /// Everything received on a pane's channel since it was last announced.
+    /// A `PaneChannel` starts the count again, so a resume's bytes are its
+    /// own and not the earlier subscription's as well.
     #[must_use]
     pub fn bytes_of(&self, pane: PaneId) -> &[u8] {
         self.bytes.get(&pane).map_or(&[], Vec::as_slice)
+    }
+
+    /// The first byte of a pane this client does not hold: where its channel
+    /// was last announced, plus everything received on it since. It is what a
+    /// `Resume` asks for, so no caller has to count bytes itself.
+    #[must_use]
+    pub fn resume_point(&self, pane: PaneId) -> Sequence {
+        let start = self.starts.get(&pane).copied().unwrap_or(Sequence(0));
+        let held = u64::try_from(self.bytes_of(pane).len()).unwrap_or(0);
+        Sequence(start.0.saturating_add(held))
     }
 
     /// Every delta received, in the order it arrived.
@@ -324,7 +358,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn snapshot_request(&mut self) -> Result<(), ClientError> {
         self.tell(&ToServer::SnapshotRequest).await
     }
@@ -333,9 +367,14 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`], and [`ClientError::Message`] when the model
-    /// will not decode.
+    /// As [`TestClient::next`]; [`ClientError::Refused`] when the server
+    /// answers with an `Error` instead; and [`ClientError::Message`] when the
+    /// model will not decode.
     pub async fn snapshot(&mut self) -> Result<HostModel, ClientError> {
+        // A snapshot held from before this request is superseded by the one it
+        // asks for, and a `Snapshot` carries nothing to tell the two apart.
+        self.kept
+            .retain(|held| !matches!(held, Received::Control(ToClient::Snapshot { .. })));
         self.snapshot_request().await?;
         let payload = self
             .expect(|message| match message {
@@ -350,8 +389,10 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`], and [`ClientError::Message`] when the command
-    /// will not encode or the outcome will not decode.
+    /// As [`TestClient::next`]; [`ClientError::Refused`] when the server
+    /// answers with an `Error` instead of a result; and
+    /// [`ClientError::Message`] when the command will not encode or the
+    /// outcome will not decode.
     pub async fn command(
         &mut self,
         command: SessionCommand,
@@ -380,7 +421,11 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// [`ClientError::Message`] when the message will not fit a frame,
+    /// [`ClientError::Link`] when the link fails, and
+    /// [`ClientError::Closed`] when there is no link left. It sends and does
+    /// not read, so it cannot report a deadline: the answer, when there is
+    /// one, comes back through [`TestClient::next`].
     pub async fn subscribe(&mut self, pane: PaneId) -> Result<(), ClientError> {
         self.tell(&ToServer::Subscribe { pane }).await
     }
@@ -389,7 +434,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn unsubscribe(&mut self, pane: PaneId) -> Result<(), ClientError> {
         self.tell(&ToServer::Unsubscribe { pane }).await
     }
@@ -398,7 +443,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn resume(&mut self, pane: PaneId, from: Sequence) -> Result<(), ClientError> {
         self.tell(&ToServer::Resume {
             pane,
@@ -411,7 +456,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn screen_request(&mut self, pane: PaneId) -> Result<(), ClientError> {
         self.tell(&ToServer::ScreenRequest { pane }).await
     }
@@ -420,7 +465,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn input(&mut self, pane: PaneId, bytes: Vec<u8>) -> Result<(), ClientError> {
         self.tell(&ToServer::Input { pane, bytes }).await
     }
@@ -429,7 +474,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn resize(
         &mut self,
         pane: PaneId,
@@ -448,7 +493,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn focus(&mut self, pane: PaneId) -> Result<(), ClientError> {
         self.tell(&ToServer::Focus { pane }).await
     }
@@ -457,7 +502,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn credit(&mut self, channel: u8, bytes: u32) -> Result<(), ClientError> {
         self.tell(&ToServer::Credit { channel, bytes }).await
     }
@@ -467,7 +512,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn channel_released(&mut self, channel: u8) -> Result<(), ClientError> {
         self.tell(&ToServer::ChannelReleased { channel }).await
     }
@@ -476,7 +521,7 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::subscribe`].
     pub async fn ping(&mut self) -> Result<(), ClientError> {
         self.tell(&ToServer::Ping).await
     }
@@ -501,7 +546,7 @@ impl<Stream: Duplex> TestClient<Stream> {
             return Ok(held);
         }
         let (channel, payload) = self.frame(deadline).await?;
-        self.record(channel, payload).await
+        self.record(channel, payload, deadline).await
     }
 
     /// Records one frame and says what it was.
@@ -510,17 +555,34 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// [`ClientError::Message`] when a control message or a delta will not
     /// decode, and the link's refusals when automatic credit cannot be sent.
-    async fn record(&mut self, channel: u8, payload: Vec<u8>) -> Result<Received, ClientError> {
+    async fn record(
+        &mut self,
+        channel: u8,
+        payload: Vec<u8>,
+        deadline: Duration,
+    ) -> Result<Received, ClientError> {
         if channel != CHANNEL_CONTROL {
-            if let Some(pane) = self.channels.get(&channel).copied() {
-                self.bytes
+            match self.channels.get(&channel).copied() {
+                Some(pane) => self
+                    .bytes
                     .entry(pane)
                     .or_default()
-                    .extend_from_slice(&payload);
+                    .extend_from_slice(&payload),
+                // Bytes on a channel this client has detached and not yet
+                // released were already in flight; dropping them is what the
+                // handshake is for. Bytes on one it never had are not.
+                None if self.detached.contains(&channel) => {}
+                None => {
+                    return Err(ClientError::Unexpected {
+                        wanted: "pane bytes on a channel this client was told about",
+                        received: format!("{} bytes on channel {channel}", payload.len()),
+                    });
+                }
             }
             if self.auto_credit {
                 let bytes = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-                self.credit(channel, bytes).await?;
+                self.within(deadline, ToServer::Credit { channel, bytes })
+                    .await?;
             }
             return Ok(Received::PaneBytes {
                 channel,
@@ -528,8 +590,23 @@ impl<Stream: Duplex> TestClient<Stream> {
             });
         }
         let message = decode_to_client(&payload)?;
-        self.absorb(&message).await?;
+        self.absorb(&message, deadline).await?;
         Ok(Received::Control(message))
+    }
+
+    /// Sends one message under a deadline, so that a peer which has stopped
+    /// reading cannot make a method that promised to answer in `deadline`
+    /// wait on a socket buffer instead.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Deadline`] when the write does not complete in time, and
+    /// the encoding and link refusals of the send itself.
+    async fn within(&mut self, deadline: Duration, message: ToServer) -> Result<(), ClientError> {
+        let Ok(sent) = tokio::time::timeout(deadline, self.tell(&message)).await else {
+            return Err(ClientError::Deadline { waited: deadline });
+        };
+        sent
     }
 
     /// Takes what a control message says about this client's own state.
@@ -538,16 +615,28 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// [`ClientError::Message`] when a delta will not decode, and the link's
     /// refusals when an acknowledgement cannot be sent.
-    async fn absorb(&mut self, message: &ToClient) -> Result<(), ClientError> {
+    async fn absorb(&mut self, message: &ToClient, deadline: Duration) -> Result<(), ClientError> {
         match message {
-            ToClient::PaneChannel { pane, channel, .. } => {
+            ToClient::PaneChannel {
+                pane,
+                channel,
+                sequence,
+            } => {
                 let _carried = self.channels.insert(*channel, *pane);
+                let _from = self.starts.insert(*pane, *sequence);
+                // The count starts again: what follows is this subscription's
+                // bytes, not the earlier one's as well.
+                let _held = self.bytes.remove(pane);
+                let _freed = self.detached.remove(channel);
             }
             ToClient::PaneDetached { channel, .. } => {
                 let released = *channel;
                 let _carried = self.channels.remove(&released);
+                let _waiting = self.detached.insert(released);
                 if self.auto_credit {
-                    self.channel_released(released).await?;
+                    self.within(deadline, ToServer::ChannelReleased { channel: released })
+                        .await?;
+                    let _freed = self.detached.remove(&released);
                 }
             }
             ToClient::Delta {
@@ -565,7 +654,8 @@ impl<Stream: Duplex> TestClient<Stream> {
     ///
     /// # Errors
     ///
-    /// As [`TestClient::next`].
+    /// As [`TestClient::next`], and [`ClientError::Refused`] when the server
+    /// answers with an `Error` rather than the thing being waited for.
     async fn expect<Found>(
         &mut self,
         matching: impl Fn(&ToClient) -> Option<Found>,
@@ -594,11 +684,19 @@ impl<Stream: Duplex> TestClient<Stream> {
                 return Err(ClientError::Deadline { waited });
             };
             let (channel, payload) = self.frame(left).await?;
-            let received = self.record(channel, payload).await?;
-            if let Received::Control(message) = &received
-                && let Some(claimed) = matching(message)
-            {
-                return Ok(claimed);
+            let received = self.record(channel, payload, left).await?;
+            if let Received::Control(message) = &received {
+                if let Some(claimed) = matching(message) {
+                    return Ok(claimed);
+                }
+                // A refusal is the answer: waiting out the deadline for one
+                // that is never coming would hide why.
+                if let ToClient::Error { code, message } = message {
+                    return Err(ClientError::Refused {
+                        code: *code,
+                        message: message.clone(),
+                    });
+                }
             }
             self.kept.push_back(received);
         }

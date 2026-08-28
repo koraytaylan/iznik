@@ -42,3 +42,21 @@ id = "client-compresses-when-both-ends-do"
 statement = "After a handshake in which both ends advertised compression, what goes on the wire is not the plain frame and a server that engages the same layer reads back exactly what was sent, four kibibytes of input included; after one in which the server did not, the wire carries the plain frame."
 test = "iznik-testkit::client::it_compresses_only_when_both_ends_advertise_it"
 because = "the leftover-bytes rule is a property of the two layers meeting, and both are in this process"
+
+[[claim]]
+id = "client-treats-a-refusal-as-an-answer"
+statement = "A method waiting for one answer stops on the server's `Error` and reports the code and words it carries, rather than waiting out its deadline for an answer that is never coming and hiding why."
+test = "iznik-testkit::client::a_refusal_is_an_answer_and_not_a_wait"
+because = "the refusal is a frame on a pipe, and what is being proven is what the client does with it"
+
+[[claim]]
+id = "client-keeps-a-channel-to-its-pane"
+statement = "Bytes are kept only under the pane the client was told a channel carries: a detached channel's late bytes are yielded and dropped rather than kept or refused, bytes on a channel it was never told of are refused rather than silently lost, and a fresh channel announcement starts both the count and the resume point again at the sequence it names."
+test = "iznik-testkit::client::it_keeps_each_channel_to_the_pane_it_was_told_of"
+because = "the channel bookkeeping is the client's own, and a script over a pipe drives every case of it exactly"
+
+[[claim]]
+id = "client-answers-with-the-snapshot-it-asked-for"
+statement = "A snapshot the client held from before its request — one that arrived while a command's result was being waited for — is not handed back as the answer to that request."
+test = "iznik-testkit::client::it_never_answers_with_a_snapshot_from_before_the_request"
+because = "a snapshot carries nothing to tell one from another, so the ordering is the whole of what is proven"

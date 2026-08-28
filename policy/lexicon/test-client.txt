@@ -12,7 +12,10 @@ duplex
 engage
 engaged
 framing
+freed
 hexed
+late
+modelled
 near
 offering
 offers
@@ -20,5 +23,7 @@ sends
 shake
 shaken
 shaped
+stray
+timely
 unexpected
 wired

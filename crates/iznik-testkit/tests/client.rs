@@ -13,13 +13,15 @@ use std::time::{Duration, Instant};
 use iznik_link::compression::compressed;
 use iznik_link::framed::FramedLink;
 use iznik_protocol::capabilities::Capabilities;
+use iznik_protocol::command::{CommandOutcome, Created, SessionCommand, encode_command_outcome};
 use iznik_protocol::delta::Delta;
 use iznik_protocol::frame;
-use iznik_protocol::identity::{Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, PROTOCOL_VERSION, ToClient, ToServer, decode_to_server, encode_to_client,
-    encode_to_server,
+    CHANNEL_CONTROL, ErrorCode, PROTOCOL_VERSION, ToClient, ToServer, decode_to_server,
+    encode_to_client, encode_to_server,
 };
+use iznik_protocol::model::{HostModel, encode_host_model};
 use iznik_testkit::client::{ClientError, Received, ServerHello, TestClient};
 use iznik_testkit::golden;
 use serde_json::Value;
@@ -42,6 +44,9 @@ const SLACK: Duration = Duration::from_millis(400);
 
 /// The pane every case names.
 const PANE: PaneId = PaneId(7);
+
+/// The pane bytes the credit case counts, so the count is the literal's own.
+const PAYLOAD: &[u8] = b"ten bytes!";
 
 /// How much input the compression case sends, to show a real payload survives
 /// the round trip and not only a bare `Ping`.
@@ -87,7 +92,7 @@ fn framed(payload: &[u8]) -> Result<Vec<u8>, Failed> {
 /// When the stream ends first.
 async fn read_frame(server: &mut DuplexStream, payload: &[u8]) -> Result<Vec<u8>, Failed> {
     let mut seen = vec![0; framed(payload)?.len()];
-    server.read_exact(&mut seen).await?;
+    tokio::time::timeout(PROMPT, server.read_exact(&mut seen)).await??;
     Ok(seen)
 }
 
@@ -232,6 +237,18 @@ async fn every_frame_it_sends_is_the_golden() {
 /// A server side that speaks frames.
 fn framing(server: DuplexStream) -> FramedLink<DuplexStream> {
     FramedLink::new(server)
+}
+
+/// The next frame's payload, or nothing at a clean end, waiting no longer than
+/// [`PROMPT`]: a client that stops short must be a named failure and not a
+/// suite that hangs until the runner kills it.
+///
+/// # Errors
+///
+/// When nothing arrives in time, or the link fails.
+async fn timely(server: &mut FramedLink<DuplexStream>) -> Result<Option<Vec<u8>>, Failed> {
+    let frame = tokio::time::timeout(PROMPT, server.next_frame()).await??;
+    Ok(frame.map(|frame| frame.payload.to_vec()))
 }
 
 /// # Panics
@@ -420,12 +437,7 @@ async fn shake(
     })?;
     server.send(CHANNEL_CONTROL, &reply).await?;
     let shaken = client.hello(Capabilities::ZSTD).await?;
-    let greeting = server
-        .next_frame()
-        .await?
-        .ok_or("the client said nothing")?
-        .payload
-        .to_vec();
+    let greeting = timely(server).await?.ok_or("the client said nothing")?;
     let ToServer::Hello { capabilities, .. } = decode_to_server(&greeting)? else {
         return Err("the client's first frame was not a Hello".into());
     };
@@ -458,7 +470,7 @@ async fn it_returns_credit_and_acknowledges_detachment_when_asked() {
                 .send(CHANNEL_CONTROL, &encode_to_client(&announcement)?)
                 .await?;
             let _announced = client.next(PROMPT).await?;
-            server.send(channel, b"nine bytes").await?;
+            server.send(channel, PAYLOAD).await?;
             let _carried = client.next(PROMPT).await?;
             let detachment = ToClient::PaneDetached {
                 pane: PANE,
@@ -477,7 +489,7 @@ async fn it_returns_credit_and_acknowledges_detachment_when_asked() {
                 vec![
                     ToServer::Credit {
                         channel,
-                        bytes: u32::try_from("nine bytes".len())?,
+                        bytes: u32::try_from(PAYLOAD.len())?,
                     },
                     ToServer::ChannelReleased { channel },
                 ]
@@ -574,6 +586,181 @@ async fn it_compresses_only_when_both_ends_advertise_it() {
                 "a plain link puts the plain frame on the wire"
             );
         }
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a refusal is waited past rather than answered with.
+#[tokio::test]
+async fn a_refusal_is_an_answer_and_not_a_wait() {
+    let case = async {
+        let held = pair();
+        let mut client = held.client;
+        let mut server = framing(held.server);
+        let refusal = ToClient::Error {
+            code: ErrorCode::UnknownPane,
+            message: "the host holds no pane 7".to_owned(),
+        };
+        server
+            .send(CHANNEL_CONTROL, &encode_to_client(&refusal)?)
+            .await?;
+
+        let started = Instant::now();
+        let answered = client
+            .command(SessionCommand::ClosePane { pane: PANE })
+            .await;
+        let waited = started.elapsed();
+        assert!(
+            matches!(
+                answered,
+                Err(ClientError::Refused {
+                    code: ErrorCode::UnknownPane,
+                    ..
+                })
+            ),
+            "the refusal is the answer: {answered:?}"
+        );
+        assert!(waited < SLACK, "and it is not waited out: {waited:?}");
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When bytes are kept under a channel the client was never told about, when a
+/// detached channel's late bytes are refused rather than dropped, or when a
+/// fresh announcement does not start the count and the resume point again.
+#[tokio::test]
+async fn it_keeps_each_channel_to_the_pane_it_was_told_of() {
+    let case = async {
+        let held = pair();
+        let mut client = held.client;
+        let mut server = framing(held.server);
+        let channel = 3;
+        let announce = |sequence| ToClient::PaneChannel {
+            pane: PANE,
+            channel,
+            sequence,
+        };
+
+        server
+            .send(
+                CHANNEL_CONTROL,
+                &encode_to_client(&announce(Sequence(100)))?,
+            )
+            .await?;
+        let _announced = client.next(PROMPT).await?;
+        server.send(channel, b"abc").await?;
+        let _carried = client.next(PROMPT).await?;
+        assert_eq!(client.bytes_of(PANE), b"abc", "the bytes are the pane's");
+        assert_eq!(
+            client.resume_point(PANE),
+            Sequence(103),
+            "and the resume point is where they end"
+        );
+
+        let detachment = ToClient::PaneDetached {
+            pane: PANE,
+            channel,
+        };
+        server
+            .send(CHANNEL_CONTROL, &encode_to_client(&detachment)?)
+            .await?;
+        let _detached = client.next(PROMPT).await?;
+        server.send(channel, b"in flight").await?;
+        let late = client.next(PROMPT).await?;
+        assert!(
+            matches!(late, Received::PaneBytes { .. }),
+            "a detached channel's late bytes are yielded, not refused"
+        );
+        assert_eq!(client.bytes_of(PANE), b"abc", "and are not kept");
+
+        server.send(9, b"never announced").await?;
+        let stray = client.next(PROMPT).await;
+        assert!(
+            matches!(stray, Err(ClientError::Unexpected { .. })),
+            "bytes on a channel it was never told of are refused: {stray:?}"
+        );
+
+        server
+            .send(
+                CHANNEL_CONTROL,
+                &encode_to_client(&announce(Sequence(200)))?,
+            )
+            .await?;
+        let _again = client.next(PROMPT).await?;
+        assert_eq!(
+            client.bytes_of(PANE),
+            b"",
+            "a fresh channel starts the count again"
+        );
+        assert_eq!(
+            client.resume_point(PANE),
+            Sequence(200),
+            "and the resume point with it"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a snapshot held from before the request is handed back as the answer
+/// to it.
+#[tokio::test]
+async fn it_never_answers_with_a_snapshot_from_before_the_request() {
+    let case = async {
+        let held = pair();
+        let mut client = held.client;
+        let mut server = framing(held.server);
+        let modelled = |generation| -> Result<ToClient, Failed> {
+            Ok(ToClient::Snapshot {
+                generation,
+                payload: encode_host_model(&HostModel {
+                    generation,
+                    sessions: Vec::new(),
+                })?,
+            })
+        };
+        // The first goes by while a command's result is being waited for, so
+        // the client holds it; the second is the one the request asks for.
+        server
+            .send(
+                CHANNEL_CONTROL,
+                &encode_to_client(&modelled(Generation(1))?)?,
+            )
+            .await?;
+        let answered = ToClient::CommandResult {
+            command_id: CommandId(0),
+            payload: encode_command_outcome(&CommandOutcome::Applied {
+                generation: Generation(1),
+                created: Created::Nothing,
+            })?,
+        };
+        server
+            .send(CHANNEL_CONTROL, &encode_to_client(&answered)?)
+            .await?;
+        server
+            .send(
+                CHANNEL_CONTROL,
+                &encode_to_client(&modelled(Generation(2))?)?,
+            )
+            .await?;
+
+        let _outcome = client
+            .command(SessionCommand::ClosePane { pane: PANE })
+            .await?;
+        let model = client.snapshot().await?;
+        assert_eq!(
+            model.generation,
+            Generation(2),
+            "the snapshot is the one this request asked for"
+        );
         Ok::<(), Failed>(())
     };
     case.await.unwrap_or_else(|error| panic!("{error}"));
