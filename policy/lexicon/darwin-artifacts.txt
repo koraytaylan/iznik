@@ -1,4 +1,8 @@
 arm64
 darwin
+fixed
 libraries
+library
+linked
 mach
+synthetic

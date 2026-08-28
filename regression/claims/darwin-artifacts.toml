@@ -1,0 +1,27 @@
+# Remote hosts are not always Linux. Cross-compiling to Darwin needs an SDK a
+# Linux machine does not have, so what needs a Mac carries `platform = "darwin"`
+# and reports as deferred here rather than as proven — the workflow builds
+# these where the toolchain is native.
+#
+# What can be proven anywhere is the diagnostic, and it is not a small thing: a
+# toolchain that is absent must be named, not discovered as a link error from
+# deep inside cargo in the middle of somebody's release.
+
+[[claim]]
+id = "darwin-names-the-missing-toolchain"
+statement = "A Darwin build with no SDK configured is refused with a message naming the variable that is unset and the workflow that builds these where the toolchain is native, and leaves no partial artifact behind."
+test = "xtask::regression_distribution_darwin::distribution_names_the_missing_darwin_toolchain"
+because = "the absence of a toolchain is what is being proven, and a Linux machine is where it is absent"
+
+[[claim]]
+id = "darwin-artifacts-are-mach-o-and-small"
+statement = "Both Darwin triples build to a Mach-O executable declaring the CPU type its triple names, each under the twenty-four mebibyte ceiling, linking only libraries a stock macOS install has."
+test = "xtask::regression_distribution_darwin::distribution_builds_both_darwin_targets"
+platform = "darwin"
+because = "the artifact under test is built by the test, and only a Mac can build it"
+
+[[claim]]
+id = "darwin-link-surface-is-really-read"
+statement = "The load-command walk the artifact case leans on reads exactly the libraries a Mach-O file names, and refuses a file that is not one at all."
+test = "xtask::regression_distribution_darwin::mach_shape_reads_what_a_file_names"
+because = "the artifact case is deferred to a Mac, and a walk that silently found nothing would pass there with the allowlist never consulted"

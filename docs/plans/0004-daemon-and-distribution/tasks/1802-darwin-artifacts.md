@@ -12,7 +12,7 @@ touches:
   - ".github/workflows/darwin-artifacts.yml"
   - "regression/claims/darwin-artifacts.toml"
   - "policy/lexicon/darwin-artifacts.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Darwin Artifacts

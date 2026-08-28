@@ -1,0 +1,57 @@
+# Darwin artifacts are built where the toolchain is native.
+#
+# Cross-compiling to Darwin from Linux needs an SDK that cannot be assumed on a
+# development machine, and `xtask distribution` says so plainly when SDKROOT is
+# unset rather than reporting a link error from deep inside cargo. This runs on
+# a macOS runner, where the SDK is the system's own.
+name: darwin-artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup reads rust-toolchain.toml and installs the pinned channel on
+      # first use; that file pins only the musl targets, so the Darwin one
+      # this job builds is added here.
+      - name: Install the toolchain
+        run: rustup target add "${{ matrix.target }}"
+
+      # A macOS runner has the SDK but does not export its path, and the
+      # distribution refuses to build without SDKROOT rather than discovering
+      # its absence as a link error. This is where the value comes from.
+      - name: Point at the SDK
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+      - name: Build the artifact
+        run: cargo xtask distribution --target "${{ matrix.target }}"
+
+      - name: Hold it to what an artifact must be
+        run: cargo nextest run --package xtask -E 'binary(/^regression_distribution_darwin$/)' --run-ignored all
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: iznik-server-${{ matrix.target }}
+          path: |
+            target/distribution/${{ matrix.target }}/iznik-server
+            target/distribution/${{ matrix.target }}/SHA256SUMS
+            target/distribution/${{ matrix.target }}/manifest.toml
+          if-no-files-found: error

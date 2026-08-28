@@ -2,10 +2,27 @@
 //! have.
 //!
 //! Remote hosts are not always Linux — a Mac under a desk is a common target —
-//! so the manifest and checksum path is the same one. What differs is that
-//! cross-compiling here needs an SDK, and when it is not there the failure
-//! says which component is missing rather than reporting a link error from
-//! deep inside cargo. The workflow builds these where the toolchain is native.
+//! so the manifest and checksum path is the same one. What differs is the
+//! toolchain, and what it needs is this:
+//!
+//! - **The SDK.** Apple's, from Xcode or the Command Line Tools. It is not
+//!   redistributable, so a Linux machine has one only if somebody put it
+//!   there. On a Mac, `xcode-select --install` is enough.
+//! - **`SDKROOT`.** The absolute path of that SDK, exported. On a Mac,
+//!   `xcrun --show-sdk-path` prints it; the workflow sets it from there. This
+//!   is the one variable this module checks, because it is the one a build
+//!   cannot proceed without and the one a cross-compiling setup forgets.
+//! - **The linker.** Apple's `ld`, reached through `cc` — native on a Mac,
+//!   and on anything else a cross linker configured under
+//!   `[target.<triple>]` in `.cargo/config.toml`, the same place the musl
+//!   targets configure theirs.
+//! - **The targets.** `rustup target add aarch64-apple-darwin
+//!   x86_64-apple-darwin`; `rust-toolchain.toml` pins only the musl pair,
+//!   because those are what the containers and the bootstrap run.
+//!
+//! When the SDK is not there the failure says so and names the workflow that
+//! builds these where the toolchain is native, rather than reporting a link
+//! error from deep inside cargo in the middle of somebody's release.
 
 use std::path::{Path, PathBuf};
 
