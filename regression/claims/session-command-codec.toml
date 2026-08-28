@@ -1,0 +1,32 @@
+# The session commands are an encoding: no clock, no process, no socket. Every
+# claim here is proven by an in-process test and a container adds nothing.
+
+[[claim]]
+id = "commands-golden-holds-both-ways"
+statement = "Every command and every outcome in the golden encodes to exactly its bytes and decodes back to exactly itself."
+test = "iznik-protocol::command_golden::command_golden_every_line_holds_in_both_directions"
+because = "the command codec is pure; a container adds nothing"
+
+[[claim]]
+id = "commands-every-variant-is-pinned"
+statement = "Every one of the eleven SessionCommand variants has a golden line, so no command is pinned by nothing."
+test = "iznik-protocol::command_golden::command_golden_every_command_variant_has_a_line"
+because = "the command codec is pure; a container adds nothing"
+
+[[claim]]
+id = "commands-every-outcome-form-is-pinned"
+statement = "Every Created form and every RejectionCode has a golden line, so an answer a client must act on is never an encoding nothing pinned."
+test = "iznik-protocol::command_golden::command_golden_every_outcome_form_has_a_line"
+because = "the command codec is pure; a container adds nothing"
+
+[[claim]]
+id = "commands-every-refusal-is-provoked"
+statement = "Every refusal the command and outcome decoders can give is provoked, on both sides, the layout bound included — and the encoder refuses a layout its own decoder would turn away."
+test = "iznik-protocol::command_golden::command_golden_every_refusal_the_decoders_give_is_provoked"
+because = "the command codec is pure; a container adds nothing"
+
+[[claim]]
+id = "commands-ride-inside-their-message"
+statement = "An encoded command is exactly the payload the Command message carries, and every command in the golden survives the round trip through it."
+test = "iznik-protocol::command_golden::command_golden_an_encoded_command_rides_inside_its_message"
+because = "both codecs are pure; a container adds nothing"
