@@ -1,22 +1,18 @@
 //! The registry's operations and their delta order, the ingestion of pane
 //! marks, sizes and exits, and the validation after every operation.
 //!
-//! This is the authoritative host model. Every change to it is a numbered
-//! delta emitted by the operation that caused it, and every delta is applied
-//! to the registry's own model **through the protocol's reconciler** before
-//! anyone else sees it — which is what makes convergence something the
-//! registry can be held to rather than something it hopes for: the model a
-//! client rebuilds and the model the registry holds are the same application
-//! of the same function.
+//! This is the authoritative host model. Every change is a numbered delta
+//! emitted by the operation that caused it and applied to the registry's own
+//! model **through the protocol's reconciler** before anyone else sees it: the
+//! model a client rebuilds and the model the registry holds are the same
+//! application of the same function. Identity is minted once from counters
+//! that never reuse a value, and position is derived.
 //!
-//! Identity is minted once from counters that never reuse a value, and
-//! position is derived: closing a tab leaves every surviving tab's id alone.
-//!
-//! A pane's marks, size and exit reach the model by [`Registry::ingest`]. It
-//! pulls rather than subscribes: a registry lives behind a lock, and a task
-//! that took that lock on every mark would need a handle to the lock the
-//! registry cannot hold until the lock exists. Whoever owns it calls `ingest`
-//! when a pane signals.
+//! A pane's marks, size and exit reach the model by [`Registry::ingest`],
+//! which pulls rather than subscribes: a registry lives behind a lock, and a
+//! task that took that lock on every mark would need a handle to the lock the
+//! registry cannot hold until the lock exists. [`Registry::signal`] tells
+//! whoever owns it when to call `ingest`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,18 +25,17 @@ use iznik_protocol::message::MarkKind;
 use iznik_protocol::model;
 use iznik_protocol::model::{HostModel, LayoutNode, ModelError, Session, Tab, Weighted};
 use iznik_protocol::reconcile::{ReconcileError, apply};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Notify, broadcast, watch};
 
 use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
-use crate::pane::{Pane, PaneError, PaneState};
+use crate::pane::{Pane, PaneState};
 use crate::pty::spawn::{ExitStatus, Program, Signal, SpawnOptions};
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
 
 /// How many deltas a client may fall behind before it is told the whole model
-/// instead. A receiver that lags sends its client a fresh `Snapshot`, which is
-/// what its reconciler would have asked for: a memory bound, not a correctness
-/// one.
+/// instead — what its reconciler would have asked for anyway. A memory bound,
+/// not a correctness one.
 pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
 
 /// The weight each side of a new split gets: equal; the client decides.
@@ -66,84 +61,9 @@ pub struct RegistryDefaults {
     pub terminfo_directory: Option<PathBuf>,
 }
 
-/// Why an operation could not be carried out.
-#[derive(Debug)]
-pub enum RegistryError {
-    /// The host holds no such session.
-    UnknownSession {
-        /// The session named.
-        session: SessionId,
-    },
-    /// The host holds no such tab.
-    UnknownTab {
-        /// The tab named.
-        tab: TabId,
-    },
-    /// The host holds no such pane.
-    UnknownPane {
-        /// The pane named.
-        pane: PaneId,
-    },
-    /// A name was empty, which no session or tab may carry.
-    EmptyName,
-    /// An order was not a permutation of the session's tabs.
-    NotAPermutation {
-        /// The session whose tabs they are.
-        session: SessionId,
-    },
-    /// A layout does not place exactly the tab's panes, each once.
-    InvalidLayout {
-        /// The tab it was for.
-        tab: TabId,
-        /// What is wrong with it.
-        error: ModelError,
-    },
-    /// A pseudoterminal or its child could not be started.
-    Spawn(PaneError),
-    /// A change the registry's own reconciler refused — a bug above. What was
-    /// started is taken away again, so nothing was made.
-    Refused {
-        /// What was being done.
-        detail: String,
-    },
-}
-
-impl core::fmt::Display for RegistryError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            RegistryError::UnknownSession { session } => {
-                write!(formatter, "the host holds no session {}", session.0)
-            }
-            RegistryError::UnknownTab { tab } => {
-                write!(formatter, "the host holds no tab {}", tab.0)
-            }
-            RegistryError::UnknownPane { pane } => {
-                write!(formatter, "the host holds no pane {}", pane.0)
-            }
-            RegistryError::EmptyName => write!(formatter, "a name may not be empty"),
-            RegistryError::NotAPermutation { session } => write!(
-                formatter,
-                "the order given is not a permutation of session {}'s tabs",
-                session.0
-            ),
-            RegistryError::InvalidLayout { tab, error } => {
-                write!(formatter, "the layout for tab {}: {error}", tab.0)
-            }
-            RegistryError::Spawn(error) => write!(formatter, "{error}"),
-            RegistryError::Refused { detail } => {
-                write!(formatter, "the registry could not {detail}")
-            }
-        }
-    }
-}
-
-impl core::error::Error for RegistryError {}
-
-impl From<PaneError> for RegistryError {
-    fn from(error: PaneError) -> RegistryError {
-        RegistryError::Spawn(error)
-    }
-}
+/// Why a session operation could not be carried out; it lives in the
+/// module above because `commands` maps it to a client's rejection code.
+pub use crate::session::RegistryError;
 
 /// What a pane has to report, and what the model last recorded of it.
 #[derive(Debug)]
@@ -184,6 +104,10 @@ pub struct Registry {
     defaults: RegistryDefaults,
     /// Where every delta goes.
     deltas: broadcast::Sender<Numbered<Delta>>,
+    /// Raised whenever any pane has something to report, so that whoever owns
+    /// this registry knows when to call [`Registry::ingest`] rather than
+    /// polling for it or never calling it at all.
+    signal: Arc<Notify>,
 }
 
 impl Registry {
@@ -210,7 +134,16 @@ impl Registry {
             mirrors,
             defaults,
             deltas,
+            signal: Arc::new(Notify::new()),
         }
+    }
+
+    /// Raised whenever a pane has something to report: a caller waits on it
+    /// and calls [`Registry::ingest`]. It wakes one waiter, and the delta
+    /// that follows reaches every other through [`Registry::deltas`].
+    #[must_use]
+    pub fn signal(&self) -> Arc<Notify> {
+        Arc::clone(&self.signal)
     }
 
     /// The whole model as it stands.
@@ -240,9 +173,9 @@ impl Registry {
     }
 
     /// Emits one delta: applies it to the registry's own model through the
-    /// reconciler, and only then broadcasts it. A delta the reconciler refuses
-    /// is a bug above; it is neither applied nor sent, so the model and what a
-    /// client rebuilds cannot come apart, and it is logged.
+    /// reconciler, and only then broadcasts it. One the reconciler refuses is
+    /// a bug above; it is logged, neither applied nor sent, so the model and
+    /// what a client rebuilds cannot come apart.
     fn emit(&mut self, delta: Delta) -> bool {
         let generation = Generation(self.model.generation.0.saturating_add(1));
         match apply(&mut self.model, generation, &delta) {
@@ -316,6 +249,18 @@ impl Registry {
         // every other pane would then be short of.
         self.next_pane = self.next_pane.saturating_add(1);
         self.admit(id);
+        // Whoever owns the registry pulls, so it has to be told when there is
+        // something to pull: without this a pane's resize, title or end is a
+        // delta nobody asks for until some other pane happens to speak. A mark
+        // arrives with the bytes that carried it, so the state watch is enough
+        // to cover both.
+        let mut changes = pane.state_updates();
+        let signal = Arc::clone(&self.signal);
+        let _stirring = tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                signal.notify_one();
+            }
+        });
         self.watching.insert(
             id,
             Watching {
@@ -879,10 +824,9 @@ const TERMINATE_SIGNAL: i32 = 15;
 impl Registry {
     /// Turns everything the panes have reported since the last call into
     /// deltas: titles and working directories from their marks, sizes from
-    /// their state, and the removal cascade from an exit.
-    ///
-    /// It takes what is there and does not wait, so whoever owns the registry
-    /// calls it when a pane signals.
+    /// their state, and the removal cascade from an exit. It takes what is
+    /// there and does not wait, so whoever owns the registry calls it when
+    /// [`Registry::signal`] is raised.
     ///
     /// # Panics
     ///

@@ -73,6 +73,13 @@ pub enum MultiplexerError {
         /// The channel that was acknowledged.
         channel: u8,
     },
+    /// The client named a channel this connection carries nothing on and has
+    /// not just detached. A channel it *has* just detached is a race, not a
+    /// mistake, and is answered by doing nothing.
+    UnknownChannel {
+        /// The channel that was named.
+        channel: u8,
+    },
     /// A frame could not be built: a model or a delta larger than a frame
     /// carries. Nothing was sent, and the client is told rather than left
     /// waiting for something that cannot be encoded.
@@ -112,6 +119,10 @@ impl Display for MultiplexerError {
             MultiplexerError::NotReleased { channel } => write!(
                 formatter,
                 "channel {channel} was not waiting to be released"
+            ),
+            MultiplexerError::UnknownChannel { channel } => write!(
+                formatter,
+                "this connection carries nothing on channel {channel}"
             ),
             MultiplexerError::Encoding { detail } => {
                 write!(formatter, "a frame could not be built: {detail}")
@@ -232,6 +243,13 @@ impl ChannelTable {
     #[must_use]
     pub fn channel_of(&self, pane: PaneId) -> Option<u8> {
         self.channels.get(&pane).copied()
+    }
+
+    /// Whether a channel is released and waiting to be acknowledged, which is
+    /// a detach the client may not have seen yet rather than a mistake.
+    #[must_use]
+    pub fn awaiting(&self, channel: u8) -> bool {
+        self.released_pending.contains(&channel)
     }
 
     /// The pane a channel carries, while it carries one.

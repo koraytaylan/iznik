@@ -10,6 +10,13 @@
 //! deltas in the order they arrived, and each pane's bytes concatenated in
 //! order on its channel. A method that waits for one answer — a snapshot, a
 //! command's result — records everything it passes over on the way.
+//!
+//! **It is one task, so it reads and writes in turn.** A caller that sends a
+//! burst without reading behind it will stop: a server under back-pressure
+//! stops reading, and a socket accounts for a small frame by far more than its
+//! bytes, so a few hundred six-byte frames can fill a queue whose size says it
+//! should hold thousands. Ask, read the answer, ask again — which is what the
+//! application this stands in for does with two tasks and one link.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;

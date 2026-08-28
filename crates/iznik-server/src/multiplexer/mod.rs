@@ -380,18 +380,23 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
 
     /// Returns flow-control credit as the client consumes it.
     ///
-    /// Credit for a channel that carries nothing is dropped rather than
-    /// refused: the server detaches a pane and the client's `Credit` frames
-    /// for it are already in flight, which is an ordinary race and not a
-    /// client acting on a pane it never had.
+    /// Credit for a channel this connection has just detached is dropped
+    /// rather than refused: the client's `Credit` frames for it were already
+    /// in flight, which is an ordinary race and not a client acting on a pane
+    /// it never had. Credit for a channel it never carried is that.
     ///
     /// # Errors
     ///
-    /// [`MultiplexerError::NotSubscribed`] when the channel carries a pane
-    /// this client has no cursor for.
+    /// [`MultiplexerError::UnknownChannel`] when the channel carries nothing
+    /// and is not one just detached, and
+    /// [`MultiplexerError::NotSubscribed`] when it carries a pane this client
+    /// has no cursor for.
     pub fn credit(&mut self, channel: u8, bytes: u32) -> Result<(), MultiplexerError> {
         let Some(pane) = self.channels.pane_of(channel) else {
-            return Ok(());
+            if self.channels.awaiting(channel) {
+                return Ok(());
+            }
+            return Err(MultiplexerError::UnknownChannel { channel });
         };
         let Some(cursor) = self.cursors.get_mut(&pane) else {
             return Err(MultiplexerError::NotSubscribed { pane });
@@ -436,6 +441,31 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         // tell it.
         self.wake.notify_one();
         Ok(())
+    }
+
+    /// Sends one control message on this client's link, in order with
+    /// everything else the pump sends. A connection loop's own replies — the
+    /// handshake, a command's result, a pong, a refusal — go out through here,
+    /// so the order of frames on the wire stays one task's decision.
+    ///
+    /// # Errors
+    ///
+    /// [`MultiplexerError::Encoding`] when it will not fit a frame, and
+    /// [`MultiplexerError::Sink`] when the link cannot take it.
+    pub async fn reply(&mut self, message: &ToClient) -> Result<(), MultiplexerError> {
+        self.tell(message).await
+    }
+
+    /// Sends the whole model, which is what answers a `SnapshotRequest`. It
+    /// goes through the pump rather than around it so that the generation it
+    /// carries is remembered and the deltas it already holds are not replayed
+    /// on top of it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Multiplexer::reply`].
+    pub async fn send_snapshot(&mut self) -> Result<(), MultiplexerError> {
+        self.tell_the_model().await
     }
 
     /// Which panes the client watches.

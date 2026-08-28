@@ -1,0 +1,61 @@
+# Any number of clients, each with its own multiplexer and its own focus, all
+# seeing the same model — and a client that disconnects leaving nothing behind.
+#
+# The loop is written over any duplex stream, so every claim here is proven
+# over a socket pair: no daemon, no socket file, no process. The same
+# behaviour through the daemon, the relay and over real SSH is proven by
+# `daemon-lifecycle`, `stdio-relay` and `integration-harness`.
+
+[[claim]]
+id = "connection-refuses-what-it-cannot-speak"
+statement = "A first frame that is not a `Hello` is dropped without an answer, because a peer that speaks garbage is not making a request; a `Hello` carrying a protocol version this server does not speak is answered with `Error { ProtocolVersion }` and closed; a good one leaves a connection that answers."
+test = "iznik-server::client_connections::the_handshake_refuses_what_it_cannot_speak"
+because = "the handshake is a property of the loop and the stream under it, and a socket pair is a stream"
+
+[[claim]]
+id = "connection-clients-see-one-model"
+statement = "A session created by one client reaches another as the same delta carrying the same generation, and a resize by one reaches both as `PaneResized` — including when neither is subscribed to the pane, because the registry is told when a pane has something to report rather than polled or left unread."
+test = "iznik-server::client_connections::two_clients_see_one_model"
+because = "two connections over two socket pairs are two connections; a network between them adds latency, not agreement"
+
+[[claim]]
+id = "connection-input-reaches-the-pane"
+statement = "Bytes one client sends as `Input` are written to the pane's shell and their echo arrives on another client's subscribed channel, so a pane is one shell and not one per connection."
+test = "iznik-server::client_connections::input_reaches_the_pane_and_comes_back"
+because = "the shell is a real process here; only the wire between it and the client is shortened"
+
+[[claim]]
+id = "connection-reports-a-backlog"
+statement = "Input beyond what a pane whose shell has stopped reading can hold is answered with `Error { InputBacklog }` naming the pane, and the connection stays open: nothing is dropped and nothing is lost."
+test = "iznik-server::client_connections::a_backlog_is_reported_and_the_connection_stays_open"
+because = "the backlog is the pane's own limit against a real pseudoterminal that is not being read"
+
+[[claim]]
+id = "connection-refuses-without-closing"
+statement = "A `Subscribe` for a pane that is not there is answered with `Error { UnknownPane }` and a `Credit` for a channel this connection never carried with `Error { NotSubscribed }`, and the connection stays open — a well-formed request that is wrong is refused, not disconnected."
+test = "iznik-server::client_connections::a_wrong_request_is_refused_and_the_connection_stays_open"
+because = "the distinction between a wrong request and a broken peer is the loop's, and needs nothing outside it"
+
+[[claim]]
+id = "connection-garbage-closes-one-connection"
+statement = "A frame that does not decode closes the connection that sent it and no other: a peer that speaks garbage is disconnected, and every other client carries on."
+test = "iznik-server::client_connections::garbage_closes_only_that_connection"
+because = "two connections over two socket pairs are as independent as two over a network"
+
+[[claim]]
+id = "connection-a-disconnect-leaves-nothing"
+statement = "A client that drops without unsubscribing leaves no subscription behind — observable because the pane's mirror answers a program's cursor-position query again, which it does only when nobody is watching — and no channel: the next client is given the first channel number."
+test = "iznik-server::client_connections::a_disconnect_leaves_nothing_behind"
+because = "the query policy is the mirror's own, driven by a real shell in this process"
+
+[[claim]]
+id = "connection-compression-is-what-was-agreed"
+statement = "A connection whose handshake agreed on compression carries control messages, commands and a whole model, and so does one whose handshake did not: were the two ends to disagree about the layer, nothing after the handshake would decode at all."
+test = "iznik-server::client_connections::compression_is_what_both_ends_agreed_on"
+because = "both ends of the layer are in this process, which is exactly what makes a disagreement observable"
+
+[[claim]]
+id = "connection-has-one-writer"
+statement = "A thousand keystroke-sized round trips interleaved with a pane's flood produce a stream in which every frame decodes and every answer is present, because one task owns the link's writer and two never race for it."
+test = "iznik-server::client_connections::one_writer_keeps_the_stream_well_formed"
+because = "the interleaving is between two producers inside one connection, and a network would only reorder what it already carries in order"
