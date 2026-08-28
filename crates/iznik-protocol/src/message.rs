@@ -10,7 +10,10 @@
 //! boolean one byte. A discriminant, error code, mark kind, presence or
 //! boolean byte no variant claims is refused as unknown; bytes missing or
 //! left over are refused as such. The session-model payloads are opaque here
-//! so plan 0003 can define them without moving a byte this golden pins.
+//! so plan 0003 can define them without moving a byte this golden pins, and
+//! their one refusal that is not a shape of these — a layout tree nested past
+//! what a model holds — is a [`MessageError`] like every other, because a
+//! decoder in this crate has one vocabulary for what it found.
 
 use core::fmt::{self, Display, Formatter};
 
@@ -357,6 +360,14 @@ pub enum MessageError {
         /// The message's discriminant.
         discriminant: u8,
     },
+    /// A layout tree nests deeper than a model may hold. The decoder refuses
+    /// it on the way down rather than recursing to the depth the bytes ask
+    /// for, so a hostile payload costs a refusal and not the stack.
+    LayoutTooDeep {
+        /// The deepest nesting a layout tree may have, which the payload
+        /// exceeded.
+        limit: usize,
+    },
     /// Pane output was asked for on the control channel.
     ControlChannel,
     /// The encoding would exceed [`MAXIMUM_PAYLOAD_LENGTH`]; nothing was
@@ -398,6 +409,10 @@ impl Display for MessageError {
                     "message {discriminant} has a string that is not UTF-8"
                 )
             }
+            MessageError::LayoutTooDeep { limit } => write!(
+                formatter,
+                "a layout tree nests deeper than the {limit} levels a model holds"
+            ),
             MessageError::ControlChannel => {
                 write!(
                     formatter,

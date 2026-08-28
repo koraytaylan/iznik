@@ -1,0 +1,57 @@
+# The host model is a pure encoding and a pure predicate — no clock, no
+# process, no socket, nothing a second machine could disagree about — so every
+# claim here is proven by an in-process test and a container adds nothing.
+
+[[claim]]
+id = "model-types-golden-holds-both-ways"
+statement = "Every model in the golden encodes to exactly its bytes, decodes back to exactly itself, and validates as its line says."
+test = "iznik-protocol::model_invariants::model_invariants_every_fixture_line_holds_in_both_directions"
+because = "the model codec is pure; a container adds nothing"
+
+[[claim]]
+id = "model-types-every-refusal-is-provoked"
+statement = "Every refusal the model decoder documents is provoked by a payload."
+test = "iznik-protocol::model_invariants::model_invariants_every_refusal_the_decoder_gives_is_provoked"
+because = "the model codec is pure; a container adds nothing"
+
+[[claim]]
+id = "model-types-invariants-name-the-identity"
+statement = "Every model invariant is refused by the variant that names the identity breaking it, and nothing else is refused."
+test = "iznik-protocol::model_invariants::model_invariants_validate_names_the_identity_of_every_broken_invariant"
+because = "validation is a pure predicate over a value; a container adds nothing"
+
+[[claim]]
+id = "model-types-normalization-rule"
+statement = "Normalization flattens a split nested in its own direction with the weights scaled so no pane's share changes, collapses a split of one child, drops a split of none, and leaves a canonical tree alone."
+test = "iznik-protocol::model_invariants::model_invariants_normalization_flattens_scales_collapses_and_drops"
+because = "normalization is a pure function on a tree; a container adds nothing"
+
+[[claim]]
+id = "model-types-normalization-settles"
+statement = "Over a thousand generated trees, normalization settles in one pass, produces a canonical tree, and moves no pane."
+test = "iznik-protocol::model_invariants::model_invariants_normalization_is_idempotent_and_canonical"
+because = "normalization is a pure function on a tree; a container adds nothing"
+
+[[claim]]
+id = "model-types-layout-operations-preserve"
+statement = "Replacing and removing a leaf keep every other pane exactly where it was and leave a canonical tree, and a pane the tree does not hold changes nothing."
+test = "iznik-protocol::model_invariants::model_invariants_the_layout_operations_keep_every_other_leaf"
+because = "the layout operations are pure functions on a tree; a container adds nothing"
+
+[[claim]]
+id = "model-types-identity-is-not-positional"
+statement = "Removing the first of three tabs leaves the other two carrying the ids they were minted with."
+test = "iznik-protocol::model_invariants::model_invariants_identity_is_not_positional"
+because = "identity is a field of a value in memory; a container adds nothing"
+
+[[claim]]
+id = "model-types-nesting-is-bounded"
+statement = "A layout at the maximum depth encodes, decodes and validates; one level deeper is refused by the decoder on the way down, by the encoder, and by the validator alike."
+test = "iznik-protocol::model_invariants::model_invariants_layout_depth_is_bounded_on_both_sides_of_the_codec"
+because = "the bound is enforced in the codec itself; a container adds nothing"
+
+[[claim]]
+id = "model-types-codec-carries-any-shape"
+statement = "Whatever shape a layout tree has, valid or not, the codec carries it back unchanged."
+test = "iznik-protocol::model_invariants::model_invariants_every_generated_tree_survives_the_codec"
+because = "the model codec is pure; a container adds nothing"

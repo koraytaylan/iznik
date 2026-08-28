@@ -42,6 +42,14 @@ pub(crate) fn put_bytes(sink: &mut dyn Sink, bytes: &[u8]) {
     sink.put(bytes);
 }
 
+/// Appends the count of the elements that follow. A count that does not fit
+/// four bytes is written saturated, which [`encode`] then refuses as
+/// oversize: no encoding this crate hands out carries a truncated count.
+pub(crate) fn put_count(sink: &mut dyn Sink, count: usize) {
+    let count = u32::try_from(count).unwrap_or(u32::MAX);
+    sink.put(&count.to_le_bytes());
+}
+
 /// Appends a message tag and the pane id that follows it.
 pub(crate) fn put_pane(sink: &mut dyn Sink, tag: u8, pane: PaneId) {
     sink.put(&[tag]);
@@ -79,6 +87,17 @@ pub(crate) struct Reader<'bytes> {
 }
 
 impl<'bytes> Reader<'bytes> {
+    /// A reader over a payload that carries no discriminant: the session-model
+    /// encodings, whose first field is a value rather than a tag. Their
+    /// refusals name discriminant 0, the byte a message would have had.
+    pub(crate) fn payload(bytes: &'bytes [u8]) -> Reader<'bytes> {
+        Reader {
+            bytes,
+            position: 0,
+            discriminant: 0,
+        }
+    }
+
     /// A reader positioned after the discriminant.
     ///
     /// # Errors
@@ -145,6 +164,18 @@ impl<'bytes> Reader<'bytes> {
         };
         self.position = self.position.saturating_add(WIDTH);
         Ok(*chunk)
+    }
+
+    /// The count of the elements that follow. It is not trusted: a decoder
+    /// reads that many elements and is stopped by the bytes running out, so a
+    /// count nothing backs costs one refusal rather than an allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`MessageError::Truncated`] when four bytes are not left.
+    pub(crate) fn count(&mut self) -> Result<usize, MessageError> {
+        let count = u32::from_le_bytes(self.array()?);
+        Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
     /// The next length-delimited bytes, owned.
