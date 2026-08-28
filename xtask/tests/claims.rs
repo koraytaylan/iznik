@@ -567,16 +567,23 @@ fn claims_a_regression_profile_runs_in_its_own_invocation() {
 #[test]
 fn claims_a_platform_is_known_by_either_of_its_names() {
     assert!(
-        verify::is_this_platform(std::env::consts::OS),
-        "the machine running is the platform it says it is"
+        verify::resolves("darwin", "macos"),
+        "`darwin` is what a claims file writes for the machine Rust calls `macos`"
     );
     assert!(
-        !verify::is_this_platform("plan9"),
-        "and a platform nothing runs is not it"
+        !verify::resolves("macos", "darwin"),
+        "and the alias goes one way: nothing reports itself as running `darwin`"
     );
-    assert_eq!(
-        verify::is_this_platform("darwin"),
-        verify::is_this_platform("macos"),
-        "darwin and macos are one machine, whichever this is"
+    assert!(
+        verify::resolves("linux", "linux"),
+        "a platform that needs no alias is itself"
+    );
+    assert!(
+        !verify::resolves("plan9", "linux"),
+        "and a platform nothing runs is not one of them"
+    );
+    assert!(
+        verify::is_this_platform(std::env::consts::OS),
+        "and the machine running is the platform it says it is"
     );
 }

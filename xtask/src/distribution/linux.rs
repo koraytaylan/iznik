@@ -46,13 +46,18 @@ const GIT_CHECKOUTS: &str = "git/checkouts";
 /// And the name that stands in for it.
 const REMAPPED_CHECKOUTS: &str = "checkouts";
 
-/// The variable that overrides this one, and must not be set: cargo prefers it
-/// to `RUSTFLAGS` outright, so a caller who has one in the environment would
-/// get none of what this computes and no warning about it.
+/// The variable this sets. Cargo prefers it to `RUSTFLAGS` outright, and its
+/// arguments are separated by a unit separator rather than by whitespace — so
+/// a flag that contains a space survives, which one of these does: a remapping
+/// under a home directory whose name has a space in it.
 const ENCODED_VARIABLE: &str = "CARGO_ENCODED_RUSTFLAGS";
 
-/// The variable this sets.
+/// The variable it is preferred to, removed so that nothing of the caller's
+/// leaks into a build whose flags are meant to be exactly these.
 const FLAGS_VARIABLE: &str = "RUSTFLAGS";
+
+/// What separates them in the encoded form.
+const ENCODED_SEPARATOR: char = '\u{1f}';
 
 /// Builds the binary for `target` and says where cargo put it.
 ///
@@ -74,11 +79,10 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
         .arg(BINARY)
         .arg("--bin")
         .arg(BINARY)
-        .env(FLAGS_VARIABLE, rustflags(root, target)?)
-        // Cargo prefers this to what was just set, so a caller who happens to
-        // carry one would get an artifact built with none of the flags above
-        // and no sign that anything was ignored.
-        .env_remove(ENCODED_VARIABLE);
+        .env(ENCODED_VARIABLE, rustflags(root, target)?)
+        // Cargo would prefer the encoded form anyway; removing this says so
+        // rather than leaving a caller's value to look as though it applied.
+        .env_remove(FLAGS_VARIABLE);
     // Its output is cargo's own progress; what matters is that it succeeded.
     process::run(command, Deadline(BUILD_DEADLINE), Output::Capture).map_err(|source| {
         DistributionError::Build {
@@ -92,7 +96,11 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
 /// The flags this build needs: what the workspace configures for the target,
 /// and the remapping that makes two builds of one commit agree.
 ///
-/// `RUSTFLAGS` replaces every configured flag rather than adding to them, so
+/// Encoded, not joined by spaces: a remapping under a home directory with a
+/// space in its name is one flag, and whitespace-splitting would make it two
+/// and fail the build on a machine whose only sin was its owner's name.
+///
+/// Either form replaces every configured flag rather than adding to them, so
 /// the configured ones are read and passed on. Without that, the musl targets
 /// lose `link-self-contained=no` and link rustc's startup objects beside the
 /// cross-compiler's, which is a duplicate `_start` and nothing else.
@@ -121,7 +129,7 @@ pub fn rustflags(root: &Path, target: &str) -> Result<String, DistributionError>
             home.join(GIT_CHECKOUTS).display()
         ));
     }
-    Ok(flags.join(" "))
+    Ok(flags.join(&ENCODED_SEPARATOR.to_string()))
 }
 
 /// Where cargo keeps what it has downloaded: what `CARGO_HOME` names, or

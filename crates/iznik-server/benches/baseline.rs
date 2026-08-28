@@ -100,9 +100,9 @@ const SETTLE_INTERVAL: Duration = Duration::from_millis(100);
 const SETTLE_LOOKS: usize = 20;
 
 /// What counts as settled: two consecutive samples within this of each other.
-/// A quarter of a percent of the fifty-pane ceiling, which is smaller than any
-/// difference the figure is meant to show and larger than the page-granular
-/// noise of a process that is doing nothing.
+/// Sixteen pages, a fortieth of a percent of the fifty-pane ceiling — smaller
+/// than any difference the figure is meant to show, and larger than the
+/// page-granular noise of a process that is doing nothing.
 const SETTLE_TOLERANCE: u64 = 64 * 1024;
 
 /// Anything a measurement can fail on.
@@ -340,7 +340,9 @@ pub async fn throughput(
 ///
 /// # Errors
 ///
-/// When the process cannot be read.
+/// When the process cannot be read, and when it never settles — a figure
+/// taken while it was still moving is a figure about starting, and reporting
+/// one as though it were about holding is the thing this exists to prevent.
 async fn settled(daemon: u32) -> Result<u64, Failed> {
     let mut last = metrics::resident_memory(daemon)?;
     for _look in 0..SETTLE_LOOKS {
@@ -351,7 +353,11 @@ async fn settled(daemon: u32) -> Result<u64, Failed> {
         }
         last = now;
     }
-    Ok(last)
+    Err(format!(
+        "the daemon's resident memory was still moving after {SETTLE_LOOKS} looks \
+         {SETTLE_INTERVAL:?} apart, and a figure taken now would be about starting"
+    )
+    .into())
 }
 
 /// The daemon's resident bytes holding nothing, and holding `panes` idle

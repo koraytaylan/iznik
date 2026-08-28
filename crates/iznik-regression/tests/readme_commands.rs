@@ -1,16 +1,17 @@
-//! Every `xtask` subcommand, asked what it takes, and matched against the
-//! documents that name it.
+//! Every `iznik-regression` subcommand, asked what it takes, and matched
+//! against the document that names it.
 //!
 //! A README that names a command no binary answers to has drifted from the
 //! thing it describes, and nothing but a test notices — the document still
 //! reads well. So this asks the binary itself which subcommands it routes,
-//! holds the documents to naming every one of them and to naming nothing
-//! else, and then runs each with `--help` under a deadline.
+//! holds the document to naming every one of them and to naming nothing else,
+//! and then runs each with `--help` under a deadline.
 //!
-//! `--help` and not the work: `xtask check` would run the whole gate, and a
-//! test that ran the gate would be the gate.
+//! `step --help` is the one that matters here: without an answer it reads
+//! standard input for a step that is never coming, and on a terminal that is
+//! a wait with no end.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -23,15 +24,24 @@ const HELP_DEADLINE: Duration = Duration::from_secs(30);
 /// The flag every subcommand must answer.
 const HELP_FLAG: &str = "--help";
 
-/// The documents that name this binary's commands.
-const DOCUMENTS: &[&str] = &["README.md", "xtask/README.md"];
+/// The documents that name this binary's commands, relative to the workspace
+/// root.
+const DOCUMENTS: &[&str] = &["crates/iznik-regression/README.md"];
 
 /// What a named command looks like in prose: the program, then the
 /// subcommand, inside a code span or a fenced block.
-const PROGRAM: &str = "xtask ";
+const PROGRAM: &str = "iznik-regression ";
 
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
+
+/// The workspace root: two directories above this crate's manifest.
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
 
 /// Runs the binary with `arguments` and gives back what it said on standard
 /// output. A non-zero exit is a failure, which is the whole assertion for
@@ -41,15 +51,20 @@ type Failed = Box<dyn std::error::Error>;
 ///
 /// When the binary cannot be started, exits non-zero, or passes its deadline.
 fn asked(root: &Path, arguments: &[&str]) -> Result<String, Failed> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-    command.current_dir(root).args(arguments);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_iznik-regression"));
+    command
+        .current_dir(root)
+        .args(arguments)
+        // Closed, not inherited: a subcommand that read it instead of
+        // answering would be waiting on this test's own terminal.
+        .stdin(std::process::Stdio::null());
     let answered = process::run(command, Deadline(HELP_DEADLINE), Output::Capture)
-        .map_err(|source| format!("xtask {}: {source}", arguments.join(" ")))?;
+        .map_err(|source| format!("iznik-regression {}: {source}", arguments.join(" ")))?;
     Ok(String::from_utf8_lossy(&answered.stdout).into_owned())
 }
 
-/// The names inside the angle brackets of a usage line, which is how both of
-/// this workspace's dispatchers say what they route.
+/// The names inside the angle brackets of a usage line, which is how every
+/// dispatcher in this workspace says what it routes.
 fn routed(usage: &str) -> Vec<String> {
     let Some(open) = usage.find('<') else {
         return Vec::new();
@@ -69,9 +84,8 @@ fn routed(usage: &str) -> Vec<String> {
 /// Whether the match at `at` begins a command reference rather than merely
 /// mentioning the program's name.
 ///
-/// Prose runs through these files — "cargo xtask runs the five gates" names
-/// no command called `runs` — so a reference must start a code span, start a
-/// line, or follow `cargo `.
+/// Prose runs through this file, so a reference must start a code span, start
+/// a line, or follow `cargo `.
 fn starts_a_command(text: &str, at: usize) -> bool {
     let before = text.get(..at).unwrap_or_default();
     let before = before.strip_suffix("cargo ").unwrap_or(before);
@@ -81,12 +95,8 @@ fn starts_a_command(text: &str, at: usize) -> bool {
         .is_none_or(|letter| letter == '`' || letter == '\n')
 }
 
-/// Every subcommand of `xtask` that the documents name, in the order they
-/// first name it.
-///
-/// A subcommand is a lowercase word after a `xtask ` that begins a command
-/// reference: `--target` and `<subcommand>` begin with something else, and a
-/// sentence that happens to carry the program's name names no command.
+/// Every subcommand of `iznik-regression` that the documents name, in the
+/// order they first name it.
 ///
 /// # Errors
 ///
@@ -115,17 +125,17 @@ fn named(root: &Path) -> Result<Vec<String>, Failed> {
 
 /// # Panics
 ///
-/// When the documents name a command the binary does not route, when the
+/// When the document names a command the binary does not route, when the
 /// binary routes one no document names, or when any of them does not answer
 /// `--help` with success and a word about itself.
 #[test]
 fn every_named_command_answers_for_itself() {
     let case = || -> Result<(), Failed> {
-        let root = xtask::repository_root();
+        let root = workspace_root();
         let routes = routed(&asked(&root, &[HELP_FLAG])?);
         assert!(
-            routes.len() > 1,
-            "the usage line routes {routes:?}, which means the reading is wrong"
+            !routes.is_empty(),
+            "the usage line routes nothing, which means the reading is wrong"
         );
         let documented = named(&root)?;
         let unnamed: Vec<&String> = routes
@@ -139,13 +149,13 @@ fn every_named_command_answers_for_itself() {
             .collect();
         assert!(
             invented.is_empty(),
-            "the documents name {invented:?}, which xtask does not route"
+            "the documents name {invented:?}, which iznik-regression does not route"
         );
         for route in &routes {
             let said = asked(&root, &[route, HELP_FLAG])?;
             assert!(
                 said.contains(route),
-                "xtask {route} {HELP_FLAG} says nothing about itself: {said:?}"
+                "iznik-regression {route} {HELP_FLAG} says nothing about itself: {said:?}"
             );
         }
         Ok(())

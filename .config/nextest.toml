@@ -18,11 +18,19 @@ slow-timeout = { period = "5s", terminate-after = 12 }
 # musl targets, and on a cold cache it builds the emulator with Zig after
 # cloning it. `linux.rs` budgets thirty minutes for exactly that, and a runner
 # that killed the case at ten would be reporting the machine rather than the
-# artifact.
+# artifact. Ninety minutes, which is above what one case may spend inside its
+# own deadlines: two thirty-minute builds and a clean between them.
 [[profile.default.overrides]]
 filter = 'binary(/^regression_distribution_/)'
 test-group = 'distribution'
-slow-timeout = { period = "120s", terminate-after = 30 }
+slow-timeout = { period = "120s", terminate-after = 45 }
+# And with the machine to itself. A release build of this workspace is fat
+# link-time optimization at one codegen unit and takes every core it can get;
+# beside it, a test that waits for a shell to print a prompt is measuring the
+# build. `xtask claims coverage` runs every proof there is, so without this a
+# distribution case and a pane case are always running at once, and the pane
+# case is the one that fails.
+threads-required = 'num-cpus'
 
 # Test binaries that start containers, build release artifacts or measure over
 # a window are named regression_*, are ignored, and get longer deadlines.

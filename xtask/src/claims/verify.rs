@@ -420,14 +420,24 @@ fn expected_case(claim: &Claim) -> (String, String) {
 /// waiting.
 const PLATFORM_ALIASES: &[(&str, &str)] = &[("darwin", "macos")];
 
+/// Whether `written`, as a claims file names a platform, is `running`, as
+/// `std::env::consts::OS` names one.
+///
+/// Both sides are arguments so that the resolution can be established on any
+/// machine: a proof that asked only about the machine running it would say
+/// nothing about the pairing on the machine that is not there.
+#[must_use]
+pub fn resolves(written: &str, running: &str) -> bool {
+    written == running
+        || PLATFORM_ALIASES
+            .iter()
+            .any(|(named, called)| *named == written && *called == running)
+}
+
 /// Whether a platform, named as a claims file names it, is the one running.
 #[must_use]
 pub fn is_this_platform(platform: &str) -> bool {
-    let running = std::env::consts::OS;
-    platform == running
-        || PLATFORM_ALIASES
-            .iter()
-            .any(|(written, called)| *written == platform && *called == running)
+    resolves(platform, std::env::consts::OS)
 }
 
 /// Why a claim is deferred, when its platform is not the one running.

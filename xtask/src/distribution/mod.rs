@@ -155,13 +155,11 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
     let directory = target_directory(root)
         .join(DISTRIBUTION_DIRECTORY)
         .join(target);
-    std::fs::create_dir_all(&directory).map_err(|source| DistributionError::Io {
-        path: directory.clone(),
-        source,
-    })?;
-    // Measured where cargo put it, before anything is copied: an artifact over
-    // the ceiling must leave no half-written distribution directory behind for
-    // a later `sha256sum -c` or an upload glob to pick up.
+    // Measured where cargo put it, before the directory is even made: what a
+    // refusal must not leave behind is a distribution directory a later
+    // `sha256sum -c` or an upload glob would take for this build's. An earlier
+    // build's is cleared for the same reason — it is complete, it verifies,
+    // and it is not what the source now says.
     let bytes = std::fs::metadata(&built)
         .map_err(|source| DistributionError::Io {
             path: built.clone(),
@@ -169,11 +167,16 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
         })?
         .len();
     if bytes > ARTIFACT_SIZE_CEILING {
+        clear(&directory);
         return Err(DistributionError::Oversize {
             bytes,
             ceiling: ARTIFACT_SIZE_CEILING,
         });
     }
+    std::fs::create_dir_all(&directory).map_err(|source| DistributionError::Io {
+        path: directory.clone(),
+        source,
+    })?;
     let path = directory.join(BINARY);
     let _copied = std::fs::copy(&built, &path).map_err(|source| DistributionError::Io {
         path: built.clone(),
@@ -187,6 +190,14 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
     };
     record(root, &directory, &artifact)?;
     Ok(artifact)
+}
+
+/// Removes what a previous build of this target left, so a refusal leaves
+/// nothing that looks like an answer. What is not there is not an error.
+fn clear(directory: &Path) {
+    for name in [BINARY, CHECKSUMS, MANIFEST] {
+        let _gone = std::fs::remove_file(directory.join(name));
+    }
 }
 
 /// Writes the checksum file and the manifest beside an artifact.

@@ -21,4 +21,4 @@ The binary `iznik-regression step` reads one step as TOML on standard input and 
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace.
+Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. `readme_commands.rs` runs every command this file names with `--help`, so a name here that no binary answers to is a failing test.

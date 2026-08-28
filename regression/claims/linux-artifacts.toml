@@ -24,3 +24,9 @@ id = "linux-artifacts-run-in-the-container"
 statement = "A staging tree assembled around the x86_64 artifact runs it inside the host container, where it says its own version and the protocol's — which is the only place its static linking is really tested."
 test = "xtask::regression_distribution_linux::distribution_runs_inside_the_host_container"
 because = "the artifact under test is built by the test, so the container is started around it rather than the other way about"
+
+[[claim]]
+id = "linux-artifacts-header-walk-is-really-read"
+statement = "The walk the artifact case leans on finds a program header naming a loader and a section header naming a symbol table, each read where its own table carries it, and refuses a file whose tables it cannot walk."
+test = "xtask::regression_distribution_linux::elf_shape_reads_both_header_tables"
+because = "no build of this workspace produces a dynamically linked or unstripped artifact, so the two answers the case asserts can only be told apart against a file made to have them"

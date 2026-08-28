@@ -4,10 +4,12 @@ artifacts
 checkouts
 checksums
 cleaned
+clear
 config
 configured
 declares
 digest
+dynamic
 elf
 flags
 headers
@@ -25,6 +27,7 @@ sdk
 section
 sections
 stride
+stripped
 sums
 symbols
 targeted

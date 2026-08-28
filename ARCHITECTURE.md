@@ -441,9 +441,10 @@ The full contract is the document plan 0006 publishes.
   was running, never a wait.
 - **The documents are held to the binaries.** A README that names a command
   nothing answers to still reads well, so nothing but a test notices.
-  `readme_commands` asks each binary which commands it routes, holds the
+  `readme_commands` — one in `xtask`, one in `iznik-server`, one in
+  `iznik-regression` — asks each binary which commands it routes, holds the
   documents to naming every one of them and inventing none, and runs each with
-  `--help` under a deadline — which is also why every subcommand answers
+  `--help` under a deadline. Which is also why every subcommand answers
   `--help` rather than doing its work when asked what it takes.
 
 The engineering rules that every line is held to — naming, literals, size,

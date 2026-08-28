@@ -39,6 +39,7 @@ proven
 registered
 rejected
 render
+resolves
 runnable
 select
 selected

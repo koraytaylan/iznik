@@ -18,3 +18,9 @@ id = "daemon-documentation-server-commands-answer"
 statement = "Every `iznik-server` entry point the documents name is one the binary routes, every one it routes is named by a document, and each answers `--help` with success rather than starting a daemon or relaying to one."
 test = "iznik-server::readme_commands::every_named_command_answers_for_itself"
 because = "the documents and the binary are both in this checkout, and what is proven is that a command answers instead of doing its work"
+
+[[claim]]
+id = "daemon-documentation-regression-commands-answer"
+statement = "Every `iznik-regression` subcommand the document names is one the binary routes, every one it routes is named, and `step --help` answers with what it takes rather than reading standard input for a step that is not coming."
+test = "iznik-regression::readme_commands::every_named_command_answers_for_itself"
+because = "the document and the binary are both in this checkout, and what is proven is that a command answers instead of waiting"
