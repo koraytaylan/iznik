@@ -22,13 +22,13 @@ because = "validation is a pure predicate over a value; a container adds nothing
 
 [[claim]]
 id = "model-types-normalization-rule"
-statement = "Normalization flattens a split nested in its own direction with the weights scaled so no pane's share changes, collapses a split of one child, drops a split of none, and leaves a canonical tree alone."
+statement = "Normalization flattens a split nested in its own direction with the weights scaled so no pane's share changes, reduces a split's weights by the factor they share, collapses a split of one child, drops a split of none, and leaves a canonical tree alone."
 test = "iznik-protocol::model_invariants::model_invariants_normalization_flattens_scales_collapses_and_drops"
 because = "normalization is a pure function on a tree; a container adds nothing"
 
 [[claim]]
 id = "model-types-normalization-settles"
-statement = "Over a thousand generated trees, normalization settles in one pass, produces a canonical tree, and moves no pane."
+statement = "Over a thousand generated trees, normalization settles in one pass, produces a canonical tree — no same-direction nesting, no split of one child, and no factor a split's children all share — and moves no pane."
 test = "iznik-protocol::model_invariants::model_invariants_normalization_is_idempotent_and_canonical"
 because = "normalization is a pure function on a tree; a container adds nothing"
 
@@ -55,3 +55,15 @@ id = "model-types-codec-carries-any-shape"
 statement = "Whatever shape a layout tree has, valid or not, the codec carries it back unchanged."
 test = "iznik-protocol::model_invariants::model_invariants_every_generated_tree_survives_the_codec"
 because = "the model codec is pure; a container adds nothing"
+
+[[claim]]
+id = "model-types-one-arrangement-is-one-tree"
+statement = "Two layouts that divide the space the same way normalize to the same tree whatever scale their weights were expressed in, so the factor a flattening multiplies by cannot accumulate until it saturates."
+test = "iznik-protocol::model_invariants::model_invariants_normalization_flattens_scales_collapses_and_drops"
+because = "normalization is a pure function on a tree; a container adds nothing"
+
+[[claim]]
+id = "model-types-payload-refusals-name-no-message"
+statement = "A refusal from inside a model payload names the discriminant no message claims, so it is never read as a refusal of the message whose discriminant happens to be zero."
+test = "iznik-protocol::model_invariants::model_invariants_every_fixture_line_holds_in_both_directions"
+because = "the refusal is a value the codec returns; a container adds nothing"

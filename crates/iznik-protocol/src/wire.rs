@@ -8,7 +8,7 @@
 
 use crate::frame::MAXIMUM_PAYLOAD_LENGTH;
 use crate::identity::PaneId;
-use crate::message::{CHANNEL_CONTROL, MessageError};
+use crate::message::{CHANNEL_CONTROL, MessageError, NO_DISCRIMINANT};
 
 /// The byte that says an optional value is absent, and the boolean `false`.
 pub(crate) const ABSENT: u8 = 0;
@@ -89,12 +89,13 @@ pub(crate) struct Reader<'bytes> {
 impl<'bytes> Reader<'bytes> {
     /// A reader over a payload that carries no discriminant: the session-model
     /// encodings, whose first field is a value rather than a tag. Their
-    /// refusals name discriminant 0, the byte a message would have had.
+    /// refusals name [`NO_DISCRIMINANT`], which no message claims, so a
+    /// refusal inside a model is never read as a refusal of a message.
     pub(crate) fn payload(bytes: &'bytes [u8]) -> Reader<'bytes> {
         Reader {
             bytes,
             position: 0,
-            discriminant: 0,
+            discriminant: NO_DISCRIMINANT,
         }
     }
 

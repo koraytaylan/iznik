@@ -1,4 +1,5 @@
 alternating
+arranged
 below
 beyond
 breaking
@@ -10,6 +11,8 @@ crossed
 deep
 deeper
 deepest
+deeply
+divisor
 flattened
 flattens
 gives
@@ -21,6 +24,7 @@ idempotent
 invariant
 invariants
 keep
+larger
 leaf
 level
 levels
@@ -35,6 +39,7 @@ placed
 positional
 prune
 pruned
+remainder
 repeats
 replace
 replaced
@@ -43,7 +48,9 @@ scales
 sessions
 sides
 simple
+smaller
 spread
+subject
 substitute
 survivors
 tabs

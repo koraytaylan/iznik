@@ -11,9 +11,19 @@
 //! a split of its own direction — such a split is flattened into its parent
 //! with every weight scaled so that no child's share of the space changes — no
 //! split of a single child, which is replaced by that child, and no split of
-//! none, which is dropped. [`LayoutNode::normalize`] is a pure, idempotent
-//! function the server applies after every operation and to every layout a
-//! client submits.
+//! none, which is dropped wherever there is a parent to drop it into. A
+//! split's weights are then divided by the largest factor they share, because
+//! weights say only how the space is divided: halves are `1, 1` whether a
+//! client called them `1, 1` or `50, 50`, and without that division the factor
+//! a flattening multiplies by accumulates forever and eventually saturates,
+//! which is a pane the wrong size. [`LayoutNode::normalize`] is a pure,
+//! idempotent function the server applies after every operation and to every
+//! layout a client submits.
+//!
+//! One shape survives normalization: a split holding nothing, at the root,
+//! where there is no parent to drop it into and no child to collapse it to. It
+//! is a layout that places no pane, which is not a layout, and
+//! [`HostModel::validate`] refuses it by name.
 //!
 //! On the wire a model is its fields in declaration order: integers
 //! little-endian at their width, a string a four-byte length and then its
@@ -22,7 +32,8 @@
 //! byte and then its fields. The golden `tests/fixtures/model.jsonl` pins
 //! every byte and this code is held to it. Refusals are [`MessageError`]'s,
 //! the crate's one vocabulary for what a decoder found; a model payload
-//! carries no discriminant, so its refusals name discriminant 0.
+//! carries no discriminant, so its refusals name
+//! [`crate::message::NO_DISCRIMINANT`].
 //!
 //! Nesting is bounded by [`MAXIMUM_LAYOUT_DEPTH`], which the decoder refuses
 //! on the way down rather than recursing to whatever depth the bytes ask for.
@@ -200,6 +211,14 @@ pub enum ModelError {
         /// The pane with nowhere to be.
         pane: PaneId,
     },
+    /// A split in a tab's layout holds no children, which is a place nothing
+    /// can be drawn in. Normalization drops such a split wherever there is a
+    /// parent to drop it into, so one that reaches here is a whole layout
+    /// that places no pane.
+    EmptySplit {
+        /// The tab whose layout it is.
+        tab: TabId,
+    },
     /// A split gives a child a weight of zero, which is a pane no size.
     ZeroWeight {
         /// The tab whose layout it is.
@@ -263,6 +282,11 @@ impl Display for ModelError {
                 "tab {} holds pane {}, which its layout does not place",
                 tab.0, pane.0
             ),
+            ModelError::EmptySplit { tab } => write!(
+                formatter,
+                "the layout of tab {} holds a split with no children",
+                tab.0
+            ),
             ModelError::ZeroWeight { tab } => write!(
                 formatter,
                 "the layout of tab {} gives a child a weight of zero",
@@ -294,10 +318,16 @@ impl LayoutNode {
     /// scaled so no share of the space changes, every split of no children
     /// dropped, and a split left holding one child replaced by that child.
     ///
-    /// The result holds no same-direction nesting anywhere, so normalizing it
-    /// again changes nothing: the function is idempotent. Weights saturate at
-    /// [`u32::MAX`] rather than wrap, which costs exact proportions only on a
-    /// tree whose weights already span four billion — a tree nobody arranged.
+    /// Every split's weights are then divided by the largest factor they
+    /// share, so that one arrangement is one tree whatever scale a client
+    /// expressed it in and the factor a flattening multiplies by does not
+    /// accumulate.
+    ///
+    /// The result holds no same-direction nesting anywhere and no factor a
+    /// split's children all share, so normalizing it again changes nothing:
+    /// the function is idempotent. Weights saturate at [`u32::MAX`] rather
+    /// than wrap, which costs exact proportions only on a tree whose reduced
+    /// weights already span four billion — a tree nobody arranged.
     #[must_use]
     pub fn normalize(self) -> LayoutNode {
         let LayoutNode::Split {
@@ -315,7 +345,7 @@ impl LayoutNode {
             })
             .filter(|child| !is_empty_split(&child.node))
             .collect();
-        collapse(direction, flatten(direction, normalized))
+        collapse(direction, reduced(flatten(direction, normalized)))
     }
 
     /// The panes the tree places, left to right.
@@ -525,6 +555,40 @@ fn push_lifted(into: &mut Vec<Weighted>, direction: SplitDirection, child: Weigh
     }
 }
 
+/// The greatest common divisor of two weights, by Euclid. A weight of zero
+/// divides nothing and so contributes no factor: `common_divisor(0, n)` is
+/// `n`, and children that all weigh nothing share no factor at all.
+fn common_divisor(left: u32, right: u32) -> u32 {
+    let mut larger = left;
+    let mut smaller = right;
+    while smaller != 0 {
+        let remainder = larger.checked_rem(smaller).unwrap_or(0);
+        larger = smaller;
+        smaller = remainder;
+    }
+    larger
+}
+
+/// The children with every weight divided by the largest factor they share.
+/// Weights say only how the space is divided, so this loses nothing and is
+/// what makes one arrangement one tree; children that all weigh nothing have
+/// no factor to take out and are left as they are.
+fn reduced(children: Vec<Weighted>) -> Vec<Weighted> {
+    let divisor = children
+        .iter()
+        .fold(0, |divisor, child| common_divisor(divisor, child.weight));
+    if divisor <= 1 {
+        return children;
+    }
+    children
+        .into_iter()
+        .map(|child| Weighted {
+            weight: child.weight.checked_div(divisor).unwrap_or(child.weight),
+            node: child.node,
+        })
+        .collect()
+}
+
 /// A split of one child is that child; a split of none stays as it is,
 /// because there is nothing to replace it with.
 fn collapse(direction: SplitDirection, children: Vec<Weighted>) -> LayoutNode {
@@ -634,6 +698,9 @@ fn validate_layout(tab: &Tab) -> Result<(), ModelError> {
     if depth > MAXIMUM_LAYOUT_DEPTH {
         return Err(ModelError::LayoutTooDeep { tab: tab.id, depth });
     }
+    if has_empty_split(&tab.layout) {
+        return Err(ModelError::EmptySplit { tab: tab.id });
+    }
     if has_zero_weight(&tab.layout) {
         return Err(ModelError::ZeroWeight { tab: tab.id });
     }
@@ -665,6 +732,16 @@ fn validate_layout(tab: &Tab) -> Result<(), ModelError> {
         Ok(())
     } else {
         Err(ModelError::UnnormalizedLayout { tab: tab.id })
+    }
+}
+
+/// Whether any split in the tree holds no children at all.
+fn has_empty_split(node: &LayoutNode) -> bool {
+    match node {
+        LayoutNode::Leaf(_pane) => false,
+        LayoutNode::Split { children, .. } => {
+            children.is_empty() || children.iter().any(|child| has_empty_split(&child.node))
+        }
     }
 }
 
@@ -788,7 +865,7 @@ pub fn encode_host_model(model: &HostModel) -> Result<Vec<u8>, MessageError> {
 /// [`MessageError::UnknownDiscriminant`] for a layout tag, split direction or
 /// presence byte no variant claims, and [`MessageError::LayoutTooDeep`] for a
 /// layout nested past [`MAXIMUM_LAYOUT_DEPTH`]. Every refusal names
-/// discriminant 0: a model payload carries none.
+/// [`crate::message::NO_DISCRIMINANT`]: a model payload carries none.
 pub fn decode_host_model(bytes: &[u8]) -> Result<HostModel, MessageError> {
     let mut reader = Reader::payload(bytes);
     let model = read_host_model(&mut reader)?;

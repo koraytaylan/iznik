@@ -26,6 +26,12 @@ use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_pane, un
 /// output.
 pub const CHANNEL_CONTROL: u8 = 0;
 
+/// The discriminant a payload that carries none reports: the session-model
+/// encodings, whose first field is a value rather than a tag. No message
+/// claims this byte, so a refusal from inside a `Snapshot`'s model is not read
+/// as a refusal of the `Hello` whose discriminant happens to be zero.
+pub const NO_DISCRIMINANT: u8 = u8::MAX;
+
 /// The protocol version this codec speaks. A `Hello` naming another version
 /// decodes to that value; the handshake owns the refusal.
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -338,8 +344,9 @@ pub enum MessageError {
         /// The byte.
         discriminant: u8,
     },
-    /// The bytes end before a field does. For an empty payload the
-    /// discriminant reported is 0, the byte that was not there.
+    /// The bytes end before a field does. For an empty message the
+    /// discriminant reported is 0, the byte that was not there; for a payload
+    /// that carries no discriminant it is [`NO_DISCRIMINANT`].
     Truncated {
         /// The message's discriminant.
         discriminant: u8,
@@ -378,6 +385,24 @@ pub enum MessageError {
     },
 }
 
+/// What a refusal calls the thing it was reading: the message a discriminant
+/// names, or a payload that carries none.
+#[derive(Debug)]
+struct Subject {
+    /// The message's discriminant, or [`NO_DISCRIMINANT`].
+    discriminant: u8,
+}
+
+impl Display for Subject {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        if self.discriminant == NO_DISCRIMINANT {
+            write!(formatter, "a payload that carries no discriminant")
+        } else {
+            write!(formatter, "message {}", self.discriminant)
+        }
+    }
+}
+
 impl Display for MessageError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -394,21 +419,28 @@ impl Display for MessageError {
                 available,
             } => write!(
                 formatter,
-                "message {discriminant} ends early: a field needs {needed} bytes, {available} are left"
+                "{} ends early: a field needs {needed} bytes, {available} are left",
+                Subject {
+                    discriminant: *discriminant
+                }
             ),
             MessageError::TrailingBytes {
                 discriminant,
                 count,
             } => write!(
                 formatter,
-                "message {discriminant} is followed by {count} bytes"
+                "{} is followed by {count} bytes",
+                Subject {
+                    discriminant: *discriminant
+                }
             ),
-            MessageError::Utf8 { discriminant } => {
-                write!(
-                    formatter,
-                    "message {discriminant} has a string that is not UTF-8"
-                )
-            }
+            MessageError::Utf8 { discriminant } => write!(
+                formatter,
+                "{} has a string that is not UTF-8",
+                Subject {
+                    discriminant: *discriminant
+                }
+            ),
             MessageError::LayoutTooDeep { limit } => write!(
                 formatter,
                 "a layout tree nests deeper than the {limit} levels a model holds"

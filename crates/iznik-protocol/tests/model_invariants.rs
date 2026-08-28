@@ -1,9 +1,8 @@
 //! The host model against its golden and its invariants: every line encodes,
-//! decodes and validates as it says it does, every broken invariant is refused
-//! by the variant naming the identity that breaks it, normalization flattens,
-//! scales, collapses and settles, the layout operations keep every other pane
-//! where it was, identity survives a removal, and nesting is bounded on both
-//! sides of the codec.
+//! decodes and validates as it says, every broken invariant is refused by the
+//! variant naming the identity that breaks it, normalization flattens, scales,
+//! reduces, collapses and settles, the layout operations keep every other pane
+//! where it was, identity survives a removal, and nesting is bounded.
 
 use std::error::Error;
 use std::path::Path;
@@ -235,9 +234,6 @@ fn message_error_of(value: &Value) -> Result<MessageError, Failure> {
         "Utf8" => MessageError::Utf8 {
             discriminant: narrow_field(&fields, "discriminant")?,
         },
-        "LayoutTooDeep" => MessageError::LayoutTooDeep {
-            limit: narrow_field(&fields, "limit")?,
-        },
         other => return Err(format!("no MessageError `{other}`").into()),
     })
 }
@@ -293,6 +289,12 @@ fn tab(id: u64, panes: &[u64], layout: LayoutNode) -> Tab {
 /// A tab holding one pane, its layout that pane's leaf.
 fn simple_tab(id: u64, pane_id: u64) -> Tab {
     tab(id, &[pane_id], leaf(pane_id))
+}
+
+/// A host of one session holding one tab, which holds `panes` arranged
+/// `layout`: the shape most of the broken models are a variation of.
+fn arranged(panes: &[u64], layout: LayoutNode) -> HostModel {
+    one_tab(tab(1, panes, layout))
 }
 
 /// A session holding the given tabs.
@@ -397,8 +399,8 @@ impl TreeGenerator {
 }
 
 /// Whether a tree is the shape [`LayoutNode::normalize`] produces: no split
-/// nested in one of its own direction, and no split of a single child. A split
-/// of none survives only at the root, with nothing to drop it into.
+/// nested in one of its own direction, no split of a single child, no factor a
+/// split's children all share. A split of none survives only at the root.
 fn is_canonical(node: &LayoutNode, root: bool) -> bool {
     let LayoutNode::Split {
         direction,
@@ -410,42 +412,37 @@ fn is_canonical(node: &LayoutNode, root: bool) -> bool {
     if children.len() == 1 || (children.is_empty() && !root) {
         return false;
     }
+    let mut shared = 0_u32;
+    for child in children {
+        let (mut larger, mut smaller) = (shared, child.weight);
+        while smaller != 0 {
+            let remainder = larger.checked_rem(smaller).unwrap_or(0);
+            larger = smaller;
+            smaller = remainder;
+        }
+        shared = larger;
+    }
+    if shared > 1 {
+        return false;
+    }
     children.iter().all(|child| {
         !matches!(&child.node, LayoutNode::Split { direction: inner, .. } if inner == direction)
             && is_canonical(&child.node, false)
     })
 }
 
-/// A layout of `levels` splits nested one inside the next, each holding a
-/// single child, around one leaf: the cheapest deep tree a peer can send, and
-/// so the one the decoder's bound has to stop.
-fn nested_layout_bytes(levels: usize) -> Vec<u8> {
-    /// A `Leaf` naming pane one: the innermost node, and the only one.
-    const LEAF: [u8; 9] = [1, 1, 0, 0, 0, 0, 0, 0, 0];
-    /// A `Split`, `Horizontal`.
-    const SPLIT: [u8; 2] = [0, 0];
-    /// The one child each split holds, and the weight it holds it at.
-    const ONE: u32 = 1;
-
-    let mut bytes = LEAF.to_vec();
-    for _index in 0..levels {
-        let mut wrapped = SPLIT.to_vec();
-        wrapped.extend_from_slice(&ONE.to_le_bytes());
-        wrapped.append(&mut bytes);
-        wrapped.extend_from_slice(&ONE.to_le_bytes());
-        bytes = wrapped;
-    }
-    bytes
-}
-
-/// A one-session, one-tab, one-pane payload whose layout is the given bytes:
-/// everything before it is what the encoder writes, so the tree is the only
-/// thing under test.
+/// A payload whose layout is `levels` splits nested one inside the next around
+/// a single leaf: the cheapest deep tree a peer can send, built by wrapping the
+/// layout of a model the encoder wrote, since it will not write the tree.
 ///
 /// # Errors
 ///
-/// When the model the prefix is taken from does not encode.
-fn payload_with_layout(layout: &[u8]) -> Result<Vec<u8>, Failure> {
+/// When the model the layout is taken from does not encode.
+fn deeply_nested_payload(levels: usize) -> Result<Vec<u8>, Failure> {
+    /// A `Split`, `Horizontal`, holding one child.
+    const SPLIT: [u8; 6] = [0, 0, 1, 0, 0, 0];
+    /// The weight that child is held at.
+    const WEIGHT: [u8; 4] = [1, 0, 0, 0];
     /// A leaf's bytes: its tag and the pane it names.
     const LEAF_LENGTH: usize = size_of::<u8>() + size_of::<u64>();
 
@@ -454,11 +451,16 @@ fn payload_with_layout(layout: &[u8]) -> Result<Vec<u8>, Failure> {
         .len()
         .checked_sub(LEAF_LENGTH)
         .ok_or("a leaf's bytes")?;
-    let mut bytes = base
-        .get(..cut)
-        .ok_or("the bytes before the layout")?
-        .to_vec();
-    bytes.extend_from_slice(layout);
+    let (prefix, leaf) = base.split_at_checked(cut).ok_or("the layout's place")?;
+    let mut layout = leaf.to_vec();
+    for _index in 0..levels {
+        let mut wrapped = SPLIT.to_vec();
+        wrapped.append(&mut layout);
+        wrapped.extend_from_slice(&WEIGHT);
+        layout = wrapped;
+    }
+    let mut bytes = prefix.to_vec();
+    bytes.append(&mut layout);
     Ok(bytes)
 }
 
@@ -492,12 +494,12 @@ fn check_model(description: &str, line: &Value) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Every fixture line is the contract: the models in both directions and
-/// under the validator, the refusals exactly as named.
+/// Every fixture line is the contract: the models in both directions and under
+/// the validator, the refusals exactly as named.
 ///
 /// # Panics
 ///
-/// When a line is malformed, or the codec does not behave as it says.
+/// When the codec or the validator does not behave as a line says.
 #[test]
 fn model_invariants_every_fixture_line_holds_in_both_directions() {
     let lines = lines().expect("the fixture loads");
@@ -520,8 +522,8 @@ fn model_invariants_every_fixture_line_holds_in_both_directions() {
     }
 }
 
-/// Every refusal `decode_host_model` documents is provoked: four by a fixture
-/// line, and the fifth by a tree nested past the bound.
+/// Every refusal `decode_host_model` documents is provoked: four by a line, the
+/// fifth by a tree nested past the bound.
 ///
 /// # Panics
 ///
@@ -534,8 +536,7 @@ fn model_invariants_every_refusal_the_decoder_gives_is_provoked() {
         .filter_map(|line| line.get("error"))
         .map(|error| variant(error).expect("an error variant").0)
         .collect();
-    let deep = payload_with_layout(&nested_layout_bytes(MAXIMUM_LAYOUT_DEPTH + 1))
-        .expect("a deep payload");
+    let deep = deeply_nested_payload(MAXIMUM_LAYOUT_DEPTH).expect("a deep payload");
     match decode_host_model(&deep) {
         Err(MessageError::LayoutTooDeep { limit }) => {
             assert_eq!(limit, MAXIMUM_LAYOUT_DEPTH, "the bound it names");
@@ -600,51 +601,46 @@ fn model_invariants_validate_names_the_identity_of_every_broken_invariant() {
             },
         ),
         (
-            one_tab(tab(1, &[], leaf(1))),
+            arranged(&[], leaf(1)),
             ModelError::TabWithoutPanes { tab: TabId(1) },
         ),
         (
-            one_tab(tab(1, &[1], leaf(2))),
+            arranged(&[1], leaf(2)),
             ModelError::LayoutNamesUnknownPane {
                 tab: TabId(1),
                 pane: PaneId(2),
             },
         ),
         (
-            one_tab(tab(
-                1,
-                &[1, 2],
-                horizontal(vec![(leaf(1), 1), (leaf(1), 1)]),
-            )),
+            arranged(&[1, 2], horizontal(vec![(leaf(1), 1), (leaf(1), 1)])),
             ModelError::LayoutRepeatsPane {
                 tab: TabId(1),
                 pane: PaneId(1),
             },
         ),
         (
-            one_tab(tab(1, &[1, 2], leaf(1))),
+            arranged(&[1, 2], leaf(1)),
             ModelError::PaneMissingFromLayout {
                 tab: TabId(1),
                 pane: PaneId(2),
             },
         ),
         (
-            one_tab(tab(
-                1,
-                &[1, 2],
-                horizontal(vec![(leaf(1), 0), (leaf(2), 1)]),
-            )),
+            arranged(&[1], horizontal(Vec::new())),
+            ModelError::EmptySplit { tab: TabId(1) },
+        ),
+        (
+            arranged(&[1, 2], horizontal(vec![(leaf(1), 0), (leaf(2), 1)])),
             ModelError::ZeroWeight { tab: TabId(1) },
         ),
         (
-            one_tab(tab(
-                1,
+            arranged(
                 &[1, 2, 3],
                 horizontal(vec![
                     (leaf(1), 1),
                     (horizontal(vec![(leaf(2), 1), (leaf(3), 1)]), 1),
                 ]),
-            )),
+            ),
             ModelError::UnnormalizedLayout { tab: TabId(1) },
         ),
         (
@@ -687,8 +683,9 @@ fn alternating_layout(depth: usize) -> LayoutNode {
 }
 
 /// Normalization flattens a same-direction nesting with its weights scaled so
-/// no pane's share changes, collapses a split of one child, drops a split of
-/// none, and leaves a canonical tree alone.
+/// no pane's share changes, reduces a split's weights by their common factor,
+/// collapses a split of one child, drops a split of none, and leaves a
+/// canonical tree alone.
 ///
 /// # Panics
 ///
@@ -697,15 +694,21 @@ fn alternating_layout(depth: usize) -> LayoutNode {
 fn model_invariants_normalization_flattens_scales_collapses_and_drops() {
     // A child of weight 2 whose own children weigh 3 and 1 gives them 6 and 2
     // of the 12 the parent now divides, and the sibling of weight 1 takes the
-    // remaining 4: exactly the half, the sixth and the third they all were.
+    // remaining 4; reduced by the 2 they share, that is 3, 1 and 2 of 6 —
+    // exactly the half, the sixth and the third they all were.
     let nested = horizontal(vec![
         (horizontal(vec![(leaf(1), 3), (leaf(2), 1)]), 2),
         (leaf(3), 1),
     ]);
     assert_eq!(
         nested.normalize(),
-        horizontal(vec![(leaf(1), 6), (leaf(2), 2), (leaf(3), 4)]),
+        horizontal(vec![(leaf(1), 3), (leaf(2), 1), (leaf(3), 2)]),
         "a same-direction nesting is flattened with its weights scaled"
+    );
+    assert_eq!(
+        horizontal(vec![(leaf(1), 50), (leaf(2), 50)]).normalize(),
+        horizontal(vec![(leaf(1), 1), (leaf(2), 1)]),
+        "halves are halves whatever scale a client expressed them in"
     );
 
     // Two lifted children: the halves become quarters and sixths of twelve.
@@ -751,9 +754,8 @@ fn model_invariants_normalization_flattens_scales_collapses_and_drops() {
     assert_eq!(leaf(9).normalize(), leaf(9), "a leaf is already canonical");
 }
 
-/// Over a thousand generated trees — same-direction nestings, splits of one
-/// child, splits of none and weights of zero among them — normalization
-/// settles in one pass, is canonical, and moves no pane.
+/// Over a thousand generated trees, normalization settles in one pass, is
+/// canonical, and moves no pane.
 ///
 /// # Panics
 ///
@@ -790,8 +792,8 @@ fn model_invariants_normalization_is_idempotent_and_canonical() {
     );
 }
 
-/// `replace_leaf` and `remove_leaf` put every other pane exactly where it was
-/// and leave a canonical tree; a pane the tree does not hold changes nothing.
+/// `replace_leaf` and `remove_leaf` put every other pane where it was and leave
+/// a canonical tree; a pane the tree does not hold changes nothing.
 ///
 /// # Panics
 ///
@@ -878,8 +880,8 @@ fn model_invariants_the_layout_operations_keep_every_other_leaf() {
     }
 }
 
-/// A tab's identity is a field, not its place: taking the first of three tabs
-/// away leaves the other two carrying exactly the ids they carried.
+/// Identity is a field, not a place: taking the first of three tabs away leaves
+/// the other two carrying exactly the ids they carried.
 ///
 /// # Panics
 ///
@@ -913,9 +915,8 @@ fn model_invariants_identity_is_not_positional() {
     assert_eq!(after.validate(), Ok(()), "two tabs still hold together");
 }
 
-/// Nesting is bounded at the same depth on both sides of the codec and in the
-/// validator: a tree at the bound encodes, decodes and validates, and one
-/// level deeper is refused by all three rather than recursed into.
+/// A tree at the bound encodes, decodes and validates; one level deeper is
+/// refused by the decoder, the encoder and the validator alike.
 ///
 /// # Panics
 ///
@@ -962,14 +963,13 @@ fn model_invariants_layout_depth_is_bounded_on_both_sides_of_the_codec() {
 
     // The cheapest deep tree on the wire is a chain of single-child splits;
     // one level short of the bound decodes, one past it is refused.
-    let at = payload_with_layout(&nested_layout_bytes(MAXIMUM_LAYOUT_DEPTH.saturating_sub(1)))
-        .expect("a payload at the bound");
+    let at =
+        deeply_nested_payload(MAXIMUM_LAYOUT_DEPTH.saturating_sub(1)).expect("a payload at bound");
     assert!(
         decode_host_model(&at).is_ok(),
         "a chain at the bound decodes"
     );
-    let beyond = payload_with_layout(&nested_layout_bytes(MAXIMUM_LAYOUT_DEPTH))
-        .expect("a payload past the bound");
+    let beyond = deeply_nested_payload(MAXIMUM_LAYOUT_DEPTH).expect("a payload past the bound");
     assert_eq!(
         decode_host_model(&beyond),
         Err(MessageError::LayoutTooDeep {
@@ -979,9 +979,7 @@ fn model_invariants_layout_depth_is_bounded_on_both_sides_of_the_codec() {
     );
 }
 
-/// Whatever shape a tree has — weights of zero, splits of one child, splits
-/// of none — the codec carries it back unchanged, so encoding is independent
-/// of whether the model it belongs to holds together.
+/// Whatever shape a tree has, the codec carries it back unchanged.
 ///
 /// # Panics
 ///
