@@ -24,6 +24,16 @@ test-group = 'scenarios'
 filter = 'test(/latency|throughput|baseline/)'
 threads-required = 'num-cpus'
 
+# Every test in the server crate drives a real shell on a real pseudoterminal
+# and waits on what it prints, so what it measures is not its own work but the
+# machine's willingness to run a shell. Sixteen of those at once, beside the
+# rest of the suite, starves one past its own deadline and turns the suite's
+# parallelism into a failure rather than a slower run. Four at a time keeps a
+# wait a wait.
+[[profile.default.overrides]]
+filter = 'package(iznik-server)'
+test-group = 'shells'
+
 # The fixture reaper removes every labelled container and network, a sibling
 # test's live fixture included, so it runs with the machine to itself.
 [[profile.default.overrides]]
@@ -31,6 +41,9 @@ filter = 'test(/regression_fixture_reaper_/)'
 threads-required = 'num-cpus'
 
 [test-groups.scenarios]
+max-threads = 4
+
+[test-groups.shells]
 max-threads = 4
 
 # `xtask claims verify` reads the outcome of every proof from this report.
