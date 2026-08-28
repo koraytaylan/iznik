@@ -2,6 +2,8 @@
 
 Framing, the `iznik/1` control messages, the session model, deltas and the reconciler. Pure: no I/O, no clock, no dependencies, and every encoding pinned by a golden fixture that is the contract.
 
+Every discriminant, byte layout and rule a second implementation needs is written out in [protocol.md](../../docs/notes/protocol.md), which the macOS repository reads instead of this source. `tests/protocol_reference.rs` holds the two together: a discriminant that moves without the document moving fails, and so does a tag nobody wrote down. The fixtures under `tests/fixtures/` remain the arbiter of both.
+
 ## Modules
 
 | Module | Holds | Landed by |

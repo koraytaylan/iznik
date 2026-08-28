@@ -88,6 +88,12 @@ an SSH channel, a unix socket, or an in-memory pipe in tests. Defined in
 `iznik-protocol`, pinned by golden fixtures, and hand-encoded in little-endian
 so a wrong byte is a failing test rather than a corrupted terminal.
 
+This section says what the protocol is for. **Every discriminant, byte layout
+and rule a second implementation needs is in
+[protocol.md](docs/notes/protocol.md)**, which the macOS repository reads
+instead of the Rust, and which a test holds to the source constant by
+constant.
+
 ### 4.1 Framing
 
 A frame is a 4-byte little-endian payload length, a 1-byte **channel**, and
@@ -105,7 +111,7 @@ Client to server:
 |---|---|
 | `Hello { protocol_version, client_version, capabilities }` | First message on every connection. |
 | `SnapshotRequest` | Ask for the complete host model. |
-| `Command { command_id, command }` | A session command (§5.3), answered by `CommandResult`. |
+| `Command { command_id, payload }` | A session command (§5.3), answered by `CommandResult`. |
 | `Subscribe { pane }`, `Unsubscribe { pane }` | Begin or end delivery of a pane's output. |
 | `Resume { pane, from_sequence }` | Subscribe and continue from a byte position the client already holds. |
 | `ScreenRequest { pane }` | Ask for the pane's current screen as VT bytes. |
@@ -121,9 +127,9 @@ Server to client:
 | Message | Purpose |
 |---|---|
 | `Hello { protocol_version, server_version, capabilities }` | Handshake reply. |
-| `Snapshot { generation, model }` | The complete host model. |
-| `Delta { generation, delta }` | One change to the model, numbered. |
-| `CommandResult { command_id, outcome }` | `Applied { generation, created }` or `Rejected { code, message }`. |
+| `Snapshot { generation, payload }` | The complete host model. |
+| `Delta { generation, payload }` | One change to the model, numbered. |
+| `CommandResult { command_id, payload }` | `Applied { generation, created }` or `Rejected { code, message }`. |
 | `PaneChannel { pane, channel, sequence }` | The channel a subscribed pane's output flows on, and the byte position the stream starts at. |
 | `PaneDetached { pane, channel }` | Output for the pane has stopped on that channel. |
 | `Screen { pane, sequence, columns, rows, bytes }` | The pane's screen and scrollback as VT bytes, exact at `sequence`. |
@@ -220,7 +226,11 @@ holding a layout tree of panes. Identity is stable and position is derived:
 every id is minted once by the server, never reused, and `index` is a field.
 The layout tree is `Split { direction, children with integer weights }` or
 `Leaf(pane)` — enough to restore an arrangement, deliberately not enough to
-compute a cell size. Focus is per client and is not model state.
+compute a cell size. It is kept normalized, and the last of those rules is
+load-bearing: a split's weights are divided by the factor they share, without
+which the product a flattening multiplies through accumulates until it
+saturates and the same arrangement is two unequal trees. Focus is per client
+and is not model state.
 
 Every change to the model is a numbered delta emitted directly by the
 operation that caused it; the model's generation advances by one per delta. A
@@ -243,12 +253,22 @@ and the delta carries the exit status.
 One connection carries every pane a client subscribes to, so without
 arbitration a `cat` of a large file starves the pane the user is typing into.
 The multiplexer is a scheduler: each pane channel has a credit window in
-bytes that the client refills as it consumes; the focused pane has a larger
-window and is served first; the rest are served round-robin. A channel at zero
-credit is skipped, never waited on. A background pane whose pending output
-outgrows its window is marked stale: the server stops streaming it, keeps its
-history, and sends a `Screen` when the client returns to it. Acceptance is a
-measured latency figure under a flood, not an adjective.
+bytes that the client refills as it consumes — 256 KiB for a background pane,
+1 MiB for the focused one, and at most 64 KiB in any single frame, so a
+keystroke echo waits behind at most one frame per active pane. The focused
+pane is served first; the rest are served round-robin from a moving place. A
+channel at zero credit is skipped, never waited on. A background pane that
+falls more than 4 MiB behind is marked stale: the server stops streaming it,
+keeps its history, and sends a `Screen` when the client returns to it. It
+buffers no pane bytes of its own — the history ring *is* the queue, and a
+subscription is a cursor into it.
+
+Acceptance is a measured latency figure under a flood, not an adjective: with
+one pane flooding at line rate and another echoing keystrokes, both
+subscribed, a thousand keystroke-to-echo round trips report a 99th percentile
+under **25 ms**, the figure past which a person stops feeling a terminal as
+immediate. The same case asserts that at least a mebibyte of the flood was
+carried alongside them, so the number cannot be earned by an idle link.
 
 ### 5.5 Daemon lifecycle
 
@@ -270,9 +290,22 @@ count. Hot upgrade by descriptor passing is deferred, not forgotten.
 
 Streaming zstd over the whole connection, negotiated in `Hello`, with a
 dictionary trained on a committed corpus of real terminal output so the first
-kilobytes of a session are not the expensive ones. Committed numbers decide
-whether it stays on: a ratio against the corpus and a latency delta for small
-frames.
+kilobytes of a session are not the expensive ones. One context per connection,
+not per frame, so the window spans frames; a flush after every frame, so
+nothing waits in a buffer for a frame that may never come.
+
+Committed numbers decide whether it stays on. Against the fidelity corpus the
+378-byte dictionary takes 316 bytes of payload to 101, a ratio of **3.129**
+against the 3.0 the capability is kept for; as the link actually frames that
+corpus — seventeen frames, a flush after each — it costs 299 bytes against
+411, a saving of **1.375**. Both are asserted together so neither can be
+quoted alone. The latency cost is **740 ns** added at the 99th percentile for
+a one-byte frame in process, against a 1 ms ceiling.
+
+The handshake's one subtlety is the leftover: by the time a plain reader has
+parsed the peer's `Hello` it has usually read some of the peer's first
+compressed bytes too, and those bytes must be handed to the compressed stream
+as its first input rather than dropped.
 
 ## 6. The client engine
 
