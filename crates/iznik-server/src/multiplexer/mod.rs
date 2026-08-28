@@ -35,11 +35,11 @@ use iznik_protocol::delta::{Delta, encode_delta};
 use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, ToClient, encode_to_client};
 use iznik_protocol::model::encode_host_model;
-use tokio::sync::{Notify, RwLock, broadcast, watch};
+use tokio::sync::{Notify, RwLock, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::multiplexer::channel::{ChannelTable, Cursor, MultiplexerError, SinkError};
-use crate::pane::{Pane, PaneState, Subscription};
+use crate::pane::{Pane, Subscription};
 use crate::resume::{StartPlan, StartRequest, plan_start};
 use crate::session::registry::{Numbered, Registry};
 use crate::terminal::marks::MarkEvent;
@@ -88,8 +88,6 @@ pub struct Multiplexer<Sink: FrameSink> {
     subscriptions: BTreeMap<PaneId, Subscription>,
     /// Each subscribed pane's marks.
     marks: BTreeMap<PaneId, broadcast::Receiver<MarkEvent>>,
-    /// Each subscribed pane's state.
-    states: BTreeMap<PaneId, watch::Receiver<PaneState>>,
     /// One task per subscription, forwarding its pane's changes to `wake`,
     /// because a `select!` cannot take a set of futures that changes.
     watchers: BTreeMap<PaneId, JoinHandle<()>>,
@@ -99,6 +97,9 @@ pub struct Multiplexer<Sink: FrameSink> {
     deltas: broadcast::Receiver<Numbered<Delta>>,
     /// Deltas taken off the channel while waiting and not yet sent.
     waiting: VecDeque<Numbered<Delta>>,
+    /// Marks taken off their panes' channels and not yet sent, which is the
+    /// only copy of them there is.
+    owed_marks: VecDeque<(PaneId, MarkEvent)>,
     /// Whether the client must be sent the whole model before anything else.
     owed_snapshot: bool,
     /// The pane this client is looking at.
@@ -132,11 +133,11 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             cursors: BTreeMap::new(),
             subscriptions: BTreeMap::new(),
             marks: BTreeMap::new(),
-            states: BTreeMap::new(),
             watchers: BTreeMap::new(),
             wake: Arc::new(Notify::new()),
             deltas,
             waiting: VecDeque::new(),
+            owed_marks: VecDeque::new(),
             owed_snapshot: false,
             focused: None,
             turn: 0,
@@ -201,6 +202,28 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
     /// [`MultiplexerError::Sink`] when the link cannot take one.
     pub async fn subscribe(&mut self, request: StartRequest) -> Result<(), MultiplexerError> {
         let pane = request.pane();
+        // A screen request arrives on a subscription that already stands, and
+        // a refusal must not tear that down; a refusal on a fresh one must not
+        // leave the channel consumed, the pane's mirror pinned in subscriber
+        // mode and a watcher waking a pump that has no cursor to serve.
+        let standing = self.cursors.contains_key(&pane);
+        match self.begin(request, pane).await {
+            Ok(()) => Ok(()),
+            Err(refused) => {
+                if !standing {
+                    self.forget(pane);
+                }
+                Err(refused)
+            }
+        }
+    }
+
+    /// Everything [`Multiplexer::subscribe`] does, so that it can unwind.
+    ///
+    /// # Errors
+    ///
+    /// As [`Multiplexer::subscribe`].
+    async fn begin(&mut self, request: StartRequest, pane: PaneId) -> Result<(), MultiplexerError> {
         let held = self.pane_of(pane).await?;
         let state = held.state();
         let channel = self.channels.assign(pane)?;
@@ -216,16 +239,18 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         self.subscriptions.insert(pane, held.subscribe());
         self.marks.insert(pane, held.marks());
         let mut changes = held.state_updates();
-        self.states.insert(pane, changes.clone());
         let wake = Arc::clone(&self.wake);
-        self.watchers.insert(
-            pane,
-            tokio::spawn(async move {
-                while changes.changed().await.is_ok() {
-                    wake.notify_one();
-                }
-            }),
-        );
+        let watching = tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                wake.notify_one();
+            }
+        });
+        // Dropping a `JoinHandle` detaches its task rather than ending it, and
+        // a screen request on a live subscription lands here again, so the one
+        // this replaces is ended rather than left waking the pump for ever.
+        if let Some(replaced) = self.watchers.insert(pane, watching) {
+            replaced.abort();
+        }
 
         let sequence = match plan {
             StartPlan::Continue { from } => {
@@ -301,7 +326,6 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         let _cursor = self.cursors.remove(&pane);
         let _subscription = self.subscriptions.remove(&pane);
         let _marks = self.marks.remove(&pane);
-        let _state = self.states.remove(&pane);
         if let Some(watcher) = self.watchers.remove(&pane) {
             watcher.abort();
         }
@@ -322,17 +346,27 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
 
     /// Returns flow-control credit as the client consumes it.
     ///
+    /// Credit for a channel that carries nothing is dropped rather than
+    /// refused: the server detaches a pane and the client's `Credit` frames
+    /// for it are already in flight, which is an ordinary race and not a
+    /// client acting on a pane it never had.
+    ///
     /// # Errors
     ///
-    /// [`MultiplexerError::NotSubscribed`] when the channel carries nothing.
+    /// [`MultiplexerError::NotSubscribed`] when the channel carries a pane
+    /// this client has no cursor for.
     pub fn credit(&mut self, channel: u8, bytes: u32) -> Result<(), MultiplexerError> {
         let Some(pane) = self.channels.pane_of(channel) else {
-            return Err(MultiplexerError::NotReleased { channel });
+            return Ok(());
         };
         let Some(cursor) = self.cursors.get_mut(&pane) else {
             return Err(MultiplexerError::NotSubscribed { pane });
         };
         cursor.credit.refill(bytes);
+        // A cursor skipped at zero credit is not woken by its pane, which may
+        // be at a prompt saying nothing; without this its backlog waits for
+        // output that never comes.
+        self.wake.notify_one();
         Ok(())
     }
 
@@ -346,8 +380,15 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         if !self.cursors.contains_key(&pane) {
             return Err(MultiplexerError::NotSubscribed { pane });
         }
+        self.registry.read().await.touch(pane);
+        // Widening twice would add the increment twice, and a client that
+        // says what it is already looking at — after a reconnect, or on every
+        // window activation — would push the server past the ceiling the
+        // window exists to hold it to.
+        if self.focused == Some(pane) {
+            return Ok(());
+        }
         if let Some(left) = self.focused
-            && left != pane
             && let Some(cursor) = self.cursors.get_mut(&left)
         {
             cursor.credit.narrow();
@@ -356,7 +397,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         if let Some(cursor) = self.cursors.get_mut(&pane) {
             cursor.credit.widen();
         }
-        self.registry.read().await.touch(pane);
+        // The catch-up a stale cursor is owed on focus is exactly what a
+        // parked pump is waiting to be told about, and an idle pane will not
+        // tell it.
+        self.wake.notify_one();
         Ok(())
     }
 
@@ -427,12 +471,32 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
                 // waiting is dropped rather than applied on top of it.
                 continue;
             }
-            let payload = encode_delta(&numbered.value)?;
-            self.tell(&ToClient::Delta {
-                generation: numbered.generation,
-                payload,
-            })
-            .await?;
+            let payload = match encode_delta(&numbered.value) {
+                Ok(payload) => payload,
+                Err(refused) => {
+                    // A change this client cannot be told is a client that
+                    // needs the whole model, not one that never hears of it.
+                    tracing::warn!(
+                        generation = numbered.generation.0,
+                        ?refused,
+                        "a delta would not encode"
+                    );
+                    self.owed_snapshot = true;
+                    continue;
+                }
+            };
+            let told = self
+                .tell(&ToClient::Delta {
+                    generation: numbered.generation,
+                    payload,
+                })
+                .await;
+            if let Err(refused) = told {
+                // Dropping it here would leave the client a generation behind
+                // for ever, with nothing owed that would repair it.
+                self.waiting.push_front(numbered);
+                return Err(refused);
+            }
             sent = true;
         }
         if self.owed_snapshot {
@@ -462,14 +526,21 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
                 }
             }
         }
-        let sent = !carried.is_empty();
-        for (pane, event) in carried {
-            self.tell(&ToClient::Mark {
-                pane,
-                sequence: event.sequence,
-                kind: event.kind,
-            })
-            .await?;
+        self.owed_marks.extend(carried);
+        let sent = !self.owed_marks.is_empty();
+        while let Some((pane, event)) = self.owed_marks.pop_front() {
+            let told = self
+                .tell(&ToClient::Mark {
+                    pane,
+                    sequence: event.sequence,
+                    kind: event.kind.clone(),
+                })
+                .await;
+            if let Err(refused) = told {
+                // Taken off the receiver and not yet sent: the only copy.
+                self.owed_marks.push_front((pane, event));
+                return Err(refused);
+            }
         }
         Ok(sent)
     }

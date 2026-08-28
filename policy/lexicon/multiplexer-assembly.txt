@@ -46,12 +46,14 @@ rig
 sample
 serve
 shares
+standing
 staying
 stepping
 stock
 stocked
 stopped
 subscriptions
+told
 turn
 typed
 unwatched
@@ -59,3 +61,4 @@ wake
 watcher
 watchers
 within
+woke

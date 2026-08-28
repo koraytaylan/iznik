@@ -31,13 +31,11 @@ use tokio::sync::RwLock;
 
 /// The width every pane in these cases is created at.
 const COLUMNS: u16 = 80;
-
 /// The height they are created at.
 const ROWS: u16 = 24;
 
 /// The deadline every case runs under, so a stall is a named failure.
 const DEADLINE: Duration = Duration::from_mins(2);
-
 /// How long a case waits between looks at a shell.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// How many looks it takes before it gives up on one.
@@ -45,10 +43,8 @@ const POLL_ATTEMPTS: usize = 4000;
 
 /// How many pumps a case allows before it calls the multiplexer a spin.
 const PUMP_LIMIT: usize = 20_000;
-
 /// The unit the floods in these cases are stated in.
 const MEBIBYTE: u64 = 1024 * 1024;
-
 /// Anything a case can fail on, so a helper reports rather than panics.
 type Failed = Box<dyn std::error::Error>;
 
@@ -500,36 +496,27 @@ fn panes_of(registry: &Registry) -> Vec<PaneId> {
 /// How much each pane produces before a scheduling case starts: more than any
 /// round can carry, and short of the lag that would mark a cursor stale.
 const STOCKED_BYTES: u64 = 3 * MEBIBYTE;
-
 /// How many rounds a scheduling case runs for.
 const ROUNDS: usize = 16;
-
 /// How many changes a client misses, being more than the channel holds.
 const LAGGING_RENAMES: usize = 2000;
-
 /// How many keystroke round trips the latency case measures.
 const SAMPLES: usize = 1000;
-
 /// The percentile the budget is stated at, over [`OF`].
 const AT: usize = 99;
-
 /// The middle of the distribution, reported beside the tail.
 const MIDDLE: usize = 50;
-
 /// What [`AT`] and [`MIDDLE`] are percentiles of.
 const OF: usize = 100;
 
 /// How long one keystroke may take before the case calls the pump stopped.
 const SAMPLE_DEADLINE: Duration = Duration::from_secs(5);
-
 /// How much the multiplexer's own memory may grow across a flood: one frame's
 /// buffer and the allocator's slack, but nothing proportional to the flood.
 const MEMORY_SLACK_BYTES: u64 = 16 * MEBIBYTE;
-
 /// What a stalled cursor may cost over an idle interval, which is the
 /// resolution of the clock `/proc` reports rather than a budget.
 const IDLE_CPU_CEILING: Duration = Duration::from_millis(20);
-
 /// How long that idle interval is.
 const IDLE_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -870,6 +857,14 @@ async fn the_scheduler_shares_the_link_and_follows_focus() {
             .saturating_sub(rig.sink.count(background));
         assert_eq!(gained, increment, "the focused pane's window is larger");
 
+        // Focusing what is already focused would otherwise add the increment
+        // again and send bytes the client never granted credit for.
+        rig.sink.reset_counts();
+        rig.multiplexer.focus(rig.pane(0)?).await?;
+        rig.drain(None).await?;
+        let twice = rig.sink.count(watched);
+        assert_eq!(twice, 0, "focusing twice does not widen twice: {twice}");
+
         rig.sink.reset_counts();
         rig.multiplexer.focus(rig.pane(1)?).await?;
         let _sent = rig.multiplexer.pump().await?;
@@ -935,6 +930,12 @@ async fn credit_is_honored_and_nothing_is_buffered() {
         stopped?;
         let spent = metrics::cpu_time(std::process::id())?.saturating_sub(spent_before);
         assert!(spent < IDLE_CPU_CEILING, "{spent:?} idle is a spin");
+
+        // And the credit returning is what must wake it: the pane it is
+        // waiting on may be at a prompt, saying nothing for hours.
+        rig.multiplexer.credit(stalled, FRAME_PAYLOAD_LENGTH)?;
+        let woke = tokio::time::timeout(IDLE_INTERVAL, rig.multiplexer.ready()).await;
+        assert!(woke.is_ok(), "returning credit wakes a parked pump");
         Ok::<(), Failed>(())
     })
     .await

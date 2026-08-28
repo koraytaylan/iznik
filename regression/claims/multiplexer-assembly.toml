@@ -40,13 +40,13 @@ because = "a container's scheduler would be measured instead of this one's, and 
 
 [[claim]]
 id = "multiplexer-the-link-is-shared-and-follows-focus"
-statement = "Three background panes with equal amounts to say receive shares within one frame of each other, and focus moves both first service and the larger window to the pane the person is looking at, the difference being exactly the increment between the two window sizes."
+statement = "Three background panes with equal amounts to say receive shares within one frame of each other; focus moves both first service and the larger window to the pane the person is looking at, the difference being exactly the increment between the two window sizes; and focusing what is already focused adds nothing, so a client that says it twice is not sent bytes it never granted credit for."
 test = "iznik-server::multiplexer_assembly::the_scheduler_shares_the_link_and_follows_focus"
 because = "the scheduling order is a pure decision over cursors; a link would only blur what it decided"
 
 [[claim]]
 id = "multiplexer-credit-is-honored-and-nothing-is-buffered"
-statement = "A cursor whose client stops returning credit stops at the window it was given while every other cursor continues, the multiplexer's own memory does not grow with either that cursor's bytes or an unwatched pane's flood of sixteen mebibytes, and a stalled cursor over a two-hundred-millisecond idle interval costs no measurable processor time."
+statement = "A cursor whose client stops returning credit stops at the window it was given while every other cursor continues, the multiplexer's own memory does not grow with either that cursor's bytes or an unwatched pane's flood of sixteen mebibytes, a stalled cursor over a two-hundred-millisecond idle interval costs no measurable processor time, and the credit returning is itself what wakes the pump — the pane it waits on may be at a prompt saying nothing."
 test = "iznik-server::multiplexer_assembly::credit_is_honored_and_nothing_is_buffered"
 because = "the memory and processor samples are of this process; a container would measure its own runtime too"
 
