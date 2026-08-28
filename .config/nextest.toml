@@ -59,8 +59,8 @@ threads-required = 'num-cpus'
 # and waits on what it prints, so what it measures is not its own work but the
 # machine's willingness to run a shell. Sixteen of those at once, beside the
 # rest of the suite, starves one past its own deadline and turns the suite's
-# parallelism into a failure rather than a slower run. Four at a time — the
-# scenarios included, above — keeps a wait a wait.
+# parallelism into a failure rather than a slower run. Twelve threads shared
+# with the scenarios above, which take three each, keeps a wait a wait.
 [[profile.default.overrides]]
 filter = 'package(iznik-server)'
 test-group = 'shells'
@@ -71,8 +71,13 @@ test-group = 'shells'
 filter = 'test(/regression_fixture_reaper_/)'
 threads-required = 'num-cpus'
 
+# Twelve, so four scenarios at three apiece still run together — the number the
+# fixture was sized for — while a scenario and the server's own shell tests
+# cannot both fill the machine. Fewer would serialize the scenarios, and thirty
+# of them one at a time is half an hour against a claims gate that allows
+# fifteen minutes before calling a run hung.
 [test-groups.shells]
-max-threads = 4
+max-threads = 12
 
 # `xtask claims verify` reads the outcome of every proof from this report.
 [profile.claims.junit]

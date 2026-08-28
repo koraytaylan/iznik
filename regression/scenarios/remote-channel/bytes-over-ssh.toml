@@ -19,8 +19,11 @@ server = "/iznik/bin/iznik-server"
 actions = [
   { kind = "create_session", name = "work" },
   { kind = "subscribe", pane = 1 },
-  { kind = "input", pane = 1, text = "echo over-the-channel\n" },
-  { kind = "await_bytes", pane = 1, contains = "over-the-channel" },
+  # The needle is what the shell computes, not what was typed: a
+  # pseudoterminal echoes the keystrokes back at once, so waiting for the words
+  # of the command would be satisfied before the command ran.
+  { kind = "input", pane = 1, text = "echo over-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "over-42" },
 ]
 
 [[expect]]

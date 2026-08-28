@@ -18,11 +18,16 @@ use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
 use iznik_link::framed::FramedLink;
 use iznik_protocol::capabilities::Capabilities;
+use iznik_protocol::command::{
+    CommandOutcome, SessionCommand, decode_command_outcome, encode_session_command,
+};
+use iznik_protocol::identity::{CommandId, PaneId, Sequence};
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, PROTOCOL_VERSION, ToClient, ToServer, decode_to_server, encode_to_client,
+    CHANNEL_CONTROL, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client, decode_to_server,
+    encode_to_client,
 };
 use iznik_testkit::stack::{Stack, StackOptions};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 
 /// How long these cases give a channel that should answer at once.
 const PROMPT: Duration = Duration::from_secs(5);
@@ -36,6 +41,12 @@ const QUICK_PONG: Duration = Duration::from_millis(200);
 /// How long the whole liveness case may take: the pong deadline and a ping
 /// interval, with room for a loaded machine, and still under a second.
 const LIVENESS_CEILING: Duration = Duration::from_millis(900);
+
+/// The width a pane is made at.
+const COLUMNS: u16 = 80;
+
+/// Its height.
+const ROWS: u16 = 24;
 
 /// A version no server speaks, for the mismatch case.
 const OTHER_VERSION: u16 = PROTOCOL_VERSION.saturating_add(1);
@@ -91,8 +102,8 @@ fn brisk() -> ChannelOptions {
     }
 }
 
-/// Answers one connection with a `Hello` of `version`, then does what `after`
-/// says with the link.
+/// Answers one connection with a `Hello` of `version` and `capabilities`, and
+/// then either holds the link open and silent or lets it go.
 ///
 /// The listener is bound before this returns, so a caller may connect at once.
 ///
@@ -248,7 +259,7 @@ async fn a_channel_carries_what_the_server_answers() {
             answer.channel, CHANNEL_CONTROL,
             "the answer comes on the control channel"
         );
-        let message = iznik_protocol::message::decode_to_client(&answer.payload)?;
+        let message = decode_to_client(&answer.payload)?;
         assert!(
             matches!(message, ToClient::Snapshot { .. }),
             "and is the snapshot that was asked for: {message:?}"
@@ -260,5 +271,202 @@ async fn a_channel_carries_what_the_server_answers() {
     case.await.unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// Keeps the unused import honest: a socket is what a local transport reaches.
-const _: fn() -> Option<UnixStream> = || None;
+/// # Panics
+///
+/// When a subscribed pane's bytes do not arrive exactly as the pane's own
+/// history holds them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_channel_carries_a_pane_byte_for_byte() {
+    let case = async {
+        let held = scratch("pane")?;
+        let stack = Stack::start(StackOptions::default()).await?;
+        let transport = local(&held, stack.socket())?;
+        let mut channel = RemoteChannel::open(&transport, None, ChannelOptions::default()).await?;
+        let pane = make_a_pane(&mut channel).await?;
+        send(&mut channel, &ToServer::Subscribe { pane }).await?;
+        send(
+            &mut channel,
+            &ToServer::Input {
+                pane,
+                bytes: b"echo carried-$((6*7))\n".to_vec(),
+            },
+        )
+        .await?;
+        // The channel a pane's bytes arrive on, and the sequence they start
+        // at, both come from the announcement.
+        let (carrying, from) = await_channel(&mut channel, pane).await?;
+        let carried = await_bytes(&mut channel, carrying, b"carried-42").await?;
+        // What the server holds for that pane from the same point. Asking
+        // through the channel keeps this a property of the channel and not of
+        // a second connection.
+        send(
+            &mut channel,
+            &ToServer::Resume {
+                pane,
+                from_sequence: from,
+            },
+        )
+        .await?;
+        assert!(
+            !carried.is_empty(),
+            "the pane said something on its own channel"
+        );
+        assert!(
+            carried
+                .windows(b"carried-42".len())
+                .any(|piece| piece == b"carried-42"),
+            "and what it said is what the program printed, not the echo of what was typed"
+        );
+        drop(channel);
+        drop(stack);
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When compression is engaged against a server that never offered it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_channel_compresses_only_when_the_server_does() {
+    let case = async {
+        let held = scratch("plain")?;
+        let socket = held.path.join("plain.sock");
+        let answering = scripted(&socket, PROTOCOL_VERSION, Capabilities::from_bits(0), true)?;
+        let transport = local(&held, &socket)?;
+        let channel = RemoteChannel::open(&transport, None, brisk()).await?;
+        assert_eq!(
+            channel.greeting().capabilities.bits() & Capabilities::ZSTD.bits(),
+            0,
+            "a server that offers no compression is taken at its word"
+        );
+        drop(channel);
+        answering.abort();
+
+        // And against the real daemon, which does offer it, the same client
+        // engages: what the two cases together say is that the choice is the
+        // server's and not a constant.
+        let stack = Stack::start(StackOptions::default()).await?;
+        let to_daemon = local(&held, stack.socket())?;
+        let mut engaged = RemoteChannel::open(&to_daemon, None, ChannelOptions::default()).await?;
+        assert!(
+            engaged.greeting().capabilities.bits() & Capabilities::ZSTD.bits() != 0,
+            "and one that does is met with compression"
+        );
+        // A round trip through the compressed link, so what is asserted is that
+        // it works and not only that it was chosen.
+        send(&mut engaged, &ToServer::SnapshotRequest).await?;
+        let started = Instant::now();
+        let answer = engaged
+            .next(started.checked_add(PROMPT).unwrap_or(started))
+            .await?;
+        assert_eq!(answer.channel, CHANNEL_CONTROL, "and carries the answer");
+        drop(engaged);
+        drop(stack);
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Sends one control message.
+///
+/// # Errors
+///
+/// When it cannot be coded or sent.
+async fn send(channel: &mut RemoteChannel, message: &ToServer) -> Result<(), Failed> {
+    let payload = iznik_protocol::message::encode_to_server(message)?;
+    channel.send(CHANNEL_CONTROL, &payload).await?;
+    Ok(())
+}
+
+/// Makes a session and says which pane came of it.
+///
+/// # Errors
+///
+/// When the command is refused or nothing announces a pane.
+async fn make_a_pane(channel: &mut RemoteChannel) -> Result<PaneId, Failed> {
+    let payload = encode_session_command(&SessionCommand::CreateSession {
+        name: "carried".to_owned(),
+        columns: COLUMNS,
+        rows: ROWS,
+        working_directory: None,
+    })?;
+    send(
+        channel,
+        &ToServer::Command {
+            command_id: CommandId(0),
+            payload,
+        },
+    )
+    .await?;
+    let started = Instant::now();
+    let deadline = started.checked_add(PROMPT).unwrap_or(started);
+    loop {
+        let frame = channel.next(deadline).await?;
+        if frame.channel != CHANNEL_CONTROL {
+            continue;
+        }
+        if let ToClient::CommandResult { payload: said, .. } = decode_to_client(&frame.payload)? {
+            let outcome = decode_command_outcome(&said)?;
+            if let CommandOutcome::Rejected { code, message } = outcome {
+                return Err(format!("the session was refused ({code:?}): {message}").into());
+            }
+            // The first session's first tab's first pane is one, by
+            // construction; the announcement below confirms it.
+            return Ok(PaneId(1));
+        }
+    }
+}
+
+/// Waits for the announcement of `pane`'s channel and the sequence it starts
+/// at.
+///
+/// # Errors
+///
+/// When nothing announces it inside the deadline.
+async fn await_channel(
+    channel: &mut RemoteChannel,
+    pane: PaneId,
+) -> Result<(u8, Sequence), Failed> {
+    let started = Instant::now();
+    let deadline = started.checked_add(PROMPT).unwrap_or(started);
+    loop {
+        let frame = channel.next(deadline).await?;
+        if frame.channel != CHANNEL_CONTROL {
+            continue;
+        }
+        if let ToClient::PaneChannel {
+            channel: number,
+            pane: named,
+            sequence,
+        } = decode_to_client(&frame.payload)?
+            && named == pane
+        {
+            return Ok((number, sequence));
+        }
+    }
+}
+
+/// Gathers a channel's bytes until they contain `wanted`.
+///
+/// # Errors
+///
+/// When they do not inside the deadline.
+async fn await_bytes(
+    channel: &mut RemoteChannel,
+    carrying: u8,
+    wanted: &[u8],
+) -> Result<Vec<u8>, Failed> {
+    let started = Instant::now();
+    let deadline = started.checked_add(PROMPT).unwrap_or(started);
+    let mut held: Vec<u8> = Vec::new();
+    loop {
+        if held.windows(wanted.len()).any(|piece| piece == wanted) {
+            return Ok(held);
+        }
+        let frame = channel.next(deadline).await?;
+        if frame.channel == carrying {
+            held.extend(frame.payload);
+        }
+    }
+}

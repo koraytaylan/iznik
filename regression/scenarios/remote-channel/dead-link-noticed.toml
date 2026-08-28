@@ -10,10 +10,10 @@ files = []
 
 # The silence and the noticing are one step, because they have to be: each step
 # is its own process, so a channel opened in one is gone by the next, and a
-# network cut between them would be met by the opening of a second channel
+# fault applied between them would be met by the opening of a second channel
 # rather than by the silence of the first. The step stops the daemon itself —
-# the relay stays up, the socket stays open, and nothing answers — which is the
-# link this is about.
+# the relay stays up, the socket stays open, and nothing answers — and lets it
+# answer again on its way out, so the step after it finds a host it can use.
 [[steps]]
 id = "a-stopped-server-is-a-dead-link"
 container = "engine"
@@ -31,14 +31,6 @@ actions = [
   { kind = "pause_server" },
 ]
 
-# And the daemon answers again, so the next scenario on this image is not met
-# by a stopped one.
-[[steps]]
-id = "let-it-answer-again"
-container = "engine"
-run = "ssh -o BatchMode=yes host0 'if [ -n \"$XDG_RUNTIME_DIR\" ]; then lock=\"$XDG_RUNTIME_DIR/iznik/server.lock\"; else lock=\"${TMPDIR:-/tmp}/iznik-$(id -u)/server.lock\"; fi; kill -CONT \"$(cat \"$lock\")\" && printf resumed'"
-timeout_seconds = 20
-
 [[steps]]
 id = "a-new-channel-opens-after-it"
 container = "engine"
@@ -52,11 +44,6 @@ server = "/iznik/bin/iznik-server"
 step = "a-stopped-server-is-a-dead-link"
 exit = 0
 duration_under_seconds = 30
-
-[[expect]]
-step = "let-it-answer-again"
-exit = 0
-stdout_equals = "resumed"
 
 [[expect]]
 step = "a-new-channel-opens-after-it"

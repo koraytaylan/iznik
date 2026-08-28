@@ -3,8 +3,16 @@
 # The handshake, the version refusal and the liveness are `test` proofs over
 # the `unix:` alias, because a socket on this machine is the same link the SSH
 # path builds and a container would only make it longer. What needs SSH — the
-# channel opened through `iznik-server --stdio` on a real host, and a link cut
-# in the middle of a subscription — is a scenario.
+# channel opened through `iznik-server --stdio` on a real host, and a server
+# that stops answering under a held subscription — is a scenario.
+#
+# That last one stops the daemon rather than cutting the network, and the claim
+# says so. The fixture applies a fault between steps, and a channel cannot
+# outlive the process that opened it, so a network cut between steps would be
+# met by the opening of a second channel rather than by the silence of the
+# first; neither container carries the traffic tooling to cut it from inside a
+# step. A stopped daemon over a healthy link is the same silence from the
+# channel's side, which is the side this task is about.
 
 [[claim]]
 id = "channel-shakes-hands-with-the-daemon"
@@ -42,5 +50,17 @@ scenario = "bytes-over-ssh"
 
 [[claim]]
 id = "channel-notices-a-dead-link"
-statement = "With the host's network cut under a held subscription, the channel reports itself dead inside the deadline it was given rather than after a transport timeout, and a new channel opens once the network is back."
+statement = "Over real SSH, with the daemon on the host stopped where it stands under a held subscription — the link healthy and answering nothing — the channel delivers what was already in flight and then reports itself dead inside the deadline it was given, and a new channel opens once the daemon is let go."
 scenario = "dead-link-noticed"
+
+[[claim]]
+id = "channel-carries-a-pane-byte-for-byte"
+statement = "A subscribed pane's bytes arrive on the channel that was announced for it, from the sequence that announcement named, carrying what the program printed rather than the echo of what was typed."
+test = "iznik-client::remote_channel::a_channel_carries_a_pane_byte_for_byte"
+because = "the pane is a real shell on a real pseudoterminal behind a real daemon; only the socket is shorter than a network"
+
+[[claim]]
+id = "channel-compresses-only-when-the-server-does"
+statement = "A server that offers no compression is taken at its word and the link stays plain; the daemon, which offers it, is met with it — and a request still comes back answered through it."
+test = "iznik-client::remote_channel::a_channel_compresses_only_when_the_server_does"
+because = "the server that declines is written to decline, which no real daemon does and no container could arrange"

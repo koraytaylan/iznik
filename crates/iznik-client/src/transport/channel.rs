@@ -42,6 +42,17 @@ pub const PONG_DEADLINE: Duration = Duration::from_secs(10);
 /// handshake together.
 pub const OPEN_DEADLINE: Duration = Duration::from_secs(30);
 
+/// How many bytes of the remote's complaints are kept. A host that says
+/// nothing useful in its first kibibyte is a host whose message was not the
+/// point; what matters is that something is kept and that the pipe is read.
+const REMOTE_COMPLAINT_BYTES: usize = 1024;
+
+/// The least a ping interval may be. A scenario sets these in milliseconds and
+/// a zero would make the liveness task a loop with nothing in it, saturating a
+/// core and flooding the server with pings; ten milliseconds is far below any
+/// deadline worth setting and still an interval.
+const LEAST_PING_INTERVAL: Duration = Duration::from_millis(10);
+
 /// What the bootstrap runs on a host, and what a channel talks to.
 const STDIO_FLAG: &str = "--stdio";
 
@@ -117,6 +128,9 @@ pub enum ChannelError {
     Closed {
         /// The host.
         host: String,
+        /// What the remote said on its standard error before it went, which is
+        /// usually the whole reason.
+        said: String,
     },
     /// Something arrived that has no place here.
     Unexpected {
@@ -148,7 +162,12 @@ impl Display for ChannelError {
             ChannelError::Deadline { host, waited } => {
                 write!(formatter, "{host} said nothing within {waited:?}")
             }
-            ChannelError::Closed { host } => write!(formatter, "{host} closed the link"),
+            ChannelError::Closed { host, said } if said.is_empty() => {
+                write!(formatter, "{host} closed the link")
+            }
+            ChannelError::Closed { host, said } => {
+                write!(formatter, "{host} closed the link: {said}")
+            }
             ChannelError::Unexpected {
                 host,
                 wanted,
@@ -195,6 +214,15 @@ pub struct RemoteChannel {
     heard: Arc<Mutex<Instant>>,
     /// The liveness task, ended when this is dropped.
     liveness: JoinHandle<()>,
+    /// What the remote said on its standard error, kept as it arrives.
+    ///
+    /// Read by a task of its own for two reasons. A host with no server at the
+    /// path it was given says `command not found` there and nothing on its
+    /// output, so a channel that did not read this could only report that the
+    /// link closed — and this plan requires an error to carry what the remote
+    /// said. And nobody reading it at all means a long session fills the pipe
+    /// and stops the remote process inside a write.
+    complaints: Arc<Mutex<String>>,
     /// The `ssh` this speaks through, when it speaks through one.
     ///
     /// Held, not dropped: the transport spawns with `kill_on_drop`, so letting
@@ -229,6 +257,40 @@ impl Drop for RemoteChannel {
         // looking like something nobody uses.
         drop(self.child.take());
     }
+}
+
+/// The link closed, carrying whatever the remote had said about it.
+fn closed(host: &str, said: &str) -> ChannelError {
+    ChannelError::Closed {
+        host: host.to_owned(),
+        said: said.trim().to_owned(),
+    }
+}
+
+/// Reads the remote's standard error into `kept` until it ends, holding the
+/// first [`REMOTE_COMPLAINT_BYTES`] of it.
+///
+/// The first bytes and not the last: what a remote says before it goes is the
+/// reason, and what it says afterwards is consequence.
+fn keep_complaints(errors: tokio::process::ChildStderr, kept: Arc<Mutex<String>>) {
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt as _;
+        let mut errors = errors;
+        let mut buffer = [0_u8; REMOTE_COMPLAINT_BYTES];
+        loop {
+            match errors.read(&mut buffer).await {
+                Ok(0) => return,
+                Err(_gone) => return,
+                Ok(count) => {
+                    let mut held = kept.lock().await;
+                    if held.len() < REMOTE_COMPLAINT_BYTES {
+                        let said = String::from_utf8_lossy(buffer.get(..count).unwrap_or_default());
+                        held.push_str(&said);
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Whether a capability set offers compression.
@@ -280,6 +342,7 @@ impl RemoteChannel {
         options: ChannelOptions,
         host: String,
     ) -> Result<RemoteChannel, ChannelError> {
+        let complaints = Arc::new(Mutex::new(String::new()));
         let (wire, child): (Wire, Option<SshChild>) = match transport {
             Transport::Ssh(ssh) => {
                 let named = server.unwrap_or_else(|| Path::new("iznik-server"));
@@ -289,12 +352,15 @@ impl RemoteChannel {
                     .child
                     .stdin
                     .take()
-                    .ok_or(ChannelError::Closed { host: host.clone() })?;
+                    .ok_or_else(|| closed(&host, ""))?;
                 let stdout = spawned
                     .child
                     .stdout
                     .take()
-                    .ok_or(ChannelError::Closed { host: host.clone() })?;
+                    .ok_or_else(|| closed(&host, ""))?;
+                if let Some(errors) = spawned.child.stderr.take() {
+                    keep_complaints(errors, Arc::clone(&complaints));
+                }
                 (Box::new(tokio::io::join(stdout, stdin)), Some(spawned))
             }
             Transport::Local { socket } => {
@@ -308,7 +374,7 @@ impl RemoteChannel {
                 (Box::new(stream), None)
             }
         };
-        RemoteChannel::shake_hands(FramedLink::new(wire), options, host, child).await
+        RemoteChannel::shake_hands(FramedLink::new(wire), options, host, child, complaints).await
     }
 
     /// Says hello, hears the answer, and puts compression under the link when
@@ -323,6 +389,7 @@ impl RemoteChannel {
         options: ChannelOptions,
         host: String,
         child: Option<SshChild>,
+        complaints: Arc<Mutex<String>>,
     ) -> Result<RemoteChannel, ChannelError> {
         let ours = wanted();
         let hello = encode_to_server(&ToServer::Hello {
@@ -334,7 +401,7 @@ impl RemoteChannel {
         link.send(CHANNEL_CONTROL, &hello)
             .await
             .map_err(ChannelError::Link)?;
-        let greeting = RemoteChannel::hear_hello(&mut link, &host).await?;
+        let greeting = RemoteChannel::hear_hello(&mut link, &host, &complaints).await?;
         let link = if offers_zstd(ours) && offers_zstd(greeting.capabilities) {
             let (stream, leftover) = link.into_parts();
             // Through the shared layer, then boxed again so a compressed
@@ -350,7 +417,9 @@ impl RemoteChannel {
         } else {
             link
         };
-        Ok(RemoteChannel::running(link, options, host, greeting, child))
+        Ok(RemoteChannel::running(
+            link, options, host, greeting, child, complaints,
+        ))
     }
 
     /// Reads the server's `Hello`, refusing another protocol version.
@@ -363,14 +432,15 @@ impl RemoteChannel {
     async fn hear_hello(
         link: &mut FramedLink<Wire>,
         host: &str,
+        complaints: &Arc<Mutex<String>>,
     ) -> Result<ServerHello, ChannelError> {
-        let frame = link
-            .next_frame()
-            .await
-            .map_err(ChannelError::Link)?
-            .ok_or_else(|| ChannelError::Closed {
-                host: host.to_owned(),
-            })?;
+        let Some(frame) = link.next_frame().await.map_err(ChannelError::Link)? else {
+            // The remote went before it said hello, and what it said on its
+            // standard error is the reason — a server that is not where it was
+            // said to be, most often.
+            let said = complaints.lock().await.clone();
+            return Err(closed(host, &said));
+        };
         if frame.channel != CHANNEL_CONTROL {
             return Err(ChannelError::Unexpected {
                 host: host.to_owned(),
@@ -411,25 +481,29 @@ impl RemoteChannel {
         host: String,
         greeting: ServerHello,
         child: Option<SshChild>,
+        complaints: Arc<Mutex<String>>,
     ) -> RemoteChannel {
         let (reader, writer) = link.split();
         let writer = Arc::new(Mutex::new(writer));
         let heard = Arc::new(Mutex::new(Instant::now()));
         let asking = Arc::clone(&writer);
-        let interval = options.ping_interval;
+        let interval = options.ping_interval.max(LEAST_PING_INTERVAL);
         let liveness = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(interval).await;
                 let Ok(ping) = encode_to_server(&ToServer::Ping) else {
                     return;
                 };
-                if asking
-                    .lock()
-                    .await
-                    .send(CHANNEL_CONTROL, &ping)
-                    .await
-                    .is_err()
-                {
+                // Never waits for the writer. A send parks when the peer has
+                // stopped reading, and a ping that waited for the lock would
+                // hold it for as long as that lasts — wedging every caller
+                // that writes, on the one link they share, exactly when the
+                // thing to do is notice. A writer that is busy is a writer
+                // something else is using, which says as much as a pong.
+                let Ok(mut held) = asking.try_lock() else {
+                    continue;
+                };
+                if held.send(CHANNEL_CONTROL, &ping).await.is_err() {
                     // The link is gone; `next` is what says so, with how long
                     // it has been silent.
                     return;
@@ -442,6 +516,7 @@ impl RemoteChannel {
             writer,
             heard,
             liveness,
+            complaints,
             child,
             options,
             greeting,
@@ -470,6 +545,11 @@ impl RemoteChannel {
 
     /// The next frame that is not a `Pong`, or why there is none.
     ///
+    /// This is the only thing that hears: the ping task asks, and what comes
+    /// back is noticed here. A caller that stops calling it stops hearing, and
+    /// will be told the link is dead when it next asks — which is right for
+    /// the manager that runs it in a loop, and the only caller there is.
+    ///
     /// # Errors
     ///
     /// [`ChannelError::Dead`] when nothing has arrived for the pong deadline,
@@ -477,7 +557,18 @@ impl RemoteChannel {
     /// [`ChannelError::Closed`] at a clean end, and [`ChannelError::Link`] when
     /// the link fails.
     pub async fn next(&mut self, deadline: Instant) -> Result<Received, ChannelError> {
+        let asked_at = Instant::now();
         loop {
+            // Before polling, not only around it: a reader with a frame always
+            // ready wins the race against an expired deadline every time, and
+            // a caller waiting for something a flooding pane never says would
+            // wait for ever inside a call that was given a bound.
+            if Instant::now() >= deadline {
+                return Err(ChannelError::Deadline {
+                    host: self.host.clone(),
+                    waited: asked_at.elapsed(),
+                });
+            }
             let silent_since = *self.heard.lock().await;
             let dead_at = silent_since
                 .checked_add(self.options.pong_deadline)
@@ -493,20 +584,17 @@ impl RemoteChannel {
                 }
                 return Err(ChannelError::Deadline {
                     host: self.host.clone(),
-                    waited: deadline.saturating_duration_since(silent_since),
+                    waited: asked_at.elapsed(),
                 });
             };
             let frame = frame.map_err(ChannelError::Link)?;
-            let received = match frame {
-                Some(frame) => Received {
-                    channel: frame.channel,
-                    payload: frame.payload.to_vec(),
-                },
-                None => {
-                    return Err(ChannelError::Closed {
-                        host: self.host.clone(),
-                    });
-                }
+            let Some(frame) = frame else {
+                let said = self.complaints.lock().await.clone();
+                return Err(closed(&self.host, &said));
+            };
+            let received = Received {
+                channel: frame.channel,
+                payload: frame.payload.to_vec(),
             };
             *self.heard.lock().await = Instant::now();
             if received.channel == CHANNEL_CONTROL

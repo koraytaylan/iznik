@@ -95,13 +95,13 @@ enum Action {
     ///
     /// This is how a scenario makes a link go silent inside one step, which is
     /// where it has to happen: each step is its own process, so a channel
-    /// opened in one is gone by the next, and a network cut between them would
-    /// be met by the *opening* of a second channel rather than by the silence
-    /// of the first. A stopped daemon leaves the relay running and the socket
-    /// open and answers nothing, which is exactly the link this notices.
+    /// opened in one is gone by the next, and a fault applied between them
+    /// would be met by the *opening* of a second channel rather than by the
+    /// silence of the first. A stopped daemon leaves the relay running and the
+    /// socket open and answers nothing, which is exactly the link this
+    /// notices. The step lets it answer again on its way out, whatever
+    /// happened, so the next scenario is not met by a stopped one.
     PauseServer,
-    /// Let it answer again, so the fixture tears down as it should.
-    ResumeServer,
 }
 
 /// The shell that finds the daemon's lock wherever the host put it and sends
@@ -253,35 +253,14 @@ async fn act(
             )
             .await
         }
-        Action::PauseServer | Action::ResumeServer => {
-            let signal = if matches!(action, Action::PauseServer) {
-                "STOP"
-            } else {
-                "CONT"
-            };
-            let Transport::Ssh(ssh) = transport else {
-                return Err("pausing a server needs an alias ssh reaches".to_owned());
-            };
-            let spawned = ssh
-                .spawn(&[signal_the_daemon(signal)])
-                .map_err(|error| error.to_string())?;
-            let said = spawned
-                .child
-                .wait_with_output()
-                .await
-                .map_err(|source| format!("the signal could not be sent: {source}"))?;
-            if said.status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "the daemon could not be sent {signal}: {}",
-                    String::from_utf8_lossy(&said.stderr).trim()
-                ))
-            }
-        }
+        Action::PauseServer => signal(transport, "STOP").await,
         Action::AwaitBytes { pane, contains } => {
             let pane = PaneId(*pane);
             let wanted = contains.as_bytes();
+            if wanted.is_empty() {
+                // Every stream contains nothing, and `windows(0)` is a panic.
+                return Ok(());
+            }
             loop {
                 if heard
                     .bytes
@@ -295,6 +274,48 @@ async fn act(
                     .map_err(|error| error.to_string())?;
             }
         }
+    }
+}
+
+/// Lets the daemon answer again, when this step is what stopped it.
+///
+/// # Errors
+///
+/// The step's own words when it cannot be resumed, because a stopped daemon
+/// left behind is a host the next scenario cannot use.
+async fn resumed(transport: &Transport, paused: bool) -> Result<(), String> {
+    if paused {
+        signal(transport, "CONT").await
+    } else {
+        Ok(())
+    }
+}
+
+/// Sends the daemon on the host a signal, through the same alias.
+///
+/// # Errors
+///
+/// The step's own words when the alias is not one `ssh` reaches, or the signal
+/// cannot be sent.
+async fn signal(transport: &Transport, named: &str) -> Result<(), String> {
+    let Transport::Ssh(ssh) = transport else {
+        return Err("signalling a server needs an alias ssh reaches".to_owned());
+    };
+    let spawned = ssh
+        .spawn(&[signal_the_daemon(named)])
+        .map_err(|error| error.to_string())?;
+    let said = spawned
+        .child
+        .wait_with_output()
+        .await
+        .map_err(|source| format!("the signal could not be sent: {source}"))?;
+    if said.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the daemon could not be sent {named}: {}",
+            String::from_utf8_lossy(&said.stderr).trim()
+        ))
     }
 }
 
@@ -325,15 +346,20 @@ async fn drive(body: &Body, deadline: Instant) -> Result<String, String> {
     let greeting = channel.greeting().clone();
     let mut heard = Heard::default();
     let mut done = 0_usize;
+    let paused = body
+        .actions
+        .iter()
+        .any(|action| matches!(action, Action::PauseServer));
     for action in &body.actions {
         act(&mut channel, &transport, &mut heard, action, deadline).await?;
         done = done.saturating_add(1);
     }
     let Some(milliseconds) = body.expect_dead_within_milliseconds else {
-        return Ok(format!(
+        let said = format!(
             "iznik/{} on {}, {done} actions",
             greeting.protocol_version, body.alias
-        ));
+        );
+        return resumed(&transport, paused).await.map(|()| said);
     };
     // The link is expected to have stopped answering. What is asserted is not
     // that it is gone — a scenario cut it — but that the channel says so
@@ -345,22 +371,26 @@ async fn drive(body: &Body, deadline: Instant) -> Result<String, String> {
     // a subscription's screen, the bytes after it — and delivering it is the
     // channel doing its job. What is asserted is what happens when there is
     // nothing left: silence, noticed, inside the bound.
-    loop {
+    let judged = loop {
         match channel.next(waiting).await {
             Ok(_carried) => {}
             Err(ChannelError::Dead { host, silent_for }) => {
-                return Ok(format!(
+                break Ok(format!(
                     "{host} was dead after {silent_for:?}, said in {:?}",
                     started.elapsed()
                 ));
             }
             other => {
-                return Err(format!(
+                break Err(format!(
                     "a silent link was not called dead within {bound:?}: {other:?}"
                 ));
             }
         }
-    }
+    };
+    // Whatever the verdict, the daemon answers again before this returns: the
+    // fixture is torn down after the scenario, but the next step of it is not.
+    resumed(&transport, paused).await?;
+    judged
 }
 
 /// The `channel` step. Its body is the `[steps.channel]` table.
@@ -385,7 +415,7 @@ pub fn execute(
         .build()
         .map_err(|source| StepError::Input { source })?;
     let started = Instant::now();
-    let patience = timeout.min(DEFAULT_PATIENCE.max(timeout));
+    let patience = timeout.min(DEFAULT_PATIENCE);
     let deadline = started.checked_add(patience).unwrap_or(started);
     let driven = runtime.block_on(async {
         tokio::time::timeout(timeout, drive(&asked, deadline))
