@@ -1,0 +1,27 @@
+# The resume decision is a pure function over two sequence numbers: no ring, no
+# pane, no clock. Every claim here is proven by an in-process test, and the
+# bytes the plan leads to are proven through the oracle by multiplexer-assembly.
+
+[[claim]]
+id = "resume-a-cold-attach-is-the-truth"
+statement = "A cold attach plans the screen at the newest byte, whatever the ring holds."
+test = "iznik-server::resume::resume_a_cold_attach_plans_the_truth_at_newest"
+because = "the decision is a pure function over two numbers; a container adds nothing"
+
+[[claim]]
+id = "resume-a-repaint-is-the-truth"
+statement = "A screen request plans the screen at the newest byte, so the cursor moves there and no byte is delivered twice."
+test = "iznik-server::resume::resume_a_repaint_plans_the_truth_at_newest"
+because = "the decision is a pure function over two numbers; a container adds nothing"
+
+[[claim]]
+id = "resume-every-boundary-is-where-it-says"
+statement = "A reconnect continues from the oldest byte the ring holds, from the newest, and from between them, and asks for the truth one byte outside either end; a ring of one byte still covers its own position."
+test = "iznik-server::resume::resume_every_boundary_of_the_inequality_is_where_it_says"
+because = "the decision is a pure function over two numbers; a container adds nothing"
+
+[[claim]]
+id = "resume-never-names-what-the-ring-lacks"
+statement = "Over a thousand generated rings, a continued plan always names a sequence between the oldest and the newest inclusive and a screen plan always names the newest, so the server never promises a byte it does not hold."
+test = "iznik-server::resume::resume_no_plan_names_a_sequence_the_ring_does_not_hold"
+because = "the decision is a pure function over two numbers; a container adds nothing"
