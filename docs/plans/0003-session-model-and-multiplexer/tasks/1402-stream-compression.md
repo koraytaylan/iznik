@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-link/tests/compression.rs"
   - "regression/claims/stream-compression.toml"
   - "policy/lexicon/stream-compression.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Stream Compression
