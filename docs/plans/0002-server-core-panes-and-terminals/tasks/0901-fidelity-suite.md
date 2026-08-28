@@ -12,7 +12,7 @@ touches:
   - "regression/claims/fidelity-suite.toml"
   - "regression/scenarios/fidelity-suite/**"
   - "policy/lexicon/fidelity-suite.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Fidelity Suite
