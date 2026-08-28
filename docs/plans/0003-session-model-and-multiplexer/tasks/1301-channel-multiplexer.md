@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/channel_multiplexer.rs"
   - "regression/claims/channel-multiplexer.toml"
   - "policy/lexicon/channel-multiplexer.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Channel Multiplexer
