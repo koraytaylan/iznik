@@ -204,6 +204,15 @@ left waiting; a subscribed client's emulator answers through `Input`, because
 only the real terminal knows its real colors and capabilities. When several
 clients subscribe to one pane, each answers; the contract documents that.
 
+**Confirmed, not assumed.** How `libghostty-vt` 0.2.1 actually behaves — which
+queries it answers through `on_pty_write` and which through dedicated effects,
+that its `osc::Parser` panics on untrusted input so the observer parses OSC
+itself, that `max_scrollback` is a byte budget rather than a line count, that
+dimensions must be read live because a program can resize itself, and what the
+`Format::Vt` formatter reproduces exactly and where its reconstruction has edges
+— is recorded, each with the test that established it, in
+[terminal-mirror.md](docs/notes/terminal-mirror.md).
+
 ### 5.2 Sessions
 
 The server holds a **host model**: sessions, each holding ordered tabs, each

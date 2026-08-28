@@ -4,6 +4,8 @@ The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions
 
 The binary `iznik-server` takes one of `--stdio`, `--daemon`, `--foreground`, `--stop` and `--version` as its first argument and hands the command line to the module that owns it; `--help` lists them.
 
+How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why the observer parses OSC itself, that `max_scrollback` is a byte budget, and what the formatter reproduces exactly and where its reconstruction has edges — is recorded, each with the test that established it, in [terminal-mirror.md](../../docs/notes/terminal-mirror.md).
+
 ## Modules
 
 | Module | Holds | Landed by |
