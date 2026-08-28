@@ -115,6 +115,18 @@ matures, each worked around where it mattered and each recorded in `screen.rs`:
   live oracle rather than the exact-equality property.
 - **The cursor is emitted before the tab-stops pass**, which moves it; the
   serializer re-emits the cursor position last to undo that.
+- **A cursor resting on the last column carries a wrap that `CUP` cannot say.**
+  A program that has just filled a line leaves the cursor there with a wrap
+  *pending*: the next character opens the next row rather than overwriting the
+  last cell. An absolute position reproduces the place and not the pending
+  wrap, so a client that attached at exactly that moment rendered one column to
+  the left from then on, for as long as the program went on printing — one
+  character in every eighty for a pane pouring full-width lines. The serializer
+  writes the last cell's own text at that column instead of moving onto it,
+  which is what puts a terminal into the state; the character written is the
+  one already there, so the screen is unchanged. Found by
+  `attachment_is_exact_under_load` in `tests/multiplexer_assembly.rs` and held
+  by `screen_serializer_keeps_a_pending_wrap`.
 
 The palette is deliberately absent — the server's palette is not the client's —
 proven by `screen_serializer_emits_no_palette` in `tests/screen_serializer.rs`.

@@ -22,19 +22,18 @@ use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
 /// terminator. A control path longer than this is one `ssh` cannot bind.
 const SOCKET_PATH_LIMIT: usize = 104;
 
-/// Every option a person may already have written in their own configuration,
-/// and every short flag that means the same thing. None may appear.
-const NEVER_PASSED: &[&str] = &[
-    "User=",
-    "Port=",
-    "IdentityFile=",
-    "ProxyJump=",
-    "HostName=",
-    "-l",
-    "-p",
-    "-i",
-    "-J",
-];
+/// Every option a person may already have written in their own configuration.
+/// None may be given with `-o`.
+const NEVER_CONFIGURED: &[&str] = &["User=", "Port=", "IdentityFile=", "ProxyJump=", "HostName="];
+
+/// And every short flag that means one of the same things. None may appear as
+/// an argument of its own.
+///
+/// Matched whole, never as a substring: `-i` inside a control path — which
+/// carries whatever `TMPDIR` is on the machine running this — would otherwise
+/// fail a test about the argument vector for a reason that has nothing to do
+/// with it.
+const NEVER_FLAGGED: &[&str] = &["-l", "-p", "-i", "-J"];
 
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
@@ -103,10 +102,21 @@ fn ssh_passes_what_it_owns_and_nothing_a_person_configured() {
                 "the options iznik owns include {wanted}: {line}"
             );
         }
-        for never in NEVER_PASSED {
+        let named_options: Vec<&String> = arguments
+            .windows(2)
+            .filter(|pair| pair.first().map(String::as_str) == Some("-o"))
+            .filter_map(|pair| pair.get(1))
+            .collect();
+        for never in NEVER_CONFIGURED {
             assert!(
-                !line.contains(never),
+                !named_options.iter().any(|given| given.starts_with(never)),
                 "and none a person could have configured: {never} is in {line}"
+            );
+        }
+        for never in NEVER_FLAGGED {
+            assert!(
+                !arguments.iter().any(|given| given == never),
+                "nor the short flag that means the same: {never} is in {line}"
             );
         }
         let alias = arguments

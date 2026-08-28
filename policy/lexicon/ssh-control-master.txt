@@ -5,10 +5,12 @@ askpass
 authentication
 classified
 classify
+configured
 connects
 control
 denied
 fits
+flagged
 form
 jump
 link
@@ -18,6 +20,8 @@ master
 mismatch
 ok
 option
+ours
+owns
 persist
 person
 ran

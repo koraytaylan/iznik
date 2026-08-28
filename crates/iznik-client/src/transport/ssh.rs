@@ -10,6 +10,14 @@
 //! directory, keepalives so a dead link is noticed in seconds, and a connect
 //! timeout — and a test asserts the argument vector against that list.
 //!
+//! Three of the six options iznik does pass are ones a person could also have
+//! written, and a command-line `-o` beats `~/.ssh/config`: a user with
+//! `ServerAliveInterval 60` on a metered link gets five seconds times three
+//! instead, and a `ConnectTimeout` of their own is replaced by fifteen. The
+//! architecture owns those three deliberately — a link iznik cannot notice
+//! dying is a session that hangs — and this note is here so the trade is a
+//! decision on the record rather than a surprise.
+//!
 //! The other half is the classification. "Connection failed" tells a person
 //! nothing, and a changed host key demands an alarming, specific message,
 //! because the difference between a moved server and somebody in the middle is
@@ -38,6 +46,14 @@ pub const SERVER_ALIVE_COUNT_MAXIMUM: u32 = 3;
 
 /// How long a connection may take to establish.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The least any of these may be given to `ssh` as. Its options are whole
+/// seconds, and a zero is not "at once" to it but "never": `ControlPersist=0`
+/// keeps a master indefinitely, `ConnectTimeout=0` falls back to the system's
+/// own, `ServerAliveInterval=0` sends no keepalives at all. So a field set to
+/// something under a second is rounded up rather than truncated into its
+/// opposite.
+const LEAST_SECONDS: u64 = 1;
 
 /// The program, which is the system's and never a library.
 const PROGRAM: &str = "ssh";
@@ -256,16 +272,16 @@ impl SshTransport {
         for option in [
             "ControlMaster=auto".to_owned(),
             format!("ControlPath={}", self.control_path.display()),
-            format!("ControlPersist={}", self.options.control_persist.as_secs()),
+            format!("ControlPersist={}", seconds(self.options.control_persist)),
             format!(
                 "ServerAliveInterval={}",
-                self.options.server_alive_interval.as_secs()
+                seconds(self.options.server_alive_interval)
             ),
             format!(
                 "ServerAliveCountMax={}",
                 self.options.server_alive_count_maximum
             ),
-            format!("ConnectTimeout={}", self.options.connect_timeout.as_secs()),
+            format!("ConnectTimeout={}", seconds(self.options.connect_timeout)),
         ] {
             arguments.push(OPTION_FLAG.to_owned());
             arguments.push(option);
@@ -330,6 +346,12 @@ impl SshTransport {
     }
 }
 
+/// A duration as the whole seconds `ssh` takes, never fewer than
+/// [`LEAST_SECONDS`].
+fn seconds(held: Duration) -> u64 {
+    held.as_secs().max(LEAST_SECONDS)
+}
+
 /// What an `ssh` that exited non-zero was actually telling you.
 ///
 /// A pure function over the status and what it said, so the captured output of
@@ -337,46 +359,78 @@ impl SshTransport {
 /// key are a table of cases rather than five hosts to arrange.
 #[must_use]
 pub fn classify(host: &str, status: Option<i32>, stderr: &str) -> SshError {
-    let said = stderr.to_lowercase();
-    let detail = last_line(stderr);
-    if CHANGED_MARKERS.iter().any(|marker| said.contains(marker)) {
-        return SshError::HostKeyChanged {
+    // The status decides first, and only then the words. `ssh` reports its own
+    // failures as 255 and passes anything else through from the command it ran
+    // — so a remote binary that is not executable exits 126 saying "Permission
+    // denied", and reading that as a refused key would tell a person to look
+    // at their credentials for a file mode. What the command said is the
+    // command's, whatever words are in it.
+    let (Some(SSH_OWN_FAILURE) | None) = status else {
+        return SshError::RemoteCommandFailed {
             host: host.to_owned(),
-            detail,
-        };
-    }
-    if REFUSED_MARKERS.iter().any(|marker| said.contains(marker)) {
-        return SshError::AuthenticationFailed {
-            host: host.to_owned(),
-            detail,
-        };
-    }
-    if UNREACHABLE_MARKERS
-        .iter()
-        .any(|marker| said.contains(marker))
-    {
-        return SshError::Unreachable {
-            host: host.to_owned(),
-            detail,
-        };
-    }
-    match status {
-        // `ssh` reports its own failures as 255, so a 255 nothing above
-        // recognized is still `ssh`'s and not the command's.
-        Some(SSH_OWN_FAILURE) | None => SshError::Unreachable {
-            host: host.to_owned(),
-            detail,
-        },
-        Some(status) => SshError::RemoteCommandFailed {
-            host: host.to_owned(),
-            status,
+            status: status.unwrap_or(SSH_OWN_FAILURE),
             stderr: stderr.trim_end().to_owned(),
-        },
+        };
+    };
+    for (markers, name) in [
+        (CHANGED_MARKERS, Refusal::HostKey),
+        (REFUSED_MARKERS, Refusal::Credentials),
+        (UNREACHABLE_MARKERS, Refusal::Link),
+    ] {
+        if let Some(detail) = matching_line(stderr, markers) {
+            return name.into_error(host, detail);
+        }
+    }
+    // `ssh`'s own status with words nobody here knows: the link, because that
+    // is what `ssh` failing rather than the command means.
+    SshError::Unreachable {
+        host: host.to_owned(),
+        detail: last_line(stderr),
     }
 }
 
-/// The last thing `ssh` said that was not empty, which is the line a person
-/// needs; the banner above it is noise.
+/// Which of the three the words named.
+#[derive(Clone, Copy)]
+enum Refusal {
+    /// The host's key.
+    HostKey,
+    /// The credentials offered.
+    Credentials,
+    /// The link itself.
+    Link,
+}
+
+impl Refusal {
+    /// The error it stands for, about `host`, carrying `detail`.
+    fn into_error(self, host: &str, detail: String) -> SshError {
+        let host = host.to_owned();
+        match self {
+            Refusal::HostKey => SshError::HostKeyChanged { host, detail },
+            Refusal::Credentials => SshError::AuthenticationFailed { host, detail },
+            Refusal::Link => SshError::Unreachable { host, detail },
+        }
+    }
+}
+
+/// The first line that carries one of `markers`, which is the line that says
+/// *why*.
+///
+/// Not the last line: `ssh` ends both host-key failures with the same generic
+/// `Host key verification failed.`, so carrying that would give a first
+/// connection to an unknown host and a key that has changed under someone the
+/// same words — and those two want opposite reactions from a person.
+fn matching_line(stderr: &str, markers: &[&str]) -> Option<String> {
+    stderr.lines().map(str::trim).find_map(|line| {
+        let said = line.to_lowercase();
+        markers
+            .iter()
+            .any(|marker| said.contains(marker))
+            .then(|| line.to_owned())
+    })
+}
+
+/// The last thing `ssh` said that was not empty, for when nothing it said was
+/// recognized at all.
 fn last_line(stderr: &str) -> String {
     stderr
         .lines()

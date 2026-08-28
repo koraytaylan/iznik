@@ -28,6 +28,7 @@
 use iznik_protocol::identity::Sequence;
 use libghostty_vt::Error as EmulatorError;
 use libghostty_vt::fmt::{Format, Formatter, FormatterOptions};
+use libghostty_vt::screen::CellWide;
 use libghostty_vt::selection::Selection;
 use libghostty_vt::terminal::{Point, PointCoordinate, Terminal};
 
@@ -39,9 +40,18 @@ use crate::terminal::mirror::Mirror;
 /// [`ScreenState::serialize`]'s remembered-primary-plus-alternate concatenation.
 pub const MAXIMUM_SCREEN_BYTES: usize = 768 * 1024;
 
-/// The most bytes the cursor position `append_cursor` adds can take:
-/// `ESC [ 65536 ; 65536 H`.
-const MAXIMUM_CURSOR_BYTES: usize = 14;
+/// How many codepoints a grapheme cluster is asked for in one go: enough for
+/// anything a terminal usually holds, and the engine says when it is not.
+const GRAPHEME_CODEPOINTS: usize = 8;
+
+/// The most bytes a cell written back after the cursor may take: that many
+/// codepoints at four bytes each. A cluster longer than this is left to the
+/// position alone rather than allowed past the budget.
+const MAXIMUM_CELL_BYTES: usize = GRAPHEME_CODEPOINTS * 4;
+
+/// The most bytes the position `append_cursor` adds can take:
+/// `ESC [ 65536 ; 65536 H`, and the one cell it may write after it.
+const MAXIMUM_CURSOR_BYTES: usize = 14 + MAXIMUM_CELL_BYTES;
 
 /// The budget the formatted screen must fit before the cursor is appended, so the
 /// whole stays within [`MAXIMUM_SCREEN_BYTES`].
@@ -214,22 +224,87 @@ pub fn serialize(mirror: &Mirror, sequence: Sequence) -> Result<SerializedScreen
 /// stop, so a final `CUP` is needed for a reproduction to end where the mirror
 /// is.
 ///
+/// A cursor resting on the last column is the exception, and it matters more
+/// than its rarity suggests. A program that has just filled a line leaves the
+/// cursor there with a wrap *pending*: the next character goes to the start of
+/// the next row, not over the last cell. `CUP` cannot say that — a fresh
+/// emulator positioned there has no wrap pending — so a client that attached
+/// at exactly that moment would put the next character one column to the left
+/// and stay one column out for as long as the program went on printing.
+/// Writing the last cell's own text *at* that column leaves the emulator where
+/// the mirror is, wrap and all: a character written into the last column is
+/// what puts a terminal into that state, and the character written is the one
+/// already there, so the screen is unchanged.
+///
 /// # Errors
 ///
-/// [`ScreenError::Emulator`] when the cursor cannot be read.
+/// [`ScreenError::Emulator`] when the cursor or the cell under it cannot be
+/// read.
 fn append_cursor(
     terminal: &Terminal<'static, 'static>,
     bytes: &mut Vec<u8>,
 ) -> Result<(), ScreenError> {
     let column = terminal.cursor_x().map_err(emulator)?;
     let row = terminal.cursor_y().map_err(emulator)?;
+    let columns = terminal.cols().map_err(emulator)?;
+    if column.saturating_add(1) == columns
+        && let Some(text) = narrow_cell(terminal, row, column)?
+    {
+        append_position(bytes, row, column);
+        bytes.extend_from_slice(text.as_bytes());
+        return Ok(());
+    }
+    append_position(bytes, row, column);
+    Ok(())
+}
+
+/// A `CUP` to a zero-based row and column.
+fn append_position(bytes: &mut Vec<u8>, row: u16, column: u16) {
     let cup = format!(
         "\x1b[{};{}H",
         row.saturating_add(1),
         column.saturating_add(1)
     );
     bytes.extend_from_slice(cup.as_bytes());
-    Ok(())
+}
+
+/// The text of the cell at `row` and `column`, when it is one a single
+/// character can be written back into: narrow, and not empty.
+///
+/// A wide glyph or an empty cell is left to `CUP`, because writing a
+/// two-column character from one column back would land it somewhere else and
+/// writing nothing would say nothing.
+///
+/// # Errors
+///
+/// [`ScreenError::Emulator`] when the grid cannot be read.
+fn narrow_cell(
+    terminal: &Terminal<'static, 'static>,
+    row: u16,
+    column: u16,
+) -> Result<Option<String>, ScreenError> {
+    let point = Point::Active(PointCoordinate {
+        x: column,
+        y: u32::from(row),
+    });
+    let reference = terminal.grid_ref(point).map_err(emulator)?;
+    let cell = reference.cell().map_err(emulator)?;
+    if cell.wide().map_err(emulator)? != CellWide::Narrow {
+        return Ok(None);
+    }
+    // Asked for twice at most: once into a buffer wide enough for anything a
+    // terminal usually holds, and again into one the engine sized itself.
+    let mut codepoints = ['\0'; GRAPHEME_CODEPOINTS];
+    let text: String = match reference.graphemes(&mut codepoints) {
+        Ok(count) => codepoints.iter().take(count).collect(),
+        Err(EmulatorError::OutOfSpace { required }) => {
+            let mut longer = vec!['\0'; required];
+            let count = reference.graphemes(&mut longer).map_err(emulator)?;
+            longer.iter().take(count).collect()
+        }
+        Err(source) => return Err(emulator(source)),
+    };
+    Ok(Some(text).filter(|held| !held.is_empty() && held.len() <= MAXIMUM_CELL_BYTES))
 }
 
 /// The primary screen remembered at the moment a program switched away from it,

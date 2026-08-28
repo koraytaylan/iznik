@@ -32,3 +32,9 @@ id = "screen-serializer-bounded"
 statement = "The serialized output is at most MAXIMUM_SCREEN_BYTES; when the whole screen would exceed it, the serializer drops its oldest scrollback rows to fit, so the newest rows still reproduce while the oldest are gone."
 test = "iznik-server::screen_serializer::screen_serializer_bounds_the_output"
 because = "the serializer is Rust over the emulator, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "screen-serializer-keeps-a-pending-wrap"
+statement = "A screen serialized while a line has just been filled reproduces the wrap the mirror is holding, so the character after it opens the next row rather than overwriting the last cell of this one."
+test = "iznik-server::screen_serializer::screen_serializer_keeps_a_pending_wrap"
+because = "what is proven is what one emulator does with the bytes another emitted, and both are in this process"

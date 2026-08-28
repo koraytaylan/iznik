@@ -67,6 +67,14 @@ pub enum PathsError {
         /// What the operating system said.
         source: std::io::Error,
     },
+    /// What is there is not a directory this user owns, so it is not one to
+    /// put an open connection to a host inside.
+    NotOurs {
+        /// What was found.
+        path: PathBuf,
+        /// What is wrong with it.
+        detail: String,
+    },
 }
 
 impl Display for PathsError {
@@ -75,6 +83,11 @@ impl Display for PathsError {
             PathsError::Io { path, source } => write!(
                 formatter,
                 "the client's runtime directory {}: {source}",
+                path.display()
+            ),
+            PathsError::NotOurs { path, detail } => write!(
+                formatter,
+                "{} cannot hold this client's connections: {detail}",
                 path.display()
             ),
         }
@@ -97,6 +110,12 @@ impl ClientRuntimePaths {
                 path: made.to_path_buf(),
                 source,
             })?;
+            // The fallback base is a predictable name in a shared temporary
+            // directory, and `create_dir_all` follows a symbolic link. Someone
+            // who plants one there first would otherwise have this restrict a
+            // directory of their choosing and then fill it with live SSH
+            // connections. What is trusted is a real directory this user owns.
+            own_directory(made)?;
             std::fs::set_permissions(
                 made,
                 <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(OWNER_ONLY),
@@ -131,6 +150,35 @@ impl ClientRuntimePaths {
     pub fn control_path(&self, alias: &str) -> PathBuf {
         self.control_directory.join(control_name(alias))
     }
+}
+
+/// Refuses anything at `path` that is not a directory this user owns, without
+/// following a link to find out.
+///
+/// # Errors
+///
+/// [`PathsError::Io`] when it cannot be read, and [`PathsError::NotOurs`] when
+/// it is a link, not a directory, or somebody else's.
+fn own_directory(path: &Path) -> Result<(), PathsError> {
+    use std::os::unix::fs::MetadataExt as _;
+    let held = std::fs::symlink_metadata(path).map_err(|source| PathsError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !held.is_dir() {
+        return Err(PathsError::NotOurs {
+            path: path.to_path_buf(),
+            detail: "it is not a directory".to_owned(),
+        });
+    }
+    let ours = Uid::current().as_raw();
+    if held.uid() != ours {
+        return Err(PathsError::NotOurs {
+            path: path.to_path_buf(),
+            detail: format!("it belongs to {} and not to {ours}", held.uid()),
+        });
+    }
+    Ok(())
 }
 
 /// The directory the client's runtime files belong in on this machine.

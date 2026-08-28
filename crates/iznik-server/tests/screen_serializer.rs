@@ -327,3 +327,44 @@ fn screen_serializer_bounds_the_output() {
         "the newest row reproduces"
     );
 }
+
+/// A screen serialized while a line has just been filled reproduces the wrap
+/// the mirror is holding, so the next character goes where the mirror would put
+/// it rather than one column to the left.
+///
+/// This is not a hypothetical. A pane pouring full-width lines rests in this
+/// state for one character in every eighty, and a client that attached at that
+/// moment used to render one column out for as long as the program went on
+/// printing — found by `attachment_is_exact_under_load` in
+/// `tests/multiplexer_assembly.rs`, which compares a screen plus the megabyte
+/// after it against the mirror.
+///
+/// # Panics
+///
+/// When the reproduction puts the next character somewhere the mirror does not.
+#[test]
+fn screen_serializer_keeps_a_pending_wrap() {
+    let columns = 40;
+    let rows = 12;
+    let filled: Vec<u8> = std::iter::repeat_n(b'x', usize::from(columns)).collect();
+    let mut mirror = Mirror::new(columns, rows).expect("a mirror");
+    let mut oracle = Vt::new(columns, rows).expect("an oracle");
+    for feed in [b"\x1b[1;1H".as_slice(), &filled] {
+        mirror.feed(feed);
+        oracle.feed(feed);
+    }
+    let serialized = serialize(&mirror, Sequence(0)).expect("a serialization");
+    let mut reproduced = Vt::new(serialized.columns, serialized.rows).expect("a fresh oracle");
+    reproduced.feed(&serialized.bytes);
+    // The character that follows is what tells the two states apart: with the
+    // wrap pending it opens the next row, and without it overwrites the last
+    // cell of this one.
+    let onward = b"ab";
+    oracle.feed(onward);
+    reproduced.feed(onward);
+    assert_eq!(
+        layout(&reproduced.snapshot().expect("a reproduced snapshot")),
+        layout(&oracle.snapshot().expect("an oracle snapshot")),
+        "a filled line's pending wrap survives serialization"
+    );
+}

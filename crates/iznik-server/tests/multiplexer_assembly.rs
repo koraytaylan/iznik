@@ -6,9 +6,8 @@
 //! the tail beside the budget. Every pane runs `sh`, quietened with
 //! `stty -opost -echo` first, so a case reads back exactly what it asked for.
 
-use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::Placement;
@@ -16,11 +15,10 @@ use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, ToClient, decode_to_client};
 use iznik_protocol::model::SplitDirection;
 use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
-use iznik_server::multiplexer::channel::SinkError;
 use iznik_server::multiplexer::credit::{
     FOCUSED_CREDIT_BYTES, FRAME_PAYLOAD_LENGTH, INITIAL_CREDIT_BYTES, STALE_THRESHOLD_BYTES,
 };
-use iznik_server::multiplexer::{FrameSink, KEYSTROKE_ROUND_TRIP_BUDGET, Multiplexer};
+use iznik_server::multiplexer::{KEYSTROKE_ROUND_TRIP_BUDGET, Multiplexer};
 use iznik_server::pty::spawn::Program;
 use iznik_server::resume::StartRequest;
 use iznik_server::session::registry::{Registry, RegistryDefaults};
@@ -28,6 +26,10 @@ use iznik_server::terminal::mirror::MirrorThread;
 use iznik_testkit::metrics;
 use iznik_testkit::vt::Vt;
 use tokio::sync::RwLock;
+
+mod sink;
+
+use sink::{Collected, Frame};
 
 /// The width every pane in these cases is created at.
 const COLUMNS: u16 = 80;
@@ -43,102 +45,13 @@ const POLL_ATTEMPTS: usize = 4000;
 const QUIET_LOOKS: usize = 20;
 /// How many pumps a case allows before it calls the multiplexer a spin.
 const PUMP_LIMIT: usize = 20_000;
+/// What a snapshot's count of scrolled-off rows begins with, which is the one
+/// thing a capped serialization does not carry.
+const SCROLLED_OFF: &str = "scrollback ";
 /// The unit the floods in these cases are stated in.
 const MEBIBYTE: u64 = 1024 * 1024;
 /// Anything a case can fail on, so a helper reports rather than panics.
 type Failed = Box<dyn std::error::Error>;
-
-/// A frame the multiplexer sent.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Frame {
-    /// The channel it went out on.
-    channel: u8,
-    /// Its bytes.
-    payload: Vec<u8>,
-}
-
-/// What the sink has been handed.
-#[derive(Debug)]
-struct Sent {
-    /// The frames it kept.
-    frames: Vec<Frame>,
-    /// How many bytes went out on each channel, kept or not.
-    counts: BTreeMap<u8, u64>,
-    /// Whether pane frames are kept: a flooding case turns this off.
-    keeping: bool,
-}
-
-/// A sink that keeps frames in memory; plan 0004 puts a framed link here.
-#[derive(Clone, Debug)]
-struct Collected {
-    /// What it has been handed.
-    inner: Arc<Mutex<Sent>>,
-}
-
-impl Collected {
-    /// A sink that keeps everything.
-    fn new() -> Collected {
-        Collected {
-            inner: Arc::new(Mutex::new(Sent {
-                frames: Vec::new(),
-                counts: BTreeMap::new(),
-                keeping: true,
-            })),
-        }
-    }
-
-    /// What it has been handed, locked.
-    fn held(&self) -> std::sync::MutexGuard<'_, Sent> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Keeps only control frames from here on, forgetting what it has.
-    fn keep_control(&self) {
-        let mut held = self.held();
-        held.keeping = false;
-        held.frames.clear();
-        held.counts.clear();
-    }
-
-    /// The kept frames, and forgets them: what one step sent, not every step.
-    fn take(&self) -> Vec<Frame> {
-        std::mem::take(&mut self.held().frames)
-    }
-
-    /// How many bytes have gone out on a channel.
-    fn count(&self, channel: u8) -> u64 {
-        self.held().counts.get(&channel).copied().unwrap_or(0)
-    }
-
-    /// Forgets every count, so a case can measure one interval.
-    fn reset_counts(&self) {
-        self.held().counts.clear();
-    }
-}
-
-impl FrameSink for Collected {
-    fn send(
-        &mut self,
-        channel: u8,
-        payload: &[u8],
-    ) -> impl Future<Output = Result<(), SinkError>> + Send {
-        let inner = Arc::clone(&self.inner);
-        let frame = Frame {
-            channel,
-            payload: payload.to_vec(),
-        };
-        async move {
-            let mut held = inner.lock().unwrap_or_else(PoisonError::into_inner);
-            let carried = u64::try_from(frame.payload.len()).unwrap_or(0);
-            let counted = held.counts.entry(frame.channel).or_insert(0);
-            *counted = counted.saturating_add(carried);
-            if held.keeping || frame.channel == CHANNEL_CONTROL {
-                held.frames.push(frame);
-            }
-            Ok(())
-        }
-    }
-}
 
 /// The control messages among some frames, in order.
 fn control(frames: &[Frame]) -> Vec<ToClient> {
@@ -196,7 +109,16 @@ fn screen_in(frames: &[Frame]) -> Option<(Sequence, Vec<u8>)> {
         })
 }
 
-/// What a terminal shows after being fed some bytes.
+/// What a terminal shows after being fed some bytes, without how much has
+/// scrolled off it.
+///
+/// The screen serializer promises the mirror's content, cursor and layout
+/// exactly, and a serialization too large for its cap is brought within it by
+/// dropping the oldest scrollback rows — `docs/notes/terminal-mirror.md`. So a
+/// screen serialized at one point plus the megabyte after it, and a screen
+/// serialized after that megabyte, agree about everything the serializer
+/// promises and disagree about how many rows each had room to carry. That row
+/// count is what this leaves out; everything the guarantee covers stays.
 ///
 /// # Errors
 ///
@@ -206,7 +128,12 @@ fn shown(pieces: &[&[u8]]) -> Result<String, Failed> {
     for piece in pieces {
         oracle.feed(piece);
     }
-    Ok(oracle.snapshot()?)
+    Ok(oracle
+        .snapshot()?
+        .lines()
+        .filter(|line| !line.starts_with(SCROLLED_OFF))
+        .collect::<Vec<&str>>()
+        .join("\n"))
 }
 
 /// The value `upper` parts in `lower` of the way through a sorted set.
@@ -381,16 +308,25 @@ impl Rig {
         Err(format!("pane {} never produced {wanted} bytes", pane.0).into())
     }
 
+    /// How far this pane's mirror has consumed, if it can be asked.
+    async fn mirrored(&self, pane: PaneId) -> Option<Sequence> {
+        let held = self.registry.read().await.pane(pane).cloned()?;
+        held.screen().await.ok().map(|screen| screen.sequence)
+    }
+
     /// Waits until a pane has been unchanged for [`QUIET_LOOKS`] consecutive
-    /// looks. Not one: a flooding shell on a loaded machine pauses for longer
-    /// than a look, and a case that took the pause for the end would compare a
-    /// prefix against a whole.
+    /// looks and its mirror has consumed everything the ring holds. Not one
+    /// look: a flooding shell pauses for longer than one. Not the ring alone:
+    /// the ring has a byte when the pane reads it and the mirror when its own
+    /// thread does, so comparing the two before the second catches up compares
+    /// what a pane has said against what it has so far been shown.
     async fn quiescent(&self, pane: PaneId) {
         let (mut before, mut still) = (Sequence(0), 0_usize);
         for _attempt in 0..POLL_ATTEMPTS {
             tokio::time::sleep(POLL_INTERVAL).await;
             let now = self.newest(pane).await;
-            still = usize::from(now == before && now.0 > 0).saturating_mul(still.saturating_add(1));
+            let settled = now == before && now.0 > 0 && self.mirrored(pane).await == Some(now);
+            still = usize::from(settled).saturating_mul(still.saturating_add(1));
             if still >= QUIET_LOOKS {
                 return;
             }

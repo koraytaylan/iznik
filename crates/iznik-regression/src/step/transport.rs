@@ -157,6 +157,11 @@ async fn master_is_live(transport: &Transport) -> Result<bool, String> {
     Ok(output.status.success())
 }
 
+/// What the step runs on the host.
+fn command_of(body: &Body) -> &str {
+    body.command.as_deref().unwrap_or(DEFAULT_COMMAND)
+}
+
 /// Runs the step and says what it established.
 ///
 /// # Errors
@@ -169,7 +174,7 @@ async fn drive(body: &Body) -> Result<String, String> {
         options.connect_timeout = Duration::from_secs(seconds);
     }
     let transport = Transport::for_alias(&body.alias, &paths, options);
-    let command = body.command.as_deref().unwrap_or(DEFAULT_COMMAND);
+    let command = command_of(body);
     let first = run_once(&transport, command).await?;
     let mut said = matches(body.expect, &first, &body.alias)?;
     if body.check_master {
@@ -215,7 +220,7 @@ async fn drive(body: &Body) -> Result<String, String> {
 pub fn execute(
     _context: &Context,
     body: &toml::Value,
-    _timeout: Duration,
+    timeout: Duration,
 ) -> Result<Outcome, StepError> {
     let asked: Body =
         body.clone()
@@ -228,7 +233,22 @@ pub fn execute(
         .build()
         .map_err(|source| StepError::Input { source })?;
     let started = Instant::now();
-    let driven = runtime.block_on(drive(&asked));
+    // This is the one step kind that opens a network connection, so it is the
+    // one that can stall where nothing else would notice: a name that never
+    // resolves, a handshake that stops after the connect, an `-O check`
+    // against a wedged master. Its own deadline is what makes that a failure
+    // this step reports rather than a runner killing the container command.
+    let driven = runtime.block_on(async {
+        tokio::time::timeout(timeout, drive(&asked))
+            .await
+            .unwrap_or_else(|_elapsed| {
+                Err(SshError::Timeout {
+                    host: asked.alias.clone(),
+                    stage: format!("running `{}`", command_of(&asked)),
+                }
+                .to_string())
+            })
+    });
     let duration = started.elapsed();
     Ok(match driven {
         Ok(summary) => Outcome {
@@ -240,7 +260,7 @@ pub fn execute(
         },
         Err(reason) => Outcome {
             exit: Some(1),
-            timed_out: false,
+            timed_out: duration >= timeout,
             duration,
             stdout: String::new(),
             stderr: reason,

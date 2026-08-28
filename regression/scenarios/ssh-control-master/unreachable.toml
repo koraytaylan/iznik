@@ -35,3 +35,6 @@ stdout_equals = "named"
 [[expect]]
 step = "it-is-unreachable-inside-its-timeout"
 exit = 0
+# The claim is that it fails inside the two seconds it was given rather than
+# waiting out a default of fifteen. Without this the step would pass on either.
+duration_under_seconds = 6
