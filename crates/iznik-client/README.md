@@ -10,7 +10,7 @@ The client engine the macOS application links: the SSH transport over the system
 | `bootstrap::launch` | Launching or adopting the daemon on a probed host, and the upgrade decision. | `remote-launch` (plan 0005) |
 | `bootstrap::probe` | One script asked of a host and a pure reading of its answer: the machine, an installed server, the terminal's terminfo and `tic`, and the first prefix the host will let iznik write. | `host-probe` (plan 0005) |
 | `bootstrap::terminfo` | The `xterm-ghostty` terminfo source as a constant, with the ncurses it came from and the one field of it that is not `infocmp`'s. | `terminfo-asset` (plan 0005) |
-| `bootstrap::upload` | Uploading the server artifact and the terminfo over the same channel, with digest verification and an atomic rename. | `payload-upload` (plan 0005) |
+| `bootstrap::upload` | The artifact and the terminfo down the standard input of one remote shell, verified by a digest this client computed, and renamed into place only once the host agrees. | `payload-upload` (plan 0005) |
 | `commands` | Optimistic commands: the unambiguous ones applied locally at once and confirmed or rolled back by the authoritative delta, the rest waiting one round trip. | `optimistic-commands` (plan 0005) |
 | `host` | Multi-host: host identity, the per-host connection state machine, and the manager that runs one task per host. | `host-identity-and-state` (plan 0005) |
 | `host::identity` | `HostId`, the user's alias, and the global pane address `iznik://<host>/<pane>`. | `host-identity-and-state` (plan 0005) |

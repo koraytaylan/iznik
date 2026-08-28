@@ -1,0 +1,50 @@
+name = "installs-twice"
+claims = ["upload-is-the-same-done-twice"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A bootstrap runs against hosts that already have what it is about to install,
+# because that is the common case after the first time. Twice must leave one
+# file, not two and not a partial.
+[[steps]]
+id = "install-it"
+container = "engine"
+timeout_seconds = 60
+
+[steps.upload]
+alias = "host0"
+
+[[steps]]
+id = "install-it-again"
+container = "engine"
+timeout_seconds = 60
+
+[steps.upload]
+alias = "host0"
+
+[steps.upload.expect]
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+
+[[steps]]
+id = "and-there-is-one-of-it"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; ls $p | tr \"\\n\" \" \"'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-it"
+exit = 0
+
+[[expect]]
+step = "install-it-again"
+exit = 0
+
+[[expect]]
+step = "and-there-is-one-of-it"
+exit = 0
+stdout_matches = "^iznik-server\\s*$"

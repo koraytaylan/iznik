@@ -17,7 +17,7 @@ The binary `iznik-regression step` reads one step as TOML on standard input and 
 | `step::probe` | `[steps.probe]`: a real host probed, and every field of the answer held to what the scenario said it would be. | `host-probe` (plan 0005) |
 | `step::run` | The `run` step: a shell command in the container that names it. | `scenario-driver` (plan 0001) |
 | `step::transport` | `[steps.transport]`: the SSH transport against the fixture's host — a command run, a master made, reused and closed, and each of the four ways a connection fails told apart. | `ssh-control-master` (plan 0005) |
-| `step::upload` | `[steps.upload]`: the artifact upload and the terminfo compilation on the host. | `payload-upload` (plan 0005) |
+| `step::upload` | `[steps.upload]`: the artifact put on a real host and the terminfo compiled beside it, held to where each landed. | `payload-upload` (plan 0005) |
 
 ## Tests
 

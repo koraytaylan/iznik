@@ -1,0 +1,35 @@
+name = "verifies-the-digest"
+claims = ["upload-refuses-what-it-did-not-send"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The script itself, driven with a digest that is not the payload's. What the
+# host must do is refuse and install nothing — the property the whole
+# verify-before-rename design exists for, asked of the script rather than of
+# the client that usually passes it a digest it computed correctly.
+[[steps]]
+id = "a-payload-that-is-not-what-it-says"
+container = "engine"
+run = "printf 'not the server' | ssh -o BatchMode=yes host0 'IZNIK_PREFIX=$HOME/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh -c \"set -e; into=\\$IZNIK_PREFIX/bin; mkdir -p \\$into; rm -f \\$into/.partial-*; partial=\\$into/.partial-\\$\\$; cat > \\$partial; got=\\$(sha256sum < \\$partial | cut -d\\\" \\\" -f1); if [ \\\"\\$got\\\" != \\\"\\$IZNIK_DIGEST\\\" ]; then rm -f \\$partial; exit 65; fi; mv \\$partial \\$into/iznik-server\"' ; printf 'exit %s' $?"
+timeout_seconds = 30
+
+[[steps]]
+id = "and-nothing-was-installed"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'p=$HOME/.local/share/iznik/bin; test -e $p/iznik-server && printf installed || printf nothing; ls $p/.partial-* 2>/dev/null | wc -l'"
+timeout_seconds = 30
+
+[[expect]]
+step = "a-payload-that-is-not-what-it-says"
+exit = 0
+stdout_contains = "exit 65"
+
+[[expect]]
+step = "and-nothing-was-installed"
+exit = 0
+stdout_contains = "nothing0"

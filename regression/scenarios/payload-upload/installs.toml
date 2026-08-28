@@ -1,0 +1,40 @@
+name = "installs"
+claims = ["upload-installs-a-server-that-runs"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "the-server-goes-onto-the-host"
+container = "engine"
+timeout_seconds = 60
+
+[steps.upload]
+alias = "host0"
+
+[steps.upload.expect]
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+terminfo = true
+
+# What it left, asked of the host rather than of the client: the binary is
+# there, it is executable, it says the version this build carries, and nothing
+# from a partial write is beside it.
+[[steps]]
+id = "and-it-runs-there"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; test -x $p/iznik-server && $p/iznik-server --version && ls $p/.partial-* 2>/dev/null | wc -l'"
+timeout_seconds = 30
+
+[[expect]]
+step = "the-server-goes-onto-the-host"
+exit = 0
+stdout_contains = "installed /home/iznik/.local/share/iznik/bin/iznik-server"
+
+[[expect]]
+step = "and-it-runs-there"
+exit = 0
+stdout_matches = "iznik-server [0-9.]+ protocol [0-9]+\\s*0"

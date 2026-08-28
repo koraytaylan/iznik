@@ -1,0 +1,38 @@
+name = "installs-terminfo"
+claims = ["upload-installs-the-terminfo-beside-it"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "the-upload-brings-the-terminfo"
+container = "engine"
+timeout_seconds = 60
+
+[steps.upload]
+alias = "host0"
+
+[steps.upload.expect]
+terminfo = true
+
+# Asked of the host's own ncurses: the entry compiled where iznik put it, and
+# what a program there would learn from it.
+[[steps]]
+id = "and-the-host-can-read-it"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'TERMINFO=/home/iznik/.local/share/iznik/terminfo infocmp -x xterm-ghostty | head -2 | tr -d \"\\n\"'"
+timeout_seconds = 30
+
+[[expect]]
+step = "the-upload-brings-the-terminfo"
+exit = 0
+stdout_contains = "terminfo /home/iznik/.local/share/iznik/terminfo"
+
+[[expect]]
+step = "and-the-host-can-read-it"
+exit = 0
+stdout_contains = "xterm-ghostty"

@@ -1,0 +1,53 @@
+# The server and the terminfo put on a host, over the one channel that is
+# already open, verified before they are installed.
+#
+# Loading a distribution directory and building the command sent to a host are
+# `test` proofs: a directory of files and the text of a script are both things
+# this machine can look at, and a container would only put them somewhere
+# further away. Everything about what a host does with that script — refusing a
+# payload that is not what it was told, leaving nothing when the link drops,
+# compiling the terminfo with its own ncurses — is a scenario, because those
+# are properties of a host.
+
+[[claim]]
+id = "upload-loads-what-a-build-produced"
+statement = "A distribution directory is loaded as one artifact per triple, each with the `SHA-256` of the file's own bytes — computed here, never read from a manifest, because what is verified must be what is about to be sent."
+test = "iznik-client::payload_upload::payload_upload_loads_one_artifact_for_every_triple"
+because = "a directory of files is the same directory wherever it is read, and the digest is arithmetic over their bytes"
+
+[[claim]]
+id = "upload-says-which-triples-it-has"
+statement = "Asked for a triple this build does not carry, it refuses naming both the one wanted and the ones there are, rather than leaving a person to guess which build they have."
+test = "iznik-client::payload_upload::payload_upload_refuses_a_triple_it_does_not_have"
+because = "what is proven is what an error says, and it says the same thing anywhere"
+
+[[claim]]
+id = "upload-sends-the-digest-and-names-nothing-early"
+statement = "The command sent to a host carries the digest this client computed and the prefix to install under, and the name the server will finally have appears once, on the rename — so a link that drops leaves a `.partial-` file and never something a later run would execute."
+test = "iznik-client::payload_upload::payload_upload_sends_a_script_that_names_the_digest_and_nothing_early"
+because = "it is a property of the text that is sent, and reading it needs no host to send it to"
+
+[[claim]]
+id = "upload-installs-a-server-that-runs"
+statement = "From the engine container, the artifact for the host's own triple is uploaded, verified there and installed under the prefix the probe chose — where it is executable, says the version this build carries, and has no partial file beside it."
+scenario = "installs"
+
+[[claim]]
+id = "upload-refuses-what-it-did-not-send"
+statement = "A payload whose digest is not the one the host was told is refused by the host's own check, which exits sixty-five and installs nothing — leaving neither a server nor a partial."
+scenario = "verifies-the-digest"
+
+[[claim]]
+id = "upload-leaves-nothing-when-a-link-drops"
+statement = "An upload killed where it stands leaves nothing at the name the bootstrap will later run, and the upload that follows it succeeds and clears what the killed one left."
+scenario = "dropped-mid-upload"
+
+[[claim]]
+id = "upload-installs-the-terminfo-beside-it"
+statement = "Where the host has `tic`, the terminfo iznik carries is compiled under the same prefix, and the host's own `infocmp` reads `xterm-ghostty` back out of it."
+scenario = "installs-terminfo"
+
+[[claim]]
+id = "upload-is-the-same-done-twice"
+statement = "Uploading onto a host that already has the same binary succeeds and leaves one file — which is the common case after the first time."
+scenario = "installs-twice"

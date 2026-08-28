@@ -1,13 +1,16 @@
 agrees
+answers
 architecture
 asked
 borrowed
 candidate
 candidates
 chosen
+combination
 counted
 data
 falls
+first
 fresh
 home
 host
@@ -21,6 +24,7 @@ nothing
 nowhere
 offered
 operating
+places
 prefix
 probe
 probed
@@ -34,6 +38,7 @@ says
 server
 serves
 system
+taken
 terminal
 terminfo
 three

@@ -19,9 +19,6 @@ use std::time::Duration;
 use crate::transport::Transport;
 use crate::transport::ssh::SshError;
 
-/// The directory iznik puts things in, under whichever prefix a host allows.
-pub const DIRECTORY_NAME: &str = "iznik";
-
 /// How long the probe may take when a caller does not say.
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -34,39 +31,65 @@ const NOTHING: &str = "-";
 /// What a yes-or-no field says for yes.
 const YES: &str = "yes";
 
+/// What every version line an iznik server prints begins with.
+const SERVER_NAME: &str = "iznik-server";
+
+/// The word a version line puts before the protocol it speaks.
+const PROTOCOL_WORD: &str = "protocol";
+
 /// The one script the probe runs, exposed so a scenario can drive it directly
 /// and a reader can see exactly what iznik asks a host.
 ///
+/// Three things about it are deliberate.
+///
 /// It creates nothing: writability is answered by walking up to the first
-/// ancestor that exists and asking about that, because a probe that made
-/// directories would have changed the host before deciding whether to.
+/// ancestor that exists, because a probe that made directories would have
+/// changed the host before deciding whether to. A candidate that exists and
+/// belongs to somebody else is not writable however its parent is set —
+/// `/tmp` is world-writable, and without that rule another local user could
+/// leave a directory where iznik would later install and run a binary.
+///
+/// Every variable is read with a default, because a host whose `~/.bashrc`
+/// sets `-u` would otherwise turn every probe into a failed command.
+///
+/// And each candidate answers for itself about the server installed *there*,
+/// rather than one loop finding a binary and another choosing a prefix: what
+/// the bootstrap will run is `<prefix>/bin/iznik-server`, so what it must know
+/// is whether one is at the prefix it settled on. Only the first line of a
+/// version is taken, so a server that says more cannot append fields to this
+/// answer.
 pub const PROBE_SCRIPT: &str = r#"
 writable() {
-  d="$1"
+  if [ -e "$1" ]; then
+    if [ -w "$1" ] && [ -O "$1" ]; then printf yes; else printf no; fi
+    return
+  fi
+  d=$(dirname "$1")
   while [ ! -e "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
   if [ -w "$d" ]; then printf yes; else printf no; fi
 }
-printf 'system %s\n' "$(uname -s)"
-printf 'machine %s\n' "$(uname -m)"
-if command -v tic >/dev/null 2>&1; then printf 'tic yes\n'; else printf 'tic no\n'; fi
-if command -v infocmp >/dev/null 2>&1 && infocmp xterm-ghostty >/dev/null 2>&1
-then printf 'terminfo yes\n'; else printf 'terminfo no\n'; fi
-if [ -n "$XDG_DATA_HOME" ]; then printf 'data %s\n' "$XDG_DATA_HOME"; else printf 'data -\n'; fi
-printf 'home %s\n' "$HOME"
-if [ -n "$XDG_RUNTIME_DIR" ]
-then printf 'runtime %s\n' "$XDG_RUNTIME_DIR"
-else printf 'runtime %s\n' "${TMPDIR:-/tmp}/iznik-$(id -u)"; fi
-for candidate in "${XDG_DATA_HOME:-$HOME/.local/share}/iznik" "$HOME/.local/share/iznik" \
-  "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/iznik-$(id -u)}/iznik"
-do printf 'candidate %s %s\n' "$candidate" "$(writable "$candidate")"; done
-said=-
-for candidate in "${XDG_DATA_HOME:-$HOME/.local/share}/iznik" "$HOME/.local/share/iznik" \
-  "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/iznik-$(id -u)}/iznik"
+home=${HOME:-/}
+runtime=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/iznik-$(id -u)}
+data=${XDG_DATA_HOME:-$home/.local/share}
+printf 'system %s
+' "$(uname -s)"
+printf 'machine %s
+' "$(uname -m)"
+if command -v tic >/dev/null 2>&1; then printf 'tic yes
+'; else printf 'tic no
+'; fi
+if command -v infocmp >/dev/null 2>&1 && TERMINFO_DIRS="$data/iznik/terminfo:$home/.local/share/iznik/terminfo:$runtime/terminfo" infocmp xterm-ghostty >/dev/null 2>&1
+then printf 'terminfo yes
+'; else printf 'terminfo no
+'; fi
+for candidate in "$data/iznik" "$home/.local/share/iznik" "$runtime"
 do
-  if [ -x "$candidate/bin/iznik-server" ]
-  then said=$("$candidate/bin/iznik-server" --version 2>/dev/null); break; fi
+  said=-
+  if [ -x "$candidate/bin/iznik-server" ] && [ -O "$candidate/bin/iznik-server" ]
+  then said=$("$candidate/bin/iznik-server" --version 2>/dev/null | head -n 1); fi
+  printf 'candidate %s %s %s
+' "$candidate" "$(writable "$candidate")" "$said"
 done
-printf 'server %s\n' "$said"
 "#;
 
 /// The operating systems iznik has artifacts for.
@@ -288,13 +311,14 @@ fn architecture(said: &str) -> Option<Architecture> {
 /// The version line an installed server printed, read into what it says.
 ///
 /// The line is `iznik-server <crate version> protocol <number>`, which is what
-/// `--version` prints; anything else is a server this cannot reason about and
-/// is reported as none rather than guessed at.
+/// `--version` prints, and it must begin with that name: something else at
+/// that path saying `myserver 9.9.9 protocol 1` is not an iznik server, and
+/// reading it as one would put an upgrade decision on a stranger's words.
 fn installed(said: &str) -> Option<InstalledServer> {
     let mut words = said.split_whitespace();
-    let _named = words.next()?;
+    let _named = words.next().filter(|word| *word == SERVER_NAME)?;
     let crate_version = words.next()?.to_owned();
-    let _protocol = words.next().filter(|word| *word == "protocol")?;
+    let _protocol = words.next().filter(|word| *word == PROTOCOL_WORD)?;
     let protocol_version = words.next()?.parse().ok()?;
     Some(InstalledServer {
         crate_version,
@@ -302,15 +326,34 @@ fn installed(said: &str) -> Option<InstalledServer> {
     })
 }
 
-/// Every prefix the host was asked about, in order, and whether it said each
-/// could be written.
-fn candidates(output: &str) -> Vec<(PathBuf, bool)> {
+/// One prefix the host was asked about: where, whether it may be written, and
+/// what an iznik server there says it is.
+struct Candidate {
+    /// Where it is.
+    path: PathBuf,
+    /// Whether this user may write it.
+    writable: bool,
+    /// The server installed *there*, if there is one this can read.
+    server: Option<InstalledServer>,
+}
+
+/// Every prefix the host was asked about, in the order it was asked.
+fn candidates(output: &str) -> Vec<Candidate> {
     output
         .lines()
         .filter_map(|line| field(line.trim_end(), "candidate"))
         .filter_map(|rest| {
-            let (path, answer) = rest.rsplit_once(FIELD_SEPARATOR)?;
-            Some((PathBuf::from(path), answer == YES))
+            let (path, answered) = rest.split_once(FIELD_SEPARATOR)?;
+            let (writable, said) = answered
+                .split_once(FIELD_SEPARATOR)
+                .unwrap_or((answered, NOTHING));
+            Some(Candidate {
+                path: PathBuf::from(path),
+                writable: writable == YES,
+                server: Some(said)
+                    .filter(|held| *held != NOTHING)
+                    .and_then(installed),
+            })
         })
         .collect()
 }
@@ -334,23 +377,35 @@ pub fn parse(output: &str) -> Result<HostProbe, ProbeError> {
             architecture: machine.to_owned(),
         });
     };
+    // Every field the script prints must be there. A host that answered only
+    // half of it is a host something went wrong on, and reading a missing
+    // `tic` line as "no tic" would install nothing and say nothing about why.
+    for wanted in ["tic", "terminfo"] {
+        if named(output, wanted).is_none() {
+            return Err(missing(wanted));
+        }
+    }
     let offered = candidates(output);
     if offered.is_empty() {
         return Err(missing("candidate"));
     }
-    let Some((prefix, _writable)) = offered.iter().find(|(_path, writable)| *writable) else {
+    let Some(chosen) = offered.iter().find(|candidate| candidate.writable) else {
         return Err(ProbeError::Unwritable {
-            candidates: offered.into_iter().map(|(path, _writable)| path).collect(),
+            candidates: offered
+                .into_iter()
+                .map(|candidate| candidate.path)
+                .collect(),
         });
     };
     Ok(HostProbe {
         operating_system,
         architecture,
-        server: named(output, "server")
-            .filter(|said| *said != NOTHING)
-            .and_then(installed),
+        // The server at the prefix that was chosen, and not one at some other
+        // candidate: what the bootstrap will run is `<prefix>/bin/iznik-server`,
+        // so a server anywhere else is not the one it is deciding about.
+        server: chosen.server.clone(),
         terminfo_installed: said_yes(output, "terminfo"),
         tic_available: said_yes(output, "tic"),
-        prefix: prefix.clone(),
+        prefix: chosen.path.clone(),
     })
 }

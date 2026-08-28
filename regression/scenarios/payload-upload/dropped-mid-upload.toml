@@ -1,0 +1,88 @@
+name = "dropped-mid-upload"
+claims = ["upload-leaves-nothing-when-a-link-drops"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A link that drops in the middle is the case the partial name exists for. The
+# script is started on the host reading from a pipe that never closes, given
+# half a payload, and killed where it stands — which is what a dropped link
+# looks like from the host's side.
+# The writer holds the pipe open after its half, because a writer that closed
+# it would give the upload an end of input and the rename would happen — which
+# is the opposite of the case being made.
+[[steps]]
+id = "start-an-upload-that-will-not-finish"
+container = "host0"
+run = "mkdir -p /home/iznik/.local/share/iznik/bin && rm -f /tmp/feed && mkfifo /tmp/feed && (IZNIK_PREFIX=/home/iznik/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh -c 'set -e; into=$IZNIK_PREFIX/bin; mkdir -p $into; rm -f $into/.partial-*; partial=$into/.partial-$$; cat > $partial; mv $partial $into/iznik-server' < /tmp/feed & echo $! > /tmp/uploader) && (sh -c 'printf \"the first half and no more\"; sleep 120' > /tmp/feed & echo $! > /tmp/writer) && sleep 2 && printf started"
+timeout_seconds = 30
+
+[[steps]]
+id = "half-of-it-is-there"
+container = "host0"
+run = "ls /home/iznik/.local/share/iznik/bin/.partial-* >/dev/null 2>&1 && printf partial || printf none"
+timeout_seconds = 20
+
+[[steps]]
+id = "cut-it-off"
+container = "host0"
+run = "kill -KILL $(cat /tmp/uploader) 2>/dev/null; kill -KILL $(cat /tmp/writer) 2>/dev/null; rm -f /tmp/feed; sleep 1; printf cut"
+timeout_seconds = 20
+
+[[steps]]
+id = "nothing-is-at-the-final-name"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; test -e $p/iznik-server && printf installed || printf nothing'"
+timeout_seconds = 30
+
+# And the upload that follows it succeeds, clearing whatever the killed one
+# left behind.
+[[steps]]
+id = "the-next-upload-succeeds"
+container = "engine"
+timeout_seconds = 60
+
+[steps.upload]
+alias = "host0"
+
+[steps.upload.expect]
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+
+[[steps]]
+id = "and-left-no-partial"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; test -x $p/iznik-server && ls $p/.partial-* 2>/dev/null | wc -l'"
+timeout_seconds = 30
+
+[[expect]]
+step = "start-an-upload-that-will-not-finish"
+exit = 0
+stdout_contains = "started"
+
+[[expect]]
+step = "half-of-it-is-there"
+exit = 0
+stdout_contains = "partial"
+
+[[expect]]
+step = "cut-it-off"
+exit = 0
+stdout_contains = "cut"
+
+[[expect]]
+step = "nothing-is-at-the-final-name"
+exit = 0
+stdout_contains = "nothing"
+
+[[expect]]
+step = "the-next-upload-succeeds"
+exit = 0
+
+[[expect]]
+step = "and-left-no-partial"
+exit = 0
+stdout_contains = "0"

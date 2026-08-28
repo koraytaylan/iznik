@@ -27,7 +27,10 @@ alias = "host0"
 
 [steps.probe.expect]
 system = "Linux"
-prefix = "/tmp/iznik-1000/iznik"
+# The runtime directory the server itself resolves, not that with another
+# component appended: what the probe falls back to must be the place the daemon
+# would use.
+prefix = "/tmp/iznik-1000"
 
 [[steps]]
 id = "give-it-back"

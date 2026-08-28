@@ -14,7 +14,7 @@ touches:
   - "regression/claims/payload-upload.toml"
   - "regression/scenarios/payload-upload/**"
   - "policy/lexicon/payload-upload.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Payload Upload

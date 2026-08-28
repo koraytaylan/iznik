@@ -25,42 +25,59 @@ const AT_ONCE: Duration = Duration::from_secs(1);
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
 
-/// A host's answer, built from what each field says.
+/// The three places the script asks about, distinct, in the order it asks.
+const PLACES: [&str; 3] = [
+    "/data/me/iznik",
+    "/home/iznik/.local/share/iznik",
+    "/run/user/1000/iznik",
+];
+
+/// A host's answer, built from what each field says. Each candidate carries
+/// the version an iznik server *there* printed, or nothing.
 fn answer(
     system: &str,
     machine: &str,
     tic: &str,
     terminfo: &str,
-    candidates: &[(&str, &str)],
-    server: &str,
+    candidates: &[(&str, &str, &str)],
 ) -> String {
     let mut said = format!("system {system}\nmachine {machine}\ntic {tic}\nterminfo {terminfo}\n");
-    for (path, writable) in candidates {
+    for (path, writable, server) in candidates {
         // Writing to a `String` cannot fail.
-        let _written = writeln!(said, "candidate {path} {writable}");
+        let _written = writeln!(said, "candidate {path} {writable} {server}");
     }
-    let _written = writeln!(said, "server {server}");
     said
 }
 
-/// The three candidates a host offers, in the order the script asks about
-/// them, with the writability each of them reports.
-fn three(data: &str, home: &str, runtime: &str) -> Vec<(&'static str, String)> {
-    vec![
-        ("/home/iznik/.local/share/iznik", data.to_owned()),
-        ("/home/iznik/.local/share/iznik", home.to_owned()),
-        ("/run/user/1000/iznik/iznik", runtime.to_owned()),
-    ]
+/// The three candidates as `yes`-or-`no`, with a server only at the one named.
+fn three<'held>(
+    writable: [&'held str; 3],
+    server_at: Option<(usize, &'held str)>,
+) -> Vec<(&'held str, &'held str, &'held str)> {
+    PLACES
+        .iter()
+        .enumerate()
+        .map(|(at, path)| {
+            let said = match server_at {
+                Some((named, version)) if named == at => version,
+                _elsewhere => "-",
+            };
+            (*path, writable.get(at).copied().unwrap_or("no"), said)
+        })
+        .collect()
 }
 
-/// An ordinary Linux answer with the writability the arguments say.
+/// An ordinary Linux answer with the writability the arguments say, and a
+/// server at the first place if one is named.
 fn linux(data: &str, home: &str, runtime: &str, server: &str) -> String {
-    let offered = three(data, home, runtime);
-    let borrowed: Vec<(&str, &str)> = offered
-        .iter()
-        .map(|(path, writable)| (*path, writable.as_str()))
-        .collect();
-    answer("Linux", "x86_64", "yes", "no", &borrowed, server)
+    let at = (server != "-").then_some((0, server));
+    answer(
+        "Linux",
+        "x86_64",
+        "yes",
+        "no",
+        &three([data, home, runtime], at),
+    )
 }
 
 /// A runner that counts how many commands it was asked to run and always says
@@ -108,7 +125,7 @@ fn host_probe_reads_an_ordinary_linux_host() {
             server: None,
             terminfo_installed: false,
             tic_available: true,
-            prefix: PathBuf::from("/home/iznik/.local/share/iznik"),
+            prefix: PathBuf::from("/data/me/iznik"),
         },
         "a fresh host with tic and no server"
     );
@@ -121,12 +138,13 @@ fn host_probe_reads_an_ordinary_linux_host() {
 #[test]
 fn host_probe_knows_the_machines_it_serves() {
     let case = |system: &str, machine: &str| {
-        let offered = three("yes", "yes", "yes");
-        let borrowed: Vec<(&str, &str)> = offered
-            .iter()
-            .map(|(path, writable)| (*path, writable.as_str()))
-            .collect();
-        parse(&answer(system, machine, "yes", "no", &borrowed, "-"))
+        parse(&answer(
+            system,
+            machine,
+            "yes",
+            "no",
+            &three(["yes", "yes", "yes"], None),
+        ))
     };
     for (system, machine, wanted_system, wanted_machine) in [
         (
@@ -187,26 +205,37 @@ fn host_probe_takes_the_first_prefix_the_host_allows() {
     let chosen = |data: &str, home: &str, runtime: &str| {
         parse(&linux(data, home, runtime, "-")).map(|read| read.prefix)
     };
-    assert_eq!(
-        chosen("yes", "yes", "yes").expect("a prefix"),
-        PathBuf::from("/home/iznik/.local/share/iznik"),
-        "the data home when it is writable"
-    );
-    assert_eq!(
-        chosen("no", "yes", "yes").expect("a prefix"),
-        PathBuf::from("/home/iznik/.local/share/iznik"),
-        "the home's share when it is not"
-    );
-    assert_eq!(
-        chosen("no", "no", "yes").expect("a prefix"),
-        PathBuf::from("/run/user/1000/iznik/iznik"),
-        "and the runtime directory when neither is"
-    );
-    let nowhere = chosen("no", "no", "no");
-    let Err(ProbeError::Unwritable { candidates }) = nowhere else {
-        panic!("a host that allows nothing was not refused: {nowhere:?}");
-    };
-    assert_eq!(candidates.len(), 3, "and names every place it tried");
+    // All eight ways three answers combine, so the order is the order and not
+    // a coincidence of which of them happened to be tried.
+    for combination in 0..8_usize {
+        let answers: Vec<&str> = (0..3)
+            .map(|at| {
+                if combination >> at & 1 == 1 {
+                    "yes"
+                } else {
+                    "no"
+                }
+            })
+            .collect();
+        let taken = chosen(
+            answers.first().copied().unwrap_or("no"),
+            answers.get(1).copied().unwrap_or("no"),
+            answers.get(2).copied().unwrap_or("no"),
+        );
+        let first = answers.iter().position(|held| *held == "yes");
+        let Some(at) = first else {
+            let Err(ProbeError::Unwritable { candidates }) = taken else {
+                panic!("a host that allows nothing was not refused: {taken:?}");
+            };
+            assert_eq!(candidates.len(), 3, "and names every place it tried");
+            continue;
+        };
+        assert_eq!(
+            taken.as_deref().ok(),
+            PLACES.get(at).map(Path::new),
+            "the first the host allows, of {answers:?}"
+        );
+    }
 }
 
 /// # Panics
@@ -243,13 +272,14 @@ fn host_probe_reads_an_installed_server() {
 #[test]
 fn host_probe_reads_what_the_terminal_needs() {
     for (tic, terminfo) in [("yes", "yes"), ("yes", "no"), ("no", "no"), ("no", "yes")] {
-        let offered = three("yes", "yes", "yes");
-        let borrowed: Vec<(&str, &str)> = offered
-            .iter()
-            .map(|(path, writable)| (*path, writable.as_str()))
-            .collect();
-        let read =
-            parse(&answer("Linux", "x86_64", tic, terminfo, &borrowed, "-")).expect("a probe");
+        let read = parse(&answer(
+            "Linux",
+            "x86_64",
+            tic,
+            terminfo,
+            &three(["yes", "yes", "yes"], None),
+        ))
+        .expect("a probe");
         assert_eq!(read.tic_available, tic == "yes", "tic {tic}");
         assert_eq!(
             read.terminfo_installed,
@@ -265,9 +295,26 @@ fn host_probe_reads_what_the_terminal_needs() {
 #[test]
 fn host_probe_refuses_an_answer_it_cannot_read() {
     for (said, missing) in [
-        ("machine x86_64\ncandidate /a yes\n", "system"),
-        ("system Linux\ncandidate /a yes\n", "machine"),
-        ("system Linux\nmachine x86_64\n", "candidate"),
+        (
+            "machine x86_64\ntic yes\nterminfo no\ncandidate /a yes -\n",
+            "system",
+        ),
+        (
+            "system Linux\ntic yes\nterminfo no\ncandidate /a yes -\n",
+            "machine",
+        ),
+        (
+            "system Linux\nmachine x86_64\nterminfo no\ncandidate /a yes -\n",
+            "tic",
+        ),
+        (
+            "system Linux\nmachine x86_64\ntic yes\ncandidate /a yes -\n",
+            "terminfo",
+        ),
+        (
+            "system Linux\nmachine x86_64\ntic yes\nterminfo no\n",
+            "candidate",
+        ),
     ] {
         let refused = parse(said);
         let Err(ProbeError::Malformed { detail }) = refused else {
@@ -294,7 +341,7 @@ async fn host_probe_is_one_round_trip() {
         let read = probe(&runner, AT_ONCE).await?;
         assert_eq!(
             read.prefix,
-            Path::new("/home/iznik/.local/share/iznik"),
+            Path::new("/data/me/iznik"),
             "the probe read what the host said"
         );
         assert_eq!(

@@ -12,7 +12,7 @@
 
 [[claim]]
 id = "probe-reads-what-a-host-says"
-statement = "A host's answer is read into the machine it is, whether a server is installed and which, whether the terminal's terminfo and `tic` are there, and where iznik may put things."
+statement = "A host's answer is read into the machine it is, whether a server is installed at the prefix that was chosen and which, whether the terminal's terminfo and `tic` are there, and where iznik may put things."
 test = "iznik-client::host_probe::host_probe_reads_an_ordinary_linux_host"
 because = "the answer is a string the host printed, and reading it is the same wherever the string came from"
 
@@ -26,11 +26,11 @@ because = "the fixture has one architecture and one operating system, and this i
 id = "probe-takes-the-first-writable-prefix"
 statement = "The prefix is the first of the data home, the home's share and the runtime directory that the host says this user may write, and a host that allows none of them is refused naming all three."
 test = "iznik-client::host_probe::host_probe_takes_the_first_prefix_the_host_allows"
-because = "a container can be made to refuse one of the three at a time, and this is about all eight ways they combine"
+because = "a container offers one arrangement of the three at a time, and this is about all eight ways their answers combine"
 
 [[claim]]
 id = "probe-reads-an-installed-server"
-statement = "A server already on the host is read as its own version and the protocol it speaks; a version line this cannot read is no server rather than a guess."
+statement = "A server already at the prefix that was chosen is read as its own version and the protocol it speaks; a line that does not begin `iznik-server` is not one, and a version line this cannot read is no server rather than a guess."
 test = "iznik-client::host_probe::host_probe_reads_an_installed_server"
 because = "an unreadable version line is one no build of this workspace prints, so only a written one can produce it"
 
@@ -42,15 +42,15 @@ because = "the container has `tic` and cannot be made to lack one it has, and th
 
 [[claim]]
 id = "probe-refuses-an-answer-it-cannot-read"
-statement = "An answer missing the machine, the system or every prefix candidate is refused saying which was missing, rather than read as though it were whole."
+statement = "An answer missing any field the script prints — the system, the machine, `tic`, the terminfo or every prefix candidate — is refused saying which was missing, rather than read as though a line that never arrived had said no."
 test = "iznik-client::host_probe::host_probe_refuses_an_answer_it_cannot_read"
 because = "a truncated answer is one no host produces, so only a written one can produce it"
 
 [[claim]]
 id = "probe-is-one-round-trip"
-statement = "Probing a host runs exactly one command on it, because latency to a distant host is the cost the whole design of this is about."
+statement = "Probing a host runs exactly one remote command through the seam the transport implements, because latency to a distant host is the cost the whole design of this is about."
 test = "iznik-client::host_probe::host_probe_is_one_round_trip"
-because = "what is proven is a count, and counting is done here rather than by watching a network"
+because = "what is proven is a count of what the probe asked for, and counting is done here rather than by watching a network"
 
 [[claim]]
 id = "probe-reads-a-fresh-host"
