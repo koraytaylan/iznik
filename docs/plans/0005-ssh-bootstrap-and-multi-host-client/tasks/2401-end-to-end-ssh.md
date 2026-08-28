@@ -11,7 +11,7 @@ touches:
   - "regression/claims/end-to-end-ssh.toml"
   - "regression/scenarios/end-to-end-ssh/**"
   - "policy/lexicon/end-to-end-ssh.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # End to End over SSH

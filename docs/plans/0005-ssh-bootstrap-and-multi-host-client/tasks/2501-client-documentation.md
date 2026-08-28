@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-client/README.md"
   - "crates/iznik-regression/README.md"
   - "policy/lexicon/client-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Client Documentation

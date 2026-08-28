@@ -350,29 +350,56 @@ iznik interprets itself; everything else is handed to `ssh` untouched.
 
 ### 6.2 Bootstrap
 
-Probe in one round trip (`uname`, installed server version, writable prefix,
-runtime directory, presence of `tic`), upload the server binary and the
-`xterm-ghostty` terminfo source over the same channel with SHA-256
-verification and an atomic rename, launch or adopt the daemon, negotiate. A
-matching version skips the upload, which is the common case and must be
-fast. `iznik uninstall <host>` removes everything it put there.
+Probe in one round trip — the machine, an installed server, a writable prefix,
+the runtime directory, `tic`, and whether the terminfo is already there — then
+upload the server binary and the `xterm-ghostty` terminfo source down the
+standard input of one remote shell, verified by a `SHA-256` this client
+computed and renamed into place only once the host agrees, then launch or adopt
+the daemon and negotiate. A matching version skips the upload entirely, which
+is the common case and must be fast: a second connection finishes inside
+`FAST_RECONNECT_BUDGET`. The prefix is the first candidate the host says this
+user both owns and may write, and nothing is created to find out.
+
+Because the daemon *is* the sessions, it is never replaced quietly: a host
+running another version is connected to as it is and the offer rides back with
+the connection. An upgrade refuses while the daemon holds panes and says how
+many; forced, it stops the daemon, installs, and refuses to call itself done
+unless the version that answers afterwards is the one this build carries.
+Uninstalling removes the binary, the terminfo, the runtime directory and the
+prefix where iznik made it — and never a prefix it was only lent, which
+`XDG_RUNTIME_DIR` may be. [The README](README.md) says what all of that is, by
+name.
 
 ### 6.3 Model, reducer and optimistic commands
 
 The client holds one host model per host, applies the server's deltas with the
 same reconciler the protocol crate tests, and routes by `HostId` first. A
-command whose local effect is unambiguous — rename, close, reorder, focus — is
-applied locally at once, recorded as pending, and confirmed or rolled back by
-the authoritative delta. Creation waits one round trip, because inventing a
-placeholder id to reconcile later is more flicker than waiting.
+command whose local effect is unambiguous — rename, close, reorder — is applied
+locally at once, recorded as pending, and confirmed or rolled back by the
+authoritative delta. Creation waits one round trip, and so do moving a pane and
+setting a layout, because inventing a placeholder id to reconcile later is more
+flicker than waiting.
+
+Two models are kept, not one. What the host has said is one; what the client
+shows is that with everything still in flight applied on top. A delta is
+applied to the first and the pending effects put back over it — so the host
+never has to reconcile a change it has not made, a refusal never undoes one it
+has, and a command that is answered *before* its own change is announced, which
+is the order the server uses, needs no special case.
 
 ### 6.4 Multi-host
 
 `HostId` is the user's SSH alias. A pane is addressed globally as
-`iznik://<host>/<pane>`, and it keeps that address across a reconnect because
-the server persists and the client reconciles rather than rebuilding. Each
-host has its own connection state machine with backoff and jitter; one host's
-failure, slowness or bootstrap is invisible to the others.
+`iznik://<host>/<pane>` — the host escaped so that an alias holding a slash, a
+colon or a space comes back exactly — and it keeps that address across a
+reconnect because the server persists and the client reconciles rather than
+rebuilding. Each host has its own task and its own connection state machine
+with backoff and jitter, seeded per host so that four hosts whose links died
+together do not come back together; one host's failure, slowness or bootstrap
+is invisible to the others, and the only thing they share is a model behind a
+lock that is never held across anything touching a network. On reconnection
+every subscribed pane is resumed at the byte the model holds, which is what
+keeps a pane's stream unbroken across a closed laptop.
 
 ## 7. The C ABI
 

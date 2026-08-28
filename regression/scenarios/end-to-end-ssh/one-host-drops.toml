@@ -1,0 +1,53 @@
+name = "one-host-drops"
+claims = ["end-to-end-keeps-a-dropped-host-to-itself"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 2
+files = []
+
+# One host stops answering while the other is being typed into. What must not
+# happen is the second noticing: no operation on a healthy host may wait on a
+# sick one, and that is the whole reason each host has a task of its own.
+#
+# The daemon on `host1` is stopped where it stands rather than its network cut,
+# for the reason `remote-channel` records: a manager cannot outlive the process
+# that made it, so a fault applied between steps would be met by a manager that
+# had not been born when the link went — and neither container carries the
+# traffic tooling to cut a network from inside one. A stopped daemon over a
+# healthy link is the same silence from the client's side.
+[[steps]]
+id = "one-drops-and-the-other-does-not-notice"
+container = "engine"
+timeout_seconds = 100
+
+[steps.manager]
+patience_milliseconds = 40000
+pong_deadline_milliseconds = 800
+ping_interval_milliseconds = 100
+backoff_initial_milliseconds = 200
+backoff_maximum_milliseconds = 1000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "add_host", alias = "host1" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+  { kind = "create_session", alias = "host0", name = "work" },
+  { kind = "create_session", alias = "host1", name = "build" },
+  { kind = "await_delta", alias = "host0", generation = 1 },
+  { kind = "await_delta", alias = "host1", generation = 1 },
+  { kind = "subscribe", alias = "host0", pane = 1 },
+  { kind = "pause_host", alias = "host1" },
+  { kind = "await_state", alias = "host1", is = "reconnecting" },
+  { kind = "input", alias = "host0", pane = 1, text = "echo apart-$((6*7))\n" },
+  { kind = "await_bytes", alias = "host0", pane = 1, contains = "apart-42" },
+  { kind = "resume_host", alias = "host1" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+]
+
+[[expect]]
+step = "one-drops-and-the-other-does-not-notice"
+exit = 0
+stdout_contains = "15 actions"

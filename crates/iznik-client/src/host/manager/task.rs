@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bootstrap::bootstrap_watched;
 use crate::bootstrap::launch::{BootstrapError, Decision, Stage, expiry, launch};
-use crate::commands::{confirm, expire};
+use crate::commands::{confirm, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::{ManagerEvent, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{Action, HostEvent, HostState, HostStateMachine, UpgradeOffer};
@@ -40,8 +40,17 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
         &host,
     )));
     let _asked = advance(&shared, &host, &machine, HostEvent::Added);
+    // What was asked for while there was nowhere to send it. A keystroke held
+    // for a minute and then delivered is worse than one that went nowhere; a
+    // subscription is not, because nothing will ever ask for it again and a
+    // pane nobody subscribed to is a pane that stays blank.
+    let mut kept: Vec<Order> = Vec::new();
     loop {
-        let Some(channel) = connect(&host, &shared, &machine, &mut orders).await else {
+        let Some(channel) = connect(&host, &shared, &machine, &mut orders, &mut kept).await else {
+            // Nothing more will be tried, and whoever is watching is told so
+            // rather than left with a host that simply stopped saying
+            // anything.
+            shared.publish(&ManagerEvent::Removed { host });
             return;
         };
         match pump(&host, &shared, &machine, &mut orders, channel).await {
@@ -90,7 +99,11 @@ fn waiting_until(machine: &Mutex<HostStateMachine>) -> Option<Instant> {
 /// Answers `false` when the host was told to stop. Orders that need a channel
 /// are dropped: there is none, and a keystroke held for a minute and then
 /// delivered is worse than one that went nowhere.
-async fn hold_until(moment: Instant, orders: &mut UnboundedReceiver<Order>) -> bool {
+async fn hold_until(
+    moment: Instant,
+    orders: &mut UnboundedReceiver<Order>,
+    kept: &mut Vec<Order>,
+) -> bool {
     loop {
         let waiting = tokio::time::sleep_until(moment.into());
         tokio::select! {
@@ -99,9 +112,56 @@ async fn hold_until(moment: Instant, orders: &mut UnboundedReceiver<Order>) -> b
                 None | Some(Order::Stop) => return false,
                 // Somebody asked for it now, so the wait is over.
                 Some(Order::Reconnect) => return true,
-                Some(_ignored) => {}
+                Some(held) => keep(kept, held),
             },
         }
+    }
+}
+
+/// Holds on to an order worth asking for again once there is a link, and lets
+/// the rest go.
+///
+/// What is worth keeping is what nothing will ask for twice: a subscription, a
+/// size, which pane has the person's attention. Keystrokes and credit are not
+/// — a keystroke delivered a minute late is worse than one that went nowhere,
+/// and credit belongs to a channel that no longer exists.
+fn keep(kept: &mut Vec<Order>, order: Order) {
+    match order {
+        Order::Subscribe { pane } => {
+            kept.retain(|held| !about(held, pane));
+            kept.push(Order::Subscribe { pane });
+        }
+        Order::Unsubscribe { pane } => kept.retain(|held| !about(held, pane)),
+        // The latest size and the latest focus, and only those: what is kept
+        // is a state to arrive at, not a history to replay, and a person
+        // moving between panes for an hour on a host that is down must not
+        // grow this without end.
+        Order::Resize { pane, .. } => {
+            kept.retain(
+                |held| !matches!(held, Order::Resize { pane: named, .. } if *named == pane),
+            );
+            kept.push(order);
+        }
+        Order::Focus { .. } => {
+            kept.retain(|held| !matches!(held, Order::Focus { .. }));
+            kept.push(order);
+        }
+        Order::Input { .. }
+        | Order::Credit { .. }
+        | Order::Command { .. }
+        | Order::Screen { .. }
+        | Order::Reconnect
+        | Order::Stop => {}
+    }
+}
+
+/// Whether a held order is about one pane.
+fn about(order: &Order, pane: PaneId) -> bool {
+    match order {
+        Order::Subscribe { pane: named }
+        | Order::Unsubscribe { pane: named }
+        | Order::Resize { pane: named, .. } => *named == pane,
+        _otherwise => false,
     }
 }
 
@@ -114,17 +174,27 @@ async fn connect(
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
+    kept: &mut Vec<Order>,
 ) -> Option<RemoteChannel> {
     loop {
         if let Some(moment) = waiting_until(machine) {
-            if !hold_until(moment, orders).await {
+            if !hold_until(moment, orders, kept).await {
                 let _torn = advance(shared, host, machine, HostEvent::Removed);
                 return None;
             }
             let _tried = advance(shared, host, machine, HostEvent::RetryDue);
         }
         match reach(host, shared, machine).await {
-            Ok(reached) => return Some(accept(host, shared, machine, reached).await),
+            Ok(reached) => {
+                let mut channel = accept(host, shared, machine, reached).await;
+                // Everything asked for while there was nowhere to send it.
+                for order in kept.drain(..) {
+                    if carry(&mut channel, order).await.is_err() {
+                        break;
+                    }
+                }
+                return Some(channel);
+            }
             Err(error) => {
                 let taken = advance(
                     shared,
@@ -226,7 +296,15 @@ async fn accept(
     } = reached;
     if let Ok(mut model) = shared.model.lock() {
         match model.host_mut(host) {
-            Some(view) => view.model = snapshot,
+            Some(view) => {
+                // What the host says replaces what it said before, and
+                // whatever is still in flight goes back on top: a command
+                // whose answer was lost with the link is still this client's
+                // to show, and its rollback must be the model that came back
+                // rather than the one from before the drop.
+                view.settle(snapshot);
+                replay(view);
+            }
             None => {
                 let _first = model.insert(host.clone(), HostView::of(snapshot));
             }
@@ -458,11 +536,20 @@ async fn act(
                 .await
                 .is_ok()
         }
-        Effect::Screen { pane, sequence } => {
+        Effect::Screen {
+            pane,
+            sequence,
+            columns,
+            rows,
+            bytes,
+        } => {
             shared.publish(&ManagerEvent::Screen {
                 host: host.clone(),
                 pane,
                 sequence,
+                columns,
+                rows,
+                bytes,
             });
             true
         }
@@ -506,6 +593,7 @@ async fn carry(channel: &mut RemoteChannel, order: Order) -> Result<(), ChannelE
             rows,
         },
         Order::Focus { pane: Some(pane) } => ToServer::Focus { pane },
+        Order::Screen { pane } => ToServer::ScreenRequest { pane },
         Order::Credit {
             channel: number,
             bytes,

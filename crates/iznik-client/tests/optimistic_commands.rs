@@ -13,7 +13,7 @@ use core::time::Duration;
 use std::time::Instant;
 
 use iznik_client::commands::{
-    Confirmed, PENDING_COMMAND_TIMEOUT, Submission, confirm, expire, settled, submit,
+    Confirmed, PENDING_COMMAND_TIMEOUT, Submission, confirm, expire, submit,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::model::{ClientModel, HostView};
@@ -582,51 +582,83 @@ fn optimistic_commands_survive_the_host_saying_the_same_thing() {
             (SessionCommand::ClosePane { pane }, closing),
         ];
         for (command, deltas) in table {
-            let host = work();
-            let mut client = ClientModel::default();
-            let _first = client.insert(host.clone(), HostView::of(model.clone()));
-            let Some(view) = client.host_mut(&host) else {
-                return Err("the host is known".into());
-            };
-            let submission = submit(view, command.clone(), moment());
-            let shown = view.model.clone();
-            // The host says the same thing, numbered.
-            for delta in &deltas {
-                let Some(standing) = client.host(&host) else {
-                    return Err("the host is known".into());
-                };
-                let at = settled(standing).generation;
-                let taken = reduce(
-                    &mut client,
-                    &host,
-                    &ToClient::Delta {
-                        generation: Generation(at.0.saturating_add(1)),
-                        payload: encode_delta(delta)?,
-                    },
-                );
-                assert!(
-                    taken.is_empty(),
-                    "{command:?}: the host's own change asked for nothing: {taken:?}"
-                );
+            // Both orders. The one the server actually uses is the answer
+            // first — it replies to the command it applied and only then
+            // pumps the delta out — and that is the order that used to leave
+            // the delta unapplicable, because retiring the command took the
+            // model it was applied to with it.
+            for answer_first in [true, false] {
+                walk(&model, &command, &deltas, answer_first)?;
             }
-            let Some(after) = client.host_mut(&host) else {
-                return Err("the host is known".into());
-            };
-            assert!(
-                same_but_for_the_generation(&after.model, &shown),
-                "{command:?}: what was shown is still shown once the host says it"
-            );
-            assert_eq!(
-                confirm(after, submission.id, &applied()),
-                Confirmed::Applied,
-                "and the answer retires it"
-            );
-            assert!(
-                same_but_for_the_generation(&after.model, &as_the_host_would(&model, &deltas)?),
-                "{command:?}: and the model is the host's own"
-            );
         }
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Submits `command`, delivers the host's own `deltas` and its answer in the
+/// order `answer_first` says, and holds the view to what it showed.
+///
+/// # Errors
+///
+/// When the host is not known or a delta cannot be encoded.
+///
+/// # Panics
+///
+/// When what the command showed does not survive the host saying the same
+/// thing, in either order.
+fn walk(
+    model: &HostModel,
+    command: &SessionCommand,
+    deltas: &[Delta],
+    answer_first: bool,
+) -> Result<(), Failed> {
+    let host = work();
+    let mut client = ClientModel::default();
+    let _first = client.insert(host.clone(), HostView::of(model.clone()));
+    let Some(view) = client.host_mut(&host) else {
+        return Err("the host is known".into());
+    };
+    let submission = submit(view, command.clone(), moment());
+    let shown = view.model.clone();
+    if answer_first {
+        let _settled = confirm(view, submission.id, &applied());
+    }
+    for delta in deltas {
+        let Some(standing) = client.host(&host) else {
+            return Err("the host is known".into());
+        };
+        let at = standing.settled.generation;
+        let taken = reduce(
+            &mut client,
+            &host,
+            &ToClient::Delta {
+                generation: Generation(at.0.saturating_add(1)),
+                payload: encode_delta(delta)?,
+            },
+        );
+        assert!(
+            taken.is_empty(),
+            "{command:?} ({answer_first}): the host's own change asked for nothing: {taken:?}"
+        );
+    }
+    let Some(after) = client.host_mut(&host) else {
+        return Err("the host is known".into());
+    };
+    assert!(
+        same_but_for_the_generation(&after.model, &shown),
+        "{command:?} ({answer_first}): what was shown is still shown once the host says it"
+    );
+    if !answer_first {
+        assert_eq!(
+            confirm(after, submission.id, &applied()),
+            Confirmed::Applied,
+            "and the answer retires it"
+        );
+    }
+    assert!(
+        same_but_for_the_generation(&after.model, &as_the_host_would(model, deltas)?),
+        "{command:?} ({answer_first}): and the model is the host's own"
+    );
+    Ok(())
 }

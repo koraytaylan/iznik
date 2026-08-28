@@ -1,0 +1,36 @@
+# The whole stack, from a machine that had nothing, against two hosts.
+#
+# Every claim here is a scenario, and that is the point of the workstream:
+# everything under it has been proven a layer at a time, against sockets on
+# this machine and against models built without a network. What is proven here
+# is that the layers are one thing — the client engine, the SSH transport, the
+# bootstrap, the daemon, the panes — and nothing but two containers and a real
+# `ssh` can say that.
+#
+# Every scenario finishes inside two minutes, because every interval the
+# manager waits on is a field the scenario sets.
+
+[[claim]]
+id = "end-to-end-bootstraps-two-hosts-from-nothing"
+statement = "From an engine container with nothing installed anywhere, one client engine puts a server on two hosts that had none, connects to both, makes a session on each, types a line into each pane and reads it back — and what it read reassembles to the screen each host itself reports."
+scenario = "two-hosts-from-nothing"
+
+[[claim]]
+id = "end-to-end-keeps-a-dropped-host-to-itself"
+statement = "With one host's daemon stopped where it stands — the same silence a cut network makes, applied from inside the step because a manager cannot outlive the process that made it — the other host is typed into and answers, and the stopped one reconnects when it is let go."
+scenario = "one-host-drops"
+
+[[claim]]
+id = "end-to-end-carries-a-pane-across-a-drop"
+statement = "A pane subscribed before a link goes carries on after it: the manager reconnects behind its backoff, resumes at the byte it held, and what arrives afterwards reassembles — through the oracle, against the host's own screen — to the same thing the host shows. The pane is `iznik://host1/1` before the drop and after it."
+scenario = "pane-identity-survives"
+
+[[claim]]
+id = "end-to-end-holds-the-upgrade-policy"
+statement = "With a server that answers as an older version and a pane open on the daemon behind it, an upgrade is refused and says how many panes it would have ended; asked again with force, it goes through, and what is left at that name is an ELF binary rather than the shell script the shim was."
+scenario = "upgrade-policy"
+
+[[claim]]
+id = "end-to-end-takes-itself-off-both-hosts"
+statement = "Uninstalling leaves both hosts as they were: no prefix, no runtime directory, and no `iznik-server` running on either."
+scenario = "uninstall-everything"

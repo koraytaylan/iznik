@@ -107,6 +107,16 @@ pub fn confirm(view: &mut HostView, command: CommandId, outcome: &CommandOutcome
     }
 }
 
+/// Takes back a command that never left this machine, putting back whatever
+/// it showed.
+///
+/// Answers whether there was one. What separates this from a refusal is who
+/// refused: nothing on the host knows about a command whose channel would not
+/// take it, so nothing is waited for and nobody is told.
+pub fn withdraw(view: &mut HostView, command: CommandId) -> bool {
+    roll_back(view, command)
+}
+
 /// Gives up on every command that has gone unanswered for longer than
 /// `timeout`, putting back what each of them showed.
 ///
@@ -133,20 +143,7 @@ pub fn expire(
     told
 }
 
-/// The model as the host last said it stands, before anything this client is
-/// still waiting on was applied to it.
-///
-/// Every pending entry holds the model from before its own effect, refreshed
-/// whenever the host says something, so the first one holds the model from
-/// before all of them.
-#[must_use]
-pub fn settled(view: &HostView) -> HostModel {
-    view.pending
-        .first()
-        .map_or_else(|| view.model.clone(), |held| held.rollback.clone())
-}
-
-/// Applies every command still in flight on top of what the model now holds,
+/// Applies every command still in flight on top of what the host has said,
 /// and refreshes what each of them would be rolled back to.
 ///
 /// This is what keeps the two truths apart. The host's own changes are applied
@@ -155,6 +152,7 @@ pub fn settled(view: &HostView) -> HostModel {
 /// against a change the host has not made yet, and a refusal never has to undo
 /// a change the host *has* made.
 pub fn replay(view: &mut HostView) {
+    view.model = view.settled.clone();
     let mut standing = std::mem::take(&mut view.pending);
     for held in &mut standing {
         held.rollback = view.model.clone();
@@ -176,17 +174,10 @@ fn roll_back(view: &mut HostView, command: CommandId) -> bool {
     let Some(at) = view.pending.iter().position(|held| held.id == command) else {
         return false;
     };
-    let entry = view.pending.remove(at);
-    // What it was put on top of, which is what the host said plus every
-    // command in flight before it — both kept up to date by `replay`.
-    view.model = entry.rollback;
-    let mut later = view.pending.split_off(at);
-    let mut standing = std::mem::take(&mut later);
-    for held in &mut standing {
-        held.rollback = view.model.clone();
-        let _applied = locally(&mut view.model, &held.command);
-    }
-    view.pending.extend(standing);
+    let _gone = view.pending.remove(at);
+    // Everything the host has said, with everything still in flight put back
+    // on top of it: one command's effect is undone by not applying it again.
+    replay(view);
     true
 }
 

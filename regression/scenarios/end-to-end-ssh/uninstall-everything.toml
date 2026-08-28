@@ -1,0 +1,43 @@
+name = "uninstall-everything"
+claims = ["end-to-end-takes-itself-off-both-hosts"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 2
+files = []
+
+# A tool that installs binaries on other people's machines owes them a clean
+# way to be rid of it — on every machine it touched, not just the last one.
+[[steps]]
+id = "install-on-both-and-take-it-off-again"
+container = "engine"
+timeout_seconds = 100
+
+[steps.manager]
+patience_milliseconds = 40000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "add_host", alias = "host1" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+  { kind = "uninstall", alias = "host0" },
+  { kind = "uninstall", alias = "host1" },
+]
+
+[[steps]]
+id = "and-neither-host-holds-anything"
+container = "engine"
+run = "for host in host0 host1; do ssh -o BatchMode=yes $host 'd=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/iznik}; d=${d:-/tmp/iznik-$(id -u)}; test -e $HOME/.local/share/iznik && printf prefix; test -e $d && printf runtime; grep -lx iznik-server /proc/[0-9]*/comm >/dev/null 2>&1 && printf process; printf clean-'; done"
+timeout_seconds = 40
+
+[[expect]]
+step = "install-on-both-and-take-it-off-again"
+exit = 0
+stdout_contains = "6 actions"
+
+[[expect]]
+step = "and-neither-host-holds-anything"
+exit = 0
+stdout_matches = "^clean-clean-$"

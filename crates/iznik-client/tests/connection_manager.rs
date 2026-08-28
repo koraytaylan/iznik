@@ -122,6 +122,10 @@ fn manager(held: &Scratch) -> Result<HostManager, Failed> {
         ping_interval: Duration::from_millis(50),
         pong_deadline: Duration::from_millis(400),
         open_deadline: Duration::from_secs(5),
+        // A server on this machine greets in microseconds; one that has not in
+        // three hundred milliseconds is one of these cases' silent sockets,
+        // and waiting five seconds for it would be waiting for nothing.
+        greeting_deadline: Duration::from_millis(300),
     };
     options.expire_interval = Duration::from_millis(50);
     options.pending_command_timeout = Duration::from_millis(300);
@@ -465,6 +469,11 @@ fn connection_manager_resumes_a_pane_where_it_left_off() {
             matches!(event, ManagerEvent::Bytes { pane, bytes, .. }
                 if *pane == PANE && contains(bytes, b"before-42"))
         })?;
+        // Where the stream stood before anything went wrong. Sampled now, and
+        // not after the reconnection: a cursor read afterwards would be small
+        // again if the host had started the pane over, and the case would not
+        // know the difference.
+        let before = cursor(&manager, &host)?;
         // The link goes, and comes back on its own.
         let started = Instant::now();
         carried.cut();
@@ -485,8 +494,7 @@ fn connection_manager_resumes_a_pane_where_it_left_off() {
             "a link that dropped is back in {back:?}"
         );
         // And the pane carries on: what is typed after the drop arrives, and
-        // the byte it starts at is where the client had got to.
-        let before = cursor(&manager, &host)?;
+        // the byte it starts at is past where the client had got to.
         manager.input(&host, PANE, b"echo across-$((6*7))\n".to_vec())?;
         let seen = await_event(
             &events,
@@ -504,7 +512,13 @@ fn connection_manager_resumes_a_pane_where_it_left_off() {
         };
         assert!(
             sequence.0 >= before.0,
-            "the stream carried on from {before:?} rather than starting again: {sequence:?}"
+            "the stream carried on from where it stood before the drop \
+             ({before:?}) rather than starting again: {sequence:?}"
+        );
+        assert!(
+            before.0 > 0,
+            "and it had stood somewhere: a pane that had said nothing would \
+             make the comparison above vacuous"
         );
         // And the pane is the same pane, by the name it has anywhere.
         let named = GlobalPaneId {
@@ -692,7 +706,11 @@ fn connection_manager_does_not_let_four_hosts_retry_at_once() {
         for index in 0..4_usize {
             manager.add_host(&alias(&held.path.join(format!("gone-{index}.sock"))));
         }
-        let mut moments = Vec::new();
+        // One moment per host, and the first each of them scheduled: a host
+        // that is not there fails again and again, and four moments from one
+        // host would say nothing about four hosts.
+        let mut moments: std::collections::BTreeMap<HostId, Instant> =
+            std::collections::BTreeMap::new();
         while moments.len() < 4 {
             let failed = await_event(&events, "a host failing", PROMPT, |event| {
                 matches!(
@@ -704,22 +722,20 @@ fn connection_manager_does_not_let_four_hosts_retry_at_once() {
                 )
             })?;
             if let ManagerEvent::Moved {
+                host,
                 state: HostState::Failed { retry_at, .. },
-                ..
             } = failed
             {
-                moments.push(retry_at);
+                let _first = moments.entry(host).or_insert(retry_at);
             }
         }
-        moments.sort_unstable();
-        let spread = moments
-            .last()
-            .zip(moments.first())
-            .map(|(last, first)| last.saturating_duration_since(*first))
-            .unwrap_or_default();
-        assert!(
-            spread > Duration::ZERO,
-            "four hosts that failed together do not come back together: {moments:?}"
+        let mut apart: Vec<Instant> = moments.values().copied().collect();
+        apart.sort_unstable();
+        apart.dedup();
+        assert_eq!(
+            apart.len(),
+            moments.len(),
+            "four hosts that failed together scheduled four different moments: {moments:?}"
         );
         drop(manager);
         Ok(())

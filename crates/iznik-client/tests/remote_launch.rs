@@ -111,6 +111,8 @@ fn brisk() -> BootstrapOptions {
         snapshot_deadline: BRIEF,
         channel: ChannelOptions {
             open_deadline: BRIEF,
+            // What bounds a server that started and will not greet.
+            greeting_deadline: BRIEF,
             ..ChannelOptions::default()
         },
         ..BootstrapOptions::default()

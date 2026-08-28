@@ -1,13 +1,13 @@
-# Plan 0005 — SSH Bootstrap and Multi-Host Client — 🚧 In progress
+# Plan 0005 — SSH Bootstrap and Multi-Host Client — ✅ Done
 
 The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file. Task-level truth lives in [tasks/](tasks/) frontmatter; Makina's integration coordinator updates both layers.
 
-- **Status:** 🚧 In progress.
+- **Status:** ✅ Done.
 
 - **Goal:** connect the client engine to remote hosts over the user's own SSH configuration, bootstrap the server and terminfo where they are missing with an explicit upgrade policy, and hold several hosts concurrently behind a client-side model with optimistic commands — proven end to end from a bare engine container against two hosts through link drops.
 - **Root cause:** the daemon speaks only to its relay, there is no client-side model in front of it, and multi-host identity cannot be retrofitted after a single-host model has shipped.
 - **Approach:** shell out to `ssh` with `ControlMaster` so `~/.ssh/config` keeps working unchanged; probe, upload, verify, launch and never again, each stage driven from the engine container by a step of its own; never replace a daemon silently; key everything on global identity so a pane survives a host reconnect and the client resumes rather than rebuilds; and make every interval a field so a link-drop proof takes seconds.
-- **Progress:** 11/13 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 13/13 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** `ssh-control-master` records two. `SshTransport::arguments` is public beyond the architecture's list, because what the vector *lacks* is the property this task exists to hold — every option a person could have written in their own configuration — and asserting an absence needs the value, not a process. `SshTransport::spawn` and `close_master` are not `async`, though the architecture writes `spawn` that way: neither awaits anything, since `tokio::process::Command::spawn` is synchronous and what a caller waits for is the child — and clippy's `unused_async`, which this workspace denies, refuses an `async fn` with nothing to await. The signature the architecture asks for cannot be written under the lint set the same document requires. And `classify` takes the host as well as the status and the words, because every variant of `SshError` carries which host it is about and a classifier that did not know would have to be told twice.
 
@@ -73,6 +73,22 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   And `decide` is a public function of the probe's answer and the artifacts on this machine, taking no transport at all. That is what makes "a machine this build carries no artifact for is refused before anything is uploaded" a property a test can hold rather than a sentence a comment makes.
 
   `client-model` records one: it is done after `host-identity-and-state` for the reason recorded there.
+
+  `client-documentation` records one. Its `touches` names no test file, and its own done-when asks for `cargo nextest run --package iznik-client -E 'test(documented_paths)'` — so `crates/iznik-client/tests/documented_paths.rs` is there, holding every path the README promises to the constant that writes it, in both directions: a path added to the document with nothing behind it fails, and so does a constant renamed without the document following.
+
+  `connection-manager`'s review found thirteen, and the first two were one mistake seen from two sides. The host answers a command *before* it announces the change — `connection.rs` replies inline and pumps the delta afterwards — so by the time the delta arrives the answer has already retired the pending entry, and the settled model derived from `pending.first()` was the shown one again. Every successful close was still refused, still complained about, still cost a snapshot. The settled model is a field of its own now, and the case walks both orders rather than the convenient one.
+
+  The other side of it: reconnecting replaced the model without putting what was still in flight back on top, so a command whose answer was lost with the link kept a rollback from before the drop — and the sweeper, five seconds later, would have restored a model tens of generations old.
+
+  The rest were the manager's edges. Ending a host's task waited for a task that only looks at its orders between awaits, so removing a host part way through a bootstrap held a person's thread for as long as the bootstrap took — it is bounded now, and cut short. Adding a host twice started a second task and detached the first, giving one alias two channels and a model written by whichever finished last. Orders issued while a host was waiting out its backoff were dropped, which is right for a keystroke and wrong for a subscription — nothing else will ever ask for that pane again — so what nothing asks for twice is held and sent when the link comes back. A command that could not be sent left what it showed on the screen. And an uninstall that failed forgot the host anyway, leaving a machine with iznik on it and no way to ask for it to come off.
+
+  Two of its own cases proved less than they said: the resume case sampled the cursor *after* the reconnection, so a host that had started the pane over would have passed it, and the retry-storm case counted four failures rather than four hosts.
+
+  `end-to-end-ssh` records three. `[steps.manager]` has actions the architecture's list does not: `await_bytes`, `expect_address`, `pause_host` and `resume_host`. The first two are how a scenario says what it is waiting for and what a pane is called; the last two are the fault, and they are inside the step for the reason `remote-channel` records — a manager cannot outlive the process that made it, so a fault applied between steps would be met by a manager that had not been born when the link went.
+
+  `ManagerEvent::Screen` carries the screen's bytes and `HostManager` gained a `screen` operation, because `expect_reassembly` compares what a client reassembled against what the host itself shows, and without either there is no way to ask a host what a pane looks like.
+
+  And two things found while running it were the harness rather than this plan. A failed exit assertion reported the number and not what the step had said, which cost a whole run to find out; it carries the step's own words now. And the manager step compared against a screen the host had sent when the pane was first subscribed to rather than the one it had just asked for — waiting for "a screen" that had already arrived.
 
   `optimistic-commands`' own review found eight, and the first two were the design rather than its details. What a command showed was applied to the one model the client holds, and the host then announced the *same change* to the client that had asked for it — so every close that worked was refused by the reconciler as a change the model could not take, and answered with a complaint and a request for the whole model. And a refusal restored a snapshot taken at submission, discarding every authoritative change that had arrived since and taking the generation back with it, so the next delta was a gap. Both are the same mistake: one model where there are two truths.
 

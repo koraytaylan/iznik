@@ -59,7 +59,10 @@ told
 twice
 undo
 undoes
+undone
 unknown
 wait
 waiting
+walk
+withdraw
 would

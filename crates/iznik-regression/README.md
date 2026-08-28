@@ -12,7 +12,7 @@ The binary `iznik-regression step` reads one step as TOML on standard input and 
 | `step::bootstrap` | `[steps.bootstrap]`: bootstrap, upgrade and uninstall against a host, including the older-looking shim. | `remote-launch` (plan 0005) |
 | `step::channel` | `[steps.channel]`: a channel opened through `iznik-server --stdio` on a real host, a pane driven over it, and a link cut in the middle reported dead inside its own deadline. | `remote-channel` (plan 0005) |
 | `step::client` | `[steps.client]`: a protocol client over a process that speaks `iznik/1`, with reassembly checked through the oracle. | `integration-harness` (plan 0004) |
-| `step::manager` | `[steps.manager]`: a host manager inside the engine container driving several hosts end to end. | `end-to-end-ssh` (plan 0005) |
+| `step::manager` | `[steps.manager]`: a whole client engine inside the engine container, driving several hosts over real SSH — every `ManagerOptions` timing a field of the table, and a fault applied from inside the step because a manager cannot outlive the process that made it. | `end-to-end-ssh` (plan 0005) |
 | `step::pane` | `[steps.pane]`: a pane driven inside the host container, with its screen reproduction checked through the oracle. | `fidelity-suite` (plan 0002) |
 | `step::probe` | `[steps.probe]`: a real host probed, and every field of the answer held to what the scenario said it would be. | `host-probe` (plan 0005) |
 | `step::run` | The `run` step: a shell command in the container that names it. | `scenario-driver` (plan 0001) |

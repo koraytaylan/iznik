@@ -317,6 +317,29 @@ pub fn parse(text: &str) -> Result<Scenario, ScenarioError> {
 /// How many milliseconds a second is, for the duration assertion.
 const MILLISECONDS_PER_SECOND: u64 = 1000;
 
+/// How much of what a step said is carried into a failure.
+///
+/// Two screens and the sentence between them: a reassembly that differs says
+/// so by showing both, and a report that cut one of them off would send
+/// whoever reads it back to run the scenario again.
+const SAID_LIMIT: usize = 5000;
+
+/// What a step said, standard error first, capped.
+fn said(stderr: &str, stdout: &str) -> String {
+    let held = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    if held.is_empty() {
+        return "nothing".to_owned();
+    }
+    match held.char_indices().nth(SAID_LIMIT) {
+        Some((at, _character)) => format!("{}…", held.get(..at).unwrap_or(held)),
+        None => held.to_owned(),
+    }
+}
+
 /// Whether a record satisfies every assertion of an expectation; the first
 /// that fails is the error.
 ///
@@ -329,9 +352,13 @@ pub fn evaluate(expect: &Expect, record: &Record) -> Result<(), String> {
     if let Some(exit) = expect.exit
         && record.exit != Some(exit)
     {
+        // With what it said: a step that failed has already written down why,
+        // and a report that gives only the number sends whoever reads it back
+        // to run the whole scenario again to find out.
         return Err(format!(
-            "expected exit {exit}, the record has {:?}",
-            record.exit
+            "expected exit {exit}, the record has {:?} and said: {}",
+            record.exit,
+            said(&record.stderr, &record.stdout)
         ));
     }
     check_stream(

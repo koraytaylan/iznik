@@ -16,7 +16,7 @@ built against the C ABI contract that plan 0006 publishes.
 
 ## Status
 
-Four plans have landed. **0001**, the foundations and the regression harness:
+Five plans have landed. **0001**, the foundations and the regression harness:
 the rule-gated workspace, the golden-pinned wire primitives, the headless VT
 oracle, the pseudoterminal harness, and the two-container Podman suite whose
 scenarios are parallel nextest tests and whose claims registry gates every
@@ -29,10 +29,14 @@ credit-windowed pump that carries every subscribed pane over one link.
 reached through `iznik-server --stdio` over real SSH, with
 [committed numbers](docs/notes/baseline.md) and reproducible static artifacts.
 
-The two that remain — the SSH bootstrap and the client API the macOS
-application links — are designed and not yet built. The design is
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the work is six executable plans under
-[`docs/plans/`](docs/plans/STATUS.md), run by
+**0005**, the SSH bootstrap and the multi-host client: hosts reached over the
+user's own `ssh`, bootstrapped from a machine that had nothing, held several at
+once behind a client-side model with optimistic commands, and carried through
+link drops without losing a pane's identity or its bytes.
+
+The one that remains — the client API the macOS application links — is designed
+and not yet built. The design is [`ARCHITECTURE.md`](ARCHITECTURE.md); the work
+is six executable plans under [`docs/plans/`](docs/plans/STATUS.md), run by
 [Makina](https://github.com/koraytaylan/makina).
 
 ## Layout
@@ -83,6 +87,37 @@ panes, and startup to a socket that answers — is measured on a described
 machine in [`docs/notes/baseline.md`](docs/notes/baseline.md), and asserted
 against ceilings by `cargo nextest run --package iznik-server --test
 regression_baseline --run-ignored all`.
+
+## What iznik puts on a host
+
+A tool that installs binaries on other people's machines says so up front.
+Connecting to a host that has never seen iznik puts exactly this on it, and
+nothing else:
+
+| Where | What |
+|---|---|
+| `<prefix>/bin/iznik-server` | The server, one static binary, verified by its `SHA-256` before it is renamed into place. |
+| `<prefix>/terminfo` | The `xterm-ghostty` entry, compiled there by the host's own `tic`. Skipped where the host has no `tic`; its panes are then told `xterm-256color`. |
+| `<runtime>/server.sock` | The daemon's socket. |
+| `<runtime>/server.lock` | The lock that keeps one daemon per user, holding its process id. |
+| `<runtime>/server.log` | What the daemon has to say. |
+
+The prefix is the first of `$XDG_DATA_HOME/iznik`, `$HOME/.local/share/iznik`
+and the runtime directory that the host says this user both owns and may
+write; nothing is created to find out. The runtime directory is
+`$XDG_RUNTIME_DIR/iznik`, or `$TMPDIR/iznik-<user_id>` where there is no
+`XDG_RUNTIME_DIR`.
+
+The daemon outlives the SSH session that started it — that is the point of it
+— and exits on its own once it has held no panes and no clients for ten
+minutes. Connecting again to a host that already has the version this build
+carries uploads nothing at all.
+
+Taking it off removes the binary, the terminfo, the runtime directory and the
+prefix itself where iznik made it. A prefix iznik was lent rather than made —
+`XDG_RUNTIME_DIR` is one of the candidates — keeps everything that was not
+iznik's. The client engine does it through `HostManager::uninstall`; the
+`iznik uninstall <host>` command that wraps it lands with plan 0006.
 
 ## Distribution
 

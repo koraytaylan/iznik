@@ -1,0 +1,65 @@
+name = "two-hosts-from-nothing"
+claims = ["end-to-end-bootstraps-two-hosts-from-nothing"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 2
+files = []
+
+# The product's first end-to-end run: a machine with nothing on it, two hosts
+# with nothing on them, and one client engine that puts a server on each,
+# connects to both, and types into a pane on each.
+[[steps]]
+id = "both-hosts-from-nothing"
+container = "engine"
+timeout_seconds = 100
+
+[steps.manager]
+patience_milliseconds = 40000
+pong_deadline_milliseconds = 2000
+ping_interval_milliseconds = 200
+backoff_initial_milliseconds = 200
+backoff_maximum_milliseconds = 2000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "add_host", alias = "host1" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+  { kind = "create_session", alias = "host0", name = "work" },
+  { kind = "create_session", alias = "host1", name = "build" },
+  { kind = "await_delta", alias = "host0", generation = 1 },
+  { kind = "await_delta", alias = "host1", generation = 1 },
+  { kind = "subscribe", alias = "host0", pane = 1 },
+  { kind = "subscribe", alias = "host1", pane = 1 },
+  # The pane as it stands before anything is typed: what the capture that
+  # follows is added to, and what a client that had just attached would draw.
+  { kind = "screen_to", alias = "host0", pane = 1, path = "/tmp/end-first-screen.bin" },
+  { kind = "screen_to", alias = "host1", pane = 1, path = "/tmp/end-second-screen.bin" },
+  { kind = "input", alias = "host0", pane = 1, text = "echo first-$((6*7))\n" },
+  { kind = "input", alias = "host1", pane = 1, text = "echo second-$((6*7))\n" },
+  { kind = "await_bytes", alias = "host0", pane = 1, contains = "first-42" },
+  { kind = "await_bytes", alias = "host1", pane = 1, contains = "second-42" },
+  { kind = "capture_to", alias = "host0", pane = 1, path = "/tmp/end-first.bin" },
+  { kind = "capture_to", alias = "host1", pane = 1, path = "/tmp/end-second.bin" },
+  { kind = "expect_reassembly", alias = "host0", pane = 1, pieces = ["/tmp/end-first-screen.bin", "/tmp/end-first.bin"] },
+  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-second-screen.bin", "/tmp/end-second.bin"] },
+]
+
+# And both hosts really have a server, put there by the client and nothing else.
+[[steps]]
+id = "and-both-hosts-hold-a-server"
+container = "engine"
+run = "for host in host0 host1; do ssh -o BatchMode=yes $host 'test -x $HOME/.local/share/iznik/bin/iznik-server && $HOME/.local/share/iznik/bin/iznik-server --version' || exit 1; done"
+timeout_seconds = 40
+
+[[expect]]
+step = "both-hosts-from-nothing"
+exit = 0
+stdout_contains = "20 actions"
+
+[[expect]]
+step = "and-both-hosts-hold-a-server"
+exit = 0
+stdout_matches = "iznik-server [0-9.]+ protocol [0-9]+"

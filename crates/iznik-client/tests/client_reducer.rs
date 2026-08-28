@@ -49,6 +49,12 @@ const ARRIVED: usize = 512;
 /// The pane these cases subscribe to.
 const PANE: PaneId = PaneId(1);
 
+/// The width a screen is sent at.
+const COLUMNS: u16 = 80;
+
+/// Its height.
+const ROWS: u16 = 24;
+
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
 
@@ -245,8 +251,8 @@ fn client_reducer_follows_a_pane_from_its_channel_to_its_screen() {
             &ToClient::Screen {
                 pane: PANE,
                 sequence: FROM,
-                columns: 80,
-                rows: 24,
+                columns: COLUMNS,
+                rows: ROWS,
                 bytes: Vec::new(),
             },
         );
@@ -255,6 +261,9 @@ fn client_reducer_follows_a_pane_from_its_channel_to_its_screen() {
             vec![Effect::Screen {
                 pane: PANE,
                 sequence: FROM,
+                columns: COLUMNS,
+                rows: ROWS,
+                bytes: Vec::new(),
             }],
             "a screen is passed on with the byte it is exact at"
         );

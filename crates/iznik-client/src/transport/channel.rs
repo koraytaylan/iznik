@@ -88,8 +88,14 @@ pub struct ChannelOptions {
     pub ping_interval: Duration,
     /// How long silence may last before the link is dead.
     pub pong_deadline: Duration,
-    /// How long opening may take.
+    /// How long getting a link may take.
     pub open_deadline: Duration,
+    /// How long the server has to greet once there is one.
+    ///
+    /// Its own, rather than whatever the opening did not spend: a dial that
+    /// took most of its deadline would otherwise leave a healthy but slow
+    /// server no time at all, and be reported as one that said nothing.
+    pub greeting_deadline: Duration,
 }
 
 impl Default for ChannelOptions {
@@ -98,6 +104,7 @@ impl Default for ChannelOptions {
             ping_interval: PING_INTERVAL,
             pong_deadline: PONG_DEADLINE,
             open_deadline: OPEN_DEADLINE,
+            greeting_deadline: GREETING_DEADLINE,
         }
     }
 }
@@ -356,9 +363,7 @@ impl RemoteChannel {
         options: ChannelOptions,
     ) -> Result<RemoteChannel, ChannelError> {
         let host = transport.alias();
-        let expires = Instant::now()
-            .checked_add(options.open_deadline)
-            .unwrap_or_else(Instant::now);
+        let waited = options.greeting_deadline;
         // The two halves are timed apart, because they fail for two different
         // reasons and a caller is told which. A link that never came up is a
         // path, a network or an `ssh` that could not start; a link that came
@@ -373,11 +378,10 @@ impl RemoteChannel {
                     waited: options.open_deadline,
                 })
             })?;
-        let left = expires.saturating_duration_since(Instant::now());
         let greeting = RemoteChannel::shake_hands(link, options, host.clone(), child, complaints);
-        tokio::time::timeout(left, greeting)
+        tokio::time::timeout(waited, greeting)
             .await
-            .unwrap_or_else(|_elapsed| Err(ChannelError::Silent { host, waited: left }))
+            .unwrap_or_else(|_elapsed| Err(ChannelError::Silent { host, waited }))
     }
 
     /// Gets a stream to the server, however this transport reaches one.

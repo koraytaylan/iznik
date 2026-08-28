@@ -100,8 +100,18 @@ pub struct PendingCommand {
 /// One host, as this client sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostView {
-    /// The host's own model, as the server last said it stands.
+    /// What this client shows: the settled model with everything still in
+    /// flight applied on top of it.
     pub model: HostModel,
+    /// The host's own model, as the host last said it stands.
+    ///
+    /// Kept beside the shown one rather than derived from the commands in
+    /// flight, because the host answers a command *before* it announces the
+    /// change: between those two frames there is nothing in flight and no
+    /// pending entry to hold what the model was, and a delta applied to a
+    /// model that already showed its own effect is a delta that cannot be
+    /// applied at all.
+    pub settled: HostModel,
     /// The panes this client subscribes to, by pane.
     pub subscriptions: BTreeMap<PaneId, Subscription>,
     /// The pane this client is showing, when it is showing one.
@@ -132,6 +142,7 @@ impl HostView {
     #[must_use]
     pub fn of(model: HostModel) -> HostView {
         HostView {
+            settled: model.clone(),
             model,
             subscriptions: BTreeMap::new(),
             focus: None,
@@ -241,6 +252,16 @@ impl HostView {
             .filter(|held| held.submitted_at < moment)
             .map(|held| held.id)
             .collect()
+    }
+
+    /// Puts what the host has said where this client shows it, and gives back
+    /// the model to apply what is still in flight to.
+    ///
+    /// The caller applies the pending effects afterwards; this is the half
+    /// that cannot be done without touching both.
+    pub fn settle(&mut self, held: HostModel) {
+        self.settled = held;
+        self.model = self.settled.clone();
     }
 
     /// Whether the model it holds is one the server could have sent.

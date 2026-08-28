@@ -1,0 +1,78 @@
+name = "upgrade-policy"
+claims = ["end-to-end-holds-the-upgrade-policy"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 2
+files = []
+
+# The daemon is the sessions, so it is never replaced quietly. With a pane open
+# on a host whose server looks older, an upgrade is refused and says how many
+# panes it would have ended; asked again with force, it goes through and the
+# host is left running what this build carries.
+[[steps]]
+id = "connect-and-open-a-pane"
+container = "engine"
+timeout_seconds = 90
+
+[steps.manager]
+patience_milliseconds = 40000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "create_session", alias = "host0", name = "work" },
+  { kind = "await_delta", alias = "host0", generation = 1 },
+  { kind = "subscribe", alias = "host0", pane = 1 },
+  { kind = "input", alias = "host0", pane = 1, text = "echo held-$((6*7))\n" },
+  { kind = "await_bytes", alias = "host0", pane = 1, contains = "held-42" },
+]
+
+# A version no build of this carries, in front of the real binary.
+[[steps]]
+id = "make-it-look-older"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server 0.0.1 protocol 1\\\\n\"; exit 0; fi\\nexec /home/iznik/.local/share/iznik/bin/iznik-server.real \"$@\"\\n' > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+[[steps]]
+id = "refused-then-forced"
+container = "engine"
+timeout_seconds = 90
+
+[steps.manager]
+patience_milliseconds = 40000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "upgrade", alias = "host0", force = false, refused = "pane(s)" },
+  { kind = "upgrade", alias = "host0", force = true },
+  { kind = "add_host", alias = "host0" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+]
+
+[[steps]]
+id = "and-the-shim-is-gone"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'head -c 4 $HOME/.local/share/iznik/bin/iznik-server | od -An -c | tr -s \" \"'"
+timeout_seconds = 30
+
+[[expect]]
+step = "connect-and-open-a-pane"
+exit = 0
+
+[[expect]]
+step = "make-it-look-older"
+exit = 0
+stdout_contains = "iznik-server 0.0.1 protocol 1"
+
+[[expect]]
+step = "refused-then-forced"
+exit = 0
+stdout_contains = "6 actions"
+
+[[expect]]
+step = "and-the-shim-is-gone"
+exit = 0
+stdout_contains = "177 E L F"

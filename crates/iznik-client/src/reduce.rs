@@ -20,7 +20,7 @@ use iznik_protocol::message::{ErrorCode, MarkKind, ToClient};
 use iznik_protocol::model::decode_host_model;
 use iznik_protocol::reconcile::{ReconcileError, apply};
 
-use crate::commands::{replay, settled};
+use crate::commands::replay;
 use crate::host::identity::HostId;
 use crate::model::{ClientModel, HostView};
 
@@ -43,6 +43,12 @@ pub enum Effect {
         pane: PaneId,
         /// The byte the screen is exact at.
         sequence: Sequence,
+        /// Its width in cells.
+        columns: u16,
+        /// Its height in cells.
+        rows: u16,
+        /// The bytes that reproduce it.
+        bytes: Vec<u8>,
     },
     /// Something a person, or the layer above, is told.
     Notify(Notification),
@@ -133,13 +139,22 @@ pub fn reduce(model: &mut ClientModel, host: &HostId, message: &ToClient) -> Vec
             let _dropped = view.unsubscribe(*pane);
             vec![Effect::ReleaseChannel { channel: *channel }]
         }
-        ToClient::Screen { pane, sequence, .. } => {
+        ToClient::Screen {
+            pane,
+            sequence,
+            columns,
+            rows,
+            bytes,
+        } => {
             if let Some(held) = view.subscription_mut(*pane) {
                 held.resume_at(*sequence);
             }
             vec![Effect::Screen {
                 pane: *pane,
                 sequence: *sequence,
+                columns: *columns,
+                rows: *rows,
+                bytes: bytes.clone(),
             }]
         }
         ToClient::CommandResult {
@@ -219,7 +234,7 @@ fn replace(
             // replaced by it — and what is still in flight goes back on top,
             // because a snapshot is what the host has said and not what this
             // client has asked for.
-            view.model = replaced;
+            view.settle(replaced);
             replay(view);
         }
         None => {
@@ -244,10 +259,10 @@ fn reconcile(
     // showing: a change already applied optimistically would be refused as one
     // the model cannot take, and a snapshot would be asked for after every
     // close that worked.
-    let mut standing = settled(view);
+    let mut standing = view.settled.clone();
     match apply(&mut standing, generation, &delta) {
         Ok(()) => {
-            view.model = standing;
+            view.settle(standing);
             replay(view);
             Vec::new()
         }

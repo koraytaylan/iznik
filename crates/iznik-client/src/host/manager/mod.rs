@@ -28,7 +28,7 @@ use crate::bootstrap::launch::{
 };
 use crate::bootstrap::upload::{ArtifactSet, UploadError};
 use crate::bootstrap::{uninstall, upgrade};
-use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit};
+use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit, withdraw};
 use crate::host::identity::HostId;
 use crate::host::manager::task::{give_up, serve};
 use crate::host::state::{BackoffPolicy, HostState};
@@ -45,6 +45,13 @@ use crate::transport::{ClientRuntimePaths, Transport};
 pub const EXPIRE_INTERVAL: Duration = Duration::from_millis(500);
 
 mod task;
+
+/// How long a caller waits for a host's task to end before it is cut short.
+///
+/// A task part way through a bootstrap does not look at its orders until the
+/// bootstrap finishes, and that may be minutes; the thread that asked for the
+/// host to go is a person's, and it does not wait minutes.
+pub const STOP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The odd constant a host's jitter seed is mixed with, so that two hosts
 /// added in one breath do not retry together.
@@ -117,6 +124,12 @@ pub enum ManagerEvent {
         pane: PaneId,
         /// The byte the screen is exact at.
         sequence: Sequence,
+        /// Its width in cells.
+        columns: u16,
+        /// Its height in cells.
+        rows: u16,
+        /// The bytes that reproduce it, which is what a caller redraws from.
+        bytes: Vec<u8>,
     },
     /// A subscribed pane's output, as it arrives.
     ///
@@ -165,6 +178,15 @@ pub enum ManagerError {
         /// The host.
         host: HostId,
     },
+    /// A lock the manager holds was left broken by a panic under it.
+    ///
+    /// Its own error rather than an empty answer: a manager that reported no
+    /// hosts, or an unknown one, would have whoever is watching believe
+    /// something about the world instead of about this program.
+    Poisoned {
+        /// Which lock.
+        what: &'static str,
+    },
     /// The host refused an upgrade, or could not be reached for one.
     Upgrade {
         /// What went wrong.
@@ -184,6 +206,9 @@ impl core::fmt::Display for ManagerError {
                 write!(formatter, "the manager's runtime: {source}")
             }
             ManagerError::Artifacts { source } => write!(formatter, "{source}"),
+            ManagerError::Poisoned { what } => {
+                write!(formatter, "the manager's {what} was left broken by a panic")
+            }
             ManagerError::UnknownHost { host } => write!(formatter, "{host} is not held"),
             ManagerError::Gone { host } => write!(formatter, "{host} is no longer running"),
             ManagerError::Upgrade { source } => write!(formatter, "{source}"),
@@ -241,6 +266,11 @@ pub(crate) enum Order {
         id: CommandId,
         /// What was asked.
         command: SessionCommand,
+    },
+    /// Ask for a pane's screen as it stands.
+    Screen {
+        /// The pane.
+        pane: PaneId,
     },
     /// Drop the channel and open another at once.
     Reconnect,
@@ -352,6 +382,10 @@ impl HostManager {
     }
 
     /// What the client knows, as it stands.
+    ///
+    /// A lock left broken by a panic answers with an empty model, because this
+    /// has nothing to say it with; every method that can returns
+    /// [`ManagerError::Poisoned`] instead.
     #[must_use]
     pub fn model(&self) -> ClientModel {
         self.shared
@@ -368,6 +402,12 @@ impl HostManager {
     /// host somebody named.
     pub fn add_host(&self, alias: &str) {
         let host = HostId(alias.to_owned());
+        // Twice is once. Starting a second task for one alias would leave the
+        // first detached and still running: two channels, two `ssh` children,
+        // and a model written by whichever of them finished last.
+        if self.hosts.lock().is_ok_and(|held| held.contains_key(&host)) {
+            return;
+        }
         if let Ok(mut model) = self.shared.model.lock()
             && model.host(&host).is_none()
         {
@@ -472,6 +512,19 @@ impl HostManager {
         self.order(alias, Order::Focus { pane })
     }
 
+    /// Asks a host for a pane's screen as it stands.
+    ///
+    /// What comes back is a [`ManagerEvent::Screen`]: a client that has
+    /// nothing drawn, or that has lost track of what it drew, redraws from it
+    /// rather than from the beginning of the pane's life.
+    ///
+    /// # Errors
+    ///
+    /// As [`HostManager::reconnect`].
+    pub fn screen(&self, alias: &str, pane: PaneId) -> Result<(), ManagerError> {
+        self.order(alias, Order::Screen { pane })
+    }
+
     /// Returns flow-control credit for a pane's channel.
     ///
     /// # Errors
@@ -509,13 +562,23 @@ impl HostManager {
             .shared
             .with(&host, |view| submit(view, asked, Instant::now()))
             .ok_or_else(|| ManagerError::UnknownHost { host: host.clone() })?;
-        self.order(
+        // The host was there a moment ago, under the lock; if it is not now,
+        // the order below says so.
+        if let Err(refused) = self.order(
             alias,
             Order::Command {
                 id: submission.id,
                 command,
             },
-        )?;
+        ) {
+            // It showed, and then it could not be sent. Leaving it up would
+            // have the screen in a state nobody was ever asked about, and the
+            // sweeper would give up on a command that never left.
+            let _undone = self
+                .shared
+                .with(&host, |view| withdraw(view, submission.id));
+            return Err(refused);
+        }
         Ok(submission)
     }
 
@@ -565,13 +628,15 @@ impl HostManager {
             &bootstrapping(&options),
             options.bootstrap_deadline,
         ));
+        let _gone = removed.map_err(|source| ManagerError::Uninstall { source })?;
+        // Only once it really came off. A host still holding a server and no
+        // longer held here is one nobody can take it off, and the only way
+        // back is to add it again.
         if let Ok(mut model) = self.shared.model.lock() {
-            let _gone = model.remove(&host);
+            let _dropped = model.remove(&host);
         }
         self.shared.publish(&ManagerEvent::Removed { host });
-        removed
-            .map(|_gone| ())
-            .map_err(|source| ManagerError::Uninstall { source })
+        Ok(())
     }
 
     /// The transport that reaches a host.
@@ -589,17 +654,30 @@ impl HostManager {
     ///
     /// [`ManagerError::UnknownHost`].
     fn take(&self, host: &HostId) -> Result<HostHandle, ManagerError> {
-        self.hosts
+        let mut held = self
+            .hosts
             .lock()
-            .ok()
-            .and_then(|mut held| held.remove(host))
+            .map_err(|_broken| ManagerError::Poisoned { what: "hosts" })?;
+        held.remove(host)
             .ok_or_else(|| ManagerError::UnknownHost { host: host.clone() })
     }
 
-    /// Ends a host's task and waits for it to go.
+    /// Ends a host's task and waits for it to go, for a while.
+    ///
+    /// A task that is part way through a bootstrap will not look at its orders
+    /// until the bootstrap is over, so the wait is bounded and what will not
+    /// stop is cut short: the alternative is a person's thread held for as
+    /// long as a slow link takes.
     fn end(&self, handle: HostHandle) {
         let _asked = handle.orders.send(Order::Stop);
-        let _ended = self.runtime.block_on(handle.task);
+        let task = handle.task;
+        let cutting = task.abort_handle();
+        let ended = self
+            .runtime
+            .block_on(async { tokio::time::timeout(STOP_DEADLINE, task).await });
+        if ended.is_err() {
+            cutting.abort();
+        }
     }
 
     /// Sends one order to a host's task.
@@ -610,11 +688,13 @@ impl HostManager {
     /// [`ManagerError::Gone`] when its task has ended.
     fn order(&self, alias: &str, order: Order) -> Result<(), ManagerError> {
         let host = HostId(alias.to_owned());
-        let sent = self
+        let held = self
             .hosts
             .lock()
-            .ok()
-            .and_then(|held| held.get(&host).map(|handle| handle.orders.send(order)))
+            .map_err(|_broken| ManagerError::Poisoned { what: "hosts" })?;
+        let sent = held
+            .get(&host)
+            .map(|handle| handle.orders.send(order))
             .ok_or_else(|| ManagerError::UnknownHost { host: host.clone() })?;
         sent.map_err(|_gone| ManagerError::Gone { host })
     }
@@ -628,7 +708,7 @@ impl Drop for HostManager {
             .map(|mut held| std::mem::take(&mut *held).into_values().collect())
             .unwrap_or_default();
         for handle in taken {
-            let _asked = handle.orders.send(Order::Stop);
+            self.end(handle);
         }
         self.sweeper.abort();
     }

@@ -1,0 +1,60 @@
+name = "pane-identity-survives"
+claims = ["end-to-end-carries-a-pane-across-a-drop"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 2
+files = []
+
+# The mechanism the whole plan is for: a link goes, the manager reconnects with
+# backoff, and every subscribed pane is resumed at the byte the model held. The
+# pieces captured either side of the drop are fed into one emulator and the
+# pane's own screen into another; if they show the same thing, nothing was lost
+# and nothing was repeated.
+[[steps]]
+id = "a-pane-carries-on-across-a-drop"
+container = "engine"
+timeout_seconds = 130
+
+[steps.manager]
+patience_milliseconds = 50000
+pong_deadline_milliseconds = 800
+ping_interval_milliseconds = 100
+backoff_initial_milliseconds = 200
+backoff_maximum_milliseconds = 1000
+actions = [
+  { kind = "add_host", alias = "host1" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+  { kind = "create_session", alias = "host1", name = "work" },
+  { kind = "await_delta", alias = "host1", generation = 1 },
+  { kind = "subscribe", alias = "host1", pane = 1 },
+  { kind = "focus", alias = "host1", pane = 1 },
+  # The pane as it stands before anything is typed, which is what everything
+  # captured after it is added to.
+  { kind = "screen_to", alias = "host1", pane = 1, path = "/tmp/end-start.bin" },
+  { kind = "input", alias = "host1", pane = 1, text = "echo before-$((6*7))\n" },
+  { kind = "await_bytes", alias = "host1", pane = 1, contains = "before-42" },
+
+  # The pane is the same pane wherever it is named.
+  { kind = "expect_address", alias = "host1", pane = 1, address = "iznik://host1/1" },
+  { kind = "pause_host", alias = "host1" },
+  { kind = "await_state", alias = "host1", is = "reconnecting" },
+  { kind = "resume_host", alias = "host1" },
+  { kind = "await_state", alias = "host1", is = "connected" },
+  # And it is still the same pane, still carrying, from where it left off.
+  { kind = "expect_address", alias = "host1", pane = 1, address = "iznik://host1/1" },
+  { kind = "input", alias = "host1", pane = 1, text = "echo after-$((6*7))\n" },
+  { kind = "await_bytes", alias = "host1", pane = 1, contains = "after-42" },
+  # Everything the pane said, either side of the drop, in one file: if it
+  # reassembles to what the host itself shows, nothing was lost across the
+  # reconnection and nothing was delivered twice.
+  { kind = "capture_to", alias = "host1", pane = 1, path = "/tmp/end-across.bin" },
+  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-start.bin", "/tmp/end-across.bin"] },
+]
+
+[[expect]]
+step = "a-pane-carries-on-across-a-drop"
+exit = 0
+stdout_contains = "19 actions"
