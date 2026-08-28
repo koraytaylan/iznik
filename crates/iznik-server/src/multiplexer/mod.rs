@@ -196,6 +196,9 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         // still in the receiver, and sending it after would look to the
         // client's reconciler like a generation it has already applied.
         self.told_through = Some(generation);
+        // Whatever was owed is paid: this is the whole model, and sending it
+        // again on the next pump would be sending it twice.
+        self.owed_snapshot = false;
         Ok(())
     }
 }
@@ -572,7 +575,6 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         if self.owed_snapshot {
             self.waiting.clear();
             self.tell_the_model().await?;
-            self.owed_snapshot = false;
             sent = true;
         }
         Ok(sent)

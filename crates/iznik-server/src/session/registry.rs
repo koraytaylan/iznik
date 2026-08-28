@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use iznik_protocol::command::Placement;
 use iznik_protocol::delta::{Delta, ExitStatus as EndedAs, RemovalReason};
@@ -37,6 +38,11 @@ use crate::terminal::mirror::MirrorThread;
 /// instead — what its reconciler would have asked for anyway. A memory bound,
 /// not a correctness one.
 pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
+
+/// How long between the looks a pane's ending is given, so the exit status the
+/// reaper records a moment after the stream closes is reported rather than
+/// waited for for ever.
+const ENDING_LOOK_INTERVAL: Duration = Duration::from_millis(10);
 
 /// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;
@@ -259,6 +265,14 @@ impl Registry {
         let _stirring = tokio::spawn(async move {
             while changes.changed().await.is_ok() {
                 signal.notify_one();
+            }
+            // The watch closes when the pane's child ends, and the reaper
+            // records how it ended a moment later. Without these last looks
+            // the one change that matters most — a pane going — would be the
+            // one nobody was ever told to ingest.
+            for _look in 0..EXIT_STATUS_ATTEMPTS {
+                signal.notify_one();
+                tokio::time::sleep(ENDING_LOOK_INTERVAL).await;
             }
         });
         self.watching.insert(

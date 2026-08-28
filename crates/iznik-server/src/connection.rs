@@ -81,6 +81,12 @@ pub enum ConnectionError {
     },
     /// The multiplexer refused something that is not the client's to fix.
     Multiplexer(MultiplexerError),
+    /// One of the connection's own tasks ended abruptly, which is a bug here
+    /// and not a client's doing.
+    Task {
+        /// What the runtime said.
+        detail: String,
+    },
 }
 
 impl core::fmt::Display for ConnectionError {
@@ -98,6 +104,9 @@ impl core::fmt::Display for ConnectionError {
                 write!(formatter, "compression could not be engaged: {detail}")
             }
             ConnectionError::Multiplexer(source) => write!(formatter, "the multiplexer: {source}"),
+            ConnectionError::Task { detail } => {
+                write!(formatter, "a connection task ended abruptly: {detail}")
+            }
         }
     }
 }
@@ -196,11 +205,17 @@ struct Greeted<Stream: AsyncRead + AsyncWrite + Unpin> {
 /// [`ConnectionError::ProtocolVersion`] when the versions differ — after the
 /// client has been told, so it can say why it failed — and
 /// [`ConnectionError::Link`] when the link fails.
-async fn greet<Stream>(mut link: FramedLink<Stream>) -> Result<Greeted<Stream>, ConnectionError>
+async fn greet<Stream>(
+    mut link: FramedLink<Stream>,
+) -> Result<Option<Greeted<Stream>>, ConnectionError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
 {
-    let first = link.next_frame().await?.ok_or(LinkError::Closed)?;
+    // A peer that connects and closes without speaking has said nothing wrong:
+    // that is what a readiness probe looks like from here.
+    let Some(first) = link.next_frame().await? else {
+        return Ok(None);
+    };
     if first.channel != CHANNEL_CONTROL {
         return Err(ConnectionError::Garbage {
             detail: format!("the first frame arrived on channel {}", first.channel),
@@ -235,7 +250,7 @@ where
     };
     link.send(CHANNEL_CONTROL, &encode_to_client(&reply)?)
         .await?;
-    Ok(Greeted { link, capabilities })
+    Ok(Some(Greeted { link, capabilities }))
 }
 
 /// Whether a capability set offers streaming compression.
@@ -262,7 +277,9 @@ pub async fn serve<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let greeted = greet(FramedLink::new(stream)).await?;
+    let Some(greeted) = greet(FramedLink::new(stream)).await? else {
+        return Ok(());
+    };
     if offers_zstd(greeted.capabilities) && offers_zstd(CAPABILITIES) {
         let (plain, leftover) = greeted.link.into_parts();
         let link = compressed(plain, leftover).map_err(|error| ConnectionError::Compression {
@@ -300,7 +317,15 @@ where
     // subscription with it — and that ends the writer.
     let mut ended = Ok(());
     loop {
-        let frame = match reader.next_frame().await {
+        let read = tokio::select! {
+            biased;
+            // The dispatcher gave up: nothing will answer this client again,
+            // so the connection ends rather than holding a socket open on a
+            // reply that is never coming.
+            () = requests.closed() => break,
+            read = reader.next_frame() => read,
+        };
+        let frame = match read {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(refused) => {
@@ -331,7 +356,9 @@ where
     ended?;
     match (pumped, wrote) {
         (Ok(pumped), Ok(wrote)) => pumped.and(wrote),
-        _joined => Ok(()),
+        (Err(joined), _) | (_, Err(joined)) => Err(ConnectionError::Task {
+            detail: joined.to_string(),
+        }),
     }
 }
 
@@ -456,6 +483,11 @@ async fn touch_pane(
     let Err(refusal) = acted else {
         return Ok(());
     };
+    // Five codes exist and none of them says "this pane's terminal failed",
+    // so the nearest is used and the message carries the truth. What exists is
+    // the model's to say: a client learns a pane has gone from `PaneRemoved`,
+    // never from a refusal's code.
+    tracing::warn!(pane = pane.0, %refusal, "a pane refused a request");
     let code = match &refusal {
         PaneError::Input(InputError::Backlog { .. }) => ErrorCode::InputBacklog,
         _other => ErrorCode::UnknownPane,
@@ -531,6 +563,10 @@ async fn answer(
             command_id,
             payload,
         } => {
+            // A `Command` whose payload will not decode is a frame that did
+            // not decode: the handshake refuses a version this server does not
+            // speak, so a peer at this version sending a command this codec
+            // cannot read is speaking garbage, not making a request.
             let command = decode_session_command(&payload)?;
             let outcome = commands::apply(&mut *registry.write().await, command).await;
             let answered = encode_command_outcome(&outcome)?;

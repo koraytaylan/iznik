@@ -1,0 +1,42 @@
+name = "survives-the-ssh-session"
+claims = ["daemon-survives-the-ssh-session"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "start-over-ssh"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --daemon --idle-shutdown-seconds 120 && printf started"
+timeout_seconds = 20
+
+[[steps]]
+id = "socket-outlives-the-session"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'test -S \"${XDG_RUNTIME_DIR:-/tmp/iznik-$(id -u)}/iznik/server.sock\" || test -S \"/tmp/iznik-$(id -u)/server.sock\"' && printf listening"
+timeout_seconds = 20
+
+[[steps]]
+id = "the-process-is-still-there"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'pgrep -u \"$(id -u)\" -f -- \"--foreground\" >/dev/null' && printf running"
+timeout_seconds = 20
+
+[[expect]]
+step = "start-over-ssh"
+exit = 0
+stdout_equals = "started"
+
+[[expect]]
+step = "socket-outlives-the-session"
+exit = 0
+stdout_equals = "listening"
+
+[[expect]]
+step = "the-process-is-still-there"
+exit = 0
+stdout_equals = "running"

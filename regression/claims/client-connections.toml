@@ -59,3 +59,15 @@ id = "connection-has-one-writer"
 statement = "A thousand keystroke-sized round trips interleaved with a pane's flood produce a stream in which every frame decodes and every answer is present, because one task owns the link's writer and two never race for it."
 test = "iznik-server::client_connections::one_writer_keeps_the_stream_well_formed"
 because = "the interleaving is between two producers inside one connection, and a network would only reorder what it already carries in order"
+
+[[claim]]
+id = "connection-a-dispatcher-that-gives-up-closes-it"
+statement = "A connection whose dispatcher has given up — on a second `Hello`, or on any refusal that is not the client's to fix — is closed rather than left holding a socket the client waits on for an answer that is never coming."
+test = "iznik-server::client_connections::a_dispatcher_that_gives_up_closes_the_connection"
+because = "what is proven is that one task ending ends the others, which is inside one process by construction"
+
+[[claim]]
+id = "connection-a-pane-that-exits-reaches-every-client"
+statement = "A pane whose shell exits is taken out of the model every client holds, with nothing but the registry's own signal driving the ingestion — no daemon, no accept loop and no timer."
+test = "iznik-server::client_connections::a_pane_that_exits_reaches_every_client"
+because = "the point is that nothing outside the connection drives it, which a daemon in a container would hide"

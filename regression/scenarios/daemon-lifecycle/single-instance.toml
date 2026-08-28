@@ -1,0 +1,31 @@
+name = "single-instance"
+claims = ["daemon-single-instance"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "start-the-first"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --daemon --idle-shutdown-seconds 120 && printf started"
+timeout_seconds = 20
+
+[[steps]]
+id = "the-second-names-the-first"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --foreground 2>&1 1>/dev/null; printf '%s' \"$(ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --foreground 2>&1 1>/dev/null)\""
+timeout_seconds = 25
+
+[[expect]]
+step = "start-the-first"
+exit = 0
+stdout_equals = "started"
+
+[[expect]]
+step = "the-second-names-the-first"
+exit = 0
+stdout_contains = "holds the lock"

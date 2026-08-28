@@ -693,3 +693,63 @@ async fn one_writer_keeps_the_stream_well_formed() {
     .await
     .unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a connection whose dispatcher has given up leaves the client waiting
+/// on a socket nobody will close.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dispatcher_that_gives_up_closes_the_connection() {
+    bounded(async {
+        let mut host = Host::new()?;
+        let mut client = host.attach(Capabilities::from_bits(0)).await?;
+        // A second `Hello` is a well-formed frame from a peer out of step: the
+        // dispatcher refuses it and stops. Nothing will answer this client
+        // again, so it must be told rather than left holding a socket.
+        let started = std::time::Instant::now();
+        let answered = client.hello(Capabilities::from_bits(0)).await;
+        assert!(
+            matches!(answered, Err(ClientError::Closed | ClientError::Link(_))),
+            "the connection closes: {answered:?}"
+        );
+        assert!(
+            started.elapsed() < PROMPT,
+            "and closes at once, not at a deadline: {:?}",
+            started.elapsed()
+        );
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a pane whose shell exits is not taken out of the model that every
+/// client holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pane_that_exits_reaches_every_client() {
+    bounded(async {
+        let mut host = Host::new()?;
+        let mut client = host.attach(Capabilities::from_bits(0)).await?;
+        let _made = make_session(&mut client).await?;
+        let pane = *host
+            .panes()
+            .await
+            .first()
+            .ok_or("the session held no pane")?;
+
+        // Nothing but the registry's own signal drives ingestion here: there
+        // is no daemon and no accept loop, which is exactly the case in which
+        // a pane's going was once a delta nobody was told to look for.
+        client.input(pane, b"exit\n".to_vec()).await?;
+        let gone = delta_of(&mut client, |delta| {
+            matches!(delta, Delta::PaneRemoved { .. })
+        })
+        .await?;
+        assert!(gone.0 > 0, "the pane's going is a change like any other");
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}

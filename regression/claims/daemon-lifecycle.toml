@@ -1,0 +1,81 @@
+# The daemon is the sessions, so what is claimed here is what makes it
+# indifferent to whether anyone is attached. Three of these are scenarios,
+# because what they prove is a property of a process on a host reached over
+# real SSH and a container is exactly what they add; the rest are `test`
+# proofs, because a lock, a mode and a rotated file are the same on any Linux
+# and a container would only slow them down.
+
+[[claim]]
+id = "daemon-runtime-directory-is-where-the-host-allows"
+statement = "The runtime directory is under `XDG_RUNTIME_DIR` when the host sets it and under `TMPDIR` in a directory of this user's own when it does not, and it is created readable by nobody but its owner."
+test = "iznik-server::daemon_lifecycle::the_runtime_directory_is_where_the_host_allows"
+because = "a locked-down host is a directory that is not there, which this reproduces by naming one; the kernel's answer is the same in a container"
+
+[[claim]]
+id = "daemon-only-one-holds-the-lock"
+statement = "A second daemon against the same paths refuses to run and names the process that holds them, because single instance is enforced by an exclusive lock and never by whether a socket file exists."
+test = "iznik-server::daemon_lifecycle::only_one_daemon_holds_the_lock"
+because = "`flock` is the kernel's, and two processes on one machine are two processes"
+
+[[claim]]
+id = "daemon-socket-hygiene"
+statement = "A socket file a killed daemon left behind is replaced and the daemon starts; a socket whose daemon is alive is left alone and the second start fails."
+test = "iznik-server::daemon_lifecycle::a_stale_socket_is_replaced_and_a_live_one_is_respected"
+because = "the difference between the two is the lock, which is the kernel's answer here as anywhere"
+
+[[claim]]
+id = "daemon-outlives-its-shell"
+statement = "A daemon started from a shell on a pseudoterminal has a session of its own, and is still listening after that shell and its terminal have gone — which is the property the whole resume story rests on."
+test = "iznik-server::daemon_lifecycle::a_daemon_outlives_the_shell_that_started_it"
+because = "a real pseudoterminal is opened and closed here; the same property over real SSH is `survives-the-ssh-session`"
+
+[[claim]]
+id = "daemon-idle-shutdown"
+statement = "A daemon with no panes and no clients exits within its idle interval, taking its socket and its lock with it."
+test = "iznik-server::daemon_lifecycle::an_idle_daemon_goes"
+because = "the interval is a parameter and the exit is this process's own; the same over real SSH is the `idle-shutdown` scenario"
+
+[[claim]]
+id = "daemon-measures-idleness-from-what-it-last-held"
+statement = "A daemon busy for longer than its idle interval does not go the moment its last client leaves: idleness is measured from when it last had something, not from when it started."
+test = "iznik-server::daemon_lifecycle::a_busy_daemon_measures_idleness_from_when_it_last_had_something"
+because = "the failure is a timer rearmed by unrelated work, which is visible only where the work is"
+
+[[claim]]
+id = "daemon-log-is-capped"
+statement = "A log written past its cap is rotated and the two files together are under twice the cap, so a remote daemon nobody is watching cannot fill a disk."
+test = "iznik-server::daemon_lifecycle::the_log_is_capped_and_rotated"
+because = "the rotation is a rename and an open; a container adds nothing to either"
+
+[[claim]]
+id = "daemon-version-is-one-line"
+statement = "`--version` prints exactly one line, carrying the crate's version and the protocol's and nothing else, because the bootstrap parses it."
+test = "iznik-server::daemon_lifecycle::version_prints_one_line"
+because = "it is one process's standard output, which a container would not change"
+
+[[claim]]
+id = "daemon-stop-ends-one-and-says-when-there-is-none"
+statement = "`--stop` ends a running daemon within its cap and its socket goes with it; against no daemon it fails and says so rather than pretending."
+test = "iznik-server::daemon_lifecycle::stop_ends_a_daemon_and_says_when_there_is_none"
+because = "a signal and a socket are the operating system's, and the same on any Linux"
+
+[[claim]]
+id = "daemon-stop-believes-the-lock"
+statement = "`--stop` decides by the lock and not by the file: a lock file a killed daemon left behind, naming a process that is no longer there, is answered with `no iznik-server is running` and nothing is signalled — the recorded id is a courtesy, and a system that has recycled it would otherwise be handed a stranger's process."
+test = "iznik-server::daemon_lifecycle::stop_believes_the_lock_and_not_the_file"
+because = "it is a file with a number in it and a lock nobody holds, which is the same everywhere"
+
+[[claim]]
+id = "daemon-survives-the-ssh-session"
+statement = "A daemon started by `ssh host0 /iznik/bin/iznik-server --daemon` is still listening and still a process after that SSH session has ended."
+scenario = "survives-the-ssh-session"
+
+[[claim]]
+id = "daemon-single-instance"
+statement = "A second start over real SSH against a host that already runs one reports the process that holds the lock."
+scenario = "single-instance"
+
+[[claim]]
+id = "daemon-idle-shutdown-over-ssh"
+statement = "Started over real SSH with a one-second idle interval, the daemon exits on its own and its socket goes, with nobody attached to notice."
+scenario = "idle-shutdown"
