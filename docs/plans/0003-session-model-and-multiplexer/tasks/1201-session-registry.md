@@ -13,7 +13,7 @@ touches:
   - "crates/iznik-server/tests/session_registry.rs"
   - "regression/claims/session-registry.toml"
   - "policy/lexicon/session-registry.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Session Registry
