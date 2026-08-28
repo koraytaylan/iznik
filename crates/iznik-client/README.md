@@ -18,10 +18,10 @@ The client engine the macOS application links: the SSH transport over the system
 | `host::state` | The per-host connection state machine with exponential backoff and jitter, as a pure table of transitions. | `host-identity-and-state` (plan 0005) |
 | `model` | The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs. | `client-model` (plan 0005) |
 | `reduce` | The reducer that applies every server message to the client model, routed by host first, yielding the effects the engine acts on. | `client-reducer` (plan 0005) |
-| `transport` | The transport under a host: the system `ssh` with a control master, or a local daemon socket for the `unix:` alias. | `ssh-control-master` (plan 0005) |
+| `transport` | The transport under a host: the client's own runtime paths, the `unix:` alias it interprets itself, and the choice between a local socket and the system `ssh`. | `ssh-control-master` (plan 0005) |
 | `transport::channel` | One channel per host carrying every pane: the `Hello` exchange, compression, liveness pings, and the deadline that surfaces a dead link at once. | `remote-channel` (plan 0005) |
-| `transport::ssh` | Spawning the system `ssh` with `ControlMaster`, and classifying its failures into messages a person can act on. | `ssh-control-master` (plan 0005) |
+| `transport::ssh` | Spawning the system `ssh` with the four options iznik owns and none a person could have configured, and classifying its failures into messages they can act on. | `ssh-control-master` (plan 0005) |
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace.
+Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. `ssh_control_master.rs` starts no process: what it holds are the argument vector, the alias forms, the control paths and the classification of `ssh`'s own words, captured under `tests/fixtures/ssh/`. Everything that touches a network is a scenario, run from the engine container.

@@ -1,0 +1,23 @@
+name = "connects"
+claims = ["transport-connects-over-the-user-configuration"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "a-command-runs-on-the-host"
+container = "engine"
+timeout_seconds = 30
+
+[steps.transport]
+alias = "host0"
+command = "echo reached"
+expect = "ok"
+
+[[expect]]
+step = "a-command-runs-on-the-host"
+exit = 0

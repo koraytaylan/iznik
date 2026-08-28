@@ -1,0 +1,37 @@
+name = "unreachable"
+claims = ["transport-says-nothing-answered"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# An address on the fixture's own network that nothing is listening on, given
+# its own alias so `ssh` reaches for it exactly as it would a real host.
+[[steps]]
+id = "name-an-address-nothing-answers-on"
+container = "engine"
+run = "printf 'Host nowhere\\n  HostName 203.0.113.1\\n  User iznik\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking no\\n' >> ~/.ssh/config && printf named"
+timeout_seconds = 20
+
+[[steps]]
+id = "it-is-unreachable-inside-its-timeout"
+container = "engine"
+timeout_seconds = 20
+
+[steps.transport]
+alias = "nowhere"
+command = "true"
+connect_timeout_seconds = 2
+expect = "unreachable"
+
+[[expect]]
+step = "name-an-address-nothing-answers-on"
+exit = 0
+stdout_equals = "named"
+
+[[expect]]
+step = "it-is-unreachable-inside-its-timeout"
+exit = 0

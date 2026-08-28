@@ -1,0 +1,25 @@
+name = "reuses-the-master"
+claims = ["transport-keeps-a-master-and-lets-it-go"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+[[steps]]
+id = "the-second-command-rides-the-first"
+container = "engine"
+timeout_seconds = 40
+
+[steps.transport]
+alias = "host0"
+command = "true"
+expect = "ok"
+check_master = true
+close_master = true
+
+[[expect]]
+step = "the-second-command-rides-the-first"
+exit = 0

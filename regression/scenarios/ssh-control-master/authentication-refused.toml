@@ -1,0 +1,37 @@
+name = "authentication-refused"
+claims = ["transport-says-the-credentials-were-refused"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A second key the host has never been told about, and an alias that offers
+# only that one: the host answers, and refuses.
+[[steps]]
+id = "offer-a-key-the-host-does-not-know"
+container = "engine"
+run = "ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/stranger && printf 'Host stranger\\n  HostName host0\\n  User iznik\\n  IdentityFile ~/.ssh/stranger\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking accept-new\\n' >> ~/.ssh/config && printf made"
+timeout_seconds = 30
+
+[[steps]]
+id = "it-is-authentication-and-not-the-link"
+container = "engine"
+timeout_seconds = 20
+
+[steps.transport]
+alias = "stranger"
+command = "true"
+connect_timeout_seconds = 5
+expect = "authentication-failed"
+
+[[expect]]
+step = "offer-a-key-the-host-does-not-know"
+exit = 0
+stdout_equals = "made"
+
+[[expect]]
+step = "it-is-authentication-and-not-the-link"
+exit = 0

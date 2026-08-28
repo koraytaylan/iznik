@@ -13,7 +13,7 @@ touches:
   - "regression/claims/ssh-control-master.toml"
   - "regression/scenarios/ssh-control-master/**"
   - "policy/lexicon/ssh-control-master.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # SSH Control Master

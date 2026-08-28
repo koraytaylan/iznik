@@ -1,0 +1,40 @@
+name = "host-key-changed"
+claims = ["transport-says-a-host-key-changed"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# One connection so the host's key is remembered, then that entry rewritten to
+# a key it will never present: what a person sees when a host is rebuilt, and
+# what they would see if something were answering in its place. The entry is
+# written under the `HostName` the configuration resolves to, because that is
+# what `ssh` looks a key up by — not the alias.
+[[steps]]
+id = "remember-the-host-then-forge-the-memory"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 true && name=$(ssh -G host0 | awk '/^hostname /{print $2}') && ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/other && printf '%s %s\\n' \"$name\" \"$(cut -d' ' -f1,2 ~/.ssh/other.pub)\" > ~/.ssh/known_hosts && printf '%s' \"forged $name\""
+timeout_seconds = 30
+
+[[steps]]
+id = "it-is-the-host-key-and-says-so"
+container = "engine"
+timeout_seconds = 20
+
+[steps.transport]
+alias = "host0"
+command = "true"
+connect_timeout_seconds = 5
+expect = "host-key-changed"
+
+[[expect]]
+step = "remember-the-host-then-forge-the-memory"
+exit = 0
+stdout_matches = "^forged .+$"
+
+[[expect]]
+step = "it-is-the-host-key-and-says-so"
+exit = 0
