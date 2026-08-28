@@ -37,6 +37,12 @@ pub const UPLOAD_DEADLINE: Duration = Duration::from_mins(5);
 /// The name the server is installed under.
 pub const BINARY_NAME: &str = "iznik-server";
 
+/// The directory under a prefix that the server goes in.
+pub const BINARY_DIRECTORY: &str = "bin";
+
+/// The directory under a prefix that the compiled terminfo goes in.
+pub const TERMINFO_DIRECTORY: &str = "terminfo";
+
 /// How many bytes a `SHA-256` is.
 pub const DIGEST_BYTES: usize = 32;
 
@@ -44,7 +50,7 @@ pub const DIGEST_BYTES: usize = 32;
 const DIGEST_REFUSED: i32 = 65;
 
 /// The variable the client passes the prefix in.
-const PREFIX_VARIABLE: &str = "IZNIK_PREFIX";
+pub(crate) const PREFIX_VARIABLE: &str = "IZNIK_PREFIX";
 
 /// The variable it passes the digest in.
 const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
@@ -57,22 +63,47 @@ const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 ///
 /// The name it will finally install under appears once, on the rename: a
 /// dropped link leaves a `.partial-` file and never something a later run
-/// would execute.
+/// would execute. The partial's own name comes from `mktemp`, and only
+/// partials older than an hour are swept, because a second bootstrap of the
+/// same host is a thing that happens and deleting the file it is filling would
+/// break it rather than tidy up after it.
+///
+/// Two things it refuses. A prefix or a `bin` that is a symbolic link, or that
+/// this user does not own: the probe chose the prefix from what it saw, and
+/// what it saw can change before this runs — a world-writable parent lets
+/// somebody else make the directory first and own what lands in it. And a host
+/// with no way to take a SHA-256: the digest check exists to be the one thing
+/// standing between a truncated download and an executable, so it fails closed
+/// rather than comparing against a value nothing computed.
+///
+/// It flushes the file rather than the machine. `sync` writes out every
+/// mounted filesystem, which on a busy host is a long wait for work that has
+/// nothing to do with iznik.
 pub const REMOTE_UPLOAD_SCRIPT: &str = r#"
 set -e
-into="$IZNIK_PREFIX/bin"
+prefix="$IZNIK_PREFIX"
+into="$prefix/bin"
 mkdir -p "$into"
-rm -f "$into"/.partial-*
-partial="$into/.partial-$$"
+for held in "$prefix" "$into"
+do
+  if [ -L "$held" ] || [ ! -d "$held" ] || [ ! -O "$held" ]
+  then printf 'not a directory owned by this user: %s\n' "$held" >&2; exit 1; fi
+done
+find "$into" -name '.partial-*' -type f -mmin +60 -exec rm -f {} + 2>/dev/null || true
+partial=$(mktemp "$into/.partial-XXXXXX")
+trap 'rm -f "$partial"' EXIT
 cat > "$partial"
 if command -v sha256sum >/dev/null 2>&1
 then got=$(sha256sum < "$partial" | cut -d' ' -f1)
-else got=$(shasum -a 256 < "$partial" | cut -d' ' -f1); fi
-if [ "$got" != "$IZNIK_DIGEST" ]
-then rm -f "$partial"; printf 'digest %s\n' "$got" >&2; exit 65; fi
+elif command -v shasum >/dev/null 2>&1
+then got=$(shasum -a 256 < "$partial" | cut -d' ' -f1)
+else printf 'no sha256 program on this host\n' >&2; exit 1; fi
+if [ -z "$got" ] || [ "$got" != "$IZNIK_DIGEST" ]
+then printf 'digest %s\n' "$got" >&2; exit 65; fi
 chmod 755 "$partial"
-sync
+dd if=/dev/null of="$partial" conv=notrunc,fsync 2>/dev/null || true
 mv "$partial" "$into/iznik-server"
+trap - EXIT
 printf 'installed %s\n' "$into/iznik-server"
 "#;
 
@@ -80,14 +111,19 @@ printf 'installed %s\n' "$into/iznik-server"
 ///
 /// Separate from the upload because a host without `tic` gets the server and
 /// no terminfo rather than nothing at all.
+///
+/// Its source file is named by `mktemp` and removed however this ends, for the
+/// same two reasons the artifact's partial is: two bootstraps of one host must
+/// not write one file, and a `tic` that fails must not leave its input behind
+/// in a prefix for ever.
 pub const REMOTE_TERMINFO_SCRIPT: &str = r#"
 set -e
 into="$IZNIK_PREFIX/terminfo"
 mkdir -p "$into"
-source="$IZNIK_PREFIX/.terminfo-source"
-cat > "$source"
-tic -x -o "$into" "$source"
-rm -f "$source"
+entry=$(mktemp "$IZNIK_PREFIX/.terminfo-XXXXXX")
+trap 'rm -f "$entry"' EXIT
+cat > "$entry"
+tic -x -o "$into" "$entry"
 printf 'compiled %s\n' "$into"
 "#;
 
@@ -115,8 +151,14 @@ pub struct ArtifactSet {
 pub struct Installed {
     /// Where the server is.
     pub server: PathBuf,
-    /// Where the terminfo is, when there was a `tic` to compile it.
+    /// Where the terminfo is, when the host has one iznik put there.
     pub terminfo: Option<PathBuf>,
+    /// Why there is none, when there is none.
+    ///
+    /// Carried rather than logged: a pane on such a host is told
+    /// `xterm-256color` instead of what it really is, and whoever notices that
+    /// deserves to be able to ask why.
+    pub terminfo_refused: Option<String>,
 }
 
 /// Why an upload did not happen.
@@ -288,14 +330,15 @@ impl ArtifactSet {
 #[must_use]
 pub fn remote_command(script: &str, prefix: &Path, digest: &str) -> String {
     format!(
-        "{PREFIX_VARIABLE}={} {DIGEST_VARIABLE}={digest} sh -c {}",
+        "{PREFIX_VARIABLE}={} {DIGEST_VARIABLE}={} sh -c {}",
         quoted(&prefix.display().to_string()),
+        quoted(digest),
         quoted(script)
     )
 }
 
 /// One argument as a shell will read it back unchanged.
-fn quoted(held: &str) -> String {
+pub(crate) fn quoted(held: &str) -> String {
     format!("'{}'", held.replace('\'', r"'\''"))
 }
 
@@ -374,15 +417,18 @@ impl FeedsRemotely for Transport {
             if output.status.success() {
                 return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
             }
-            if output.status.code() == Some(DIGEST_REFUSED) {
+            // A digest refusal is the one exit that carries a digest, and it
+            // says so on its own line. Reading the last word of whatever came
+            // back would turn a `mv` that happened to fail with the same code
+            // — or a login shell writing to standard error — into "the host
+            // received <garbage>", which is worse than saying nothing.
+            if output.status.code() == Some(DIGEST_REFUSED)
+                && let Some(received) = reported_digest(&said)
+            {
                 return Err(UploadError::Digest {
                     host,
                     expected: String::new(),
-                    received: said
-                        .split_whitespace()
-                        .next_back()
-                        .unwrap_or_default()
-                        .to_owned(),
+                    received: received.to_owned(),
                 });
             }
             Err(UploadError::Refused {
@@ -409,36 +455,101 @@ pub async fn upload(
     probe: &HostProbe,
     deadline: Duration,
 ) -> Result<Installed, UploadError> {
-    let bytes = std::fs::read(&artifact.path).map_err(|source| UploadError::Artifacts {
-        directory: artifact.path.clone(),
-        detail: source.to_string(),
-    })?;
+    let bytes = tokio::fs::read(&artifact.path)
+        .await
+        .map_err(|source| UploadError::Artifacts {
+            directory: artifact.path.clone(),
+            detail: source.to_string(),
+        })?;
+    unchanged(artifact, &bytes)?;
     let expected = hexadecimal(&artifact.digest);
     let command = remote_command(REMOTE_UPLOAD_SCRIPT, &probe.prefix, &expected);
     let said = transport
         .feed(&command, &bytes, "uploading the server", deadline)
         .await
         .map_err(|error| name_the_digest(error, &expected))?;
-    let server =
-        installed_path(&said).unwrap_or_else(|| probe.prefix.join("bin").join(BINARY_NAME));
-    let terminfo = if probe.tic_available {
-        let compiling = remote_command(REMOTE_TERMINFO_SCRIPT, &probe.prefix, &expected);
-        transport
-            .feed(
-                &compiling,
-                XTERM_GHOSTTY_TERMINFO.as_bytes(),
-                "compiling the terminfo",
-                deadline,
-            )
-            .await?;
-        Some(probe.prefix.join("terminfo"))
-    } else {
-        // A host without `tic` gets the server and no terminfo; its panes are
-        // told `xterm-256color`, which is the nearest lie and better than a
-        // bootstrap that refuses to finish.
-        None
+    let server = installed_path(&said)
+        .unwrap_or_else(|| probe.prefix.join(BINARY_DIRECTORY).join(BINARY_NAME));
+    let (terminfo, terminfo_refused) = terminfo_for(transport, probe, &expected, deadline).await;
+    Ok(Installed {
+        server,
+        terminfo,
+        terminfo_refused,
+    })
+}
+
+/// Refuses an artifact whose bytes are not the ones its digest was taken over.
+///
+/// The digest is computed when the set is loaded and the bytes are read again
+/// here, so between the two the file may have been replaced. What the host is
+/// told to expect must be a digest of what it is about to be sent, or the
+/// check on the far end compares one file against another.
+///
+/// # Errors
+///
+/// [`UploadError::Artifacts`] naming both digests.
+fn unchanged(artifact: &Artifact, bytes: &[u8]) -> Result<(), UploadError> {
+    use sha2::Digest as _;
+    let read: [u8; DIGEST_BYTES] = sha2::Sha256::digest(bytes).into();
+    if read == artifact.digest {
+        return Ok(());
+    }
+    Err(UploadError::Artifacts {
+        directory: artifact.path.clone(),
+        detail: format!(
+            "changed since it was loaded: {} was read where {} was expected",
+            hexadecimal(&read),
+            hexadecimal(&artifact.digest)
+        ),
+    })
+}
+
+/// The terminfo the host ends up with, and why it is not this build's when it
+/// is not.
+///
+/// A `tic` that fails is not a bootstrap that fails. By the time this runs the
+/// server is on the host and works; what a missing terminfo costs is a pane
+/// told `xterm-256color` instead of what it really is, and that is a far
+/// smaller thing than a connection that refuses to finish. The one thing that
+/// saves such a host is an entry the probe already found, which is iznik's own
+/// from an earlier run: a host that cannot compile one today may still have
+/// one from a day it could.
+async fn terminfo_for(
+    transport: &impl FeedsRemotely,
+    probe: &HostProbe,
+    expected: &str,
+    deadline: Duration,
+) -> (Option<PathBuf>, Option<String>) {
+    let already = probe.prefix.join(TERMINFO_DIRECTORY);
+    let without = |reason: String| {
+        if probe.terminfo_installed {
+            (Some(already.clone()), None)
+        } else {
+            (None, Some(reason))
+        }
     };
-    Ok(Installed { server, terminfo })
+    if !probe.tic_available {
+        return without("the host has no `tic` to compile one with".to_owned());
+    }
+    let compiling = remote_command(REMOTE_TERMINFO_SCRIPT, &probe.prefix, expected);
+    match transport
+        .feed(
+            &compiling,
+            XTERM_GHOSTTY_TERMINFO.as_bytes(),
+            "compiling the terminfo",
+            deadline,
+        )
+        .await
+    {
+        Ok(_said) => (Some(already), None),
+        Err(refusal) => without(refusal.to_string()),
+    }
+}
+
+/// The digest a host said it computed, from the one line that says so.
+fn reported_digest(said: &str) -> Option<&str> {
+    said.lines()
+        .find_map(|line| line.trim().strip_prefix("digest "))
 }
 
 /// Puts the digest this client sent into a refusal that only knows what the

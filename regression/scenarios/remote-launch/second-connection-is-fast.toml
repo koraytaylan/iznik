@@ -1,0 +1,48 @@
+name = "second-connection-is-fast"
+claims = ["launch-reconnects-inside-the-fast-budget"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The first connection to a host uploads a binary and is as slow as the link.
+# Every one after it is this, and this is the one a person waits through. The
+# budget is enforced rather than measured: the second bootstrap is run under
+# two seconds and fails if it runs past, so the claim cannot rot into a number
+# somebody reads and shrugs at.
+[[steps]]
+id = "install-it-once"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "install"
+
+[[steps]]
+id = "and-connect-again-inside-the-fast-budget"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+budget_milliseconds = 2000
+
+[steps.bootstrap.expect]
+decision = "up to date"
+live_panes = 0
+
+[[expect]]
+step = "install-it-once"
+exit = 0
+stdout_contains = "install"
+
+[[expect]]
+step = "and-connect-again-inside-the-fast-budget"
+exit = 0
+stdout_contains = "up to date"

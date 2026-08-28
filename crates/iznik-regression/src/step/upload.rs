@@ -8,8 +8,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use iznik_client::bootstrap::launch::triple_of;
 use iznik_client::bootstrap::probe::{PROBE_DEADLINE, probe};
-use iznik_client::bootstrap::upload::{ArtifactSet, UPLOAD_DEADLINE, upload};
+use iznik_client::bootstrap::upload::{ArtifactSet, REMOTE_UPLOAD_SCRIPT, UPLOAD_DEADLINE, upload};
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, Transport};
 use serde::Deserialize;
@@ -40,27 +41,27 @@ struct Expect {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Body {
-    /// The host alias, as `~/.ssh/config` names it.
-    alias: String,
+    /// The host alias, as `~/.ssh/config` names it. Wanted for an upload, and
+    /// not for an `emit`.
+    #[serde(default)]
+    alias: Option<String>,
     /// Where the artifacts are on the machine running this.
     #[serde(default)]
     artifacts: Option<PathBuf>,
+    /// Where to write [`REMOTE_UPLOAD_SCRIPT`] in the container this step runs
+    /// in, instead of uploading anything.
+    ///
+    /// What a host does with that script — refuse a payload whose digest is
+    /// not the one it was told, leave nothing at the final name when the run
+    /// that was writing it dies — is a property of the host's own shell, and
+    /// the only way to ask it there is to put the script itself there. A
+    /// scenario that retyped the script would establish its claims about the
+    /// copy, and go on passing after the real one changed.
+    #[serde(default)]
+    emit: Option<PathBuf>,
     /// What the upload must have left.
     #[serde(default)]
     expect: Expect,
-}
-
-/// The triple a probe's answer names.
-fn triple_of(found: &iznik_client::bootstrap::probe::HostProbe) -> String {
-    use iznik_client::bootstrap::probe::{Architecture, OperatingSystem};
-    let machine = match found.architecture {
-        Architecture::X86_64 => "x86_64",
-        Architecture::Aarch64 => "aarch64",
-    };
-    match found.operating_system {
-        OperatingSystem::Linux => format!("{machine}-unknown-linux-musl"),
-        OperatingSystem::Darwin => format!("{machine}-apple-darwin"),
-    }
 }
 
 /// Runs the step and says what it established.
@@ -70,8 +71,16 @@ fn triple_of(found: &iznik_client::bootstrap::probe::HostProbe) -> String {
 /// The step's own words when the upload or what it left is not what was asked
 /// for.
 async fn drive(body: &Body) -> Result<String, String> {
+    if let Some(into) = &body.emit {
+        std::fs::write(into, REMOTE_UPLOAD_SCRIPT).map_err(|error| error.to_string())?;
+        return Ok(format!("emitted {}", into.display()));
+    }
+    let alias = body
+        .alias
+        .as_deref()
+        .ok_or_else(|| "an `upload` step needs an `alias` to upload to".to_owned())?;
     let paths = ClientRuntimePaths::resolve().map_err(|error| error.to_string())?;
-    let transport = Transport::for_alias(&body.alias, &paths, SshOptions::default());
+    let transport = Transport::for_alias(alias, &paths, SshOptions::default());
     let found = probe(&transport, PROBE_DEADLINE)
         .await
         .map_err(|error| error.to_string())?;
@@ -109,11 +118,15 @@ async fn drive(body: &Body) -> Result<String, String> {
                 ));
             }
             Ok(format!(
-                "installed {}{}",
+                "installed {}{}{}",
                 installed.server.display(),
                 installed
                     .terminfo
                     .map(|held| format!(", terminfo {}", held.display()))
+                    .unwrap_or_default(),
+                installed
+                    .terminfo_refused
+                    .map(|why| format!(", no terminfo: {why}"))
                     .unwrap_or_default()
             ))
         }

@@ -1,0 +1,40 @@
+name = "first-connection"
+claims = ["launch-installs-and-connects-to-a-fresh-host"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A host as its image leaves it: nothing installed, no daemon. One bootstrap
+# must be enough — probe, upload, launch, hand shake, snapshot — and afterwards
+# the daemon is running, because the launch is what starts it.
+[[steps]]
+id = "the-first-bootstrap-installs-and-connects"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "install"
+live_panes = 0
+
+[[steps]]
+id = "and-the-daemon-is-running-afterwards"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'd=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/iznik}; d=${d:-/tmp/iznik-$(id -u)}; test -S $d/server.sock && test -x $HOME/.local/share/iznik/bin/iznik-server && printf running'"
+timeout_seconds = 30
+
+[[expect]]
+step = "the-first-bootstrap-installs-and-connects"
+exit = 0
+stdout_contains = "install"
+
+[[expect]]
+step = "and-the-daemon-is-running-afterwards"
+exit = 0
+stdout_contains = "running"

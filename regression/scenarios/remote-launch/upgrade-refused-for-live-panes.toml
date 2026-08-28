@@ -1,0 +1,88 @@
+name = "upgrade-refused-for-live-panes"
+claims = ["launch-refuses-an-upgrade-that-would-end-panes"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A scenario cannot build an older server, so it installs an older-looking one:
+# a shell shim that answers `--version` with a version no build of this carries
+# and `exec`s the real binary for everything else. The probe reads the shim,
+# the decision is an upgrade — and the daemon behind it is the real one,
+# holding a real pane.
+[[steps]]
+id = "install-the-real-server"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "make-it-look-older"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server 0.0.1 protocol 1\\\\n\"; exit 0; fi\\nexec /home/iznik/.local/share/iznik/bin/iznik-server.real \"$@\"\\n' > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+[[steps]]
+id = "open-a-pane-on-it"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+actions = [
+  { kind = "create_session", name = "work" },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo held-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "held-42" },
+]
+
+# The daemon *is* the sessions. Replacing it would end that pane, so it is
+# refused — with the count, so whoever asked can decide.
+[[steps]]
+id = "an-upgrade-is-refused"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+force = false
+
+[steps.bootstrap.expect]
+live_panes = 1
+
+[[steps]]
+id = "and-the-old-server-is-still-there-with-its-pane"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 '$HOME/.local/share/iznik/bin/iznik-server --version; d=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/iznik}; d=${d:-/tmp/iznik-$(id -u)}; test -S $d/server.sock && printf running'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-the-real-server"
+exit = 0
+
+[[expect]]
+step = "make-it-look-older"
+exit = 0
+stdout_contains = "iznik-server 0.0.1 protocol 1"
+
+[[expect]]
+step = "open-a-pane-on-it"
+exit = 0
+stdout_contains = "4 actions"
+
+[[expect]]
+step = "an-upgrade-is-refused"
+exit = 0
+stdout_contains = "holds 1 pane"
+
+[[expect]]
+step = "and-the-old-server-is-still-there-with-its-pane"
+exit = 0
+stdout_matches = "iznik-server 0.0.1 protocol 1\\s*running"

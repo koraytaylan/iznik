@@ -1,7 +1,9 @@
+ago
 artifact
 artifacts
 chunk
 compiling
+did
 digest
 distribution
 dropped
@@ -18,9 +20,11 @@ installs
 into
 loaded
 loads
+located
 mid
 named
 partial
+partials
 payload
 prefix
 quoted
@@ -33,9 +37,14 @@ scratch
 sends
 server
 stage
+sweeps
 terminfo
+tools
 triple
 triples
 twice
+unchanged
 upload
 verifies
+way
+will

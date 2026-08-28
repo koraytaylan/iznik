@@ -42,9 +42,12 @@ fn answer(
     candidates: &[(&str, &str, &str)],
 ) -> String {
     let mut said = format!("system {system}\nmachine {machine}\ntic {tic}\nterminfo {terminfo}\n");
-    for (path, writable, server) in candidates {
-        // Writing to a `String` cannot fail.
-        let _written = writeln!(said, "candidate {path} {writable} {server}");
+    for (at, (path, writable, server)) in candidates.iter().enumerate() {
+        // Three labelled lines each, as the script prints them: writing to a
+        // `String` cannot fail.
+        for (name, value) in [("writable", writable), ("version", server), ("path", path)] {
+            let _written = writeln!(said, "candidate {at} {name} {value}");
+        }
     }
     said
 }
@@ -236,6 +239,86 @@ fn host_probe_takes_the_first_prefix_the_host_allows() {
             "the first the host allows, of {answers:?}"
         );
     }
+}
+
+/// # Panics
+///
+/// When the server reported is one at a prefix that was not chosen.
+#[test]
+fn host_probe_reads_the_server_at_the_prefix_it_chose() {
+    // A host with an old server under a prefix it may not write, and an empty
+    // one it may: what the bootstrap will run is `<chosen>/bin/iznik-server`,
+    // so the server at the other place says nothing about the decision.
+    let elsewhere = answer(
+        "Linux",
+        "x86_64",
+        "yes",
+        "no",
+        &three(
+            ["no", "yes", "no"],
+            Some((0, "iznik-server 0.0.1 protocol 1")),
+        ),
+    );
+    let read = parse(&elsewhere).expect("a probe");
+    assert_eq!(
+        read.prefix.as_path(),
+        Path::new(PLACES[1]),
+        "the prefix is the first one the host allows"
+    );
+    assert_eq!(
+        read.server, None,
+        "and the server is the one there, which is none: {:?}",
+        read.server
+    );
+    // And when the server *is* at the chosen prefix, it is read.
+    let same = answer(
+        "Linux",
+        "x86_64",
+        "yes",
+        "no",
+        &three(
+            ["no", "yes", "no"],
+            Some((1, "iznik-server 0.0.1 protocol 1")),
+        ),
+    );
+    let there = parse(&same).expect("a probe");
+    assert_eq!(
+        there.server,
+        Some(InstalledServer {
+            crate_version: "0.0.1".to_owned(),
+            protocol_version: 1,
+        }),
+        "the server at the prefix that was chosen"
+    );
+}
+
+/// # Panics
+///
+/// When a prefix with a space in it is not read whole.
+#[test]
+fn host_probe_reads_a_prefix_with_a_space_in_it() {
+    // `XDG_DATA_HOME` is whatever somebody set it to, and a candidate whose
+    // path was cut at its first space would read as unwritable — sending a
+    // person to look at permission bits for a bug in this parser.
+    let spaced = "/mnt/My Data/iznik";
+    let said = answer(
+        "Linux",
+        "x86_64",
+        "yes",
+        "no",
+        &[(spaced, "yes", "iznik-server 0.1.0 protocol 1")],
+    );
+    let read = parse(&said).expect("a probe");
+    assert_eq!(
+        read.prefix.as_path(),
+        Path::new(spaced),
+        "the whole path, spaces and all"
+    );
+    assert_eq!(
+        read.server.map(|held| held.crate_version),
+        Some("0.1.0".to_owned()),
+        "and the server there is still read"
+    );
 }
 
 /// # Panics

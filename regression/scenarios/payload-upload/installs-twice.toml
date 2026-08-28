@@ -33,7 +33,7 @@ server = "/home/iznik/.local/share/iznik/bin/iznik-server"
 [[steps]]
 id = "and-there-is-one-of-it"
 container = "engine"
-run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; ls $p | tr \"\\n\" \" \"'"
+run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; ls -A $p | tr \"\\n\" \" \"'"
 timeout_seconds = 30
 
 [[expect]]

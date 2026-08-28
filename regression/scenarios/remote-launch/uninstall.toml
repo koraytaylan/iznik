@@ -1,0 +1,49 @@
+name = "uninstall"
+claims = ["launch-takes-itself-off-again"]
+driver = "engine"
+budget_seconds = 150
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A tool that installs binaries on other people's machines owes them a clean
+# way to take them off. After this the host must look as it did: no server, no
+# runtime directory, no process.
+[[steps]]
+id = "install-and-connect"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "take-it-off-again"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+action = "uninstall"
+
+[[steps]]
+id = "and-nothing-is-left"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'd=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/iznik}; d=${d:-/tmp/iznik-$(id -u)}; test -e $HOME/.local/share/iznik && printf prefix; test -e $d && printf runtime; grep -lx iznik-server /proc/[0-9]*/comm >/dev/null 2>&1 && printf process; printf clean'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-and-connect"
+exit = 0
+
+[[expect]]
+step = "take-it-off-again"
+exit = 0
+stdout_contains = "removed /home/iznik/.local/share/iznik"
+
+[[expect]]
+step = "and-nothing-is-left"
+exit = 0
+stdout_matches = "^clean$"

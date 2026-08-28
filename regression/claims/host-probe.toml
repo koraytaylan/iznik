@@ -61,3 +61,15 @@ scenario = "fresh-host"
 id = "probe-falls-back-when-a-home-is-unwritable"
 statement = "A host whose home its own user cannot write is still probed, and says the runtime directory is where iznik would put things instead."
 scenario = "unwritable-home"
+
+[[claim]]
+id = "probe-reads-the-server-at-the-prefix-it-chose"
+statement = "The server reported is the one at the prefix that was chosen, and not one at a candidate the host will not let this user write — because what a bootstrap runs is `<chosen>/bin/iznik-server`, and a version read from somewhere else would put an upgrade decision on a binary nothing is going to execute."
+test = "iznik-client::host_probe::host_probe_reads_the_server_at_the_prefix_it_chose"
+because = "which candidate a version came from is a property of the answer and of the function that reads it"
+
+[[claim]]
+id = "probe-reads-a-prefix-with-a-space-in-it"
+statement = "A candidate whose path contains a space is read whole, path and version both, rather than cut at the space into an unwritable stump — so a host whose `XDG_DATA_HOME` is `/mnt/My Data` is bootstrapped rather than refused with a reason that is not the reason."
+test = "iznik-client::host_probe::host_probe_reads_a_prefix_with_a_space_in_it"
+because = "it is a property of the line the script prints and the function that reads it"

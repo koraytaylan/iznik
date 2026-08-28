@@ -34,12 +34,12 @@ scenario = "installs"
 
 [[claim]]
 id = "upload-refuses-what-it-did-not-send"
-statement = "A payload whose digest is not the one the host was told is refused by the host's own check, which exits sixty-five and installs nothing — leaving neither a server nor a partial."
+statement = "On a real host, running the script this client sends — the constant itself, put there rather than retyped — a payload whose digest is not the one the host was told is refused by the host's own shell, which exits sixty-five and installs nothing: neither a server nor a partial."
 scenario = "verifies-the-digest"
 
 [[claim]]
 id = "upload-leaves-nothing-when-a-link-drops"
-statement = "An upload killed where it stands leaves nothing at the name the bootstrap will later run, and the upload that follows it succeeds and clears what the killed one left."
+statement = "The script this client sends, running on a real host and killed where it stands with half a payload written, leaves nothing at the name a bootstrap will run; the upload that follows installs beside what it left, and what runs at that name is the real server."
 scenario = "dropped-mid-upload"
 
 [[claim]]
@@ -49,5 +49,53 @@ scenario = "installs-terminfo"
 
 [[claim]]
 id = "upload-is-the-same-done-twice"
-statement = "Uploading onto a host that already has the same binary succeeds and leaves one file — which is the common case after the first time."
+statement = "Uploading onto a host that already has the same binary succeeds and leaves one file, counting the ones a plain `ls` would hide — which is the common case after the first time."
 scenario = "installs-twice"
+
+[[claim]]
+id = "upload-script-installs-what-it-verified"
+statement = "Run by a shell, the script installs the bytes whose digest it was told, byte for byte and executable, with no partial of its own left beside them."
+test = "iznik-client::upload_script::upload_script_installs_what_matches_its_digest"
+because = "the script is `sh` and a filesystem, and both are here; the container proves the same text against the host's own shell"
+
+[[claim]]
+id = "upload-script-refuses-a-digest-that-does-not-match"
+statement = "Given bytes whose digest is not the one it was told, it exits sixty-five, says on its standard error which digest it computed so the two can be compared, and leaves neither a server nor a partial."
+test = "iznik-client::upload_script::upload_script_refuses_what_it_did_not_send"
+because = "it is what `sh` does with the script, which is the same anywhere it runs"
+
+[[claim]]
+id = "upload-script-sweeps-only-a-stale-partial"
+statement = "It clears a partial from a link that dropped long ago and keeps one a second bootstrap of the same host is still filling — because deleting that one would break a run in progress rather than tidy up after a run that ended."
+test = "iznik-client::upload_script::upload_script_sweeps_only_a_partial_nothing_is_filling"
+because = "it is a property of the sweep and of a file's modification time"
+
+[[claim]]
+id = "upload-script-refuses-a-prefix-that-is-not-this-users"
+statement = "It refuses a prefix that is a symbolic link or that this user does not own, installing nothing through it — because the probe chose the prefix from what it saw, and under a directory anybody may write what it saw can be replaced before the upload runs."
+test = "iznik-client::upload_script::upload_script_refuses_a_prefix_that_is_not_this_user_own"
+because = "ownership and symbolic links are the same test on any POSIX host"
+
+[[claim]]
+id = "upload-script-fails-closed-without-a-digest-program"
+statement = "On a host with no way to take a `SHA-256` it refuses and says so, rather than comparing against a value nothing computed and installing what it never checked."
+test = "iznik-client::upload_script::upload_script_fails_closed_with_no_way_to_take_a_digest"
+because = "the case is built by narrowing what the script may find, which needs no host"
+
+[[claim]]
+id = "upload-installs-though-the-terminfo-will-not"
+statement = "A `tic` that fails does not undo an install that succeeded: the server is reported where it went, the terminfo as absent, and why it is absent is carried back rather than swallowed — because a pane told `xterm-256color` is a far smaller thing than a connection that refuses to finish."
+test = "iznik-client::payload_upload::payload_upload_installs_the_server_even_when_the_terminfo_will_not_compile"
+because = "what a refusing host does to the upload's answer is a property of the upload"
+
+[[claim]]
+id = "upload-keeps-a-terminfo-the-host-already-has"
+statement = "A host with no `tic` but with the entry already under its prefix is reported as having it, and one with neither is told why it has none."
+test = "iznik-client::payload_upload::payload_upload_keeps_a_terminfo_the_host_already_has"
+because = "it is the decision the upload makes from what the probe answered"
+
+[[claim]]
+id = "upload-refuses-an-artifact-that-changed"
+statement = "An artifact replaced between being loaded and being sent is refused naming both digests, because what the host is told to expect must be a digest of what it is about to receive."
+test = "iznik-client::payload_upload::payload_upload_refuses_an_artifact_that_changed_under_it"
+because = "the file is on this machine and the replacement is a write to it"

@@ -15,7 +15,7 @@ touches:
   - "regression/claims/remote-launch.toml"
   - "regression/scenarios/remote-launch/**"
   - "policy/lexicon/remote-launch.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Remote Launch

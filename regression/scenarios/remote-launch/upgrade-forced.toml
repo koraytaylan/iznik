@@ -1,0 +1,81 @@
+name = "upgrade-forced"
+claims = ["launch-replaces-a-server-when-it-is-asked-to"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The same older-looking shim, and the same pane — but this time the person
+# asking has said they mean it. The old daemon is stopped, the artifact
+# replaces the shim, and the version that answers afterwards is this build's.
+[[steps]]
+id = "install-the-real-server"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "make-it-look-older"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server 0.0.1 protocol 1\\\\n\"; exit 0; fi\\nexec /home/iznik/.local/share/iznik/bin/iznik-server.real \"$@\"\\n' > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+[[steps]]
+id = "open-a-pane-on-it"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+actions = [
+  { kind = "create_session", name = "work" },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo held-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "held-42" },
+]
+
+[[steps]]
+id = "a-forced-upgrade-replaces-it"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+force = true
+
+[[steps]]
+id = "and-the-version-that-answers-is-this-build"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 '$HOME/.local/share/iznik/bin/iznik-server --version'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-the-real-server"
+exit = 0
+
+[[expect]]
+step = "make-it-look-older"
+exit = 0
+stdout_contains = "iznik-server 0.0.1 protocol 1"
+
+[[expect]]
+step = "open-a-pane-on-it"
+exit = 0
+stdout_contains = "4 actions"
+
+[[expect]]
+step = "a-forced-upgrade-replaces-it"
+exit = 0
+stdout_contains = "upgraded"
+
+[[expect]]
+step = "and-the-version-that-answers-is-this-build"
+exit = 0
+stdout_matches = "iznik-server [0-9]+\\.[0-9]+\\.[0-9]+ protocol 1"

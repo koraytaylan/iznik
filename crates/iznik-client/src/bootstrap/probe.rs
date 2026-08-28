@@ -13,6 +13,7 @@
 
 use core::fmt::{self, Display, Formatter};
 use core::future::Future;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -82,13 +83,19 @@ if command -v infocmp >/dev/null 2>&1 && TERMINFO_DIRS="$data/iznik/terminfo:$ho
 then printf 'terminfo yes
 '; else printf 'terminfo no
 '; fi
+index=0
 for candidate in "$data/iznik" "$home/.local/share/iznik" "$runtime"
 do
   said=-
   if [ -x "$candidate/bin/iznik-server" ] && [ -O "$candidate/bin/iznik-server" ]
   then said=$("$candidate/bin/iznik-server" --version 2>/dev/null | head -n 1); fi
-  printf 'candidate %s %s %s
-' "$candidate" "$(writable "$candidate")" "$said"
+  printf 'candidate %s writable %s
+' "$index" "$(writable "$candidate")"
+  printf 'candidate %s version %s
+' "$index" "$said"
+  printf 'candidate %s path %s
+' "$index" "$candidate"
+  index=$((index + 1))
 done
 "#;
 
@@ -180,7 +187,7 @@ impl Display for ProbeError {
             }
             ProbeError::Unwritable { candidates } => write!(
                 formatter,
-                "none of these can be written by this user: {}",
+                "none of these is a directory this user both owns and can write: {}",
                 candidates
                     .iter()
                     .map(|held| held.display().to_string())
@@ -337,21 +344,60 @@ struct Candidate {
     server: Option<InstalledServer>,
 }
 
+/// A candidate as its lines arrive, before it is known to be complete.
+#[derive(Default)]
+struct Building {
+    /// Its `writable` line.
+    writable: Option<bool>,
+    /// Its `version` line.
+    version: Option<String>,
+    /// Its `path` line.
+    path: Option<PathBuf>,
+}
+
+/// One `candidate <n> <name> <value>` line, put where it belongs.
+fn read_field(held: &mut BTreeMap<usize, Building>, line: &str) {
+    let Some(rest) = field(line.trim_end_matches('\r'), "candidate") else {
+        return;
+    };
+    let Some((index, named)) = rest.split_once(FIELD_SEPARATOR) else {
+        return;
+    };
+    let Ok(index) = index.parse::<usize>() else {
+        return;
+    };
+    let Some((name, value)) = named.split_once(FIELD_SEPARATOR) else {
+        return;
+    };
+    let building = held.entry(index).or_default();
+    match name {
+        "writable" => building.writable = Some(value == YES),
+        "version" => building.version = Some(value.to_owned()),
+        "path" => building.path = Some(PathBuf::from(value)),
+        _other => {}
+    }
+}
+
 /// Every prefix the host was asked about, in the order it was asked.
+///
+/// A candidate is three labelled lines rather than one line of three fields,
+/// because both the value that varies most — a prefix — and the one beside it
+/// — a version line — may contain a space. With the value the whole rest of
+/// its own line, neither can eat the other: a host whose `XDG_DATA_HOME` is
+/// `/mnt/My Data` is read as it is, rather than as an unwritable `/mnt/My`.
 fn candidates(output: &str) -> Vec<Candidate> {
-    output
-        .lines()
-        .filter_map(|line| field(line.trim_end(), "candidate"))
-        .filter_map(|rest| {
-            let (path, answered) = rest.split_once(FIELD_SEPARATOR)?;
-            let (writable, said) = answered
-                .split_once(FIELD_SEPARATOR)
-                .unwrap_or((answered, NOTHING));
+    let mut held: BTreeMap<usize, Building> = BTreeMap::new();
+    for line in output.lines() {
+        read_field(&mut held, line);
+    }
+    held.into_values()
+        .filter_map(|building| {
+            let said = building.version.unwrap_or_else(|| NOTHING.to_owned());
             Some(Candidate {
-                path: PathBuf::from(path),
-                writable: writable == YES,
-                server: Some(said)
-                    .filter(|held| *held != NOTHING)
+                path: building.path?,
+                writable: building.writable?,
+                server: Some(said.as_str())
+                    .filter(|named| *named != NOTHING)
                     .and_then(installed),
             })
         })

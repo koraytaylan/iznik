@@ -1,7 +1,7 @@
 name = "dropped-mid-upload"
 claims = ["upload-leaves-nothing-when-a-link-drops"]
 driver = "engine"
-budget_seconds = 150
+budget_seconds = 180
 exclusive = false
 
 [setup]
@@ -9,17 +9,27 @@ hosts = 1
 files = []
 
 # A link that drops in the middle is the case the partial name exists for. The
-# script is started on the host reading from a pipe that never closes, given
-# half a payload, and killed where it stands — which is what a dropped link
-# looks like from the host's side.
+# script the client sends — the constant itself, put on the host — is started
+# reading from a pipe that never closes, given half a payload, and killed
+# where it stands, which is what a dropped link looks like from the host's
+# side.
+#
 # The writer holds the pipe open after its half, because a writer that closed
-# it would give the upload an end of input and the rename would happen — which
-# is the opposite of the case being made.
+# it would give the upload an end of input and the digest check would run —
+# which is the opposite of the case being made.
+[[steps]]
+id = "put-the-script-on-the-host"
+container = "host0"
+timeout_seconds = 30
+
+[steps.upload]
+emit = "/tmp/upload.sh"
+
 [[steps]]
 id = "start-an-upload-that-will-not-finish"
 container = "host0"
-run = "mkdir -p /home/iznik/.local/share/iznik/bin && rm -f /tmp/feed && mkfifo /tmp/feed && (IZNIK_PREFIX=/home/iznik/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh -c 'set -e; into=$IZNIK_PREFIX/bin; mkdir -p $into; rm -f $into/.partial-*; partial=$into/.partial-$$; cat > $partial; mv $partial $into/iznik-server' < /tmp/feed & echo $! > /tmp/uploader) && (sh -c 'printf \"the first half and no more\"; sleep 120' > /tmp/feed & echo $! > /tmp/writer) && sleep 2 && printf started"
-timeout_seconds = 30
+run = "mkdir -p /home/iznik/.local/share/iznik/bin && rm -f /tmp/feed && mkfifo /tmp/feed && (IZNIK_PREFIX=/home/iznik/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh /tmp/upload.sh < /tmp/feed & echo $! > /tmp/uploader) && (sh -c 'printf \"the first half and no more\"; sleep 120' > /tmp/feed & echo $! > /tmp/writer) && sleep 2 && printf started"
+timeout_seconds = 40
 
 [[steps]]
 id = "half-of-it-is-there"
@@ -39,8 +49,8 @@ container = "engine"
 run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; test -e $p/iznik-server && printf installed || printf nothing'"
 timeout_seconds = 30
 
-# And the upload that follows it succeeds, clearing whatever the killed one
-# left behind.
+# And the upload that follows it installs beside what the killed one left,
+# under the name a bootstrap will run.
 [[steps]]
 id = "the-next-upload-succeeds"
 container = "engine"
@@ -52,11 +62,20 @@ alias = "host0"
 [steps.upload.expect]
 server = "/home/iznik/.local/share/iznik/bin/iznik-server"
 
+# What matters about the leftover is that it is not what runs. A partial from
+# a link that dropped a moment ago is left where it is on purpose: a second
+# bootstrap of the same host may be filling one, and sweeping every partial
+# would break that run rather than tidy up after this one.
 [[steps]]
-id = "and-left-no-partial"
+id = "and-what-runs-is-the-real-server"
 container = "engine"
-run = "ssh -o BatchMode=yes host0 'p=/home/iznik/.local/share/iznik/bin; test -x $p/iznik-server && ls $p/.partial-* 2>/dev/null | wc -l'"
+run = "ssh -o BatchMode=yes host0 '/home/iznik/.local/share/iznik/bin/iznik-server --version'"
 timeout_seconds = 30
+
+[[expect]]
+step = "put-the-script-on-the-host"
+exit = 0
+stdout_contains = "emitted /tmp/upload.sh"
 
 [[expect]]
 step = "start-an-upload-that-will-not-finish"
@@ -83,6 +102,6 @@ step = "the-next-upload-succeeds"
 exit = 0
 
 [[expect]]
-step = "and-left-no-partial"
+step = "and-what-runs-is-the-real-server"
 exit = 0
-stdout_contains = "0"
+stdout_matches = "iznik-server [0-9.]+ protocol [0-9]+"

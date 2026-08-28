@@ -5,6 +5,7 @@ asked
 borrowed
 candidate
 candidates
+chose
 chosen
 combination
 counted
@@ -37,6 +38,7 @@ said
 says
 server
 serves
+spaced
 system
 taken
 terminal

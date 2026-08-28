@@ -1,0 +1,89 @@
+# Probe, decide, upload if it is needed, launch, hand shake — and the two verbs
+# that undo it.
+#
+# The decision is a pure function of what a host answered and what this build
+# carries, so its cases are `test` proofs: what makes "an unsupported machine
+# is told so before anything is sent" provable at all is that deciding touches
+# no host. The stage a refusal names is a `test` proof too, against a server
+# written to disagree, which no real daemon does. What is a scenario is
+# everything that is only true of a host: that one bootstrap leaves a running
+# daemon, that the next one is fast because it uploads nothing, and that an
+# upgrade is refused while panes are open and done when it is asked for.
+#
+# The older server the upgrade cases need cannot be built — this workspace
+# builds one version — so it is installed: a shell shim that answers
+# `--version` with a version no build carries and `exec`s the real binary for
+# everything else. The probe reads the shim; the daemon behind it is real.
+
+[[claim]]
+id = "launch-installs-where-there-is-no-server"
+statement = "A host with no server this client may run is one to install on."
+test = "iznik-client::remote_launch::remote_launch_installs_where_there_is_no_server"
+because = "the decision is a function of the probe's answer and the artifacts on this machine"
+
+[[claim]]
+id = "launch-uploads-nothing-to-a-matching-host"
+statement = "A host already running the version this build carries is left alone, and nothing is uploaded — which is what makes every connection after the first one fast."
+test = "iznik-client::remote_launch::remote_launch_is_up_to_date_when_the_versions_match"
+because = "same: what is proven is the decision, and the scenario proves what it costs on a host"
+
+[[claim]]
+id = "launch-offers-rather-than-replaces"
+statement = "A host running another version is connected to as it is, and both versions are carried back — because the daemon *is* the sessions, and replacing it is somebody's decision to make, not this client's."
+test = "iznik-client::remote_launch::remote_launch_offers_an_upgrade_for_another_version"
+because = "it is the decision itself, and the container proves the refusal it leads to"
+
+[[claim]]
+id = "launch-refuses-a-machine-it-carries-nothing-for"
+statement = "A machine this build has no artifact for is refused by name, from the probe's answer alone — before anything has been put on it, which is provable only because deciding touches no host."
+test = "iznik-client::remote_launch::remote_launch_refuses_a_machine_it_carries_nothing_for"
+because = "the whole point of the claim is that no host is involved; a scenario would weaken it"
+
+[[claim]]
+id = "launch-names-the-handshake-when-a-server-disagrees"
+statement = "A server that says it speaks another protocol version fails the bootstrap at the handshake stage, naming the version it said."
+test = "iznik-client::remote_launch::remote_launch_names_the_handshake_when_the_server_disagrees"
+because = "the server is written to say the wrong thing, which no real daemon does and no container could arrange"
+
+[[claim]]
+id = "launch-names-the-handshake-when-a-server-refuses"
+statement = "A server that answers the handshake with a refusal rather than a greeting fails at the handshake stage too, carrying the remote's own words."
+test = "iznik-client::remote_launch::remote_launch_names_the_handshake_when_the_server_refuses"
+because = "same: the answer is scripted, because a real daemon greets"
+
+[[claim]]
+id = "launch-takes-a-snapshot-of-what-the-host-holds"
+statement = "A bootstrap ends with the host's model in hand, and the panes it holds counted — which is what an upgrade later asks about."
+test = "iznik-client::remote_launch::remote_launch_takes_a_snapshot_from_the_daemon"
+because = "the daemon behind it is the real one; only the socket is shorter than a network"
+
+[[claim]]
+id = "launch-keeps-every-stage-inside-the-budget"
+statement = "No stage of a bootstrap outlasts what is left of the caller's whole budget, nor its own deadline — which is how a refusal names the stage it happened in rather than a timeout that could have been any of them."
+test = "iznik-client::remote_launch::remote_launch_gives_each_stage_what_is_left_of_the_budget"
+because = "it is arithmetic over two deadlines and a clock"
+
+[[claim]]
+id = "launch-installs-and-connects-to-a-fresh-host"
+statement = "From the engine container, the first bootstrap of a host as its image leaves it installs the server, launches it, hands shake and takes a snapshot — and the daemon is running on the host afterwards, because launching is what started it."
+scenario = "first-connection"
+
+[[claim]]
+id = "launch-reconnects-inside-the-fast-budget"
+statement = "The second bootstrap of that host uploads nothing, decides it is up to date, and completes inside the two-second fast-reconnect budget — enforced, not measured: the bootstrap is run under it and fails if it runs past."
+scenario = "second-connection-is-fast"
+
+[[claim]]
+id = "launch-refuses-an-upgrade-that-would-end-panes"
+statement = "With an older-looking server installed and a pane open on the daemon behind it, an upgrade without force is refused naming the one pane it would have ended, and afterwards the old server is still there and its daemon still running."
+scenario = "upgrade-refused-for-live-panes"
+
+[[claim]]
+id = "launch-replaces-a-server-when-it-is-asked-to"
+statement = "The same host, asked with force, has its daemon stopped and the artifact installed over the shim — and the version that answers afterwards is the one this build carries."
+scenario = "upgrade-forced"
+
+[[claim]]
+id = "launch-takes-itself-off-again"
+statement = "Uninstalling stops the daemon and leaves the host as it was: no prefix, no runtime directory, and no `iznik-server` process."
+scenario = "uninstall"

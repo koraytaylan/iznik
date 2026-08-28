@@ -8,9 +8,13 @@
 
 use std::path::PathBuf;
 
+use core::future::Future;
+use std::time::Duration;
+
+use iznik_client::bootstrap::probe::{Architecture, HostProbe, OperatingSystem};
 use iznik_client::bootstrap::upload::{
-    ArtifactSet, BINARY_NAME, REMOTE_UPLOAD_SCRIPT, UPLOAD_CHUNK_LENGTH, UploadError, hexadecimal,
-    remote_command,
+    ArtifactSet, BINARY_NAME, FeedsRemotely, REMOTE_UPLOAD_SCRIPT, TERMINFO_DIRECTORY,
+    UPLOAD_CHUNK_LENGTH, UploadError, hexadecimal, remote_command, upload,
 };
 
 /// Anything a case can fail on.
@@ -162,8 +166,9 @@ fn payload_upload_sends_a_script_that_names_the_digest_and_nothing_early() {
         "which is what the partial name is for"
     );
     assert!(
-        REMOTE_UPLOAD_SCRIPT.contains("rm -f \"$into\"/.partial-*"),
-        "and a stale one from a dropped link before it is cleared first"
+        REMOTE_UPLOAD_SCRIPT.contains("mktemp"),
+        "whose name is minted rather than guessed, so two bootstraps of one \
+         host cannot pick the same one"
     );
 }
 
@@ -179,4 +184,177 @@ fn payload_upload_reads_in_the_chunk_it_says() {
         "a mebibyte: large enough that the reads are not the cost, small enough \
          that a shell's buffer is not the limit"
     );
+}
+
+/// The host these cases upload to.
+const HOST: &str = "host0";
+
+/// The prefix the probe chose on it.
+const PREFIX: &str = "/home/iznik/.local/share/iznik";
+
+/// The one triple these cases carry an artifact for.
+const TRIPLE: &str = "x86_64-unknown-linux-musl";
+
+/// How long each of these gives a host that answers at once.
+const AT_ONCE: Duration = Duration::from_secs(5);
+
+/// A host that takes the artifact and answers the terminfo however it is told.
+struct Fed {
+    /// Whether compiling the terminfo is refused.
+    refuses_terminfo: bool,
+}
+
+impl FeedsRemotely for Fed {
+    fn feed(
+        &self,
+        _command: &str,
+        _bytes: &[u8],
+        stage: &'static str,
+        _deadline: Duration,
+    ) -> impl Future<Output = Result<String, UploadError>> + Send {
+        let refused = self.refuses_terminfo && stage.contains("terminfo");
+        async move {
+            if refused {
+                return Err(UploadError::Refused {
+                    host: HOST.to_owned(),
+                    stage,
+                    detail: "tic: unknown option -- x".to_owned(),
+                });
+            }
+            Ok(format!("installed {PREFIX}/bin/{BINARY_NAME}\n"))
+        }
+    }
+}
+
+/// A probed host with the `tic` and the terminfo the arguments say.
+fn probed(tic_available: bool, terminfo_installed: bool) -> HostProbe {
+    HostProbe {
+        operating_system: OperatingSystem::Linux,
+        architecture: Architecture::X86_64,
+        server: None,
+        terminfo_installed,
+        tic_available,
+        prefix: PathBuf::from(PREFIX),
+    }
+}
+
+/// # Panics
+///
+/// When a `tic` that fails takes the server down with it.
+#[tokio::test]
+async fn payload_upload_installs_the_server_even_when_the_terminfo_will_not_compile() {
+    let case = async {
+        let held = distribution("tic-fails", &[(TRIPLE, b"a server")])?;
+        let artifacts = ArtifactSet::load(&held.path)?;
+        let artifact = artifacts.for_triple(TRIPLE)?;
+        // By the time the terminfo is compiled the server is on the host and
+        // works. What a `tic` that will not run costs is a pane told
+        // `xterm-256color`, which is smaller than a connection that refuses.
+        let installed = upload(
+            &Fed {
+                refuses_terminfo: true,
+            },
+            artifact,
+            &probed(true, false),
+            AT_ONCE,
+        )
+        .await?;
+        assert_eq!(
+            installed.server,
+            PathBuf::from(format!("{PREFIX}/bin/{BINARY_NAME}")),
+            "the server is installed"
+        );
+        assert_eq!(installed.terminfo, None, "and there is no terminfo");
+        let refused = installed.terminfo_refused.unwrap_or_default();
+        assert!(
+            refused.contains("tic: unknown option"),
+            "and why is carried rather than swallowed: {refused}"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a host that already has the terminfo is told it has none.
+#[tokio::test]
+async fn payload_upload_keeps_a_terminfo_the_host_already_has() {
+    let case = async {
+        let held = distribution("terminfo-kept", &[(TRIPLE, b"a server")])?;
+        let artifacts = ArtifactSet::load(&held.path)?;
+        let artifact = artifacts.for_triple(TRIPLE)?;
+        // No `tic` today, but the entry is there from a day there was one:
+        // the probe looked for it under the candidates, and found it.
+        let kept = upload(
+            &Fed {
+                refuses_terminfo: false,
+            },
+            artifact,
+            &probed(false, true),
+            AT_ONCE,
+        )
+        .await?;
+        assert_eq!(
+            kept.terminfo,
+            Some(PathBuf::from(PREFIX).join(TERMINFO_DIRECTORY)),
+            "the entry the host already has"
+        );
+        assert_eq!(kept.terminfo_refused, None, "and no reason to give");
+        let without = upload(
+            &Fed {
+                refuses_terminfo: false,
+            },
+            artifact,
+            &probed(false, false),
+            AT_ONCE,
+        )
+        .await?;
+        assert_eq!(without.terminfo, None, "and a host with neither has none");
+        assert!(
+            without
+                .terminfo_refused
+                .unwrap_or_default()
+                .contains("no `tic`"),
+            "and is told why"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When an artifact replaced between being loaded and being sent is uploaded
+/// against the digest of the file it used to be.
+#[tokio::test]
+async fn payload_upload_refuses_an_artifact_that_changed_under_it() {
+    let case = async {
+        let held = distribution("changed", &[(TRIPLE, b"the one that was loaded")])?;
+        let artifacts = ArtifactSet::load(&held.path)?;
+        let artifact = artifacts.for_triple(TRIPLE)?;
+        // The digest is taken when the set is loaded and the bytes are read
+        // again when they are sent. What the host is told to expect must be a
+        // digest of what it is about to receive, or the check on the far end
+        // is comparing one file against another.
+        std::fs::write(&artifact.path, b"something else entirely")?;
+        let refused = upload(
+            &Fed {
+                refuses_terminfo: false,
+            },
+            artifact,
+            &probed(true, false),
+            AT_ONCE,
+        )
+        .await;
+        let Err(UploadError::Artifacts { detail, .. }) = refused else {
+            return Err(format!("a changed artifact was sent anyway: {refused:?}").into());
+        };
+        assert!(
+            detail.contains("changed since it was loaded"),
+            "and says so: {detail}"
+        );
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
 }
