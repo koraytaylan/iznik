@@ -1,0 +1,39 @@
+# The compressed link is a byte stream over an in-memory pipe: no process, no
+# socket, no clock but the one the latency figure is taken with. Every claim is
+# proven in-process, and the same link over a real socket is plan 0004's.
+
+[[claim]]
+id = "compression-every-corpus-construct-survives"
+statement = "Every chunk of every fidelity construct comes back byte-identical through a compressed link pair."
+test = "iznik-link::compression::compression_every_corpus_frame_survives_the_round_trip"
+because = "the link is a byte stream over an in-memory pipe; a container adds nothing"
+
+[[claim]]
+id = "compression-the-leftover-is-not-lost"
+statement = "The peer's first compressed bytes, read past its Hello by the plain link, are handed to the compressed one through into_parts, and the first compressed frame arrives whole."
+test = "iznik-link::compression::compression_the_leftover_of_a_plain_link_is_not_lost"
+because = "the handover is between two values in memory; a container adds nothing"
+
+[[claim]]
+id = "compression-is-flushed-not-buffered"
+statement = "A single frame is readable on the other side without any further frame being sent, so nothing a caller has written waits inside zstd for a block to fill."
+test = "iznik-link::compression::compression_a_frame_is_flushed_not_buffered"
+because = "the flush is between two values in memory; a container adds nothing"
+
+[[claim]]
+id = "compression-streams-across-frames"
+statement = "One compressor spans the connection: a thousand one-byte frames cost far less than a thousand compressions that each start afresh."
+test = "iznik-link::compression::compression_streams_rather_than_starting_afresh_per_frame"
+because = "the comparison is between two byte counts; a container adds nothing"
+
+[[claim]]
+id = "compression-earns-its-ratio"
+statement = "The fidelity corpus compresses by at least three times — 316 bytes to 101, a ratio of 3.129 — and as the link frames it, seventeen frames with a flush after each, it costs 299 bytes against 411 uncompressed."
+test = "iznik-link::compression::compression_the_corpus_ratio_earns_the_capability"
+because = "compression of a fixed input is deterministic; a container adds nothing"
+
+[[claim]]
+id = "compression-costs-no-perceptible-latency"
+statement = "Compression adds 740 nanoseconds to a one-byte frame's round trip at the ninety-ninth percentile over ten thousand samples, far under the one-millisecond ceiling: compressed median 1.67 microseconds against a plain 910 nanoseconds."
+test = "iznik-link::compression::compression_small_frame_latency"
+because = "the figure is a delta between two in-process paths on one machine; a container adds a network, not an answer"
