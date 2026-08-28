@@ -310,23 +310,15 @@ fn put_start(sink: &mut dyn Sink, columns: u16, rows: u16, directory: Option<&st
 
 /// Appends a command: its discriminant and then its fields.
 ///
-/// The two halves below split it only because one match of eleven arms and
-/// their fields is longer than a function may be. This match is the exhaustive
-/// one, so a twelfth command is a compile error here rather than a command
-/// that encodes to nothing; each half's last arm is what this has ruled out.
+/// Neither half below knows every one of them — one match of that many arms
+/// and their fields is longer than a function may be — so each says whether it
+/// wrote what it was given, and this offers it to the other when it did not. A
+/// variant moved between the two is therefore written by the half that knows
+/// it rather than by neither, and `check_layouts` is exhaustive, so a new one
+/// is a compile error there rather than a command that encodes to nothing.
 fn put_command(sink: &mut dyn Sink, command: &SessionCommand) {
-    match command {
-        SessionCommand::CreateSession { .. }
-        | SessionCommand::RenameSession { .. }
-        | SessionCommand::CloseSession { .. }
-        | SessionCommand::CreateTab { .. }
-        | SessionCommand::RenameTab { .. }
-        | SessionCommand::CloseTab { .. }
-        | SessionCommand::ReorderTabs { .. }
-        | SessionCommand::SetLayout { .. } => put_arrangement(sink, command),
-        SessionCommand::CreatePane { .. }
-        | SessionCommand::ClosePane { .. }
-        | SessionCommand::MovePane { .. } => put_pane_command(sink, command),
+    if !put_arrangement(sink, command) {
+        let _written = put_pane_command(sink, command);
     }
 }
 
@@ -353,7 +345,7 @@ fn check_layouts(command: &SessionCommand) -> Result<(), MessageError> {
 }
 
 /// Appends the commands that name a session or a tab.
-fn put_arrangement(sink: &mut dyn Sink, command: &SessionCommand) {
+fn put_arrangement(sink: &mut dyn Sink, command: &SessionCommand) -> bool {
     match command {
         SessionCommand::CreateSession {
             name,
@@ -408,13 +400,13 @@ fn put_arrangement(sink: &mut dyn Sink, command: &SessionCommand) {
             sink.put(&tab.0.to_le_bytes());
             put_layout(sink, layout);
         }
-        // Ruled out by `put_command`, the only caller.
-        _other => {}
+        _other => return false,
     }
+    true
 }
 
 /// Appends the commands that name a pane.
-fn put_pane_command(sink: &mut dyn Sink, command: &SessionCommand) {
+fn put_pane_command(sink: &mut dyn Sink, command: &SessionCommand) -> bool {
     match command {
         SessionCommand::CreatePane {
             tab,
@@ -442,9 +434,9 @@ fn put_pane_command(sink: &mut dyn Sink, command: &SessionCommand) {
             sink.put(&to_tab.0.to_le_bytes());
             put_placement(sink, *placement);
         }
-        // Ruled out by `put_command`, the only caller.
-        _other => {}
+        _other => return false,
     }
+    true
 }
 
 /// The `Command` payload for a command.

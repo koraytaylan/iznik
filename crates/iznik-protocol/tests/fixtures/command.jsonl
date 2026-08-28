@@ -36,3 +36,5 @@
 {"description": "a discriminant no outcome claims", "kind": "outcome", "hex": "02", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
 {"description": "a created form no variant claims", "kind": "outcome", "hex": "00070000000000000004", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 4}}}
 {"description": "a rejection code no variant claims", "kind": "outcome", "hex": "0107", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 7}}}
+{"description": "a byte after an outcome's last field", "kind": "outcome", "hex": "0100040000006e6f2030ff", "error": {"TrailingBytes": {"discriminant": 1, "count": 1}}}
+{"description": "a rejection message that is not UTF-8", "kind": "outcome", "hex": "010002000000fffe", "error": {"Utf8": {"discriminant": 1}}}

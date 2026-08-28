@@ -239,26 +239,15 @@ fn read_reason(reader: &mut Reader<'_>) -> Result<RemovalReason, MessageError> {
 
 /// Appends a delta: its discriminant and then its fields.
 ///
-/// The two halves below split it only because one match of fourteen arms is
-/// longer than a function may be. This match is the exhaustive one, so a
-/// fifteenth variant is a compile error here rather than a delta that encodes
-/// to nothing; each half's last arm is what this match has already ruled out.
+/// Neither half below knows every one of them — one match of that many arms
+/// and their fields is longer than a function may be — so each says whether it
+/// wrote what it was given, and this offers it to the other when it did not. A
+/// variant moved between the two is therefore written by the half that knows
+/// it rather than by neither, and `check_layouts` is exhaustive, so a new one
+/// is a compile error there rather than a delta that encodes to nothing.
 fn put_delta(sink: &mut dyn Sink, delta: &Delta) {
-    match delta {
-        Delta::SessionAdded { .. }
-        | Delta::SessionRenamed { .. }
-        | Delta::SessionRemoved { .. }
-        | Delta::TabAdded { .. }
-        | Delta::TabRenamed { .. }
-        | Delta::TabRemoved { .. }
-        | Delta::TabsReordered { .. }
-        | Delta::LayoutChanged { .. } => put_arrangement(sink, delta),
-        Delta::PaneAdded { .. }
-        | Delta::PaneRemoved { .. }
-        | Delta::PaneMoved { .. }
-        | Delta::PaneTitle { .. }
-        | Delta::PaneWorkingDirectory { .. }
-        | Delta::PaneResized { .. } => put_pane_change(sink, delta),
+    if !put_arrangement(sink, delta) {
+        let _written = put_pane_change(sink, delta);
     }
 }
 
@@ -292,7 +281,7 @@ fn check_layouts(delta: &Delta) -> Result<(), MessageError> {
 }
 
 /// Appends the deltas that name a session or a tab.
-fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) {
+fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) -> bool {
     match delta {
         Delta::SessionAdded { session } => {
             sink.put(&[delta_tag::SESSION_ADDED]);
@@ -340,13 +329,13 @@ fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) {
             sink.put(&tab.0.to_le_bytes());
             put_layout(sink, layout);
         }
-        // Ruled out by `put_delta`, the only caller.
-        _other => {}
+        _other => return false,
     }
+    true
 }
 
 /// Appends the deltas that name a pane.
-fn put_pane_change(sink: &mut dyn Sink, delta: &Delta) {
+fn put_pane_change(sink: &mut dyn Sink, delta: &Delta) -> bool {
     match delta {
         Delta::PaneAdded { tab, pane } => {
             sink.put(&[delta_tag::PANE_ADDED]);
@@ -383,9 +372,9 @@ fn put_pane_change(sink: &mut dyn Sink, delta: &Delta) {
             sink.put(&columns.to_le_bytes());
             sink.put(&rows.to_le_bytes());
         }
-        // Ruled out by `put_delta`, the only caller.
-        _other => {}
+        _other => return false,
     }
+    true
 }
 
 /// The `Delta` payload for a change.

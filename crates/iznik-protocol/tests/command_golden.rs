@@ -11,7 +11,10 @@ use iznik_protocol::command::{
     decode_session_command, encode_command_outcome, encode_session_command,
 };
 use iznik_protocol::identity::{CommandId, Generation, PaneId, SessionId, TabId};
-use iznik_protocol::message::{MessageError, ToServer, decode_to_server, encode_to_server};
+use iznik_protocol::message::{
+    MessageError, ToClient, ToServer, decode_to_client, decode_to_server, encode_to_client,
+    encode_to_server,
+};
 use iznik_protocol::model::{LayoutNode, MAXIMUM_LAYOUT_DEPTH, SplitDirection, Weighted};
 use iznik_testkit::golden;
 use serde_json::Value;
@@ -391,6 +394,28 @@ fn check(description: &str, line: &Value) -> Result<(), Failure> {
     Ok(())
 }
 
+/// The refusals the fixture provokes on one side of the codec, sorted. Each
+/// decoder is held to its own, because pooling them lets one side's line stand
+/// in for the other's missing one.
+///
+/// # Errors
+///
+/// When a line is malformed.
+fn refusals_of(side: &str) -> Result<Vec<String>, Failure> {
+    let mut names = Vec::new();
+    for line in &lines()? {
+        let Some(error) = line.get("error") else {
+            continue;
+        };
+        if string_field(line, "kind")? == side {
+            names.push(variant(error)?.0);
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 /// The names of the variants the fixture's lines under `key` describe.
 ///
 /// # Errors
@@ -463,7 +488,18 @@ fn command_golden_every_outcome_form_has_a_line() {
             continue;
         };
         match outcome_of(value).expect("an outcome") {
-            CommandOutcome::Applied { created: made, .. } => created.push(format!("{made:?}")),
+            // The name, not the value: `Session(3)` and `Session(4)` are one
+            // form, and counting them as two would leave a wire byte pinned
+            // by nothing while the test stayed green.
+            CommandOutcome::Applied { created: made, .. } => created.push(
+                match made {
+                    Created::Nothing => "Nothing",
+                    Created::Session(_named) => "Session",
+                    Created::Tab(_named) => "Tab",
+                    Created::Pane(_named) => "Pane",
+                }
+                .to_owned(),
+            ),
             CommandOutcome::Rejected { code, .. } => rejected.push(format!("{code:?}")),
         }
     }
@@ -471,8 +507,24 @@ fn command_golden_every_outcome_form_has_a_line() {
     created.dedup();
     rejected.sort();
     rejected.dedup();
-    assert_eq!(created.len(), 4, "the created forms were {created:?}");
-    assert_eq!(rejected.len(), 7, "the rejection codes were {rejected:?}");
+    assert_eq!(
+        created,
+        ["Nothing", "Pane", "Session", "Tab"],
+        "the created forms the fixture pins"
+    );
+    assert_eq!(
+        rejected,
+        [
+            "EmptyName",
+            "InvalidLayout",
+            "InvalidOrder",
+            "SpawnFailed",
+            "UnknownPane",
+            "UnknownSession",
+            "UnknownTab",
+        ],
+        "the rejection codes the fixture pins"
+    );
 }
 
 /// Every refusal the decoders can give is provoked: four by a fixture line on
@@ -486,6 +538,19 @@ fn command_golden_every_outcome_form_has_a_line() {
 /// its own decoder would refuse.
 #[test]
 fn command_golden_every_refusal_the_decoders_give_is_provoked() {
+    let expected = [
+        "TrailingBytes".to_owned(),
+        "Truncated".to_owned(),
+        "UnknownDiscriminant".to_owned(),
+        "Utf8".to_owned(),
+    ];
+    for side in ["command", "outcome"] {
+        assert_eq!(
+            refusals_of(side).expect("the fixture loads"),
+            expected,
+            "the refusals the {side} decoder is provoked into"
+        );
+    }
     let mut provoked = named("error").expect("the fixture loads");
     let refusal = MessageError::LayoutTooDeep {
         limit: MAXIMUM_LAYOUT_DEPTH,
@@ -598,6 +663,41 @@ fn command_golden_an_encoded_command_rides_inside_its_message() {
                 );
             }
             other => panic!("a Command message did not come back: {other:?}"),
+        }
+    }
+}
+
+/// An encoded outcome is the payload the `CommandResult` message carries.
+///
+/// # Panics
+///
+/// When the payload does not survive the message it rides in.
+#[test]
+fn command_golden_an_encoded_outcome_rides_inside_its_message() {
+    for line in &lines().expect("the fixture loads") {
+        let Some(value) = line.get("outcome") else {
+            continue;
+        };
+        let outcome = outcome_of(value).expect("an outcome");
+        let payload = encode_command_outcome(&outcome).expect("an outcome encodes");
+        let message = ToClient::CommandResult {
+            command_id: RIDER,
+            payload,
+        };
+        let wire = encode_to_client(&message).expect("the message encodes");
+        match decode_to_client(&wire) {
+            Ok(ToClient::CommandResult {
+                command_id,
+                payload: carried,
+            }) => {
+                assert_eq!(command_id, RIDER, "the command id rides along");
+                assert_eq!(
+                    decode_command_outcome(&carried),
+                    Ok(outcome),
+                    "the outcome rides along"
+                );
+            }
+            other => panic!("a CommandResult did not come back: {other:?}"),
         }
     }
 }
