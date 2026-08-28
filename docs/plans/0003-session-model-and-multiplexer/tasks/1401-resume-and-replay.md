@@ -10,7 +10,7 @@ touches:
   - "crates/iznik-server/tests/resume.rs"
   - "regression/claims/resume-and-replay.toml"
   - "policy/lexicon/resume-and-replay.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Resume and Replay
