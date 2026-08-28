@@ -10,6 +10,56 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Progress:** 2/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
+- **Review of `bbf5669`:** nine findings, every one of them real. The high one
+  was a command pinned for ever: a command answered but not yet announced is
+  kept applied until the model reaches the generation the answer named, and a
+  daemon that was replaced begins again at nothing — so the number it was
+  answered at is never reached, nothing expires it (it was answered) and
+  nothing rolls it back (it was not refused), and it was re-applied on top of
+  every snapshot the new host sent. A generation that goes backwards is now
+  read for what it is, another daemon's first word, and what the one that is
+  gone answered stops being shown.
+
+  Three more were about what one layer tells the next. Credit for a pane whose
+  channel another pane had taken went out on the control channel, where no
+  pane could get it, while the window this client believed it had returned
+  grew — it is refused now, by a model that says such a pane has no channel at
+  all. A change this client could not fit was passed on to the application
+  regardless, which would have applied what this one refused. And an event
+  carrying a change carried no generation, though the encoded change does not
+  hold one and the protocol's own `apply` will not take it without one: an
+  application could not have used what it was handed.
+
+  Two were about letting go. A pane's handlers were read out of the map and
+  called with the lock released, so an application that detached from one
+  thread could free its context while a callback was running on another — the
+  obligation the header states was not keepable. Letting a pane go, and
+  replacing the event callback, now wait for a call that is already running,
+  and a handler that lets its own pane go waits for nothing, because it is the
+  call. And a host's task that died with an order in hand dropped it; it goes
+  back on the pile the next connection carries, under the same rule as one
+  that arrived while there was none.
+
+  The rest: `log_path` had been part of the published ABI and was read by
+  nobody, so an application that named a file got silence — it is honoured
+  now, a host's every move is written to it, and a file that cannot be opened
+  is a refusal rather than a quiet nothing; the regression harness's byte
+  buffer assumed a stream with no holes in it, which a resume served by a
+  screen puts a hole in; and two of the atomicity case's own markers were
+  shaped exactly like a caller's line, so two of the hundred were proven by a
+  line the case had typed itself.
+
+  The two cases the review's findings needed are in a file of their own,
+  `crates/iznik-client/tests/manager_traffic.rs`, which no task's `touches`
+  names: `connection_manager.rs` was at eight hundred lines before them and a
+  thousand is the most a file may have. A shared module would have been the
+  other way, and this workspace forbids the waiver that makes one possible —
+  every item a test binary compiles must be one it uses.
+
+  One of the nine has no case of its own: making a write fail in the middle of
+  a live session is a race, so the order a dying link drops is put through the
+  same `keep` the disconnected path uses and read rather than driven.
+
 - **Carried back into 0005:** `pane-byte-pipe` found that a host's task let
   what a host was saying starve the orders already waiting for it, so a burst
   of input went out one to a round trip — a hundred lines took seconds instead

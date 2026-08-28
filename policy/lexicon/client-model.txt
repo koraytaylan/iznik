@@ -10,6 +10,7 @@ credit
 cursor
 drops
 exactly
+flight
 focus
 focused
 forwards
@@ -30,6 +31,7 @@ outstanding
 pending
 puts
 records
+restarted
 resume
 retire
 retired

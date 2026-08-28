@@ -274,15 +274,42 @@ struct Heard {
 }
 
 impl Heard {
+    /// Takes what arrived at a position in the stream.
+    ///
+    /// What is held has to run from `from` without a hole in it, because that
+    /// is the only reason a position can be turned into an offset. A cursor
+    /// does move: a host that answers a resume with a screen puts the
+    /// subscription where the screen is exact, and the bytes after it begin
+    /// there rather than where the last ones ended. What was held before such
+    /// a jump belongs to a stream this no longer has all of, so it is let go
+    /// and the new position is where this begins.
+    fn took(&mut self, sequence: u64, bytes: &[u8]) {
+        let held = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
+        let next = self.from.map(|first| first.saturating_add(held));
+        if next == Some(sequence) {
+            self.bytes.extend_from_slice(bytes);
+            return;
+        }
+        self.from = Some(sequence);
+        self.bytes = bytes.to_vec();
+    }
+
     /// The bytes between two positions in the stream, as far as they are held.
     ///
     /// A screen is exact at a position and the capture begins at another, so
     /// feeding a screen and then every byte held would show what the screen
     /// already showed a second time. This is the window between them.
+    ///
+    /// Nothing when the window begins before what is held: answering with
+    /// what there is would be answering a different question, and a case that
+    /// compares an empty window fails saying so.
     fn between(&self, first: Option<u64>, last: Option<u64>) -> &[u8] {
         let Some(from) = self.from else {
             return &[];
         };
+        if first.is_some_and(|named| named < from) {
+            return &[];
+        }
         let held = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
         let start = first.unwrap_or(from).saturating_sub(from);
         let end = last
@@ -319,10 +346,7 @@ impl Watched {
                 bytes,
             } => {
                 let held = self.panes.entry((host, pane)).or_default();
-                if held.from.is_none() {
-                    held.from = Some(sequence.0);
-                }
-                held.bytes.extend_from_slice(&bytes);
+                held.took(sequence.0, &bytes);
             }
             ManagerEvent::Screen {
                 host,

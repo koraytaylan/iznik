@@ -74,7 +74,7 @@ threads-required = 'num-cpus'
 # reading a hundred lines is slower than a round trip, and the ratio stops
 # being about the loop it was written for.
 [[profile.default.overrides]]
-filter = 'test(connection_manager_carries_a_burst_as_fast_as_it_is_given)'
+filter = 'test(manager_traffic_carries_a_burst_as_fast_as_it_is_given)'
 threads-required = 'num-cpus'
 
 # Every test in the server crate drives a real shell on a real pseudoterminal

@@ -53,5 +53,11 @@ because = "the events are the manager's own, and a container would only make the
 [[claim]]
 id = "manager-carries-a-burst-as-fast-as-it-is-given"
 statement = "A hundred lines handed over at once reach the pane at once, not one to a round trip: a host's task takes the orders already waiting before it hears what the host has to say, so what a person typed or pasted is not paced by what their screen happens to be doing. Bounded, so a caller who never stops ordering still leaves the task hearing."
-test = "iznik-client::connection_manager::connection_manager_carries_a_burst_as_fast_as_it_is_given"
+test = "iznik-client::manager_traffic::manager_traffic_carries_a_burst_as_fast_as_it_is_given"
 because = "the starvation is between two branches of the task's own loop, and a local transport shows it exactly — a network would only make the round trip it was paced by longer"
+
+[[claim]]
+id = "manager-passes-on-no-change-it-could-not-take"
+statement = "A change numbered past the one that would follow is not passed on. This client applies nothing it cannot fit and asks for the whole of the model instead, and an application handed that change would have applied what this one refused — so the two would part until the snapshot arrived. What goes up is what went in, and an application that applies every change in turn holds what this client holds."
+test = "iznik-client::manager_traffic::manager_traffic_passes_on_no_change_it_could_not_take"
+because = "the host is scripted because no real one sends a number it did not reach; what is being asked is what this client does when one does"

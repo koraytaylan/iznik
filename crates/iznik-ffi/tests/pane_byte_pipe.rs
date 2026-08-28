@@ -5,7 +5,7 @@
 //! stops consuming stops its own pane and nothing else. Every case here calls
 //! the `extern "C"` functions against a daemon on this machine.
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 use core::time::Duration;
 use std::ffi::CString;
 use std::path::PathBuf;
@@ -82,9 +82,13 @@ const WIDTH: usize = 2;
 /// gives up rather than about what arrived.
 const SILENT: char = '#';
 
-/// A line of the same shape as a caller's, typed before they start, whose
-/// coming back twice is what says the reader is reading.
-const PROBE: &str = "9999";
+/// A line typed before they start, whose coming back twice is what says the
+/// reader is reading.
+///
+/// Letters, deliberately: every four-digit line whose halves match is some
+/// caller's own, so a probe of that shape would be caller ninety-nine's, and
+/// its arrival would prove theirs.
+const PROBE: &str = "ready";
 
 /// How many times a line comes back: once as the terminal echoed it, once as
 /// the reader wrote it back.
@@ -118,6 +122,61 @@ unsafe impl Send for Reachable {}
 
 // SAFETY: as above.
 unsafe impl Sync for Reachable {}
+
+/// What the case that lets a pane go from inside a handler passes to it.
+struct Leaving {
+    /// The client to call back into.
+    client: Reachable,
+    /// The host, kept null-terminated for that call.
+    alias: CString,
+    /// What the handler has been told, and what came of its own call.
+    told: Mutex<Left>,
+}
+
+/// What that handler saw.
+#[derive(Debug, Default)]
+struct Left {
+    /// How many times output arrived.
+    calls: usize,
+    /// What letting the pane go answered, once it has.
+    answered: Option<c_int>,
+}
+
+/// A handler that lets its own pane go, from inside the call.
+///
+/// The one call that must not wait for the call it is inside: waiting for a
+/// handler to finish is exactly what makes an application able to free what it
+/// gave, and a handler doing it to itself would wait for ever.
+extern "C" fn leaves(context: *mut c_void, _bytes: *const u8, _length: usize) {
+    if context.is_null() {
+        return;
+    }
+    // SAFETY: the context is this case's own box, alive until the case ends.
+    let leaving = unsafe { &*context.cast::<Leaving>() };
+    let first = {
+        let Ok(mut told) = leaving.told.lock() else {
+            return;
+        };
+        told.calls = told.calls.saturating_add(1);
+        told.calls == 1
+    };
+    if !first {
+        return;
+    }
+    // SAFETY: the client is live for the whole of the case and the alias is
+    // null-terminated; no error is asked for.
+    let answered = unsafe {
+        iznik_pane_detach(
+            leaving.client.0,
+            leaving.alias.as_ptr(),
+            PANE,
+            core::ptr::null_mut(),
+        )
+    };
+    if let Ok(mut told) = leaving.told.lock() {
+        told.answered = Some(answered);
+    }
+}
 
 /// What a pane's handlers have been given.
 #[derive(Debug, Default)]
@@ -570,9 +629,9 @@ fn pane_byte_pipe_keeps_one_call_one_message() {
         // written back by what is reading it.
         typed(client, &alias, PANE, &format!("{SILENT}{PROBE}\n"))?;
         await_watched(watched, "the reader reading", PROMPT, |kept| {
-            typed_lines(&kept.output)
-                .iter()
-                .filter(|line| line.as_str() == PROBE)
+            kept.output
+                .windows(PROBE.len())
+                .filter(|window| *window == PROBE.as_bytes())
                 .count()
                 >= TWICE
         })?;
@@ -628,14 +687,17 @@ fn pane_byte_pipe_keeps_one_call_one_message() {
             let kept = unsafe { &*watched }
                 .lock()
                 .map_err(|_broken| "the record")?;
-            let echoed = typed_lines(&kept.output);
+            // Everything the pane said except the line this case typed itself
+            // to learn that the reader was reading: what is being read here is
+            // the callers'.
+            let echoed: Vec<String> = typed_lines(&kept.output)
+                .into_iter()
+                .filter(|line| line != PROBE)
+                .collect();
             let mut every: Vec<String> = echoed.clone();
             every.sort();
             every.dedup();
-            let mut wanted: Vec<String> = (0..TYPISTS)
-                .map(pattern)
-                .chain([PROBE.to_owned()])
-                .collect();
+            let mut wanted: Vec<String> = (0..TYPISTS).map(pattern).collect();
             wanted.sort();
             let missing: Vec<&String> =
                 wanted.iter().filter(|line| !every.contains(line)).collect();
@@ -749,6 +811,90 @@ fn pane_byte_pipe_stops_when_it_is_let_go() {
         unsafe { iznik_client_free(client) };
         // SAFETY: the box this case made, taken back once.
         drop(unsafe { Box::from_raw(watched) });
+        drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When letting a pane go from inside its own handler waits for that handler
+/// to finish, or when anything arrives for it afterwards.
+#[test]
+fn pane_byte_pipe_lets_a_pane_go_from_inside_its_own_handler() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("leaving")?;
+        let runtime = runtime()?;
+        let (stack, client, alias) = connected(&held, &runtime)?;
+        let leaving: *mut Leaving = Box::into_raw(Box::new(Leaving {
+            client: Reachable(client),
+            alias: alias.clone(),
+            told: Mutex::new(Left::default()),
+        }));
+        let handlers = PaneCallbacks {
+            output: Some(leaves),
+            screen: None,
+            mark: None,
+            detached: None,
+        };
+        let mut error = blank();
+        // SAFETY: the client is live, the alias null-terminated, and the
+        // context outlives the attachment — this case frees it at the end.
+        let taken = unsafe {
+            iznik_pane_attach(
+                client,
+                alias.as_ptr(),
+                PANE,
+                handlers,
+                leaving.cast::<c_void>(),
+                &raw mut error,
+            )
+        };
+        assert_eq!(taken, OK, "the pane was taken: {}", said(&error));
+        typed(client, &alias, PANE, "#hello\n")?;
+        // The handler lets the pane go while it is running. Without the rule
+        // that a handler waits for nothing, this never answers.
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        while Instant::now() < expires {
+            // SAFETY: this case's own box, alive here.
+            let answered = unsafe { &*leaving }
+                .told
+                .lock()
+                .ok()
+                .and_then(|told| told.answered);
+            if answered.is_some() {
+                assert_eq!(answered, Some(OK), "and it answers that it let go");
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let calls = {
+            // SAFETY: this case's own box, alive here.
+            let told = unsafe { &*leaving }
+                .told
+                .lock()
+                .map_err(|_broken| "the record")?;
+            assert_eq!(told.answered, Some(OK), "letting go answered");
+            told.calls
+        };
+        // And nothing more arrives for a pane that was let go, however much
+        // the shell goes on saying.
+        typed(client, &alias, PANE, "#more\n")?;
+        std::thread::sleep(BRIEF);
+        {
+            // SAFETY: this case's own box, alive here.
+            let told = unsafe { &*leaving }
+                .told
+                .lock()
+                .map_err(|_broken| "the record")?;
+            assert_eq!(told.calls, calls, "nothing arrived after it let go");
+        }
+        // SAFETY: it came from `iznik_client_new` and is freed once.
+        unsafe { iznik_client_free(client) };
+        // SAFETY: the box this case made, taken back once, after the client
+        // that could have called into it is gone.
+        drop(unsafe { Box::from_raw(leaving) });
         drop(stack);
         Ok(())
     };

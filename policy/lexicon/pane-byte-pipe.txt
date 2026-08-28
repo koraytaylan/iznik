@@ -18,6 +18,7 @@ forget
 go
 gone
 handed
+handler
 handlers
 hands
 holds

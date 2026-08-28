@@ -30,3 +30,21 @@ id = "ffi-says-which-layer-failed"
 statement = "Every refusal carries a layer and words: a call with no host named is the client's own, and a host that cannot be reached is the transport's, naming the host. The first question anybody asks about a system this tall is which part of it broke."
 test = "iznik-ffi::ffi_surface::ffi_surface_says_which_layer_failed"
 because = "the layer is decided here, from what the engine reported, and no host is needed to read the answer"
+
+[[claim]]
+id = "surface-numbers-the-model-it-hands-over"
+statement = "A snapshot and a change each say which generation they are, because the encoded change does not carry the number and `iznik_protocol`'s own `apply` will not take one without it — so an application keeping a model of its own can apply what it is handed, and can tell that nothing was missed."
+test = "iznik-ffi::ffi_surface::ffi_surface_carries_events_and_commands"
+because = "the number is put into the event beside the bytes, and what it must equal is what the same bytes decode to"
+
+[[claim]]
+id = "surface-writes-the-log-it-was-given"
+statement = "A log named in the configuration is written, under a directory that did not exist yet, and says what happened to a host — which is the only account of a run a native application can hand over without having kept one itself."
+test = "iznik-ffi::ffi_surface::ffi_surface_writes_the_log_it_was_given"
+because = "a file on this machine is the same file anywhere, and the host it is about is a whole daemon reached through `unix:`"
+
+[[claim]]
+id = "surface-refuses-a-log-it-cannot-write"
+statement = "A log that cannot be opened is a refusal naming the file, not a client that quietly writes nowhere — because the one moment somebody discovers an empty log is the moment they are looking for the reason something failed."
+test = "iznik-ffi::ffi_surface::ffi_surface_refuses_a_log_it_cannot_write"
+because = "the file is refused by this machine's own filesystem, which refuses it the same way anywhere"

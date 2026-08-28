@@ -12,6 +12,7 @@ carried
 carry
 carrying
 copying
+could
 credit
 cut
 cutting
@@ -74,6 +75,7 @@ shared
 shortest
 shows
 silent
+skips
 sleep
 storm
 stuck
@@ -83,6 +85,7 @@ sweeper
 sweeping
 taking
 task
+traffic
 turn
 unanswered
 uninstall

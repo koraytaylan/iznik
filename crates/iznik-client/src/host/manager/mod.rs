@@ -215,6 +215,18 @@ pub enum ManagerError {
         /// The host.
         host: HostId,
     },
+    /// The log an application asked for could not be opened.
+    ///
+    /// Refused rather than shrugged at: somebody who names a file wants what
+    /// went wrong written to it, and the one moment they would find out it
+    /// was never opened is the moment they go looking for the reason
+    /// something failed.
+    Log {
+        /// The file that was asked for.
+        path: PathBuf,
+        /// What the operating system said.
+        source: std::io::Error,
+    },
     /// A lock the manager holds was left broken by a panic under it.
     ///
     /// Its own error rather than an empty answer: a manager that reported no
@@ -243,6 +255,9 @@ impl core::fmt::Display for ManagerError {
                 write!(formatter, "the manager's runtime: {source}")
             }
             ManagerError::Artifacts { source } => write!(formatter, "{source}"),
+            ManagerError::Log { path, source } => {
+                write!(formatter, "the log at {}: {source}", path.display())
+            }
             ManagerError::Poisoned { what } => {
                 write!(formatter, "the manager's {what} was left broken by a panic")
             }
@@ -374,14 +389,55 @@ pub struct HostManager {
     sweeper: tokio::task::JoinHandle<()>,
 }
 
+/// Sends what this crate says to a file, when one was asked for.
+///
+/// Best effort about *who* is listening and exact about the file: a process
+/// that already installed a subscriber of its own keeps it — the command-line
+/// program does, and a manager inside it must not take that away — but a file
+/// that was named and cannot be written is an error, because the person who
+/// named it will go looking for what is in it.
+///
+/// # Errors
+///
+/// [`ManagerError::Log`] when the file cannot be opened for appending.
+fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if let Some(holding) = path.parent() {
+        std::fs::create_dir_all(holding).map_err(|source| ManagerError::Log {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|source| ManagerError::Log {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    // Whoever got there first keeps it: there is one of these for a process,
+    // and a program that set its own up said what it wanted.
+    let _mine = tracing_subscriber::fmt()
+        .with_writer(Mutex::new(file))
+        .with_ansi(false)
+        .try_init();
+    Ok(())
+}
+
 impl HostManager {
     /// A manager with nothing in it yet.
     ///
     /// # Errors
     ///
-    /// [`ManagerError::Runtime`] when a runtime cannot be built, and
-    /// [`ManagerError::Artifacts`] when this build's artifacts cannot be read.
+    /// [`ManagerError::Runtime`] when a runtime cannot be built,
+    /// [`ManagerError::Artifacts`] when this build's artifacts cannot be read,
+    /// and [`ManagerError::Log`] when a log was asked for and cannot be
+    /// written.
     pub fn new(options: ManagerOptions) -> Result<HostManager, ManagerError> {
+        write_to(options.log_path.as_deref())?;
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .build()
@@ -582,11 +638,16 @@ impl HostManager {
         let channel = self
             .shared
             .with(&host, |view| {
-                let carried = view.subscription(pane).map(|held| held.channel);
+                // A pane whose channel another pane has taken carries nothing:
+                // its number is `NO_CHANNEL`, which is the control channel,
+                // and credit sent there is credit the pane never gets — while
+                // the window this client thinks it returned has grown. Neither
+                // the order nor the grant happens.
+                let carried = view.carried(pane)?;
                 if let Some(held) = view.subscription_mut(pane) {
                     held.grant(u64::from(bytes));
                 }
-                carried
+                Some(carried)
             })
             .flatten()
             .ok_or(ManagerError::UnknownHost { host })?;

@@ -204,6 +204,19 @@ impl HostView {
         opened
     }
 
+    /// The channel a pane's bytes arrive on, when it has one.
+    ///
+    /// A pane whose number another pane has taken has [`NO_CHANNEL`], which is
+    /// the control channel and carries nobody's bytes — so it has none, and
+    /// anything addressed to it would go where it would not be understood.
+    #[must_use]
+    pub fn carried(&self, pane: PaneId) -> Option<u8> {
+        self.subscriptions
+            .get(&pane)
+            .map(|held| held.channel)
+            .filter(|channel| *channel != NO_CHANNEL)
+    }
+
     /// The pane whose bytes arrive on `channel`, when exactly one does.
     #[must_use]
     pub fn carrying(&self, channel: u8) -> Option<PaneId> {
@@ -264,10 +277,32 @@ impl HostView {
     /// the model to apply what is still in flight to.
     ///
     /// The caller applies the pending effects afterwards; this is the half
-    /// that cannot be done without touching both.
-    pub fn settle(&mut self, held: HostModel) {
+    /// that cannot be done without touching both. What comes back is the
+    /// commands this gave up on, which is empty except in the one case below.
+    ///
+    /// A generation lower than the one already settled is not this host's
+    /// history going on — it is another daemon's beginning, after an upgrade
+    /// or a restart. A command the daemon that is gone answered can never be
+    /// announced now, and nothing else would ever take it out of `pending`:
+    /// it is neither expired, since it was answered, nor rolled back, since
+    /// it was not refused. It stops being shown, and its number is given back
+    /// so the caller can say so. What was sent and never answered stays, and
+    /// times out in its own time.
+    pub fn settle(&mut self, held: HostModel) -> Vec<CommandId> {
+        let restarted = held.generation < self.settled.generation;
+        let abandoned = if restarted {
+            let (kept, gone): (Vec<PendingCommand>, Vec<PendingCommand>) =
+                std::mem::take(&mut self.pending)
+                    .into_iter()
+                    .partition(|standing| standing.answered.is_none());
+            self.pending = kept;
+            gone.iter().map(|standing| standing.id).collect()
+        } else {
+            Vec::new()
+        };
         self.settled = held;
         self.model = self.settled.clone();
+        abandoned
     }
 
     /// Whether the model it holds is one the server could have sent.

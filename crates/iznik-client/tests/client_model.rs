@@ -35,6 +35,9 @@ const CREDIT: u64 = 64 * 1024;
 /// The pane these cases subscribe to.
 const PANE: PaneId = PaneId(1);
 
+/// Another, for the cases about two of them.
+const OTHER: PaneId = PaneId(2);
+
 /// A host model with one session, one tab and one pane in it.
 fn one_pane(generation: u64) -> HostModel {
     HostModel {
@@ -343,5 +346,83 @@ fn client_model_validates_every_host_it_holds() {
     assert!(
         complaint.to_string().contains("build"),
         "and reads as one: {complaint}"
+    );
+}
+
+/// # Panics
+///
+/// When a command a replaced daemon answered goes on being shown, or one it
+/// never answered is thrown away with it.
+#[test]
+fn client_model_lets_go_of_what_a_replaced_daemon_answered() {
+    let now = Instant::now();
+    let mut view = HostView::of(one_pane(5));
+    // One answered at the generation the host said it reached, and one still
+    // waiting. The first is what the host is about to stop being able to
+    // announce.
+    let mut answered = sent(1, "answered", now);
+    answered.answered = Some(Generation(5));
+    view.record(answered);
+    view.record(sent(2, "waiting", now));
+    // A daemon that was upgraded, or restarted, begins again at nothing: a
+    // generation below the one settled is another host's first word, not this
+    // one's next.
+    let abandoned = view.settle(one_pane(0));
+    assert_eq!(
+        abandoned,
+        vec![CommandId(1)],
+        "the answered one is given up on, and named"
+    );
+    assert_eq!(
+        view.pending.iter().map(|held| held.id).collect::<Vec<_>>(),
+        vec![CommandId(2)],
+        "and the one nobody answered stays, to time out in its own time"
+    );
+}
+
+/// # Panics
+///
+/// When a host that carried on from where it was loses a command that is
+/// still in flight.
+#[test]
+fn client_model_keeps_what_is_in_flight_across_a_snapshot() {
+    let now = Instant::now();
+    let mut view = HostView::of(one_pane(5));
+    let mut answered = sent(1, "answered", now);
+    answered.answered = Some(Generation(7));
+    view.record(answered);
+    // The same host, further on: everything in flight is still in flight.
+    let abandoned = view.settle(one_pane(6));
+    assert!(
+        abandoned.is_empty(),
+        "nothing is given up on when a host carries on"
+    );
+    assert_eq!(view.pending.len(), 1, "and what was in flight still is");
+}
+
+/// # Panics
+///
+/// When a pane whose channel another pane took is still said to have one.
+#[test]
+fn client_model_says_a_pane_has_no_channel_once_another_takes_it() {
+    let mut view = HostView::of(one_pane(1));
+    let _first = view.subscribe(PANE, CHANNEL, FROM);
+    assert_eq!(
+        view.carried(PANE),
+        Some(CHANNEL),
+        "a pane that was given a channel has it"
+    );
+    // The host gives the same number to another pane, which is what a
+    // reconnection re-announcing panes does.
+    let _second = view.subscribe(OTHER, CHANNEL, FROM);
+    assert_eq!(
+        view.carried(PANE),
+        None,
+        "and the pane that lost it has none, rather than the control channel"
+    );
+    assert_eq!(
+        view.carried(OTHER),
+        Some(CHANNEL),
+        "while the pane that took it does"
     );
 }

@@ -11,7 +11,7 @@ use std::ffi::{CStr, CString};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{JoinHandle, ThreadId};
 
 use iznik_client::bootstrap::launch::{Stage, UpgradeError};
 use iznik_client::host::identity::HostId;
@@ -71,6 +71,16 @@ pub struct Client {
     listening: Arc<Mutex<Listener>>,
     /// The panes an application has attached to, and what to call for each.
     attached: Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
+    /// Held by the thread below for as long as a callback is running.
+    ///
+    /// Not taken in order to make a call — taken to say that one is being
+    /// made, so that letting a pane go, or taking the event callback away,
+    /// can wait for the call that may already be running instead of leaving
+    /// an application to guess whether its context is still being read.
+    delivering: Arc<Mutex<()>>,
+    /// Which thread that is, so that a handler calling back in is never made
+    /// to wait for itself.
+    delivers: ThreadId,
     /// The one thread every callback arrives on.
     pump: Option<JoinHandle<()>>,
 }
@@ -85,6 +95,25 @@ struct Attached {
 }
 
 impl Client {
+    /// Waits for a callback that may already be running to finish.
+    ///
+    /// Taken after whatever is being taken away is out of reach and never
+    /// before: a call that has not begun will not find it, and one that has
+    /// is what this waits for. So an application that has detached a pane, or
+    /// replaced its event callback, may free what it passed as soon as the
+    /// call it made returns.
+    ///
+    /// Nothing else may be held while this waits — the thread it waits for
+    /// makes calls that come back in and take those locks. A handler that
+    /// calls in from inside a callback waits for nothing at all: it *is* the
+    /// call, and what it passed is alive for as long as it is running.
+    fn quiesce(&self) {
+        if std::thread::current().id() == self.delivers {
+            return;
+        }
+        drop(self.delivering.lock());
+    }
+
     /// Takes the lock that serializes the application's own calls.
     ///
     /// It is never held while a callback runs, so a handler may call back in.
@@ -189,6 +218,7 @@ fn options(
     runtime: Option<&str>,
     artifacts: Option<&str>,
     askpass: Option<&str>,
+    log: Option<&str>,
 ) -> Result<ManagerOptions, String> {
     let paths = match runtime {
         Some(named) => ClientRuntimePaths::under(&PathBuf::from(named)),
@@ -208,6 +238,7 @@ fn options(
         askpass_program: askpass.map(PathBuf::from),
         ..SshOptions::default()
     };
+    held.log_path = log.map(PathBuf::from);
     Ok(held)
 }
 
@@ -245,7 +276,9 @@ pub unsafe extern "C" fn iznik_client_new(
     let artifacts = unsafe { said.and_then(|held| text(held.artifacts_directory)) };
     // SAFETY: the same again.
     let askpass = unsafe { said.and_then(|held| text(held.askpass_program)) };
-    let held = match options(runtime, artifacts, askpass) {
+    // SAFETY: and the last of them.
+    let log = unsafe { said.and_then(|held| text(held.log_path)) };
+    let held = match options(runtime, artifacts, askpass, log) {
         Ok(held) => held,
         Err(detail) => {
             // SAFETY: the caller's obligation, above.
@@ -274,12 +307,17 @@ fn started(manager: HostManager) -> Client {
     let attached = Arc::new(Mutex::new(BTreeMap::new()));
     let telling = Arc::clone(&listening);
     let watching = Arc::clone(&attached);
-    let pump = std::thread::spawn(move || deliver(&telling, &watching, &events));
+    let delivering = Arc::new(Mutex::new(()));
+    let busy = Arc::clone(&delivering);
+    let pump = std::thread::spawn(move || deliver(&telling, &watching, &busy, &events));
+    let delivers = pump.thread().id();
     Client {
         manager: Some(manager),
         calling: Mutex::new(()),
         listening,
         attached,
+        delivering,
+        delivers,
         pump: Some(pump),
     }
 }
@@ -292,9 +330,16 @@ fn started(manager: HostManager) -> Client {
 fn deliver(
     listening: &Arc<Mutex<Listener>>,
     attached: &Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
+    delivering: &Arc<Mutex<()>>,
     events: &Receiver<ManagerEvent>,
 ) {
     while let Ok(event) = events.recv() {
+        // Taken for the whole of the call and let go between calls: what
+        // waits on it is a caller taking away the context this one is about
+        // to read.
+        let Ok(_delivering) = delivering.lock() else {
+            return;
+        };
         // A pane somebody is watching is handed its own bytes, and not handed
         // them twice: an application that attached to a pane reads it there.
         if handed(attached, &event) {
@@ -432,6 +477,7 @@ fn carry(
         host: named.as_ptr(),
         pane: pane_of(event),
         sequence: sequence_of(event),
+        generation: generation_of(event),
         command_id: command_of(event),
         payload: payload.as_ptr(),
         payload_length: payload.len(),
@@ -530,6 +576,21 @@ fn pane_of(event: &ManagerEvent) -> u64 {
     }
 }
 
+/// The number a model event carries, or zero.
+///
+/// A change is applied to the generation before it and to no other, so an
+/// application that keeps a model of its own cannot use one without the
+/// number it belongs to: `iznik_protocol`'s own `apply` takes both, and the
+/// encoded change does not carry it.
+fn generation_of(event: &ManagerEvent) -> u64 {
+    match event {
+        ManagerEvent::Snapshot { generation, .. } | ManagerEvent::Delta { generation, .. } => {
+            generation.0
+        }
+        _elsewhere => 0,
+    }
+}
+
 /// Where in a pane's stream an event sits, or zero.
 fn sequence_of(event: &ManagerEvent) -> u64 {
     match event {
@@ -562,6 +623,7 @@ fn layer_of(refusal: &ManagerError) -> Layer {
         ManagerError::Uninstall { source } => staged(source.stage),
         ManagerError::Runtime { .. }
         | ManagerError::Artifacts { .. }
+        | ManagerError::Log { .. }
         | ManagerError::UnknownHost { .. }
         | ManagerError::Gone { .. }
         | ManagerError::Poisoned { .. } => Layer::Client,
@@ -632,11 +694,16 @@ pub unsafe extern "C" fn iznik_set_event_callback(
     let Some(held) = (unsafe { borrowed(client) }) else {
         return;
     };
-    let Ok(mut listening) = held.listening.lock() else {
-        return;
-    };
-    listening.callback = callback;
-    listening.context = Carried(context);
+    {
+        let Ok(mut listening) = held.listening.lock() else {
+            return;
+        };
+        listening.callback = callback;
+        listening.context = Carried(context);
+    }
+    // The listener is let go first: the thread this waits for takes it to
+    // read what to call.
+    held.quiesce();
 }
 
 /// Begins holding a host, and connecting to it.

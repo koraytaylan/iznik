@@ -41,3 +41,9 @@ id = "pipe-stops-when-it-is-let-go"
 statement = "Nothing arrives for a pane that was let go, and what had arrived before is untouched."
 test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_stops_when_it_is_let_go"
 because = "what stops is this library's own delivery, and no host is needed to see that it stopped"
+
+[[claim]]
+id = "pipe-lets-a-pane-go-from-inside-its-own-handler"
+statement = "Letting a pane go waits for a handler that is already running before it answers — which is what makes the obligation keepable: when it returns, nothing is reading the context any more, so it may be freed. A handler that lets its own pane go waits for nothing at all, because it *is* the call it would be waiting for, and nothing arrives for the pane afterwards."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_lets_a_pane_go_from_inside_its_own_handler"
+because = "the two threads are real threads and the waiting is this boundary's own; a network would add delay to what arrives, not another caller"

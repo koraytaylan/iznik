@@ -44,9 +44,24 @@ type Failed = Box<dyn std::error::Error>;
 struct Seen {
     /// Every thread a callback has arrived on.
     threads: BTreeSet<String>,
-    /// What each event was: its kind, its host, its payload copied while it
-    /// was valid, and the command number it carried.
-    events: Vec<(EventKind, String, Vec<u8>, u64)>,
+    /// What each event was, copied while it was valid.
+    events: Vec<Told>,
+}
+
+/// One event, as this case kept it.
+#[derive(Debug)]
+struct Told {
+    /// What it was about.
+    kind: EventKind,
+    /// The host it named.
+    host: String,
+    /// Its bytes, copied while they were valid, because that is the rule the
+    /// boundary states.
+    payload: Vec<u8>,
+    /// The command it answered, or zero.
+    command: u64,
+    /// The generation it carried, or zero.
+    generation: u64,
 }
 
 /// The callback every case uses: it copies what it is given, because that is
@@ -69,8 +84,13 @@ extern "C" fn record(event: *const Event, context: *mut c_void) {
     };
     kept.threads
         .insert(format!("{:?}", std::thread::current().id()));
-    kept.events
-        .push((held.kind, host, payload, held.command_id));
+    kept.events.push(Told {
+        kind: held.kind,
+        host,
+        payload,
+        command: held.command_id,
+        generation: held.generation,
+    });
 }
 
 /// One of iznik's strings as text.
@@ -195,9 +215,7 @@ fn await_seen(
 /// the lock while it asks, and a second lock on the same mutex from inside the
 /// question would wait for the answer.
 fn saw(kept: &Seen, kind: EventKind) -> bool {
-    kept.events
-        .iter()
-        .any(|(named, _host, _payload, _id)| *named == kind)
+    kept.events.iter().any(|told| told.kind == kind)
 }
 
 /// # Panics
@@ -271,13 +289,20 @@ fn ffi_surface_carries_events_and_commands() {
             let snapshot = kept
                 .events
                 .iter()
-                .find(|(kind, _host, _payload, _id)| *kind == EventKind::Snapshot)
+                .find(|told| told.kind == EventKind::Snapshot)
                 .ok_or("a snapshot was seen")?;
             // The payload is the protocol's own encoding, read with the
             // protocol's own reader: one schema, not two.
-            let model = iznik_protocol::model::decode_host_model(&snapshot.2)?;
+            let model = iznik_protocol::model::decode_host_model(&snapshot.payload)?;
             assert_eq!(model.sessions.len(), 0, "a fresh daemon holds nothing");
-            assert!(snapshot.1.contains("unix:"), "and it names the host");
+            assert!(snapshot.host.contains("unix:"), "and it names the host");
+            // And the number that says which model it is. A change is applied
+            // to the generation before it and to no other, so an application
+            // keeping a model of its own cannot use one without this.
+            assert_eq!(
+                snapshot.generation, model.generation.0,
+                "the event says which generation the model it carries is"
+            );
         }
         let asked = encode_session_command(&SessionCommand::CreateSession {
             name: "work".to_owned(),
@@ -304,13 +329,26 @@ fn ffi_surface_carries_events_and_commands() {
         // the boundary states.
         drop(asked);
         await_seen(seen, "the command's answer", |kept| {
-            kept.events.iter().any(|(kind, _host, _payload, id)| {
-                *kind == EventKind::CommandResult && *id == number
-            })
+            kept.events
+                .iter()
+                .any(|told| told.kind == EventKind::CommandResult && told.command == number)
         })?;
         await_seen(seen, "the session's delta", |kept| {
             saw(kept, EventKind::Delta)
         })?;
+        {
+            // SAFETY: this case's own box, alive here.
+            let kept = unsafe { &*seen }.lock().map_err(|_broken| "the record")?;
+            // A change carries the number it produces, for the same reason a
+            // snapshot does: `iznik_protocol`'s own `apply` takes both, and
+            // the encoded change does not carry it.
+            let numbered = kept
+                .events
+                .iter()
+                .filter(|told| told.kind == EventKind::Delta)
+                .all(|told| told.generation > 0);
+            assert!(numbered, "every change says which generation it produces");
+        }
         // SAFETY: it came from `iznik_client_new` and is freed once, here.
         unsafe { iznik_client_free(made) };
         // Nothing can be calling back now, so the record may go.
@@ -410,6 +448,93 @@ fn ffi_surface_says_which_layer_failed() {
         );
         // SAFETY: it came from `iznik_client_new` and is freed once, here.
         unsafe { iznik_client_free(made) };
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a log an application asked for is never written, or a file that
+/// cannot be opened is not said to be a refusal.
+#[test]
+fn ffi_surface_writes_the_log_it_was_given() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("logging")?;
+        let runtime = runtime()?;
+        let stack = runtime.block_on(Stack::start(StackOptions::default()))?;
+        // Under a directory that does not exist yet: an application names a
+        // file, not a place that has been prepared for it.
+        let path = held.path.join("logs").join("iznik.log");
+        let runtime_directory = CString::new(held.path.join("runtime").display().to_string())?;
+        let log = CString::new(path.display().to_string())?;
+        let configuration = Configuration {
+            runtime_directory: runtime_directory.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: log.as_ptr(),
+        };
+        let mut error = blank();
+        // SAFETY: the configuration and its strings are alive for this call.
+        let made = unsafe { iznik_client_new(&raw const configuration, &raw mut error) };
+        assert!(!made.is_null(), "a client with a log: {}", said(&error));
+        let alias = CString::new(format!("unix:{}", stack.socket().display()))?;
+        // SAFETY: the client is live and the alias null-terminated.
+        let added = unsafe { iznik_host_add(made, alias.as_ptr(), &raw mut error) };
+        assert_eq!(added, OK, "the host is held: {}", said(&error));
+        // A host that connects moves, and a host that moves is written down.
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        while Instant::now() < expires {
+            if std::fs::metadata(&path).is_ok_and(|found| found.len() > 0) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let written = std::fs::read_to_string(&path)?;
+        assert!(
+            written.contains("a host moved"),
+            "the log says what happened: {written:?}"
+        );
+        // SAFETY: it came from `iznik_client_new` and is freed once, here.
+        unsafe { iznik_client_free(made) };
+        drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a log that cannot be opened is answered with a client rather than a
+/// refusal naming the layer it came from.
+#[test]
+fn ffi_surface_refuses_a_log_it_cannot_write() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("unwritable")?;
+        // A file whose parent is a file: nothing can be made under it, and the
+        // application finds out now rather than when it goes looking for what
+        // the log was supposed to say.
+        let blocking = held.path.join("occupied");
+        std::fs::write(&blocking, b"not a directory")?;
+        let path = blocking.join("iznik.log");
+        let runtime_directory = CString::new(held.path.join("runtime").display().to_string())?;
+        let log = CString::new(path.display().to_string())?;
+        let configuration = Configuration {
+            runtime_directory: runtime_directory.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: log.as_ptr(),
+        };
+        let mut error = blank();
+        // SAFETY: the configuration and its strings are alive for this call.
+        let made = unsafe { iznik_client_new(&raw const configuration, &raw mut error) };
+        assert!(made.is_null(), "no client is made");
+        assert_eq!(error.layer, Layer::Client, "and this layer said so");
+        assert!(
+            said(&error).contains("iznik.log"),
+            "naming the file it could not write: {}",
+            said(&error)
+        );
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

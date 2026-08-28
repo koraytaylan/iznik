@@ -57,6 +57,14 @@ pub struct Event {
     /// Where in a pane's stream it sits, for the kinds that say; zero
     /// otherwise.
     pub sequence: u64,
+    /// Which generation of the host's model a `Snapshot` is, or a `Delta`
+    /// produces; zero otherwise.
+    ///
+    /// A change belongs to exactly one generation and the encoded change does
+    /// not carry the number, so an application keeping a model of its own is
+    /// given it here — it is what `iznik_protocol`'s `apply` wants beside the
+    /// bytes, and what says whether anything was missed.
+    pub generation: u64,
     /// This client's number for a command, for `CommandResult`; zero
     /// otherwise.
     pub command_id: u64,
@@ -72,4 +80,8 @@ pub struct Event {
 /// keeps state in its handler needs no lock of its own for it. It may call
 /// back into iznik: the calls the application makes are serialized among
 /// themselves, and nothing holds that lock while a callback runs.
+///
+/// Replacing it, or taking it away with a null, waits for a call that is
+/// already running before it returns — so the context the application gave
+/// with it may be freed as soon as that answers.
 pub type EventCallback = Option<extern "C" fn(event: *const Event, context: *mut c_void)>;

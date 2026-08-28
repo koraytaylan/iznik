@@ -53,7 +53,7 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
             shared.publish(&ManagerEvent::Removed { host });
             return;
         };
-        match pump(&host, &shared, &machine, &mut orders, channel).await {
+        match pump(&host, &shared, &machine, &mut orders, &mut kept, channel).await {
             Ended::Stopped => return,
             Ended::Gone => {}
         }
@@ -76,6 +76,12 @@ fn advance(
     let after = held.state().clone();
     drop(held);
     if after != before {
+        // Written down as well as announced. An application is told so it can
+        // show it; the log is what somebody reads afterwards, when what they
+        // want to know is when a host went and how long it was gone — and it
+        // is the only account of that a native application can hand over
+        // without having kept one itself.
+        tracing::info!(host = %host.0, from = %before, to = %after, "a host moved");
         shared.publish(&ManagerEvent::Moved {
             host: host.clone(),
             state: after,
@@ -314,6 +320,7 @@ async fn accept(
     // above the manager is told about a host's model the same way whether the
     // model arrived with the connection or after it.
     told_the_model(host, shared, &snapshot);
+    let mut abandoned = Vec::new();
     if let Ok(mut model) = shared.model.lock() {
         match model.host_mut(host) {
             Some(view) => {
@@ -322,13 +329,24 @@ async fn accept(
                 // whose answer was lost with the link is still this client's
                 // to show, and its rollback must be the model that came back
                 // rather than the one from before the drop.
-                view.settle(snapshot);
+                abandoned = view.settle(snapshot);
                 replay(view);
             }
             None => {
                 let _first = model.insert(host.clone(), HostView::of(snapshot));
             }
         }
+    }
+    if !abandoned.is_empty() {
+        // Not an event: what happened is that this host is another daemon,
+        // which the state and the snapshot beside it already say. It is
+        // written down because a command that was applied and is no longer
+        // shown is the kind of thing somebody reads a log to understand.
+        tracing::info!(
+            host = %host.0,
+            commands = ?abandoned,
+            "a replaced daemon answered these, and they stop being shown"
+        );
     }
     let taken = advance(
         shared,
@@ -400,6 +418,7 @@ async fn pump(
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
+    kept: &mut Vec<Order>,
     mut channel: RemoteChannel,
 ) -> Ended {
     let mut carried = 0_usize;
@@ -440,7 +459,13 @@ async fn pump(
                 return Ended::Gone;
             }
             Turn::Ordered(Some(order)) => {
-                if carry(&mut channel, order).await.is_err() {
+                if carry(&mut channel, order.clone()).await.is_err() {
+                    // Held for the next connection, under the same rule as an
+                    // order that arrived while there was none: what the link
+                    // died holding was taken from the application, which was
+                    // told so, and dropping it here would lose a subscription
+                    // and leave a pane blank for ever.
+                    keep(kept, order);
                     let _dead = advance(shared, host, machine, dead("the link would not take it"));
                     return Ended::Gone;
                 }
@@ -523,7 +548,17 @@ async fn heard(
         // What the host said about its model goes on as the host said it: the
         // layer above this one hands those bytes to an application that
         // decodes them with the protocol's own reader.
-        announced(host, shared, &message);
+        //
+        // Except a change this client could not take. A gap in the numbering
+        // or a change that did not fit leaves the model exactly as it was and
+        // asks for the whole of it; passing the change on regardless would
+        // have the application apply what this client refused, and the two
+        // would part until the snapshot arrived. What is passed on is what
+        // was applied, so an application that applies every change in turn
+        // holds what this client holds.
+        if taken.is_empty() || !matches!(message, iznik_protocol::message::ToClient::Delta { .. }) {
+            announced(host, shared, &message);
+        }
         taken
     } else {
         carried(host, shared, &received);

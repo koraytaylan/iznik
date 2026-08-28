@@ -3,6 +3,7 @@ artifacts
 askpass
 blank
 boundary
+busy
 callback
 calling
 calls
@@ -14,6 +15,8 @@ context
 copied
 defaulted
 deliver
+delivering
+delivers
 ends
 error
 event
@@ -43,6 +46,7 @@ poisoned
 protocol
 pump
 quickly
+quiesce
 record
 remembered
 said

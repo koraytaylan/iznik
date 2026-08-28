@@ -65,42 +65,6 @@ const ROWS: u16 = 24;
 /// The first pane every one of these makes.
 const PANE: PaneId = PaneId(1);
 
-/// How many times a line comes back from the reader: once as the terminal
-/// echoed it, once as the reader wrote it back.
-const TWICE: usize = 2;
-
-/// How many round trips a hundred lines handed over at once may cost.
-///
-/// One, when they are carried as they are given; a hundred, when each waits
-/// on the one before it. Ten is far from both, so which of the two happened
-/// is legible however loaded the machine is — and a machine's load lengthens
-/// the round trip this is counted in, not the count.
-const ROUND_TRIPS: u32 = 10;
-
-/// The least a hundred lines are given, however quick one line was.
-///
-/// A round trip on an idle machine is a fraction of a millisecond, and ten of
-/// those is not a budget but a stopwatch on the scheduler.
-const BURST_FLOOR: Duration = Duration::from_millis(250);
-
-/// The line whose round trip the burst is measured against.
-const ALONE: &str = "8888";
-
-/// How many lines are handed over at once in the burst case.
-///
-/// Enough that carrying them one to a turn would show: with a round trip
-/// between each, a hundred of them take longer than any budget here.
-const BURST: usize = 100;
-
-/// What the burst is typed into, and what says it is ready.
-///
-/// A shell of its own re-arms its terminal before every line it reads, and
-/// what it uses to do that throws away input that arrived but has not been
-/// read — so a shell would make this a case about how far it had got. `cat`
-/// re-arms nothing, and a line comes back from it twice: once as the terminal
-/// echoed it, once as `cat` wrote it back.
-const READER: &[u8] = b"cat\n";
-
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
 
@@ -477,46 +441,6 @@ fn connection_manager_keeps_a_stuck_host_to_itself() {
     case().unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// Waits until everything a pane has said satisfies `wanted`, and gives back
-/// what it said.
-///
-/// Bytes arrive in whatever pieces the host sent them, so a case that asks
-/// about many lines has to gather rather than wait for one event.
-///
-/// # Errors
-///
-/// When it never does.
-fn gathered(
-    events: &Receiver<ManagerEvent>,
-    what: &str,
-    patience: Duration,
-    wanted: impl Fn(&[u8]) -> bool,
-) -> Result<Vec<u8>, Failed> {
-    let expires = Instant::now().checked_add(patience).ok_or("no clock")?;
-    let mut said = Vec::new();
-    while Instant::now() < expires {
-        if wanted(&said) {
-            return Ok(said);
-        }
-        let left = expires.saturating_duration_since(Instant::now());
-        match events.recv_timeout(left) {
-            Ok(ManagerEvent::Bytes { pane, bytes, .. }) if pane == PANE => {
-                said.extend_from_slice(&bytes);
-            }
-            Ok(_other) => {}
-            Err(_nothing) => break,
-        }
-    }
-    if wanted(&said) {
-        return Ok(said);
-    }
-    Err(format!(
-        "no {what} inside {patience:?}; the pane said {:?}",
-        String::from_utf8_lossy(&said)
-    )
-    .into())
-}
-
 /// Whether a needle is somewhere in a haystack.
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
@@ -878,68 +802,6 @@ fn connection_manager_reports_every_state_in_order() {
         assert!(
             !manager.model().is_empty(),
             "and the model holds what it heard"
-        );
-        drop(manager);
-        drop(stack);
-        Ok(())
-    };
-    case().unwrap_or_else(|error| panic!("{error}"));
-}
-
-/// # Panics
-///
-/// When a burst of input is paced by what the host is saying rather than
-/// carried as fast as it was handed over.
-#[test]
-fn connection_manager_carries_a_burst_as_fast_as_it_is_given() {
-    let case = || -> Result<(), Failed> {
-        let held = scratch("burst")?;
-        let runtime = runtime()?;
-        let stack = runtime.block_on(Stack::start(StackOptions::default()))?;
-        let manager = manager(&held)?;
-        let events = manager.events();
-        let host = alias(stack.socket());
-        manager.add_host(&host);
-        await_connected(&events, &[&host])?;
-        let _session = make_a_session(&manager, &events, &host, "work")?;
-        manager.subscribe(&host, PANE)?;
-        manager.input(&host, PANE, READER.to_vec())?;
-        // Not that the name was echoed — that what it named is reading, which
-        // is what a line coming back twice says.
-        manager.input(&host, PANE, b"#9999\n".to_vec())?;
-        let _ready = gathered(&events, "the reader reading", PROMPT, |said| {
-            said.windows(b"9999".len())
-                .filter(|window| *window == b"9999")
-                .count()
-                >= TWICE
-        })?;
-        // What one line costs, so that what a hundred cost can be read
-        // against it rather than against a clock a busy machine cannot keep.
-        let alone = Instant::now();
-        manager.input(&host, PANE, format!("#{ALONE}\n").into_bytes())?;
-        let _once = gathered(&events, "one line coming back", PROMPT, |said| {
-            said.windows(ALONE.len())
-                .filter(|window| *window == ALONE.as_bytes())
-                .count()
-                >= TWICE
-        })?;
-        let one = alone.elapsed();
-        // A hundred lines handed over at once, while the host is saying
-        // something: every one of them is carried without waiting to hear
-        // what it has to say between one and the next.
-        let started = Instant::now();
-        for index in 0..BURST {
-            manager.input(&host, PANE, format!("#{index:02}{index:02}\n").into_bytes())?;
-        }
-        let _said = gathered(&events, "the burst", PROMPT, |said| {
-            (0..BURST).all(|index| contains(said, format!("{index:02}{index:02}").as_bytes()))
-        })?;
-        let taken = started.elapsed();
-        let budget = one.saturating_mul(ROUND_TRIPS).max(BURST_FLOOR);
-        assert!(
-            taken < budget,
-            "a hundred lines cost {taken:?}, which is more than {ROUND_TRIPS} of the \
-             {one:?} one line costs: they are being carried one to a round trip"
         );
         drop(manager);
         drop(stack);

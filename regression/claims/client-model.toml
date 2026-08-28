@@ -66,3 +66,21 @@ id = "client-model-validates-every-host-it-holds"
 statement = "Every host model it holds is one a server could have sent, and a model that is not — a session with no tabs — is refused naming the host it belongs to, because a client that rendered one would show something the host does not have."
 test = "iznik-client::client_model::client_model_validates_every_host_it_holds"
 because = "the invariants are the protocol's own, proven there; what is proven here is that every host is put through them and that the complaint says which"
+
+[[claim]]
+id = "client-model-lets-go-of-what-a-replaced-daemon-answered"
+statement = "A generation lower than the one settled is another daemon's first word, not this one's next — an upgrade, or a restart. A command the daemon that is gone answered, and had not yet announced, stops being shown: nothing else would ever take it out, since it was neither refused nor left unanswered, and it would otherwise be re-applied on top of every snapshot the new host sent, for ever. What was sent and never answered stays, and times out in its own time."
+test = "iznik-client::client_model::client_model_lets_go_of_what_a_replaced_daemon_answered"
+because = "a generation is a number in a model, and what a client does when one goes backwards is arithmetic on values this machine holds"
+
+[[claim]]
+id = "client-model-keeps-what-is-in-flight-across-a-snapshot"
+statement = "A host that carried on from where it was keeps everything in flight in flight, so the ordinary snapshot — a resume, a gap made good — costs an application nothing it was showing."
+test = "iznik-client::client_model::client_model_keeps_what_is_in_flight_across_a_snapshot"
+because = "it is the other half of the case above, and the same values"
+
+[[claim]]
+id = "client-model-says-a-pane-has-no-channel-once-another-takes-it"
+statement = "A pane whose channel number another pane has taken has no channel, rather than channel zero — which is the control channel, where credit would be a message the host cannot route and a window this client believes it returned and never did."
+test = "iznik-client::client_model::client_model_says_a_pane_has_no_channel_once_another_takes_it"
+because = "which pane holds which channel is the model's own bookkeeping, and a host is not needed to renumber one"
