@@ -22,6 +22,17 @@ const PIPE: usize = 1 << 20;
 /// The channel every case sends on; any but the control channel would do.
 const CHANNEL: u8 = 1;
 
+/// A flood just past the compressor's own scratch, which is where a decoder
+/// that is not drained first goes wrong.
+const SMALL_FLOOD: usize = 64 * 1024;
+
+/// A flood far past it, and past a zstd block, but inside both a protocol
+/// frame and the pipe once compressed.
+const LARGE_FLOOD: usize = 300 * 1024;
+
+/// The seed the flood is generated from, so a failure is reproducible.
+const FLOOD_SEED: u64 = 0x2026_0828_1402_0003;
+
 /// How many samples the latency figure is taken over.
 const SAMPLES: usize = 10_000;
 
@@ -91,6 +102,37 @@ async fn compression_every_corpus_frame_survives_the_round_trip() {
     tokio::time::timeout(DEADLINE, case)
         .await
         .expect("the round trip finishes");
+}
+
+/// A payload far larger than the compressor's own scratch survives, which a
+/// corpus of tiny constructs never reaches: a zstd block decompresses to more
+/// than one step's buffer holds, and a decoder stepped only while it still has
+/// unread input leaves whole frames inside itself and stalls the reader.
+///
+/// # Panics
+///
+/// When a large frame does not arrive, or does not arrive whole.
+#[tokio::test]
+async fn compression_a_payload_larger_than_the_buffers_survives() {
+    let case = async {
+        let (here, there) = duplex(PIPE);
+        let mut sender = compressed(here, Vec::new()).expect("a compressed link");
+        let mut receiver = compressed(there, Vec::new()).expect("a compressed link");
+        for length in [SMALL_FLOOD, LARGE_FLOOD] {
+            let payload = corpus::generated(FLOOD_SEED, length);
+            sender.send(CHANNEL, &payload).await.expect("a frame goes");
+            let frame = receiver
+                .next_frame()
+                .await
+                .expect("a frame arrives")
+                .expect("the link is open");
+            assert_eq!(frame.payload.len(), payload.len(), "a frame of {length}");
+            assert_eq!(frame.payload, payload.as_slice(), "a frame of {length}");
+        }
+    };
+    tokio::time::timeout(DEADLINE, case)
+        .await
+        .expect("a large frame arrives");
 }
 
 /// The peer's first compressed bytes, read past its `Hello` by the plain link,

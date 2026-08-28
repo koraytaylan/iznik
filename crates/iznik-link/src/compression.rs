@@ -75,10 +75,19 @@ pub struct ZstdStream<Stream> {
     taken: usize,
     /// What a write took from its caller and has not yet reported, held
     /// across a `Pending` so a retry does not compress the same bytes twice.
-    accepted: usize,
+    /// It carries the length it took, so that a retry of a *different* write —
+    /// which means the first was abandoned, and `FramedLink::send` says what
+    /// that costs — is compressed rather than silently answered with the
+    /// abandoned write's count.
+    accepted: Option<usize>,
     /// Whether the zstd frame has been finished; finishing twice is not
     /// something the encoder is asked to survive.
     finished: bool,
+    /// Whether the frame being decoded has reached its end. A stream that
+    /// stops in the middle of one is a truncation, not a clean close, and
+    /// saying otherwise would hand a client half a screen as if it were all
+    /// of it.
+    ended: bool,
     /// The scratch one encode or decode step writes into, kept so that a
     /// keystroke does not allocate.
     work: Vec<u8>,
@@ -103,7 +112,12 @@ impl<Stream> core::fmt::Debug for ZstdStream<Stream> {
     }
 }
 
-/// Drops what a buffer has already given up, when there is enough of it to be
+/// The least a buffer must have given up before its remainder is moved down.
+/// Below this the move costs more than the bytes it reclaims, and a large
+/// frame would be moved once per step of the decoder.
+const COMPACT_THRESHOLD: usize = 4 * 1024;
+
+/// Drops what a buffer has already given up, once there is enough of it to be
 /// worth the move.
 fn compact(buffer: &mut Vec<u8>, consumed: &mut usize) {
     if *consumed == 0 {
@@ -111,6 +125,8 @@ fn compact(buffer: &mut Vec<u8>, consumed: &mut usize) {
     }
     if *consumed >= buffer.len() {
         buffer.clear();
+    } else if *consumed < COMPACT_THRESHOLD {
+        return;
     } else {
         let _removed = buffer.drain(..*consumed);
     }
@@ -137,8 +153,9 @@ impl<Stream> ZstdStream<Stream> {
             decoded: 0,
             plain: Vec::new(),
             taken: 0,
-            accepted: 0,
+            accepted: None,
             finished: false,
+            ended: true,
             work: vec![0; WORK_LENGTH],
             reading: vec![0; READ_LENGTH],
         })
@@ -204,7 +221,6 @@ impl<Stream> ZstdStream<Stream> {
         if self.finished {
             return Ok(());
         }
-        self.finished = true;
         let ZstdStream {
             encoder,
             outgoing,
@@ -220,6 +236,7 @@ impl<Stream> ZstdStream<Stream> {
                 break;
             }
         }
+        self.finished = true;
         Ok(())
     }
 
@@ -236,18 +253,22 @@ impl<Stream> ZstdStream<Stream> {
             decoded,
             plain,
             work,
+            ended,
             ..
         } = self;
         let mut produced = false;
-        while *decoded < incoming.len() {
+        loop {
             let input = incoming.get(*decoded..).unwrap_or_default();
             let status = decoder.run_on_buffers(input, work)?;
             *decoded = decoded.saturating_add(status.bytes_read);
             plain.extend_from_slice(work.get(..status.bytes_written).unwrap_or_default());
+            *ended = status.remaining == 0;
             if status.bytes_written > 0 {
                 produced = true;
                 break;
             }
+            // Nothing read and nothing written is a decoder that has given up
+            // everything it holds and wants bytes it does not have.
             if status.bytes_read == 0 {
                 break;
             }
@@ -286,21 +307,32 @@ impl<Stream: AsyncWrite + Unpin> ZstdStream<Stream> {
     fn poll_send(
         &mut self,
         context: &mut Context<'_>,
-        slices: &[&[u8]],
+        slices: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        if self.accepted == 0 {
-            let mut total: usize = 0;
+        let offered = slices
+            .iter()
+            .fold(0_usize, |total, slice| total.saturating_add(slice.len()));
+        if self.accepted != Some(offered) {
+            // Either nothing is pending, or what is pending was a different
+            // write and so was abandoned — which `FramedLink::send` documents
+            // as leaving a torn frame. Better a torn frame than this one
+            // silently answered with the abandoned one's count.
             for slice in slices {
                 self.feed(slice)?;
-                total = total.saturating_add(slice.len());
             }
             self.flush_encoder()?;
-            self.accepted = total;
+            self.accepted = Some(offered);
         }
-        ready!(self.poll_drain(context))?;
-        let accepted = self.accepted;
-        self.accepted = 0;
-        Poll::Ready(Ok(accepted))
+        match self.poll_drain(context) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => {
+                self.accepted = None;
+                return Poll::Ready(Err(error));
+            }
+            Poll::Ready(Ok(())) => {}
+        }
+        self.accepted = None;
+        Poll::Ready(Ok(offered))
     }
 }
 
@@ -310,7 +342,7 @@ impl<Stream: AsyncWrite + Unpin> AsyncWrite for ZstdStream<Stream> {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.get_mut().poll_send(context, &[buffer])
+        self.get_mut().poll_send(context, &[IoSlice::new(buffer)])
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -322,12 +354,14 @@ impl<Stream: AsyncWrite + Unpin> AsyncWrite for ZstdStream<Stream> {
         context: &mut Context<'_>,
         buffers: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        let slices: Vec<&[u8]> = buffers.iter().map(|slice| &**slice).collect();
-        self.get_mut().poll_send(context, &slices)
+        // The slices are used where they are, so a keystroke does not allocate
+        // a list of them on its way to the encoder.
+        self.get_mut().poll_send(context, buffers)
     }
 
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        this.accepted = None;
         this.flush_encoder()?;
         ready!(this.poll_drain(context))?;
         Pin::new(&mut this.stream).poll_flush(context)
@@ -335,6 +369,7 @@ impl<Stream: AsyncWrite + Unpin> AsyncWrite for ZstdStream<Stream> {
 
     fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        this.accepted = None;
         this.finish_encoder()?;
         ready!(this.poll_drain(context))?;
         Pin::new(&mut this.stream).poll_shutdown(context)
@@ -365,16 +400,26 @@ impl<Stream: AsyncRead + Unpin> AsyncRead for ZstdStream<Stream> {
                 stream,
                 incoming,
                 reading,
+                ended,
                 ..
             } = this;
             let mut arrived = ReadBuf::new(reading);
             ready!(Pin::new(&mut *stream).poll_read(context, &mut arrived))?;
             let taken = arrived.filled();
             if taken.is_empty() {
-                // The stream ended; anything the decoder still holds is a
-                // truncated frame, and the link above reports it as such.
-                return Poll::Ready(Ok(()));
+                if *ended {
+                    return Poll::Ready(Ok(()));
+                }
+                // A stream that stops inside a zstd frame has lost bytes. The
+                // link above only sees a torn *plain* frame, so a truncation
+                // landing on a plaintext boundary would read as an orderly
+                // close and hand a client half a screen as if it were all.
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "the stream ended inside a compressed frame",
+                )));
             }
+            *ended = false;
             incoming.extend_from_slice(taken);
         }
     }
