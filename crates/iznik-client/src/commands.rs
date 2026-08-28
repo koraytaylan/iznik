@@ -153,6 +153,25 @@ pub fn expire(
     told
 }
 
+/// Says, on the record, which commands stopped being shown because the host
+/// that answered them is gone.
+///
+/// Not an event: what happened is that this host is another daemon, which the
+/// state and the snapshot beside it already say. It is written down because a
+/// command that was applied and is no longer shown is the kind of thing
+/// somebody reads a log to understand — and because it is said wherever a
+/// model is settled, not only where a connection begins.
+pub fn abandoned(host: &HostId, commands: &[CommandId]) {
+    if commands.is_empty() {
+        return;
+    }
+    tracing::info!(
+        host = %host.0,
+        commands = ?commands,
+        "a replaced daemon answered these, and they stop being shown"
+    );
+}
+
 /// Applies every command still in flight on top of what the host has said,
 /// and refreshes what each of them would be rolled back to.
 ///

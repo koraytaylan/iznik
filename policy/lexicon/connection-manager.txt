@@ -25,12 +25,14 @@ floor
 focus
 four
 gathered
+given
 gives
 golden
 gone
 handle
 healthy
 held
+holdable
 holding
 holds
 input

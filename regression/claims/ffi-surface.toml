@@ -45,6 +45,6 @@ because = "a file on this machine is the same file anywhere, and the host it is 
 
 [[claim]]
 id = "surface-refuses-a-log-it-cannot-write"
-statement = "A log that cannot be opened is a refusal naming the file, not a client that quietly writes nowhere — because the one moment somebody discovers an empty log is the moment they are looking for the reason something failed."
+statement = "A log that will not be written is a refusal naming the file, not a client that quietly writes nowhere — because the one moment somebody discovers an empty log is the moment they are looking for the reason something failed. A file that cannot be opened is one such; so is a second client naming a different file, since where this process writes is settled once and outlives whatever asked for it."
 test = "iznik-ffi::ffi_surface::ffi_surface_refuses_a_log_it_cannot_write"
 because = "the file is refused by this machine's own filesystem, which refuses it the same way anywhere"

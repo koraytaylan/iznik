@@ -20,7 +20,7 @@ use iznik_protocol::message::{ErrorCode, MarkKind, ToClient};
 use iznik_protocol::model::decode_host_model;
 use iznik_protocol::reconcile::{ReconcileError, apply};
 
-use crate::commands::replay;
+use crate::commands::{abandoned, replay};
 use crate::host::identity::HostId;
 use crate::model::{ClientModel, HostView};
 
@@ -234,7 +234,7 @@ fn replace(
             // replaced by it — and what is still in flight goes back on top,
             // because a snapshot is what the host has said and not what this
             // client has asked for.
-            view.settle(replaced);
+            abandoned(host, &view.settle(replaced));
             replay(view);
         }
         None => {

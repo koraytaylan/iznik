@@ -57,9 +57,10 @@ pub struct PaneCallbacks {
 /// Begins delivery of a pane's output to these handlers.
 ///
 /// **Obligation:** whatever `context` points at outlives the attachment — it
-/// is detached, or the client is freed, before it goes away. Either is enough
-/// on its own: both wait for a handler that is running before they return, so
-/// the moment one of them answers, nothing is reading it any more.
+/// is detached, the client is freed, or another attachment takes its place,
+/// before it goes away. Any of the three is enough on its own: each waits for
+/// a handler that is running before it returns, so the moment one of them
+/// answers, nothing is reading it any more.
 ///
 /// # Safety
 ///
@@ -75,13 +76,21 @@ pub unsafe extern "C" fn iznik_pane_attach(
     error: *mut Error,
 ) -> c_int {
     // SAFETY: the caller's obligations, above.
-    unsafe {
+    let outcome = unsafe {
         with_pane(client, host, error, |held, named| {
             held.attach(named, PaneId(pane), callbacks, context);
             held.manager()
                 .map_or(Ok(()), |manager| manager.subscribe(named, PaneId(pane)))
         })
+    };
+    // Attaching over an attachment takes the one before it away, so it owes
+    // what letting go owes: whoever was there is not called again with what
+    // they gave, and by the time this answers nothing is reading it.
+    // SAFETY: the caller's obligation: a live client, as above.
+    if let Some(held) = unsafe { borrowed(client) } {
+        held.quiesce();
     }
+    outcome
 }
 
 /// Ends it.

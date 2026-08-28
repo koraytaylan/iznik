@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bootstrap::bootstrap_watched;
 use crate::bootstrap::launch::{BootstrapError, Decision, Stage, expiry, launch};
-use crate::commands::{confirm, expire, replay};
+use crate::commands::{abandoned, confirm, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{Action, HostEvent, HostState, HostStateMachine, UpgradeOffer};
@@ -166,6 +166,22 @@ fn keep(kept: &mut Vec<Order>, order: Order) {
         | Order::Reconnect
         | Order::Stop => {}
     }
+}
+
+/// Whether the pile would hold this kind of order.
+///
+/// The same four kinds [`keep`] keeps, asked before an order is given away, so
+/// that only what would be held is copied: a keystroke, a credit, a command
+/// and a screen are gone with the link, and copying a paste to hold what
+/// nobody would resend would copy the paste.
+fn keeps(order: &Order) -> bool {
+    matches!(
+        order,
+        Order::Subscribe { .. }
+            | Order::Unsubscribe { .. }
+            | Order::Resize { .. }
+            | Order::Focus { .. }
+    )
 }
 
 /// Whether a held order is one pane's subscription, which a later one about
@@ -320,7 +336,7 @@ async fn accept(
     // above the manager is told about a host's model the same way whether the
     // model arrived with the connection or after it.
     told_the_model(host, shared, &snapshot);
-    let mut abandoned = Vec::new();
+    let mut given_up = Vec::new();
     if let Ok(mut model) = shared.model.lock() {
         match model.host_mut(host) {
             Some(view) => {
@@ -329,7 +345,7 @@ async fn accept(
                 // whose answer was lost with the link is still this client's
                 // to show, and its rollback must be the model that came back
                 // rather than the one from before the drop.
-                abandoned = view.settle(snapshot);
+                given_up = view.settle(snapshot);
                 replay(view);
             }
             None => {
@@ -337,17 +353,7 @@ async fn accept(
             }
         }
     }
-    if !abandoned.is_empty() {
-        // Not an event: what happened is that this host is another daemon,
-        // which the state and the snapshot beside it already say. It is
-        // written down because a command that was applied and is no longer
-        // shown is the kind of thing somebody reads a log to understand.
-        tracing::info!(
-            host = %host.0,
-            commands = ?abandoned,
-            "a replaced daemon answered these, and they stop being shown"
-        );
-    }
+    abandoned(host, &given_up);
     let taken = advance(
         shared,
         host,
@@ -459,13 +465,16 @@ async fn pump(
                 return Ended::Gone;
             }
             Turn::Ordered(Some(order)) => {
-                if carry(&mut channel, order.clone()).await.is_err() {
+                let holdable = keeps(&order).then(|| order.clone());
+                if carry(&mut channel, order).await.is_err() {
                     // Held for the next connection, under the same rule as an
                     // order that arrived while there was none: what the link
                     // died holding was taken from the application, which was
                     // told so, and dropping it here would lose a subscription
                     // and leave a pane blank for ever.
-                    keep(kept, order);
+                    if let Some(held) = holdable {
+                        keep(kept, held);
+                    }
                     let _dead = advance(shared, host, machine, dead("the link would not take it"));
                     return Ended::Gone;
                 }
@@ -556,7 +565,14 @@ async fn heard(
         // would part until the snapshot arrived. What is passed on is what
         // was applied, so an application that applies every change in turn
         // holds what this client holds.
-        if taken.is_empty() || !matches!(message, iznik_protocol::message::ToClient::Delta { .. }) {
+        // Except what this client could not take. A gap in the numbering, a
+        // change that did not fit, a model that could not be read: each leaves
+        // the model exactly as it was, and each asks for something. Passing it
+        // on regardless would have the application take what this client
+        // refused, and the two would part until the snapshot arrived. What is
+        // passed on is what was applied, so an application that applies every
+        // one in turn holds what this client holds.
+        if taken.is_empty() || !carries_a_model(&message) {
             announced(host, shared, &message);
         }
         taken
@@ -610,6 +626,15 @@ fn told_the_model(host: &HostId, shared: &Arc<Shared>, model: &iznik_protocol::m
         generation: model.generation,
         payload,
     });
+}
+
+/// Whether a message is one of the two that say what the host's model is.
+fn carries_a_model(message: &iznik_protocol::message::ToClient) -> bool {
+    matches!(
+        message,
+        iznik_protocol::message::ToClient::Snapshot { .. }
+            | iznik_protocol::message::ToClient::Delta { .. }
+    )
 }
 
 /// Passes on the host's own account of its model, unchanged.

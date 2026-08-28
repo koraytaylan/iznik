@@ -47,3 +47,9 @@ id = "pipe-lets-a-pane-go-from-inside-its-own-handler"
 statement = "Letting a pane go waits for a handler that is already running before it answers — which is what makes the obligation keepable: when it returns, nothing is reading the context any more, so it may be freed. A handler that lets its own pane go waits for nothing at all, because it *is* the call it would be waiting for, and nothing arrives for the pane afterwards."
 test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_lets_a_pane_go_from_inside_its_own_handler"
 because = "the two threads are real threads and the waiting is this boundary's own; a network would add delay to what arrives, not another caller"
+
+[[claim]]
+id = "pipe-waits-for-a-handler-before-it-lets-go"
+statement = "Letting a pane go while one of its handlers is running does not answer until that handler has: the wait is the whole of what makes the obligation keepable, and without it an application that frees its context when the call returns frees what is being read."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_waits_for_a_handler_before_it_lets_go"
+because = "the handler holds on for a fixed time on a thread of its own, so what is measured is the waiting and not the machine"

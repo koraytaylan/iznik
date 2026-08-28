@@ -60,6 +60,21 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   a live session is a race, so the order a dying link drops is put through the
   same `keep` the disconnected path uses and read rather than driven.
 
+- **Review of `9419e1a`:** six more, all in what the review before it added.
+  The log was the substantial one: a subscriber belongs to a process and is
+  installed once, so a second client naming a second file opened it, failed to
+  install, and reported success — leaving exactly the empty log the refusal
+  exists to prevent. Where this process writes is remembered now. Two were
+  about saying what happened: credit for a pane between channel announcements
+  was refused as an unknown host, which a held and connected host is not, and
+  a snapshot settled mid-session dropped the account of the commands it gave
+  up on. Two were one rule applied unevenly: a model that could not be read
+  was passed on though a change that did not fit was not, and attaching over
+  an attachment did not wait for a handler that was running though detaching
+  did. And one was waste: an order was copied before every send so that a
+  dying link could hold it, though the pile holds four kinds and none of them
+  is a keystroke.
+
 - **Carried back into 0005:** `pane-byte-pipe` found that a host's task let
   what a host was saying starve the orders already waiting for it, so a burst
   of input went out one to a round trip — a hundred lines took seconds instead

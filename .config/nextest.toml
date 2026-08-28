@@ -93,7 +93,7 @@ test-group = 'shells'
 # inside them, and what starves is a pane waiting for a shell to answer a
 # signal, which then fails a deadline meant to catch a hang.
 [[profile.default.overrides]]
-filter = 'binary(remote_channel) + binary(remote_launch)'
+filter = 'binary(remote_channel) + binary(remote_launch) + binary(connection_manager) + binary(manager_traffic)'
 test-group = 'shells'
 
 # The boundary's own cases stand the same thing up from further out: a daemon,

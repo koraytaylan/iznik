@@ -624,6 +624,7 @@ fn layer_of(refusal: &ManagerError) -> Layer {
         ManagerError::Runtime { .. }
         | ManagerError::Artifacts { .. }
         | ManagerError::Log { .. }
+        | ManagerError::NotCarrying { .. }
         | ManagerError::UnknownHost { .. }
         | ManagerError::Gone { .. }
         | ManagerError::Poisoned { .. } => Layer::Client,
@@ -656,7 +657,10 @@ fn staged(stage: Stage) -> Layer {
 ///
 /// **Obligation:** the pointer came from [`iznik_client_new`], has not been
 /// freed, and is not used afterwards. A null pointer is nothing to free and
-/// is ignored.
+/// is ignored. Not from inside a callback: this waits for the thread the
+/// callbacks arrive on, and a handler that called it would be waiting for
+/// itself. Letting a pane go and taking the event callback away may both be
+/// done from a handler; ending the client may not.
 ///
 /// # Safety
 ///

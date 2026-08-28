@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::SessionCommand;
@@ -215,17 +215,31 @@ pub enum ManagerError {
         /// The host.
         host: HostId,
     },
-    /// The log an application asked for could not be opened.
+    /// The log an application asked for will not be written.
     ///
     /// Refused rather than shrugged at: somebody who names a file wants what
     /// went wrong written to it, and the one moment they would find out it
-    /// was never opened is the moment they go looking for the reason
+    /// was never written is the moment they go looking for the reason
     /// something failed.
     Log {
         /// The file that was asked for.
         path: PathBuf,
-        /// What the operating system said.
-        source: std::io::Error,
+        /// Why it will not be.
+        detail: String,
+    },
+    /// The pane is not carrying anything just now.
+    ///
+    /// Its own refusal rather than an unknown host, which is what a held and
+    /// connected host would otherwise be called: between a reconnection and
+    /// the host re-announcing its panes, a pane can be left holding a number
+    /// that now belongs to another, and credit for it would go where no pane
+    /// would ever receive it. Nothing is wrong, and there is nothing to do
+    /// but wait for the screen that says where it went.
+    NotCarrying {
+        /// The host.
+        host: HostId,
+        /// The pane.
+        pane: PaneId,
     },
     /// A lock the manager holds was left broken by a panic under it.
     ///
@@ -255,9 +269,14 @@ impl core::fmt::Display for ManagerError {
                 write!(formatter, "the manager's runtime: {source}")
             }
             ManagerError::Artifacts { source } => write!(formatter, "{source}"),
-            ManagerError::Log { path, source } => {
-                write!(formatter, "the log at {}: {source}", path.display())
+            ManagerError::Log { path, detail } => {
+                write!(formatter, "the log at {}: {detail}", path.display())
             }
+            ManagerError::NotCarrying { host, pane } => write!(
+                formatter,
+                "pane {} on {host} is not carrying anything just now",
+                pane.0
+            ),
             ManagerError::Poisoned { what } => {
                 write!(formatter, "the manager's {what} was left broken by a panic")
             }
@@ -389,6 +408,15 @@ pub struct HostManager {
     sweeper: tokio::task::JoinHandle<()>,
 }
 
+/// Where this process is already writing what this crate says, if anywhere.
+///
+/// A subscriber belongs to a process and not to a manager: there is one, it is
+/// installed once, and it outlives whatever asked for it — so a client that is
+/// freed does not give the file back. Remembering which file it was given is
+/// what lets the second client be told the truth, that its own file will never
+/// be written, rather than be handed a client and an empty file.
+static WRITING: OnceLock<PathBuf> = OnceLock::new();
+
 /// Sends what this crate says to a file, when one was asked for.
 ///
 /// Best effort about *who* is listening and exact about the file: a process
@@ -404,10 +432,13 @@ fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
     let Some(path) = path else {
         return Ok(());
     };
+    if let Some(already) = WRITING.get() {
+        return taken(path, already);
+    }
     if let Some(holding) = path.parent() {
         std::fs::create_dir_all(holding).map_err(|source| ManagerError::Log {
             path: path.to_path_buf(),
-            source,
+            detail: source.to_string(),
         })?;
     }
     let file = std::fs::OpenOptions::new()
@@ -416,15 +447,46 @@ fn write_to(path: Option<&std::path::Path>) -> Result<(), ManagerError> {
         .open(path)
         .map_err(|source| ManagerError::Log {
             path: path.to_path_buf(),
-            source,
+            detail: source.to_string(),
         })?;
-    // Whoever got there first keeps it: there is one of these for a process,
-    // and a program that set its own up said what it wanted.
-    let _mine = tracing_subscriber::fmt()
+    if tracing_subscriber::fmt()
         .with_writer(Mutex::new(file))
         .with_ansi(false)
-        .try_init();
+        .try_init()
+        .is_err()
+    {
+        // Something else took it: another manager between the look above and
+        // here, or the program this is embedded in. Which of those it was is
+        // the difference between a log that is being written and one that
+        // never will be.
+        return taken(path, WRITING.get().unwrap_or(&PathBuf::new()));
+    }
+    let _first = WRITING.set(path.to_path_buf());
     Ok(())
+}
+
+/// Whether a log already being written to `already` satisfies a request for
+/// `path`.
+///
+/// # Errors
+///
+/// [`ManagerError::Log`] when it is a different file, because that one will
+/// never be written and the caller would find out by reading nothing.
+fn taken(path: &std::path::Path, already: &std::path::Path) -> Result<(), ManagerError> {
+    if already == path {
+        return Ok(());
+    }
+    Err(ManagerError::Log {
+        path: path.to_path_buf(),
+        detail: if already.as_os_str().is_empty() {
+            "something else in this process is already taking what iznik says".to_owned()
+        } else {
+            format!(
+                "this process is already writing its log to {}",
+                already.display()
+            )
+        },
+    })
 }
 
 impl HostManager {
@@ -631,8 +693,8 @@ impl HostManager {
     ///
     /// # Errors
     ///
-    /// As [`HostManager::reconnect`], and [`ManagerError::UnknownHost`] when
-    /// no channel is open for that pane.
+    /// As [`HostManager::reconnect`], and [`ManagerError::NotCarrying`] when
+    /// the pane is held but is not carrying anything just now.
     pub fn credit(&self, alias: &str, pane: PaneId, bytes: u32) -> Result<(), ManagerError> {
         let host = HostId(alias.to_owned());
         let channel = self
@@ -649,8 +711,8 @@ impl HostManager {
                 }
                 Some(carried)
             })
-            .flatten()
-            .ok_or(ManagerError::UnknownHost { host })?;
+            .ok_or(ManagerError::UnknownHost { host: host.clone() })?
+            .ok_or(ManagerError::NotCarrying { host, pane })?;
         self.order(alias, Order::Credit { channel, bytes })
     }
 

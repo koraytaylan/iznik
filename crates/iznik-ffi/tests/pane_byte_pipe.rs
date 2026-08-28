@@ -123,6 +123,32 @@ unsafe impl Send for Reachable {}
 // SAFETY: as above.
 unsafe impl Sync for Reachable {}
 
+/// How long the handler in the case about waiting holds on for.
+const DAWDLE: Duration = Duration::from_millis(400);
+
+/// How much of that letting go must have waited for it to have waited at all.
+///
+/// Well under the whole, because the case notices the handler has begun some
+/// way into it; far above nothing, which is what a call that did not wait
+/// would take.
+const WAITED: Duration = Duration::from_millis(100);
+
+/// What the case about waiting passes to its handler: whether one has begun.
+struct Dawdling(Mutex<bool>);
+
+/// A handler that takes its time.
+extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize) {
+    if context.is_null() {
+        return;
+    }
+    // SAFETY: this case's own box, alive until the case ends.
+    let dawdling = unsafe { &*context.cast::<Dawdling>() };
+    if let Ok(mut begun) = dawdling.0.lock() {
+        *begun = true;
+    }
+    std::thread::sleep(DAWDLE);
+}
+
 /// What the case that lets a pane go from inside a handler passes to it.
 struct Leaving {
     /// The client to call back into.
@@ -895,6 +921,68 @@ fn pane_byte_pipe_lets_a_pane_go_from_inside_its_own_handler() {
         // SAFETY: the box this case made, taken back once, after the client
         // that could have called into it is gone.
         drop(unsafe { Box::from_raw(leaving) });
+        drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When letting a pane go answers while a handler is still reading what the
+/// application gave it.
+#[test]
+fn pane_byte_pipe_waits_for_a_handler_before_it_lets_go() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("waiting")?;
+        let runtime = runtime()?;
+        let (stack, client, alias) = connected(&held, &runtime)?;
+        let dawdling: *mut Dawdling = Box::into_raw(Box::new(Dawdling(Mutex::new(false))));
+        let handlers = PaneCallbacks {
+            output: Some(dawdles),
+            screen: None,
+            mark: None,
+            detached: None,
+        };
+        let mut error = blank();
+        // SAFETY: the client is live, the alias null-terminated, and the
+        // context outlives the attachment — this case frees it at the end.
+        let taken = unsafe {
+            iznik_pane_attach(
+                client,
+                alias.as_ptr(),
+                PANE,
+                handlers,
+                dawdling.cast::<c_void>(),
+                &raw mut error,
+            )
+        };
+        assert_eq!(taken, OK, "the pane was taken: {}", said(&error));
+        typed(client, &alias, PANE, "#hello\n")?;
+        // Waited for closely, so that most of the handler's own wait is still
+        // ahead of it when the letting go begins.
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        while Instant::now() < expires {
+            // SAFETY: this case's own box, alive here.
+            if unsafe { &*dawdling }.0.lock().is_ok_and(|begun| *begun) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let started = Instant::now();
+        // SAFETY: the client is live and the alias null-terminated.
+        let gone = unsafe { iznik_pane_detach(client, alias.as_ptr(), PANE, &raw mut error) };
+        let took = started.elapsed();
+        assert_eq!(gone, OK, "the pane was let go: {}", said(&error));
+        assert!(
+            took >= WAITED,
+            "letting go waited for the handler that was running: {took:?}"
+        );
+        // SAFETY: it came from `iznik_client_new` and is freed once.
+        unsafe { iznik_client_free(client) };
+        // SAFETY: the box this case made, taken back once, after the client
+        // that could have called into it is gone.
+        drop(unsafe { Box::from_raw(dawdling) });
         drop(stack);
         Ok(())
     };
