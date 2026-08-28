@@ -8,7 +8,9 @@ use std::path::Path;
 use iznik_protocol::delta::{Delta, ExitStatus, RemovalReason, decode_delta, encode_delta};
 use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
 use iznik_protocol::message::{MessageError, ToClient, decode_to_client, encode_to_client};
-use iznik_protocol::model::{LayoutNode, Pane, Session, SplitDirection, Tab, Weighted};
+use iznik_protocol::model::{
+    LayoutNode, MAXIMUM_LAYOUT_DEPTH, Pane, Session, SplitDirection, Tab, Weighted,
+};
 use iznik_testkit::golden;
 use serde_json::Value;
 
@@ -326,6 +328,50 @@ fn message_error_of(value: &Value) -> Result<MessageError, Failure> {
     })
 }
 
+/// A layout of `levels` splits nested one inside the next around one leaf: the
+/// cheapest deep tree there is, and so the one the bound has to stop.
+fn nested_layout(levels: usize) -> LayoutNode {
+    let mut node = LayoutNode::Leaf(PaneId(5));
+    for _index in 0..levels {
+        node = LayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            children: vec![Weighted { node, weight: 1 }],
+        };
+    }
+    node
+}
+
+/// The same tree as bytes, built by wrapping a layout the encoder did write —
+/// it refuses to write this one, which is the point.
+///
+/// # Errors
+///
+/// When the shallow payload the wrapping starts from does not encode.
+fn deeply_nested_payload(shallow: &[u8], levels: usize) -> Result<Vec<u8>, Failure> {
+    /// A `Split`, `Horizontal`, holding one child.
+    const SPLIT: [u8; 6] = [0, 0, 1, 0, 0, 0];
+    /// The weight that child is held at.
+    const WEIGHT: [u8; 4] = [1, 0, 0, 0];
+    /// A leaf's bytes: its tag and the pane it names.
+    const LEAF_LENGTH: usize = size_of::<u8>() + size_of::<u64>();
+
+    let cut = shallow
+        .len()
+        .checked_sub(LEAF_LENGTH)
+        .ok_or("a leaf's bytes")?;
+    let (prefix, leaf) = shallow.split_at_checked(cut).ok_or("the layout's place")?;
+    let mut layout = leaf.to_vec();
+    for _index in 0..levels {
+        let mut wrapped = SPLIT.to_vec();
+        wrapped.append(&mut layout);
+        wrapped.extend_from_slice(&WEIGHT);
+        layout = wrapped;
+    }
+    let mut bytes = prefix.to_vec();
+    bytes.append(&mut layout);
+    Ok(bytes)
+}
+
 /// The fixture's lines, in order.
 ///
 /// # Errors
@@ -419,26 +465,90 @@ fn delta_golden_every_variant_has_a_line() {
     );
 }
 
-/// Every refusal the decoder can give is provoked by a line.
+/// Every refusal `decode_delta` documents is provoked: four by a fixture line,
+/// and the fifth by a layout nested past what a model holds — which the
+/// encoder refuses to write, so nothing it produces is something the decoder
+/// turns away.
 ///
 /// # Panics
 ///
-/// When a refusal has no line.
+/// When a refusal has nothing that provokes it, or the encoder writes a tree
+/// its own decoder would refuse.
 #[test]
-fn delta_golden_every_refusal_is_provoked_by_a_line() {
+fn delta_golden_every_refusal_the_decoder_gives_is_provoked() {
     let lines = lines().expect("the fixture loads");
     let mut provoked: Vec<String> = lines
         .iter()
         .filter_map(|line| line.get("error"))
         .map(|error| variant(error).expect("an error variant").0)
         .collect();
+    let refusal = MessageError::LayoutTooDeep {
+        limit: MAXIMUM_LAYOUT_DEPTH,
+    };
+    for delta in deltas_past_the_bound() {
+        assert_eq!(
+            encode_delta(&delta),
+            Err(refusal.clone()),
+            "the encoder wrote a tree its decoder refuses: {delta:?}"
+        );
+    }
+    let shallow = encode_delta(&Delta::LayoutChanged {
+        tab: TabId(3),
+        layout: LayoutNode::Leaf(PaneId(5)),
+    })
+    .expect("a shallow layout change encodes");
+    let deep = deeply_nested_payload(&shallow, MAXIMUM_LAYOUT_DEPTH).expect("a deep payload");
+    assert_eq!(decode_delta(&deep), Err(refusal), "a tree past the bound");
+    provoked.push("LayoutTooDeep".to_owned());
     provoked.sort();
     provoked.dedup();
     assert_eq!(
         provoked,
-        ["TrailingBytes", "Truncated", "UnknownDiscriminant", "Utf8"],
-        "the refusals the fixture provokes"
+        [
+            "LayoutTooDeep",
+            "TrailingBytes",
+            "Truncated",
+            "UnknownDiscriminant",
+            "Utf8",
+        ],
+        "the refusals provoked"
     );
+}
+
+/// One delta per way a layout reaches the wire, each nested one level past
+/// what a model holds.
+fn deltas_past_the_bound() -> Vec<Delta> {
+    let layout = nested_layout(MAXIMUM_LAYOUT_DEPTH);
+    let tab = Tab {
+        id: TabId(3),
+        name: "tab".to_owned(),
+        panes: vec![Pane {
+            id: PaneId(5),
+            title: "sh".to_owned(),
+            working_directory: None,
+            columns: 80,
+            rows: 24,
+        }],
+        layout: layout.clone(),
+    };
+    vec![
+        Delta::LayoutChanged {
+            tab: TabId(3),
+            layout,
+        },
+        Delta::TabAdded {
+            session: SessionId(1),
+            tab: tab.clone(),
+            index: 0,
+        },
+        Delta::SessionAdded {
+            session: Session {
+                id: SessionId(1),
+                name: "session".to_owned(),
+                tabs: vec![tab],
+            },
+        },
+    ]
 }
 
 /// An encoded delta is the payload the `Delta` message carries: plan 0001 left

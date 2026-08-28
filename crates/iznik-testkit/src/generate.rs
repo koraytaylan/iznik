@@ -53,6 +53,11 @@ const SECOND_SHIFT: u32 = 7;
 /// The third shift, to the left again.
 const THIRD_SHIFT: u32 = 17;
 
+/// The state a seed of zero starts from. Zero is a fixed point of the
+/// xorshift — it maps to itself for ever — so the one seed that would draw
+/// nothing but zeros is given a state that draws.
+const ZERO_SEED_STATE: u64 = 0x9E37_79B9_7F4A_7C15;
+
 /// The two ways a choice with two sides can go.
 const EITHER: u64 = 2;
 
@@ -131,7 +136,7 @@ impl ModelGenerator {
     #[must_use]
     pub fn new(seed: u64) -> ModelGenerator {
         ModelGenerator {
-            state: seed,
+            state: if seed == 0 { ZERO_SEED_STATE } else { seed },
             next_session: 1,
             next_tab: 1,
             next_pane: 1,
@@ -537,17 +542,20 @@ impl ModelGenerator {
             return Vec::new();
         };
         let reason = self.removal_reason();
+        let Some(found) = tab_at(model, place) else {
+            return Vec::new();
+        };
+        let tab = found.id;
+        let Some(pane) = found.panes.get(index).map(|held| held.id) else {
+            return Vec::new();
+        };
+        let Some(layout) = found.layout.clone().remove_leaf(pane) else {
+            return Vec::new();
+        };
         let Some(held) = tab_at_mut(model, place) else {
             return Vec::new();
         };
-        let tab = held.id;
-        let Some(pane) = held.panes.get(index).map(|found| found.id) else {
-            return Vec::new();
-        };
         let _removed = held.panes.remove(index);
-        let Some(layout) = held.layout.clone().remove_leaf(pane) else {
-            return Vec::new();
-        };
         held.layout = layout.clone();
         vec![
             Delta::PaneRemoved { pane, reason },
@@ -570,29 +578,38 @@ impl ModelGenerator {
         let Some(index) = self.pick(count) else {
             return Vec::new();
         };
-        let Some(held) = tab_at_mut(model, source) else {
+        let Some(from) = tab_at(model, source) else {
             return Vec::new();
         };
-        let from_tab = held.id;
-        let moved = held.panes.remove(index);
+        let from_tab = from.id;
+        let Some(moved) = from.panes.get(index).cloned() else {
+            return Vec::new();
+        };
         let pane = moved.id;
-        let Some(from_layout) = held.layout.clone().remove_leaf(pane) else {
+        let Some(from_layout) = from.layout.clone().remove_leaf(pane) else {
             return Vec::new();
         };
-        held.layout = from_layout.clone();
-        let Some(into) = tab_at_mut(model, destination) else {
+        let Some(into) = tab_at(model, destination) else {
             return Vec::new();
         };
         let to_tab = into.id;
-        into.panes.push(moved);
-        let panes = into.panes.clone();
+        let mut panes = into.panes.clone();
+        panes.push(moved.clone());
         let Some(to_layout) = self.arrange(&panes) else {
             return Vec::new();
         };
-        let Some(arranged) = tab_at_mut(model, destination) else {
+        // Everything that could fail has, so the two mutations below cannot
+        // leave the model changed with no delta to describe it.
+        let Some(source_tab) = tab_at_mut(model, source) else {
             return Vec::new();
         };
-        arranged.layout = to_layout.clone();
+        let _removed = source_tab.panes.remove(index);
+        source_tab.layout = from_layout.clone();
+        let Some(destination_tab) = tab_at_mut(model, destination) else {
+            return Vec::new();
+        };
+        destination_tab.panes.push(moved);
+        destination_tab.layout = to_layout.clone();
         vec![
             Delta::PaneMoved { pane, to_tab },
             Delta::LayoutChanged {

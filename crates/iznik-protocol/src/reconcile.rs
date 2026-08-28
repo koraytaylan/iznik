@@ -294,18 +294,19 @@ fn add_session(model: &mut HostModel, session: &Session) -> Result<(), Reconcile
 /// # Errors
 ///
 /// [`ReconcileError::UnknownSession`] when the host holds no such session, and
-/// [`ReconcileError::Invalid`] when the name is empty.
+/// [`ReconcileError::Invalid`] when the name is empty — the identity first, so
+/// a refusal never names something the host does not hold.
 fn rename_session(
     model: &mut HostModel,
     session: SessionId,
     name: &str,
 ) -> Result<(), ReconcileError> {
-    if name.is_empty() {
-        return Err(invalid(ModelError::EmptySessionName { session }));
-    }
     let Some(held) = model.sessions.iter_mut().find(|held| held.id == session) else {
         return Err(ReconcileError::UnknownSession { session });
     };
+    if name.is_empty() {
+        return Err(invalid(ModelError::EmptySessionName { session }));
+    }
     name.clone_into(&mut held.name);
     Ok(())
 }
@@ -363,12 +364,12 @@ fn add_tab(
 /// [`ReconcileError::UnknownTab`] when the host holds no such tab, and
 /// [`ReconcileError::Invalid`] when the name is empty.
 fn rename_tab(model: &mut HostModel, tab: TabId, name: &str) -> Result<(), ReconcileError> {
-    if name.is_empty() {
-        return Err(invalid(ModelError::EmptyTabName { tab }));
-    }
     let Some(held) = find_tab(model, tab) else {
         return Err(ReconcileError::UnknownTab { tab });
     };
+    if name.is_empty() {
+        return Err(invalid(ModelError::EmptyTabName { tab }));
+    }
     name.clone_into(&mut held.name);
     Ok(())
 }

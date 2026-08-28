@@ -227,6 +227,24 @@ fn refused_for_naming_nothing() -> Vec<(Delta, ReconcileError)> {
             },
             ReconcileError::UnknownTab { tab: TabId(9) },
         ),
+        // The identity is looked up before the name is judged, so a rename to
+        // an empty name on a session nobody holds is refused for the session.
+        (
+            Delta::SessionRenamed {
+                session: SessionId(9),
+                name: String::new(),
+            },
+            ReconcileError::UnknownSession {
+                session: SessionId(9),
+            },
+        ),
+        (
+            Delta::TabRenamed {
+                tab: TabId(9),
+                name: String::new(),
+            },
+            ReconcileError::UnknownTab { tab: TabId(9) },
+        ),
     ]
 }
 

@@ -10,15 +10,12 @@
 //! equality test mean what it says. A normalized tree holds no split nested in
 //! a split of its own direction — such a split is flattened into its parent
 //! with every weight scaled so that no child's share of the space changes — no
-//! split of a single child, which is replaced by that child, and no split of
-//! none, which is dropped wherever there is a parent to drop it into. A
-//! split's weights are then divided by the largest factor they share, because
-//! weights say only how the space is divided: halves are `1, 1` whether a
-//! client called them that or `50, 50`, and without the division the factor a
-//! flattening multiplies by accumulates until it saturates, which is a pane
-//! the wrong size. [`LayoutNode::normalize`] is pure and idempotent, and the
-//! server applies it after every operation and to every layout a client
-//! submits.
+//! split of a single child, and no split of none wherever there is a parent to
+//! drop it into. A split's weights are then divided by the largest factor they
+//! share, because weights say only how the space is divided: halves are `1, 1`
+//! whether a client called them that or `50, 50`, and without the division the
+//! factor a flattening multiplies by accumulates until it saturates, which is
+//! a pane the wrong size. [`LayoutNode::normalize`] is pure and idempotent.
 //!
 //! One shape survives normalization: a split holding nothing, at the root,
 //! with no parent to drop it into and no child to collapse it to. It is a
@@ -28,10 +25,9 @@
 //! little-endian at their width, a string a four-byte length and then its
 //! UTF-8 bytes, an optional string a presence byte and then the string, a
 //! sequence a four-byte count and then its elements, and a layout node a tag
-//! byte and then its fields. The golden `tests/fixtures/model.jsonl` pins every
-//! byte. Refusals are [`MessageError`]'s, the crate's one vocabulary for what a
-//! decoder found; a model payload carries no discriminant, so its refusals name
-//! [`crate::message::NO_DISCRIMINANT`].
+//! byte and then its fields; `tests/fixtures/model.jsonl` pins every byte.
+//! Refusals are [`MessageError`]'s, and a model payload carries no
+//! discriminant, so its refusals name [`crate::message::NO_DISCRIMINANT`].
 //!
 //! The delta and command payloads embed a session, a tab, a pane or a layout
 //! and are held to the same invariants, so the writers, the readers and the
@@ -47,15 +43,14 @@ use std::collections::HashSet;
 
 use crate::identity::{Generation, PaneId, SessionId, TabId};
 use crate::message::MessageError;
-use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_count, unknown};
+use crate::wire::{Reader, Sink, encode, put_bytes, put_count, put_optional, unknown};
 
 /// The deepest a layout tree may nest, counting a bare leaf as one.
 ///
 /// A split of its parent's direction is flattened away, so depth grows only
 /// when a person alternates directions; sixty-four alternations is past any
-/// arrangement anybody makes — the innermost pane would be under a cell wide —
-/// and far below the recursion any thread can afford. It is the decoder's
-/// bound, and so the reason every walk of a tree here is a recursion.
+/// arrangement anybody makes and far below the recursion any thread can
+/// afford. It is the decoder's bound, and so why every walk here recurses.
 pub const MAXIMUM_LAYOUT_DEPTH: usize = 64;
 
 /// The discriminants of [`LayoutNode`], in declaration order.
@@ -107,8 +102,7 @@ pub struct Tab {
     pub layout: LayoutNode,
 }
 
-/// A pane, as the model knows it: what it is called, where its shell is, and
-/// how large it is. The bytes it produces are not model state.
+/// A pane as the model knows it. The bytes it produces are not model state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
     /// Minted once by the host and never reused.
@@ -123,7 +117,7 @@ pub struct Pane {
     pub rows: u16,
 }
 
-/// How a tab arranges its panes: enough to restore an arrangement,
+/// How a tab arranges its panes: enough to restore an arrangement, and
 /// deliberately not enough to compute a cell size.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LayoutNode {
@@ -138,8 +132,8 @@ pub enum LayoutNode {
     Leaf(PaneId),
 }
 
-/// A child of a split and its share of the space. Weights are relative to
-/// their siblings and mean nothing across splits.
+/// A child of a split and its share: relative to its siblings, meaningless
+/// across splits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Weighted {
     /// The child.
@@ -157,6 +151,29 @@ pub enum SplitDirection {
     Vertical,
 }
 
+impl SplitDirection {
+    /// The direction's wire value.
+    pub(crate) fn tag(self) -> u8 {
+        match self {
+            SplitDirection::Horizontal => direction_tag::HORIZONTAL,
+            SplitDirection::Vertical => direction_tag::VERTICAL,
+        }
+    }
+
+    /// The direction a wire value names.
+    ///
+    /// # Errors
+    ///
+    /// [`MessageError::UnknownDiscriminant`] for a byte no direction claims.
+    pub(crate) fn from_tag(tag: u8) -> Result<SplitDirection, MessageError> {
+        match tag {
+            direction_tag::HORIZONTAL => Ok(SplitDirection::Horizontal),
+            direction_tag::VERTICAL => Ok(SplitDirection::Vertical),
+            other => Err(unknown(other)),
+        }
+    }
+}
+
 /// An invariant a model breaks, naming the identity that breaks it.
 ///
 /// [`HostModel::validate`] is for tests and debug builds and never a release
@@ -168,12 +185,12 @@ pub enum ModelError {
         /// The id both carry.
         session: SessionId,
     },
-    /// Two tabs carry one id, whether or not in the same session.
+    /// Two tabs carry one id, in one session or across two.
     DuplicateTab {
         /// The id both carry.
         tab: TabId,
     },
-    /// Two panes carry one id, whether or not in the same tab.
+    /// Two panes carry one id, in one tab or across two.
     DuplicatePane {
         /// The id both carry.
         pane: PaneId,
@@ -209,9 +226,9 @@ pub enum ModelError {
         /// The pane with nowhere to be.
         pane: PaneId,
     },
-    /// A split in a tab's layout holds no children, which is a place nothing
-    /// can be drawn in. Normalization drops one wherever there is a parent to
-    /// drop it into, so one that reaches here places no pane at all.
+    /// A split holds no children, which is a place nothing can be drawn in.
+    /// Normalization drops one wherever there is a parent to drop it into, so
+    /// one that reaches here places no pane at all.
     EmptySplit {
         /// The tab whose layout it is.
         tab: TabId,
@@ -221,8 +238,8 @@ pub enum ModelError {
         /// The tab whose layout it is.
         tab: TabId,
     },
-    /// A tab's layout is not the tree [`LayoutNode::normalize`] would produce,
-    /// so two clients holding the same arrangement could disagree about it.
+    /// A tab's layout is not the tree [`LayoutNode::normalize`] produces, so
+    /// two clients holding the same arrangement could disagree about it.
     UnnormalizedLayout {
         /// The tab whose layout it is.
         tab: TabId,
@@ -312,8 +329,8 @@ impl core::error::Error for ModelError {}
 impl LayoutNode {
     /// The tree in its canonical shape: every child normalized, every split of
     /// this node's own direction flattened into it with its children's weights
-    /// scaled so no share of the space changes, every split of no children
-    /// dropped, and a split left holding one child replaced by that child.
+    /// scaled so no share changes, every split of no children dropped, and a
+    /// split left holding one child replaced by that child.
     ///
     /// Every split's weights are then divided by the largest factor they
     /// share, so one arrangement is one tree whatever scale a client expressed
@@ -382,11 +399,10 @@ impl LayoutNode {
 
     /// Puts `with` where `pane`'s leaf was, and says whether it found one.
     ///
-    /// The tree is left normalized when a leaf was replaced — splitting a pane
+    /// The tree is left normalized when a leaf was replaced: splitting a pane
     /// in the direction its parent already divides is how a same-direction
-    /// nesting arises, and flattening it here is what keeps the arrangement
-    /// the one every client computes. When no leaf named `pane`, nothing is
-    /// touched.
+    /// nesting arises, and flattening it here keeps the arrangement the one
+    /// every client computes. When no leaf named `pane`, nothing is touched.
     pub fn replace_leaf(&mut self, pane: PaneId, with: LayoutNode) -> bool {
         let mut pending = Some(with);
         self.substitute(pane, &mut pending);
@@ -462,9 +478,8 @@ impl LayoutNode {
     }
 }
 
-/// Whether a node is a split holding nothing: a shape nothing can render,
-/// which normalization drops rather than keeps, so that a tree carrying one
-/// is not mistaken for the canonical arrangement of its remaining panes.
+/// Whether a node is a split holding nothing: a shape nothing can render, so
+/// normalization drops it rather than keep it in a canonical tree.
 fn is_empty_split(node: &LayoutNode) -> bool {
     matches!(node, LayoutNode::Split { children, .. } if children.is_empty())
 }
@@ -477,13 +492,11 @@ fn weight_total(children: &[Weighted]) -> u32 {
 }
 
 /// Every same-direction child's children lifted into their parent's place,
-/// with weights that leave each pane the share of the space it had.
-///
-/// Lifting a child of weight `parent` whose own children weigh `inner` in
-/// total gives each of those children `parent × inner_child`, and every other
-/// child of the parent a factor of `inner` — so the scale the whole list is
-/// multiplied by is the product of every lifted child's total, and a lifted
-/// child's own children take that product divided by their total.
+/// with weights that leave each pane the share of the space it had: lifting a
+/// child of weight `parent` whose own children weigh `inner` in total gives
+/// each of those `parent × inner_child` and every other child a factor of
+/// `inner`, so the whole list is scaled by the product of every lifted child's
+/// total and a lifted child's own take that product over their total.
 fn flatten(direction: SplitDirection, children: Vec<Weighted>) -> Vec<Weighted> {
     let scale = children.iter().fold(1_u32, |scale, child| {
         match lifted_children(direction, &child.node) {
@@ -552,8 +565,7 @@ fn push_lifted(into: &mut Vec<Weighted>, direction: SplitDirection, child: Weigh
 }
 
 /// The greatest common divisor of two weights, by Euclid. A weight of zero
-/// divides nothing and so contributes no factor: `common_divisor(0, n)` is
-/// `n`, and children that all weigh nothing share no factor at all.
+/// contributes no factor: `common_divisor(0, n)` is `n`.
 fn common_divisor(left: u32, right: u32) -> u32 {
     let mut larger = left;
     let mut smaller = right;
@@ -566,9 +578,8 @@ fn common_divisor(left: u32, right: u32) -> u32 {
 }
 
 /// The children with every weight divided by the largest factor they share.
-/// Weights say only how the space is divided, so this loses nothing and is
-/// what makes one arrangement one tree; children that all weigh nothing have
-/// no factor to take out and are left as they are.
+/// Weights say only how the space is divided, so this loses nothing and makes
+/// one arrangement one tree; children that all weigh nothing are left alone.
 fn reduced(children: Vec<Weighted>) -> Vec<Weighted> {
     let divisor = children
         .iter()
@@ -599,8 +610,7 @@ fn collapse(direction: SplitDirection, children: Vec<Weighted>) -> LayoutNode {
 
 /// The ids a validation has already met, so that "unique across the host" is
 /// one pass rather than a search per identity. The reconciler holds an
-/// incoming value to the same pass over an empty one, and checks the host's
-/// own ids itself.
+/// incoming value to the same pass over an empty one.
 #[derive(Debug, Default)]
 pub(crate) struct SeenIds {
     /// Every session id met so far.
@@ -614,8 +624,8 @@ pub(crate) struct SeenIds {
 impl HostModel {
     /// Confirms the model holds together.
     ///
-    /// This is for tests and debug builds and never a release path: a model
-    /// glitch degrades a client, it does not kill the server.
+    /// For tests and debug builds, never a release path: a model glitch
+    /// degrades a client, it does not kill the server.
     ///
     /// # Errors
     ///
@@ -687,8 +697,7 @@ pub(crate) fn validate_tab(seen: &mut SeenIds, tab: &Tab) -> Result<(), ModelErr
 
 /// Confirms a layout places exactly `panes`, each once, in a tree that is
 /// normalized, weighted and no deeper than a model holds. It takes the parts
-/// rather than a whole tab so the reconciler can hold a layout it has not
-/// stored yet to the panes the tab has.
+/// so the reconciler can hold a layout it has not stored to a tab's panes.
 ///
 /// # Errors
 ///
@@ -793,13 +802,7 @@ pub(crate) fn put_tab(sink: &mut dyn Sink, tab: &Tab) {
 pub(crate) fn put_pane(sink: &mut dyn Sink, pane: &Pane) {
     sink.put(&pane.id.0.to_le_bytes());
     put_bytes(sink, pane.title.as_bytes());
-    match pane.working_directory.as_deref() {
-        None => sink.put(&[ABSENT]),
-        Some(path) => {
-            sink.put(&[PRESENT]);
-            put_bytes(sink, path.as_bytes());
-        }
-    }
+    put_optional(sink, pane.working_directory.as_deref());
     sink.put(&pane.columns.to_le_bytes());
     sink.put(&pane.rows.to_le_bytes());
 }
@@ -812,11 +815,7 @@ pub(crate) fn put_layout(sink: &mut dyn Sink, node: &LayoutNode) {
             direction,
             children,
         } => {
-            let direction = match direction {
-                SplitDirection::Horizontal => direction_tag::HORIZONTAL,
-                SplitDirection::Vertical => direction_tag::VERTICAL,
-            };
-            sink.put(&[layout_tag::SPLIT, direction]);
+            sink.put(&[layout_tag::SPLIT, direction.tag()]);
             put_count(sink, children.len());
             for child in children {
                 put_layout(sink, &child.node);
@@ -835,31 +834,40 @@ pub(crate) fn put_layout(sink: &mut dyn Sink, node: &LayoutNode) {
 /// # Errors
 ///
 /// [`MessageError::LayoutTooDeep`] when a tab's layout nests past
-/// [`MAXIMUM_LAYOUT_DEPTH`], so that nothing this encoder produces is
-/// something [`decode_host_model`] refuses; [`MessageError::Oversize`] when
-/// the encoding would not fit a frame, measured before anything is allocated
-/// for it.
+/// [`MAXIMUM_LAYOUT_DEPTH`], so nothing this encoder produces is something
+/// [`decode_host_model`] refuses; [`MessageError::Oversize`] when the encoding
+/// would not fit a frame, measured before anything is allocated for it.
 pub fn encode_host_model(model: &HostModel) -> Result<Vec<u8>, MessageError> {
-    let too_deep = model
-        .sessions
-        .iter()
-        .flat_map(|session| session.tabs.iter())
-        .any(|tab| tab.layout.depth() > MAXIMUM_LAYOUT_DEPTH);
-    if too_deep {
+    for session in &model.sessions {
+        for tab in &session.tabs {
+            check_depth(&tab.layout)?;
+        }
+    }
+    encode(|sink| put_host_model(sink, model))
+}
+
+/// Refuses a layout nested past [`MAXIMUM_LAYOUT_DEPTH`], so that nothing any
+/// encoder in this crate produces is something its own decoder refuses: a
+/// delta a client cannot decode is a client that can never catch up.
+///
+/// # Errors
+///
+/// [`MessageError::LayoutTooDeep`], naming the bound.
+pub(crate) fn check_depth(layout: &LayoutNode) -> Result<(), MessageError> {
+    if layout.depth() > MAXIMUM_LAYOUT_DEPTH {
         return Err(MessageError::LayoutTooDeep {
             limit: MAXIMUM_LAYOUT_DEPTH,
         });
     }
-    encode(|sink| put_host_model(sink, model))
+    Ok(())
 }
 
 /// The model a `Snapshot` payload holds.
 ///
 /// The bytes are not trusted: a count is read as far as the bytes go rather
 /// than allocated for, and a layout is refused on the way down at
-/// [`MAXIMUM_LAYOUT_DEPTH`] rather than recursed to whatever depth it asks
-/// for. What comes back is a well-formed model, not necessarily a valid one —
-/// [`HostModel::validate`] is what says that.
+/// [`MAXIMUM_LAYOUT_DEPTH`]. What comes back is a well-formed model, not
+/// necessarily a valid one — [`HostModel::validate`] says that.
 ///
 /// # Errors
 ///
@@ -941,11 +949,7 @@ pub(crate) fn read_tab(reader: &mut Reader<'_>) -> Result<Tab, MessageError> {
 pub(crate) fn read_pane(reader: &mut Reader<'_>) -> Result<Pane, MessageError> {
     let id = PaneId(u64::from_le_bytes(reader.array()?));
     let title = reader.string()?;
-    let working_directory = if reader.flag()? {
-        Some(reader.string()?)
-    } else {
-        None
-    };
+    let working_directory = reader.optional_string()?;
     let columns = u16::from_le_bytes(reader.array()?);
     let rows = u16::from_le_bytes(reader.array()?);
     Ok(Pane {
@@ -974,11 +978,7 @@ pub(crate) fn read_layout(
     }
     match reader.byte()? {
         layout_tag::SPLIT => {
-            let direction = match reader.byte()? {
-                direction_tag::HORIZONTAL => SplitDirection::Horizontal,
-                direction_tag::VERTICAL => SplitDirection::Vertical,
-                other => return Err(unknown(other)),
-            };
+            let direction = SplitDirection::from_tag(reader.byte()?)?;
             let count = reader.count()?;
             let mut children = Vec::new();
             for _index in 0..count {

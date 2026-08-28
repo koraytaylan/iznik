@@ -20,8 +20,8 @@
 use crate::identity::{PaneId, SessionId, TabId};
 use crate::message::MessageError;
 use crate::model::{
-    LayoutNode, Pane, Session, Tab, put_layout, put_pane, put_session, put_tab, read_layout,
-    read_pane, read_session, read_tab,
+    LayoutNode, Pane, Session, Tab, check_depth, put_layout, put_pane, put_session, put_tab,
+    read_layout, read_pane, read_session, read_tab,
 };
 use crate::wire::{Reader, Sink, encode, put_bytes, put_count, unknown};
 
@@ -237,6 +237,60 @@ fn read_reason(reader: &mut Reader<'_>) -> Result<RemovalReason, MessageError> {
     }
 }
 
+/// Appends a delta: its discriminant and then its fields.
+///
+/// The two halves below split it only because one match of fourteen arms is
+/// longer than a function may be. This match is the exhaustive one, so a
+/// fifteenth variant is a compile error here rather than a delta that encodes
+/// to nothing; each half's last arm is what this match has already ruled out.
+fn put_delta(sink: &mut dyn Sink, delta: &Delta) {
+    match delta {
+        Delta::SessionAdded { .. }
+        | Delta::SessionRenamed { .. }
+        | Delta::SessionRemoved { .. }
+        | Delta::TabAdded { .. }
+        | Delta::TabRenamed { .. }
+        | Delta::TabRemoved { .. }
+        | Delta::TabsReordered { .. }
+        | Delta::LayoutChanged { .. } => put_arrangement(sink, delta),
+        Delta::PaneAdded { .. }
+        | Delta::PaneRemoved { .. }
+        | Delta::PaneMoved { .. }
+        | Delta::PaneTitle { .. }
+        | Delta::PaneWorkingDirectory { .. }
+        | Delta::PaneResized { .. } => put_pane_change(sink, delta),
+    }
+}
+
+/// Refuses a delta carrying a layout nested past what a model holds. It is
+/// exhaustive for the same reason [`put_delta`] is: a new variant carrying a
+/// layout must not slip past the guard unnoticed.
+///
+/// # Errors
+///
+/// [`MessageError::LayoutTooDeep`], naming the bound.
+fn check_layouts(delta: &Delta) -> Result<(), MessageError> {
+    match delta {
+        Delta::SessionAdded { session } => session
+            .tabs
+            .iter()
+            .try_for_each(|tab| check_depth(&tab.layout)),
+        Delta::TabAdded { tab, .. } => check_depth(&tab.layout),
+        Delta::LayoutChanged { layout, .. } => check_depth(layout),
+        Delta::SessionRenamed { .. }
+        | Delta::SessionRemoved { .. }
+        | Delta::TabRenamed { .. }
+        | Delta::TabRemoved { .. }
+        | Delta::TabsReordered { .. }
+        | Delta::PaneAdded { .. }
+        | Delta::PaneRemoved { .. }
+        | Delta::PaneMoved { .. }
+        | Delta::PaneTitle { .. }
+        | Delta::PaneWorkingDirectory { .. }
+        | Delta::PaneResized { .. } => Ok(()),
+    }
+}
+
 /// Appends the deltas that name a session or a tab.
 fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) {
     match delta {
@@ -286,7 +340,8 @@ fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) {
             sink.put(&tab.0.to_le_bytes());
             put_layout(sink, layout);
         }
-        other => put_pane_change(sink, other),
+        // Ruled out by `put_delta`, the only caller.
+        _other => {}
     }
 }
 
@@ -328,7 +383,8 @@ fn put_pane_change(sink: &mut dyn Sink, delta: &Delta) {
             sink.put(&columns.to_le_bytes());
             sink.put(&rows.to_le_bytes());
         }
-        other => put_arrangement(sink, other),
+        // Ruled out by `put_delta`, the only caller.
+        _other => {}
     }
 }
 
@@ -336,10 +392,13 @@ fn put_pane_change(sink: &mut dyn Sink, delta: &Delta) {
 ///
 /// # Errors
 ///
-/// [`MessageError::Oversize`] when the encoding would not fit a frame,
-/// measured before anything is allocated for it.
+/// [`MessageError::LayoutTooDeep`] when a layout the delta carries nests past
+/// [`crate::model::MAXIMUM_LAYOUT_DEPTH`], so nothing this encoder produces is
+/// something [`decode_delta`] refuses, and [`MessageError::Oversize`] when the
+/// encoding would not fit a frame, measured before anything is allocated.
 pub fn encode_delta(delta: &Delta) -> Result<Vec<u8>, MessageError> {
-    encode(|sink| put_arrangement(sink, delta))
+    check_layouts(delta)?;
+    encode(|sink| put_delta(sink, delta))
 }
 
 /// The change a `Delta` payload holds.

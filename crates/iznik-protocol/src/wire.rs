@@ -42,6 +42,18 @@ pub(crate) fn put_bytes(sink: &mut dyn Sink, bytes: &[u8]) {
     sink.put(bytes);
 }
 
+/// Appends an optional string: a presence byte, and the string when there is
+/// one. The model's working directories and the commands' are the same field.
+pub(crate) fn put_optional(sink: &mut dyn Sink, text: Option<&str>) {
+    match text {
+        None => sink.put(&[ABSENT]),
+        Some(text) => {
+            sink.put(&[PRESENT]);
+            put_bytes(sink, text.as_bytes());
+        }
+    }
+}
+
 /// Appends the count of the elements that follow. A count that does not fit
 /// four bytes is written saturated, which [`encode`] then refuses as
 /// oversize: no encoding this crate hands out carries a truncated count.
@@ -188,6 +200,22 @@ impl<'bytes> Reader<'bytes> {
         let length = u32::from_le_bytes(self.array()?);
         let taken = self.take(usize::try_from(length).unwrap_or(usize::MAX))?;
         Ok(taken.to_vec())
+    }
+
+    /// The next optional string: a presence byte, and the string when there
+    /// is one.
+    ///
+    /// # Errors
+    ///
+    /// [`MessageError::Truncated`] when it is cut short,
+    /// [`MessageError::Utf8`] when it is not UTF-8, and
+    /// [`MessageError::UnknownDiscriminant`] when the presence byte is
+    /// neither absent nor present.
+    pub(crate) fn optional_string(&mut self) -> Result<Option<String>, MessageError> {
+        if !self.flag()? {
+            return Ok(None);
+        }
+        Ok(Some(self.string()?))
     }
 
     /// The next length-delimited string.

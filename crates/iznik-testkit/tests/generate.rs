@@ -170,8 +170,32 @@ fn generate_operations_cover_every_kind() {
 /// When a delta variant never appears.
 #[test]
 fn generate_changes_cover_every_delta() {
-    let mut generator = ModelGenerator::new(SEED);
-    let mut seen: Vec<String> = Vec::new();
+    let kinds = variants_drawn(SEED);
+    assert_eq!(kinds.len(), 14, "the deltas drawn were {kinds:?}");
+}
+
+/// A seed of zero draws like any other. Zero is a fixed point of the xorshift,
+/// so a generator that started from it unchanged would draw nothing but zeros
+/// for ever: one session, one kind of change, one name — and every property
+/// checked over it would pass while proving almost nothing.
+///
+/// # Panics
+///
+/// When a seed of zero does not draw.
+#[test]
+fn generate_a_seed_of_zero_still_draws() {
+    let kinds = variants_drawn(0);
+    assert_eq!(kinds.len(), 14, "a seed of zero drew {kinds:?}");
+}
+
+/// The names of the delta variants a seed draws over `ROUNDS` rounds.
+///
+/// # Panics
+///
+/// Never; it only draws.
+fn variants_drawn(seed: u64) -> Vec<String> {
+    let mut generator = ModelGenerator::new(seed);
+    let mut kinds: Vec<String> = Vec::new();
     for _round in 0..ROUNDS {
         let start = generator.model();
         for delta in generator.changes(&start, CHANGES).deltas() {
@@ -181,10 +205,10 @@ fn generate_changes_cover_every_delta() {
                 .next()
                 .unwrap_or_default()
                 .to_owned();
-            seen.push(kind);
+            kinds.push(kind);
         }
     }
-    seen.sort();
-    seen.dedup();
-    assert_eq!(seen.len(), 14, "the deltas drawn were {seen:?}");
+    kinds.sort();
+    kinds.dedup();
+    kinds
 }
