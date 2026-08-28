@@ -1,0 +1,20 @@
+# A README that names a command nothing answers to still reads well, so nothing
+# but a test notices. What is claimed here is that the documents and the
+# binaries agree in both directions, and that asking a command what it takes is
+# a thing a person can do without running it.
+#
+# Both are proven in process. A document and the binary it describes are both
+# in this repository; a container would carry the same two files into a
+# namespace and compare them there.
+
+[[claim]]
+id = "daemon-documentation-xtask-commands-answer"
+statement = "Every `xtask` subcommand the documents name is one the binary routes, every one it routes is named by a document, and each answers `--help` with success and a word about itself rather than doing its work."
+test = "xtask::readme_commands::every_named_command_answers_for_itself"
+because = "the documents and the binary are both in this checkout, and a container adds nothing to comparing them"
+
+[[claim]]
+id = "daemon-documentation-server-commands-answer"
+statement = "Every `iznik-server` entry point the documents name is one the binary routes, every one it routes is named by a document, and each answers `--help` with success rather than starting a daemon or relaying to one."
+test = "iznik-server::readme_commands::every_named_command_answers_for_itself"
+because = "the documents and the binary are both in this checkout, and what is proven is that a command answers instead of doing its work"

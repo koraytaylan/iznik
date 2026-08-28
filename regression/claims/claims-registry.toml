@@ -12,3 +12,9 @@ scenario = "proof-passes"
 id = "claims-registry-scenario-in-container"
 statement = "A scenario proof runs inside the container it names."
 scenario = "in-container"
+
+[[claim]]
+id = "claims-registry-platform-is-resolved"
+statement = "A claim's platform is resolved to the machine it means, so `darwin` and `macos` are one platform and a proof deferred on a machine that cannot run it is not deferred on the machine that can."
+test = "xtask::claims::claims_a_platform_is_known_by_either_of_its_names"
+because = "what is proven is how a name in a file is read, and the reading is the same in every namespace"

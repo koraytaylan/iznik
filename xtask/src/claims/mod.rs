@@ -28,6 +28,10 @@ pub type TaskId = String;
 /// a failure, not a wait; a typical run is far under it.
 const RUN_DEADLINE: Duration = Duration::from_mins(15);
 
+/// What this subcommand takes: its two forms, the flag that narrows the first
+/// to named tasks rather than to the branch's own, and the root to look under.
+const USAGE: &str = "usage: xtask claims <verify [--task <id>]... | coverage> [--root <dir>]";
+
 /// The `claims` subcommand: `verify [--task <id>]… [--root <dir>]` or
 /// `coverage [--root <dir>]`.
 ///
@@ -35,6 +39,9 @@ const RUN_DEADLINE: Duration = Duration::from_mins(15);
 /// subcommand first.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     match arguments.get(1).and_then(|argument| argument.to_str()) {
         Some("verify") => command(&verify_selection(arguments), arguments),
         Some("coverage") => command(&Selection::Everything, arguments),
@@ -135,7 +142,7 @@ fn fail(error: &VerifyError) -> ExitCode {
 
 /// Reports an unusable command line and the usage code.
 fn usage() -> ExitCode {
-    let _printed = writeln!(std::io::stderr(), "claims: expected `verify` or `coverage`");
+    let _printed = writeln!(std::io::stderr(), "{USAGE}");
     ExitCode::from(crate::USAGE_EXIT_CODE)
 }
 

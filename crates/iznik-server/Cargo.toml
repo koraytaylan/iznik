@@ -31,3 +31,7 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 iznik-testkit = { path = "../iznik-testkit" }
+# For its bounded process runner only: `readme_commands` runs every command the
+# documents name, and section 8's rule is that no spawned process runs without
+# a deadline.
+iznik-harness = { path = "../iznik-harness" }

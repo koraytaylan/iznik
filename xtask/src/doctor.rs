@@ -12,6 +12,9 @@ use std::time::Duration;
 
 use iznik_harness::process::{self, Deadline, Output, ProcessError};
 
+/// What this subcommand takes, which is nothing.
+const USAGE: &str = "usage: xtask doctor";
+
 /// How long a probe may take: thirty seconds — `podman info` on a cold
 /// machine is the slowest, and takes seconds.
 const PROBE_DEADLINE: Duration = Duration::from_secs(30);
@@ -285,8 +288,11 @@ pub fn missing(root: &Path) -> Result<Vec<Missing>, DoctorError> {
 /// one on standard error, and a failure status when anything is missing.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     if arguments.len() != 1 {
-        writeln!(io::stderr(), "usage: xtask doctor").unwrap_or_default();
+        writeln!(io::stderr(), "{USAGE}").unwrap_or_default();
         return ExitCode::from(crate::USAGE_EXIT_CODE);
     }
     let examined = match examine(&crate::repository_root()) {

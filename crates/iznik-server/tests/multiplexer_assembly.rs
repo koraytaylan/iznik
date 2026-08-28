@@ -33,14 +33,14 @@ use tokio::sync::RwLock;
 const COLUMNS: u16 = 80;
 /// The height they are created at.
 const ROWS: u16 = 24;
-
 /// The deadline every case runs under, so a stall is a named failure.
 const DEADLINE: Duration = Duration::from_mins(2);
 /// How long a case waits between looks at a shell.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// How many looks it takes before it gives up on one.
 const POLL_ATTEMPTS: usize = 4000;
-
+/// How many unchanged looks finish a pane; one is a pause, not an end.
+const QUIET_LOOKS: usize = 20;
 /// How many pumps a case allows before it calls the multiplexer a spin.
 const PUMP_LIMIT: usize = 20_000;
 /// The unit the floods in these cases are stated in.
@@ -334,8 +334,7 @@ impl Rig {
             .first()
             .and_then(|session| session.tabs.first().map(|tab| tab.id))
             .ok_or("the host holds no tab")?;
-        held.rename_tab(tab, format!("tab {turn}"))?;
-        Ok(())
+        Ok(held.rename_tab(tab, format!("tab {turn}"))?)
     }
 
     /// Tells a pane's shell to do something.
@@ -346,8 +345,7 @@ impl Rig {
     async fn ask(&self, pane: PaneId, script: &str) -> Result<(), Failed> {
         let host = self.registry.read().await;
         let held = host.pane(pane).ok_or("the host holds no such pane")?;
-        held.input(format!("{script}\n").into_bytes())?;
-        Ok(())
+        Ok(held.input(format!("{script}\n").into_bytes())?)
     }
 
     /// The sequence just past a pane's newest byte.
@@ -383,13 +381,17 @@ impl Rig {
         Err(format!("pane {} never produced {wanted} bytes", pane.0).into())
     }
 
-    /// Waits until a pane has stopped producing and its host has caught up.
+    /// Waits until a pane has been unchanged for [`QUIET_LOOKS`] consecutive
+    /// looks. Not one: a flooding shell on a loaded machine pauses for longer
+    /// than a look, and a case that took the pause for the end would compare a
+    /// prefix against a whole.
     async fn quiescent(&self, pane: PaneId) {
-        let mut before = Sequence(0);
+        let (mut before, mut still) = (Sequence(0), 0_usize);
         for _attempt in 0..POLL_ATTEMPTS {
             tokio::time::sleep(POLL_INTERVAL).await;
             let now = self.newest(pane).await;
-            if now == before && now.0 > 0 {
+            still = usize::from(now == before && now.0 > 0).saturating_mul(still.saturating_add(1));
+            if still >= QUIET_LOOKS {
                 return;
             }
             before = now;
@@ -508,7 +510,6 @@ const AT: usize = 99;
 const MIDDLE: usize = 50;
 /// What [`AT`] and [`MIDDLE`] are percentiles of.
 const OF: usize = 100;
-
 /// How long one keystroke may take before the case calls the pump stopped.
 const SAMPLE_DEADLINE: Duration = Duration::from_secs(5);
 /// How much the multiplexer's own memory may grow across a flood: one frame's
@@ -519,7 +520,6 @@ const MEMORY_SLACK_BYTES: u64 = 16 * MEBIBYTE;
 const IDLE_CPU_CEILING: Duration = Duration::from_millis(20);
 /// How long that idle interval is.
 const IDLE_INTERVAL: Duration = Duration::from_millis(200);
-
 /// What a subscription that needs the truth opens with.
 fn cold_path() -> Vec<String> {
     vec!["PaneChannel".to_owned(), "Screen".to_owned()]

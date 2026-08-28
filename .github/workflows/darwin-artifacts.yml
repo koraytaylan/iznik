@@ -4,6 +4,10 @@
 # development machine, and `xtask distribution` says so plainly when SDKROOT is
 # unset rather than reporting a link error from deep inside cargo. This runs on
 # a macOS runner, where the SDK is the system's own.
+#
+# One job rather than one per triple: the case that holds an artifact to what
+# it must be builds both, so a job with only its own target installed would
+# fail on the other one.
 name: darwin-artifacts
 
 on:
@@ -17,22 +21,29 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.target }}
+    name: aarch64 and x86_64
     runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - aarch64-apple-darwin
-          - x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
       # rustup reads rust-toolchain.toml and installs the pinned channel on
-      # first use; that file pins only the musl targets, so the Darwin one
-      # this job builds is added here.
+      # first use; that file pins only the musl targets, so both Darwin ones
+      # are added here.
       - name: Install the toolchain
-        run: rustup target add "${{ matrix.target }}"
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # The emulator this links is built by its -sys crate with Zig, which the
+      # runner image does not carry. CONTRIBUTING.md lists it as a
+      # prerequisite; `cargo xtask doctor` names it when it is missing.
+      - name: Install zig
+        run: |
+          brew install zig
+          zig version
+
+      # The case below is run by nextest, which the runner image does not
+      # carry either.
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
 
       # A macOS runner has the SDK but does not export its path, and the
       # distribution refuses to build without SDKROOT rather than discovering
@@ -40,18 +51,26 @@ jobs:
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
-      - name: Build the artifact
-        run: cargo xtask distribution --target "${{ matrix.target }}"
+      - name: Build the artifacts
+        run: |
+          cargo xtask distribution --target aarch64-apple-darwin
+          cargo xtask distribution --target x86_64-apple-darwin
 
-      - name: Hold it to what an artifact must be
+      # Against the artifacts just built: Mach-O headers for the machine each
+      # names, the size ceiling, and a dynamic-link surface a stock macOS
+      # install has.
+      - name: Hold them to what an artifact must be
         run: cargo nextest run --package xtask -E 'binary(/^regression_distribution_darwin$/)' --run-ignored all
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: iznik-server-${{ matrix.target }}
+          name: iznik-server-darwin
           path: |
-            target/distribution/${{ matrix.target }}/iznik-server
-            target/distribution/${{ matrix.target }}/SHA256SUMS
-            target/distribution/${{ matrix.target }}/manifest.toml
+            target/distribution/aarch64-apple-darwin/iznik-server
+            target/distribution/aarch64-apple-darwin/SHA256SUMS
+            target/distribution/aarch64-apple-darwin/manifest.toml
+            target/distribution/x86_64-apple-darwin/iznik-server
+            target/distribution/x86_64-apple-darwin/SHA256SUMS
+            target/distribution/x86_64-apple-darwin/manifest.toml
           if-no-files-found: error

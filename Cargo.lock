@@ -424,6 +424,7 @@ dependencies = [
 name = "iznik-server"
 version = "0.1.0"
 dependencies = [
+ "iznik-harness",
  "iznik-link",
  "iznik-protocol",
  "iznik-testkit",

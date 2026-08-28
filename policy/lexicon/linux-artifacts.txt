@@ -1,9 +1,12 @@
 aarch64
 artifact
 artifacts
+checkouts
 checksums
+cleaned
 config
 configured
+declares
 digest
 elf
 flags
@@ -19,7 +22,12 @@ remapped
 reproducible
 rustflags
 sdk
+section
+sections
 stride
 sums
+symbols
 targeted
+triples
+unreadable
 x86

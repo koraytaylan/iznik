@@ -2,7 +2,9 @@
 
 The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions, multiplexing and resume. Asynchronous end to end; the one module with blocking I/O is `pty::streams`, whose purpose is to hide it.
 
-The binary `iznik-server` takes one of `--stdio`, `--daemon`, `--foreground`, `--stop` and `--version` as its first argument and hands the command line to the module that owns it; `--help` lists them.
+The binary `iznik-server` takes one of `--stdio`, `--daemon`, `--foreground`, `--stop` and `--version` as its first argument and hands the command line to the module that owns it; `--help` lists them, and each of them answers `--help` with what it takes. The four the `daemon` module owns share two flags: `--idle-shutdown-seconds`, which shortens the interval after which a daemon with no panes and no clients exits, and `--program`, which says what a pane runs rather than leaving it to whoever's login shell is on the machine. `tests/readme_commands.rs` asks every command this file names, so a name here that no binary answers to is a failing test.
+
+What it costs is measured, not asserted in prose: `benches/baseline.rs` prints the table in [baseline.md](../../docs/notes/baseline.md), and `tests/regression_baseline.rs` includes that same file so one definition of each figure is both printed and held to a ceiling.
 
 What this daemon speaks is written out in [protocol.md](../../docs/notes/protocol.md): every discriminant, every byte layout, and the subscribe, resume, credit and compression rules a second implementation needs.
 
@@ -40,4 +42,4 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules, and the `harness = false` benchmark `benches/baseline.rs` is filled by `performance-baseline`; there is no test module inside `src/`, here or anywhere in the workspace.
+Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. Two of them are not ordinary: `regression_baseline.rs` includes `benches/baseline.rs` and is ignored by default, because every case builds and measures a real daemon; `readme_commands.rs` runs every command the READMEs name with `--help`.

@@ -31,6 +31,29 @@ const CARGO_CONFIG: &str = ".cargo/config.toml";
 /// replaced by a name that is the same everywhere.
 const REMAPPED: &str = ".";
 
+/// And the same for the dependencies, which carry their own panic locations
+/// out of a registry under a home directory that differs on every machine.
+/// Stripping does not remove these: they are data, not symbols.
+const REMAPPED_REGISTRY: &str = "registry";
+
+/// Where cargo unpacks what it downloads, under `CARGO_HOME`.
+const REGISTRY_SOURCES: &str = "registry/src";
+
+/// Where cargo keeps a dependency it took from a git remote — the emulator is
+/// one — under `CARGO_HOME`.
+const GIT_CHECKOUTS: &str = "git/checkouts";
+
+/// And the name that stands in for it.
+const REMAPPED_CHECKOUTS: &str = "checkouts";
+
+/// The variable that overrides this one, and must not be set: cargo prefers it
+/// to `RUSTFLAGS` outright, so a caller who has one in the environment would
+/// get none of what this computes and no warning about it.
+const ENCODED_VARIABLE: &str = "CARGO_ENCODED_RUSTFLAGS";
+
+/// The variable this sets.
+const FLAGS_VARIABLE: &str = "RUSTFLAGS";
+
 /// Builds the binary for `target` and says where cargo put it.
 ///
 /// # Errors
@@ -51,7 +74,11 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
         .arg(BINARY)
         .arg("--bin")
         .arg(BINARY)
-        .env("RUSTFLAGS", rustflags(root, target));
+        .env(FLAGS_VARIABLE, rustflags(root, target)?)
+        // Cargo prefers this to what was just set, so a caller who happens to
+        // carry one would get an artifact built with none of the flags above
+        // and no sign that anything was ignored.
+        .env_remove(ENCODED_VARIABLE);
     // Its output is cargo's own progress; what matters is that it succeeded.
     process::run(command, Deadline(BUILD_DEADLINE), Output::Capture).map_err(|source| {
         DistributionError::Build {
@@ -69,34 +96,77 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
 /// the configured ones are read and passed on. Without that, the musl targets
 /// lose `link-self-contained=no` and link rustc's startup objects beside the
 /// cross-compiler's, which is a duplicate `_start` and nothing else.
-#[must_use]
-pub fn rustflags(root: &Path, target: &str) -> String {
-    let mut flags = configured(root, target);
+///
+/// # Errors
+///
+/// [`DistributionError::Unreadable`] when `.cargo/config.toml` is there but
+/// cannot be read or parsed. Falling back to no flags is the one thing this
+/// must not do: `RUSTFLAGS` replaces the configured ones, so an empty answer
+/// silently drops `link-self-contained=no` and the musl link dies on a
+/// duplicate `_start` — the failure this function exists to prevent.
+pub fn rustflags(root: &Path, target: &str) -> Result<String, DistributionError> {
+    let mut flags = configured(root, target)?;
     flags.push(format!("--remap-path-prefix={}={REMAPPED}", root.display()));
-    flags.join(" ")
+    // Two builds of one commit must agree across machines, not only across
+    // runs on one. A dependency's panic locations carry the absolute path of
+    // the registry it was unpacked into, which lives under a home directory
+    // whose name differs for every person who builds this.
+    if let Some(home) = cargo_home() {
+        flags.push(format!(
+            "--remap-path-prefix={}={REMAPPED_REGISTRY}",
+            home.join(REGISTRY_SOURCES).display()
+        ));
+        flags.push(format!(
+            "--remap-path-prefix={}={REMAPPED_CHECKOUTS}",
+            home.join(GIT_CHECKOUTS).display()
+        ));
+    }
+    Ok(flags.join(" "))
+}
+
+/// Where cargo keeps what it has downloaded: what `CARGO_HOME` names, or
+/// `.cargo` under the home directory.
+fn cargo_home() -> Option<PathBuf> {
+    std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
 }
 
 /// The flags `.cargo/config.toml` sets for a target, and for every build.
-fn configured(root: &Path, target: &str) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(root.join(CARGO_CONFIG)) else {
-        return Vec::new();
-    };
-    let Ok(config) = text.parse::<toml::Table>() else {
-        return Vec::new();
-    };
+///
+/// # Errors
+///
+/// [`DistributionError::Unreadable`] when the file is there and cannot be
+/// read or parsed. A workspace with no such file has no configured flags,
+/// which is a different thing and not an error.
+fn configured(root: &Path, target: &str) -> Result<Vec<String>, DistributionError> {
+    let path = root.join(CARGO_CONFIG);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|source| DistributionError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let config =
+        text.parse::<toml::Table>()
+            .map_err(|_unparsed| DistributionError::Unreadable {
+                path,
+                wanted: "a table of build and target flags".to_owned(),
+            })?;
     let build = config.get("build").and_then(|table| table.get("rustflags"));
     let targeted = config
         .get("target")
         .and_then(|table| table.get(target))
         .and_then(|table| table.get("rustflags"));
-    [build, targeted]
+    Ok([build, targeted]
         .into_iter()
         .flatten()
         .filter_map(toml::Value::as_array)
         .flatten()
         .filter_map(toml::Value::as_str)
         .map(str::to_owned)
-        .collect()
+        .collect())
 }
 
 /// Where cargo puts the binary for a target under the release profile.

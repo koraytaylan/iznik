@@ -15,7 +15,7 @@ touches:
   - "crates/iznik-regression/README.md"
   - "xtask/README.md"
   - "policy/lexicon/daemon-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Daemon Documentation

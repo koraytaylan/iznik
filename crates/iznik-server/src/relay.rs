@@ -110,14 +110,21 @@ async fn relay(stream: UnixStream) -> Result<(), String> {
         .map_err(|error| format!("the relay stopped: {error}"))
 }
 
+/// What this entry point takes, which is nothing: what it does is decided by
+/// whether a daemon is there.
+const USAGE: &str = "usage: iznik-server --stdio";
+
 /// The subcommand's entry point.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first. This takes no flags of its own: what it does is decided
 /// by whether a daemon is there.
 pub async fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE).await;
+    }
     if arguments.first().and_then(|argument| argument.to_str()) != Some(STDIO) {
-        complain("usage: iznik-server --stdio").await;
+        complain(USAGE).await;
         return ExitCode::from(crate::USAGE_EXIT_CODE);
     }
     if arguments.len() > 1 {

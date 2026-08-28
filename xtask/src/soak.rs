@@ -6,12 +6,20 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 
+/// What this subcommand will take. It answers now, ahead of the work,
+/// because a README names it and a named command that cannot say what it
+/// is has already drifted from the document.
+const USAGE: &str = "usage: xtask soak (not implemented until task soak-and-release)";
+
 /// The subcommand's entry point: a stub until task `soak-and-release` replaces its body.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first, and the module parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     let subcommand = arguments.first().map_or_else(String::new, |argument| {
         argument.to_string_lossy().into_owned()
     });

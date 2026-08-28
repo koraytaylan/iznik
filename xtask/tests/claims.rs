@@ -555,3 +555,28 @@ fn claims_a_regression_profile_runs_in_its_own_invocation() {
         "{default_line:?}"
     );
 }
+
+/// # Panics
+///
+/// When the platform a claims file names is not resolved to the machine it
+/// means.
+///
+/// `darwin` is what plan 0004 writes and `macos` is what Rust calls the same
+/// machine; a registry that took them for two platforms would defer the Darwin
+/// artifacts' proof on a Mac as well, which is a proof that never runs.
+#[test]
+fn claims_a_platform_is_known_by_either_of_its_names() {
+    assert!(
+        verify::is_this_platform(std::env::consts::OS),
+        "the machine running is the platform it says it is"
+    );
+    assert!(
+        !verify::is_this_platform("plan9"),
+        "and a platform nothing runs is not it"
+    );
+    assert_eq!(
+        verify::is_this_platform("darwin"),
+        verify::is_this_platform("macos"),
+        "darwin and macos are one machine, whichever this is"
+    );
+}

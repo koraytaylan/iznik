@@ -91,6 +91,20 @@ const READ_ATTEMPTS: usize = 100_000;
 /// stopped rather than went slowly.
 const SAMPLE_DEADLINE: Duration = Duration::from_secs(5);
 
+/// How long between two looks at what a daemon holds.
+const SETTLE_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How many looks before the figure is taken as it stands. Twenty at that
+/// interval is two seconds, which is longer than fifty shells take to stop
+/// allocating and short enough that a measurement is still a measurement.
+const SETTLE_LOOKS: usize = 20;
+
+/// What counts as settled: two consecutive samples within this of each other.
+/// A quarter of a percent of the fifty-pane ceiling, which is smaller than any
+/// difference the figure is meant to show and larger than the page-granular
+/// noise of a process that is doing nothing.
+const SETTLE_TOLERANCE: u64 = 64 * 1024;
+
 /// Anything a measurement can fail on.
 pub type Failed = Box<dyn std::error::Error>;
 
@@ -317,6 +331,29 @@ pub async fn throughput(
         .unwrap_or_default())
 }
 
+/// The daemon's resident bytes once they have stopped moving.
+///
+/// A pane's shell allocates as it starts, and fifty of them started one after
+/// another are still doing it when the last one is made. Sampling there would
+/// report what starting costs, and this figure is about what holding costs, so
+/// it is asked again until two consecutive answers agree.
+///
+/// # Errors
+///
+/// When the process cannot be read.
+async fn settled(daemon: u32) -> Result<u64, Failed> {
+    let mut last = metrics::resident_memory(daemon)?;
+    for _look in 0..SETTLE_LOOKS {
+        tokio::time::sleep(SETTLE_INTERVAL).await;
+        let now = metrics::resident_memory(daemon)?;
+        if now.abs_diff(last) <= SETTLE_TOLERANCE {
+            return Ok(now);
+        }
+        last = now;
+    }
+    Ok(last)
+}
+
 /// The daemon's resident bytes holding nothing, and holding `panes` idle
 /// panes.
 ///
@@ -326,11 +363,11 @@ pub async fn throughput(
 pub async fn memory(panes: usize) -> Result<(u64, u64), Failed> {
     let (stack, mut client) = attached().await?;
     let daemon = daemon_of(&stack)?;
-    let resting = metrics::resident_memory(daemon)?;
+    let resting = settled(daemon).await?;
     for _pane in 0..panes {
         let _made = new_pane(&mut client).await?;
     }
-    let holding = metrics::resident_memory(daemon)?;
+    let holding = settled(daemon).await?;
     Ok((resting, holding))
 }
 

@@ -33,9 +33,24 @@ const COMMANDS_AT: usize = 32;
 /// Where the count of load commands is in that header.
 const COMMAND_COUNT_AT: usize = 16;
 
-/// The load command that names a library the file needs at run time. The two
-/// beside it are the same shape: a weak dependency and a re-export.
-const LOAD_LIBRARY: &[u32] = &[0x0000_000c, 0x8000_0018, 0x8000_001f];
+/// The load command that names a library the file needs at run time.
+const LOAD_DYLIB: u32 = 0x0000_000c;
+
+/// It and the two of the same shape beside it: a weak dependency and a
+/// re-export.
+const LOAD_LIBRARY: &[u32] = &[LOAD_DYLIB, 0x8000_0018, 0x8000_001f];
+
+/// A load command that names no library. A segment is most of what a real
+/// Mach-O file's commands are, and stepping over them by the length they
+/// declare is the part of the walk that can go wrong unnoticed.
+const LOAD_SEGMENT: u32 = 0x0000_0019;
+
+/// How long one of those is with no sections in it.
+const SEGMENT_LENGTH: usize = 72;
+
+/// What a load command's name is padded to, which is how a linker lays one
+/// out and so what the walk has to step over.
+const NAME_ALIGNMENT: usize = 4;
 
 /// Where, within one of those commands, the offset of its name is; and where
 /// the command's own length is, which is how the walk advances.
@@ -49,10 +64,18 @@ const MACH_EXECUTABLE: u32 = 2;
 
 /// The system libraries a stock macOS install has, which are the only ones an
 /// artifact may name.
+///
+/// The list is what the criterion allows, not a guess at what this binary
+/// happens to link: every one of these ships with the operating system, so a
+/// host that has macOS has them. An artifact that named something else would
+/// be one a person had to install a dependency for, which is the whole thing a
+/// distributed binary must not be.
 const ALLOWED_LIBRARIES: &[&str] = &[
     "/usr/lib/libSystem.B.dylib",
     "/usr/lib/libiconv.2.dylib",
     "/usr/lib/libresolv.9.dylib",
+    "/usr/lib/libc++.1.dylib",
+    "/usr/lib/libobjc.A.dylib",
     "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
     "/System/Library/Frameworks/Security.framework/Versions/A/Security",
 ];
@@ -68,13 +91,14 @@ fn word(bytes: &[u8], at: usize) -> Option<u32> {
         .map(u32::from_le_bytes)
 }
 
-/// The nul-terminated name at `at`, if there is one.
+/// The name at `at`, if there is one and it is terminated.
+///
+/// A run of bytes to the end of the file is not a name: a file that stopped
+/// mid-string is truncated, and reporting the rest of it as a library would
+/// be an answer where there should be a refusal.
 fn name(bytes: &[u8], at: usize) -> Option<String> {
     let rest = bytes.get(at..)?;
-    let end = rest
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(rest.len());
+    let end = rest.iter().position(|byte| *byte == 0)?;
     rest.get(..end)
         .map(|held| String::from_utf8_lossy(held).into_owned())
 }
@@ -126,33 +150,51 @@ fn shape_of(bytes: &[u8]) -> Result<(u32, Vec<String>), Failed> {
     Ok((cpu, linked))
 }
 
-/// A 64-bit Mach-O file naming `libraries` and nothing else: the smallest
-/// thing the walk above has to read correctly.
-fn synthetic(cpu: u32, libraries: &[&str]) -> Vec<u8> {
+/// One load command that names a library, laid out as a linker lays it out:
+/// the fixed part, then the name, padded to a multiple of four.
+fn dylib_command(library: &str) -> Vec<u8> {
+    let fixed = NAME_OFFSET_AT.saturating_add(16);
+    let mut named = library.as_bytes().to_vec();
+    named.push(0);
+    while !named.len().is_multiple_of(NAME_ALIGNMENT) {
+        named.push(0);
+    }
+    let size = fixed.saturating_add(named.len());
+    let mut command = Vec::new();
+    command.extend_from_slice(&LOAD_DYLIB.to_le_bytes());
+    command.extend_from_slice(&u32::try_from(size).unwrap_or_default().to_le_bytes());
+    command.extend_from_slice(&u32::try_from(fixed).unwrap_or_default().to_le_bytes());
+    command.extend_from_slice(&0_u32.to_le_bytes());
+    command.extend_from_slice(&0_u32.to_le_bytes());
+    command.extend_from_slice(&0_u32.to_le_bytes());
+    command.extend_from_slice(&named);
+    command
+}
+
+/// One load command that names nothing: a segment, all zeros after its kind
+/// and its length. It is here so the walk has to step over something by the
+/// length it declares rather than by the length of what it has just read.
+fn segment_command() -> Vec<u8> {
+    let mut command = Vec::new();
+    command.extend_from_slice(&LOAD_SEGMENT.to_le_bytes());
+    command.extend_from_slice(
+        &u32::try_from(SEGMENT_LENGTH)
+            .unwrap_or_default()
+            .to_le_bytes(),
+    );
+    command.resize(SEGMENT_LENGTH, 0);
+    command
+}
+
+/// A 64-bit Mach-O file whose load commands are, in order, what `libraries`
+/// says: a name for one the file needs, and nothing for a segment.
+fn synthetic(cpu: u32, libraries: &[Option<&str>]) -> Vec<u8> {
     let mut commands = Vec::new();
     for library in libraries {
-        // The name follows the fixed part and is padded to a multiple of four,
-        // which is how a real linker lays one out.
-        let fixed = NAME_OFFSET_AT.saturating_add(16);
-        let mut named = library.as_bytes().to_vec();
-        named.push(0);
-        while named.len() % 4 != 0 {
-            named.push(0);
+        match *library {
+            Some(named) => commands.extend_from_slice(&dylib_command(named)),
+            None => commands.extend_from_slice(&segment_command()),
         }
-        let size = fixed.saturating_add(named.len());
-        commands.extend_from_slice(
-            &LOAD_LIBRARY
-                .first()
-                .copied()
-                .unwrap_or_default()
-                .to_le_bytes(),
-        );
-        commands.extend_from_slice(&u32::try_from(size).unwrap_or_default().to_le_bytes());
-        commands.extend_from_slice(&u32::try_from(fixed).unwrap_or_default().to_le_bytes());
-        commands.extend_from_slice(&0_u32.to_le_bytes());
-        commands.extend_from_slice(&0_u32.to_le_bytes());
-        commands.extend_from_slice(&0_u32.to_le_bytes());
-        commands.extend_from_slice(&named);
     }
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&MACH_MAGIC.to_le_bytes());
@@ -284,22 +326,38 @@ fn distribution_builds_both_darwin_targets() {
 /// pass on the runner with its allowlist never consulted.
 #[test]
 fn mach_shape_reads_what_a_file_names() {
-    let named = ["/usr/lib/libSystem.B.dylib", "/usr/lib/libiconv.2.dylib"];
-    let (cpu, linked) = shape_of(&synthetic(CPU_ARM64, &named))
+    let first = "/usr/lib/libSystem.B.dylib";
+    let second = "/usr/lib/libiconv.2.dylib";
+    // Segments around and between them, so the two names can be found only by
+    // stepping over commands of another kind and another length.
+    let file = synthetic(
+        CPU_ARM64,
+        &[None, Some(first), None, None, Some(second), None],
+    );
+    let (cpu, linked) = shape_of(&file)
         .unwrap_or_else(|error| panic!("a synthetic Mach-O file was refused: {error}"));
     assert_eq!(cpu, CPU_ARM64, "the CPU type is read from the header");
-    assert_eq!(linked, named, "and every library the load commands name");
+    assert_eq!(linked, [first, second], "and the libraries, in order");
     assert!(
         linked
             .iter()
             .all(|library| ALLOWED_LIBRARIES.contains(&library.as_str())),
         "which the allowlist above is written against"
     );
-    let (_cpu, none) = shape_of(&synthetic(CPU_X86_64, &[]))
-        .unwrap_or_else(|error| panic!("a file naming nothing was refused: {error}"));
-    assert!(none.is_empty(), "a file naming nothing yields nothing");
+    let (_cpu, none) = shape_of(&synthetic(CPU_X86_64, &[None, None]))
+        .unwrap_or_else(|error| panic!("a file of segments was refused: {error}"));
+    assert!(
+        none.is_empty(),
+        "a file whose commands name no library yields none: {none:?}"
+    );
     assert!(
         shape_of(b"\x7fELF\x02\x01\x01").is_err(),
         "and something that is not a Mach-O file at all is refused"
+    );
+    let mut truncated = file;
+    truncated.truncate(truncated.len().saturating_sub(SEGMENT_LENGTH));
+    assert!(
+        shape_of(&truncated).is_err(),
+        "as is a file whose commands run past its end"
     );
 }

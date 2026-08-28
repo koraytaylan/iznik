@@ -245,15 +245,15 @@ fn report_passed(gate: Gate, elapsed: Duration) {
     .unwrap_or_default();
 }
 
+/// What these two subcommands take: everything in order, or one gate by name.
+fn usage_line() -> String {
+    let names: Vec<&str> = GATES.iter().map(|gate| gate.name()).collect();
+    format!("usage: xtask check | xtask gate <{}>", names.join(" | "))
+}
+
 /// The usage line, on standard error, and the usage exit code.
 fn usage() -> ExitCode {
-    let names: Vec<&str> = GATES.iter().map(|gate| gate.name()).collect();
-    writeln!(
-        io::stderr(),
-        "usage: xtask check | xtask gate <{}>",
-        names.join(" | ")
-    )
-    .unwrap_or_default();
+    writeln!(io::stderr(), "{}", usage_line()).unwrap_or_default();
     ExitCode::from(crate::USAGE_EXIT_CODE)
 }
 
@@ -263,6 +263,9 @@ fn usage() -> ExitCode {
 /// subcommand first.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(&usage_line());
+    }
     let outcome = match arguments {
         [subcommand] if subcommand.as_os_str() == "check" => check(),
         [subcommand, name] if subcommand.as_os_str() == "gate" => {

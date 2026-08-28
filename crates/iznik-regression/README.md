@@ -2,7 +2,7 @@
 
 The scenario driver that runs inside a container, executes one step under its deadline and reports one NDJSON record, and the test binary that makes every scenario under `regression/scenarios/` a nextest test.
 
-The binary `iznik-regression step` reads one step as TOML on standard input and prints one NDJSON record, and `--help` names that one subcommand; `tests/regression_scenarios.rs` is the `harness = false` test binary that registers one ignored test per scenario file.
+The binary `iznik-regression step` reads one step as TOML on standard input and prints one NDJSON record, and `--help` names that one subcommand — as does `step --help`, which answers rather than waiting on standard input for a step that is not coming. `tests/regression_scenarios.rs` is the `harness = false` test binary that registers one ignored test per scenario file.
 
 ## Modules
 

@@ -410,10 +410,30 @@ fn expected_case(claim: &Claim) -> (String, String) {
     }
 }
 
+/// The names one platform is known by: what a person writes in a claims file,
+/// and what `std::env::consts::OS` calls the same machine.
+///
+/// A claim that says `darwin` means the platform Rust calls `macos`. Without
+/// this the two would never be the same thing, and a proof deferred here
+/// would be deferred on the one machine that can run it too — which is a
+/// claim nothing will ever establish, reported as though it were merely
+/// waiting.
+const PLATFORM_ALIASES: &[(&str, &str)] = &[("darwin", "macos")];
+
+/// Whether a platform, named as a claims file names it, is the one running.
+#[must_use]
+pub fn is_this_platform(platform: &str) -> bool {
+    let running = std::env::consts::OS;
+    platform == running
+        || PLATFORM_ALIASES
+            .iter()
+            .any(|(written, called)| *written == platform && *called == running)
+}
+
 /// Why a claim is deferred, when its platform is not the one running.
 fn is_deferred(claim: &Claim) -> Option<String> {
     let platform = claim.platform.as_ref()?;
-    if platform == std::env::consts::OS {
+    if is_this_platform(platform) {
         None
     } else {
         Some(format!(

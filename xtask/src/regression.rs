@@ -20,12 +20,20 @@ use crate::USAGE_EXIT_CODE;
 /// The subcommand's forms.
 const FORMS: &str = "images | stage | reap";
 
+/// What this subcommand takes: one of its three forms.
+fn usage_line() -> String {
+    format!("usage: xtask regression <{FORMS}>")
+}
+
 /// The subcommand's entry point.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first, and the module parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(&usage_line());
+    }
     let form = arguments
         .get(1)
         .map(|argument| argument.to_string_lossy().into_owned());
@@ -34,7 +42,7 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         Some("stage") => staged(),
         Some("reap") => reaped(),
         _ => {
-            let _written = writeln!(std::io::stderr(), "usage: xtask regression <{FORMS}>");
+            let _written = writeln!(std::io::stderr(), "{}", usage_line());
             ExitCode::from(USAGE_EXIT_CODE)
         }
     }

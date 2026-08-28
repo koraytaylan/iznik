@@ -781,18 +781,30 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
     ExitCode::from(FAILED)
 }
 
+/// What these entry points take: the four they answer to, and the two flags
+/// that shorten the idle interval and say what a pane runs.
+fn usage_line() -> String {
+    format!(
+        "usage: iznik-server <{DAEMON} | {FOREGROUND} | {STOP} | {VERSION}> \
+         [{IDLE_FLAG} <seconds>] [{PROGRAM_FLAG} <path>]"
+    )
+}
+
 /// The subcommand's entry point.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first, and this parses its own flags.
 pub async fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(&usage_line()).await;
+    }
     match arguments.first().and_then(|argument| argument.to_str()) {
         Some(VERSION) => version().await,
         Some(FOREGROUND) => foreground(arguments).await,
         Some(DAEMON) => start(arguments).await,
         Some(STOP) => stop(arguments).await,
         _unknown => {
-            complain("usage: iznik-server <--daemon | --foreground | --stop | --version>").await;
+            complain(&usage_line()).await;
             ExitCode::from(crate::USAGE_EXIT_CODE)
         }
     }

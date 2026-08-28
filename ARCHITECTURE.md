@@ -280,6 +280,30 @@ no panes and no clients, and logs to a size-capped rotating file.
 `iznik-server --stdio` connects to the daemon, starting it if needed, and
 relays bytes between its standard streams and the socket.
 
+What landed says all of that in five entry points — `--stdio`, `--daemon`,
+`--foreground`, `--stop`, `--version` — each of which answers `--help`, and in
+two flags every measurement and every test uses: `--idle-shutdown-seconds`,
+which shortens the idle interval so a test can watch a daemon go, and
+`--program`, which says what a pane runs so a figure does not depend on whose
+login shell was on the machine.
+
+Three details are worth writing down because each was a bug before it was a
+rule. The lock is asked *who holds it* through a second, shared-mode open, so
+a refusal names a process id rather than a path; a start that meets that probe
+mid-flight asks again after a pause rather than failing. Releasing unlinks
+before dropping, so the file a later daemon flocks is never one already gone.
+And the log is written through the runtime — a `tracing-subscriber` layer
+formats each event into a line and one task owns the file — because §3.6
+forbids this crate the standard library's blocking streams, which is what that
+crate's own file writer wants.
+
+The relay is asymmetric, and has to be. A client's end of input is a
+half-close: the write half of the socket is shut down and whatever the daemon
+answers is still delivered. The daemon's end is the relay's end. Copying both
+directions and waiting for both to finish — which is what `copy_bidirectional`
+does — hangs on a dead daemon while a parked read of standard input never
+returns.
+
 The daemon *is* the sessions: replacing its binary ends them. The client
 therefore never upgrades a server silently. A protocol-version mismatch is
 reported; a newer bundled server is offered as an upgrade the application
@@ -398,12 +422,29 @@ The full contract is the document plan 0006 publishes.
   field of an options struct whose default is the named constant; the product
   uses the default and a test shortens it. An in-process test finishes in
   under five seconds, and nextest says so when one does not.
-- **Committed numbers**: latency, throughput and memory baselines live in a
-  notes file under `docs/notes/` with the machine described; tests assert
-  generous ceilings so the regression test survives a noisy machine.
+- **Committed numbers**: latency, throughput and memory baselines live in
+  [`docs/notes/baseline.md`](docs/notes/baseline.md) with the machine
+  described; tests assert generous ceilings so the regression test survives a
+  noisy machine. One file defines how each figure is taken — a benchmark that
+  prints the table for a person, included by a test binary that holds the same
+  measurement to its ceiling — so a number in the document and a number in a
+  gate cannot drift apart.
+- **Artifacts are proven, not assumed.** `xtask distribution --target <triple>`
+  is held to what a bootstrap needs: the ELF program headers are read to
+  establish that no loader is named, two builds of one commit are compared
+  byte for byte, the manifest's digest is recomputed from the file, and the
+  x86_64 artifact is run inside the host container, which is the only place
+  its static linking is really tested. What needs a Mac to build says so with
+  `platform = "darwin"` and reports as deferred rather than as proven.
 - **Deadlines everywhere.** No test, gate, scenario step, fixture wait or
   spawned process runs without a bound. A hang is a failure that names what
   was running, never a wait.
+- **The documents are held to the binaries.** A README that names a command
+  nothing answers to still reads well, so nothing but a test notices.
+  `readme_commands` asks each binary which commands it routes, holds the
+  documents to naming every one of them and inventing none, and runs each with
+  `--help` under a deadline — which is also why every subcommand answers
+  `--help` rather than doing its work when asked what it takes.
 
 The engineering rules that every line is held to — naming, literals, size,
 documentation, the lint set, the dependency allowlist — are in

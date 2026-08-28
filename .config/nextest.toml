@@ -7,6 +7,23 @@ fail-fast = false
 # over sixty is killed and reported by name.
 slow-timeout = { period = "5s", terminate-after = 12 }
 
+# Before the rule below, because nextest takes the first override that matches
+# and this needs a longer deadline than that one gives.
+#
+# Every distribution case builds a release artifact, and two cargo invocations
+# at once wait on each other for the package-cache lock, so they run one at a
+# time and a wait is not counted against a deadline. An hour, rather than the
+# ten minutes every other `regression_*` binary gets: a release build of this
+# workspace is fat link-time optimization at one codegen unit, for one or two
+# musl targets, and on a cold cache it builds the emulator with Zig after
+# cloning it. `linux.rs` budgets thirty minutes for exactly that, and a runner
+# that killed the case at ten would be reporting the machine rather than the
+# artifact.
+[[profile.default.overrides]]
+filter = 'binary(/^regression_distribution_/)'
+test-group = 'distribution'
+slow-timeout = { period = "120s", terminate-after = 30 }
+
 # Test binaries that start containers, build release artifacts or measure over
 # a window are named regression_*, are ignored, and get longer deadlines.
 [[profile.default.overrides]]
@@ -49,13 +66,6 @@ max-threads = 4
 # `xtask claims verify` reads the outcome of every proof from this report.
 [profile.claims.junit]
 path = "claims.xml"
-
-# Every distribution case builds a release artifact, and two cargo invocations
-# at once contend on the package-cache lock and one of them fails. They run one
-# at a time.
-[[profile.default.overrides]]
-filter = 'binary(/^regression_distribution_/)'
-test-group = 'distribution'
 
 [test-groups.distribution]
 max-threads = 1

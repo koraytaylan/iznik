@@ -31,6 +31,8 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
   Review of `session-registry` found the shared history budget was charged for every pane ever created and credited for none, so a closed pane's four mebibytes sat ahead of every live pane in the eviction order and it was the long-lived pane's scrollback that paid — the fix gives the share back through a new `HistoryBudget::remove`, outside the task's touches. It also found that a pane whose reaper never records a status was never removed from the model at all, now bounded, and that `emit` swallowed a refusal while the create above it answered `Ok`. Separately, the suite's own parallelism was starving one shell-driving test per run past its twenty-second deadline; `.config/nextest.toml` now runs the server crate's tests four at a time, which is plan 0001's file and its own commit.
 
+  Plan 0004's `linux-artifacts` review left `multiplexer-assembly` one fix, recorded here because the file is this plan's. `Rig::quiescent` took a pane for finished when its newest sequence was unchanged across one five-millisecond look; a shell pouring a mebibyte through a pseudoterminal pauses for longer than that on a loaded machine, and `attachment_is_exact_under_load` failed about one run in twenty comparing a prefix against a whole. It now wants twenty consecutive unchanged looks.
+
 - **Outcome:** A server that holds an authoritative, reconcilable host model, answers every command exactly once, carries every subscribed pane over one link with the focused pane responsive under a flood, resumes a client from the byte it holds or the screen it needs, and compresses the link when the numbers say it should.
 
-_Last updated: 2026-08-28, against `develop` @ `bbf00e4`._
+_Last updated: 2026-08-28, against `develop` @ `28c330b`._

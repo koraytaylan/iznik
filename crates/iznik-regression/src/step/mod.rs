@@ -264,13 +264,20 @@ pub fn duration_milliseconds(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// What this subcommand takes: one step as TOML on standard input, and
+/// nothing on the command line.
+const USAGE: &str = "usage: iznik-regression step  (one step as TOML on standard input)";
+
 /// The `step` subcommand: read one step, run it, print one NDJSON record.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first; this subcommand takes none, reading the step from
 /// standard input.
 #[must_use]
-pub fn run(_arguments: &[OsString]) -> ExitCode {
+pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     let step = match read_step() {
         Ok(step) => step,
         Err(error) => return fail(&error),

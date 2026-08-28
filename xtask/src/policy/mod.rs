@@ -26,6 +26,9 @@ pub mod links;
 pub mod literals;
 pub mod unsafe_boundary;
 
+/// What this subcommand takes, which is nothing.
+const USAGE: &str = "usage: xtask policy";
+
 /// The directories whose sources the source-level checks read, relative to
 /// the root.
 pub const SOURCE_ROOTS: &[&str] = &["crates", "xtask"];
@@ -366,8 +369,11 @@ pub fn line_of(node: &impl Spanned) -> usize {
 /// there is one.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     if arguments.len() != 1 {
-        writeln!(io::stderr(), "usage: xtask policy").unwrap_or_default();
+        writeln!(io::stderr(), "{USAGE}").unwrap_or_default();
         return ExitCode::from(crate::USAGE_EXIT_CODE);
     }
     let root = crate::repository_root();

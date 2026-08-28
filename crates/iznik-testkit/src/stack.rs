@@ -98,6 +98,14 @@ pub enum StackError {
         /// How long it was given.
         waited: Duration,
     },
+    /// A daemon run as a binary was asked for a program with arguments, and
+    /// its command line has no way to say them.
+    Unsayable {
+        /// The program.
+        path: PathBuf,
+        /// The arguments that would have been dropped.
+        arguments: Vec<String>,
+    },
 }
 
 impl Display for StackError {
@@ -114,6 +122,13 @@ impl Display for StackError {
                 formatter,
                 "nothing answered on {} within {waited:?}",
                 socket.display()
+            ),
+            StackError::Unsayable { path, arguments } => write!(
+                formatter,
+                "a daemon run as a binary cannot be told to run {} with {arguments:?}: \
+                 `--program` takes a path and nothing after it, and dropping them \
+                 would make this stack and an in-process one run different things",
+                path.display()
             ),
         }
     }
@@ -250,7 +265,22 @@ fn begin(options: &StackOptions, home: &Path, paths: &RuntimePaths) -> Result<Ru
             // Without this the child would run the product's default, which is
             // whoever's login shell is on the machine, and a stack that said
             // `sh` would have been measuring something else.
-            if let Program::Command { path: named, .. } = &options.program {
+            //
+            // `--program` takes a path and nothing after it. A caller who
+            // wants arguments is asking for something this mode cannot do, and
+            // silently running the program without them would make the two
+            // modes disagree about what a pane is.
+            if let Program::Command {
+                path: named,
+                arguments,
+            } = &options.program
+            {
+                if !arguments.is_empty() {
+                    return Err(StackError::Unsayable {
+                        path: named.clone(),
+                        arguments: arguments.clone(),
+                    });
+                }
                 running.arg("--program").arg(named);
             }
             let child = running

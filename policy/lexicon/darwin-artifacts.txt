@@ -1,5 +1,7 @@
+alignment
 arm64
 darwin
+dylib
 fixed
 libraries
 library

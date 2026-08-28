@@ -66,6 +66,13 @@ pub enum DistributionError {
         /// What it may be.
         ceiling: u64,
     },
+    /// A file this reads does not hold what it was read for.
+    Unreadable {
+        /// The file.
+        path: PathBuf,
+        /// What it was read for, as a person would say it.
+        wanted: String,
+    },
 }
 
 impl Display for DistributionError {
@@ -84,6 +91,9 @@ impl Display for DistributionError {
                 formatter,
                 "the artifact is {bytes} bytes, over the {ceiling} ceiling"
             ),
+            DistributionError::Unreadable { path, wanted } => {
+                write!(formatter, "{}: does not hold {wanted}", path.display())
+            }
         }
     }
 }
@@ -149,14 +159,12 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
         path: directory.clone(),
         source,
     })?;
-    let path = directory.join(BINARY);
-    let _copied = std::fs::copy(&built, &path).map_err(|source| DistributionError::Io {
-        path: built.clone(),
-        source,
-    })?;
-    let bytes = std::fs::metadata(&path)
+    // Measured where cargo put it, before anything is copied: an artifact over
+    // the ceiling must leave no half-written distribution directory behind for
+    // a later `sha256sum -c` or an upload glob to pick up.
+    let bytes = std::fs::metadata(&built)
         .map_err(|source| DistributionError::Io {
-            path: path.clone(),
+            path: built.clone(),
             source,
         })?
         .len();
@@ -166,6 +174,11 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
             ceiling: ARTIFACT_SIZE_CEILING,
         });
     }
+    let path = directory.join(BINARY);
+    let _copied = std::fs::copy(&built, &path).map_err(|source| DistributionError::Io {
+        path: built.clone(),
+        source,
+    })?;
     let artifact = Artifact {
         target: target.to_owned(),
         digest: digest_of(&path)?,
@@ -190,7 +203,7 @@ fn record(root: &Path, directory: &Path, artifact: &Artifact) -> Result<(), Dist
     let said = format!(
         "crate_version = \"{}\"\nprotocol_version = {}\ntarget = \"{}\"\nbinary = \"{BINARY}\"\nbytes = {}\nsha256 = \"{}\"\n",
         crate_version(),
-        protocol_version(root).unwrap_or_default(),
+        protocol_version(root)?,
         artifact.target,
         artifact.bytes,
         artifact.digest
@@ -216,12 +229,45 @@ const PROTOCOL_DECLARATION: &str = "pub const PROTOCOL_VERSION: u16 = ";
 /// The protocol version the distributed binary speaks, read from the source
 /// rather than from the crate: a tooling crate reaches neither the emulator
 /// nor the product, and the workspace has a test that says so.
-fn protocol_version(root: &Path) -> Option<u16> {
-    let source = std::fs::read_to_string(root.join(PROTOCOL_SOURCE)).ok()?;
+///
+/// A failure here is a failure of the whole command. Scraping a source file is
+/// brittle by nature — widening the constant, or moving it, or a formatting
+/// change is enough to miss it — and a manifest that shipped `0` because the
+/// scrape missed would be a wrong version in a release artifact that nothing
+/// caught.
+///
+/// # Errors
+///
+/// [`DistributionError::Unreadable`] when the declaration is not where this
+/// expects it, naming the file and what it looked for.
+fn protocol_version(root: &Path) -> Result<u16, DistributionError> {
+    let path = root.join(PROTOCOL_SOURCE);
+    let source = std::fs::read_to_string(&path).map_err(|source| DistributionError::Io {
+        path: path.clone(),
+        source,
+    })?;
     source
         .lines()
         .find_map(|line| line.trim().strip_prefix(PROTOCOL_DECLARATION))
         .and_then(|rest| rest.trim_end_matches(';').trim().parse().ok())
+        .ok_or_else(|| DistributionError::Unreadable {
+            path,
+            wanted: format!("the protocol version, declared as `{PROTOCOL_DECLARATION}`"),
+        })
+}
+
+/// What this subcommand takes: the one triple to build for, of the four this
+/// distributes.
+fn usage_line() -> String {
+    let triples: Vec<&str> = linux::TARGETS
+        .iter()
+        .chain(darwin::TARGETS)
+        .copied()
+        .collect();
+    format!(
+        "usage: xtask distribution {TARGET_FLAG} <{}>",
+        triples.join(" | ")
+    )
 }
 
 /// The subcommand's entry point.
@@ -230,6 +276,9 @@ fn protocol_version(root: &Path) -> Option<u16> {
 /// subcommand first, and this parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(&usage_line());
+    }
     let mut rest = arguments.iter().skip(1);
     let mut wanted: Option<String> = None;
     while let Some(argument) = rest.next() {
@@ -242,7 +291,7 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         wanted = Some(target.to_string_lossy().into_owned());
     }
     let Some(target) = wanted else {
-        return refuse(&format!("usage: xtask distribution {TARGET_FLAG} <triple>"));
+        return refuse(&usage_line());
     };
     let root = workspace_root();
     match build(&root, &target) {
