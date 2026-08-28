@@ -1,0 +1,44 @@
+# One client speaks this protocol in the tests, and it is this one. Two would
+# be two readings of the same document, and the wrong one would be the one
+# nothing was tested against.
+#
+# Every claim here is proven against the protocol goldens and a script over
+# `tokio::io::duplex`: no daemon, no socket, no shell. What a real link and a
+# real daemon add is proven by `client-connections` and `integration-harness`,
+# which are written against this client rather than beside it.
+
+[[claim]]
+id = "client-sends-the-golden-frame"
+statement = "Every message a caller can ask for exactly — the snapshot request, subscribe, unsubscribe, resume, screen request, credit, channel release, input, resize, focus and ping — goes out as the frame the message golden pins for it, byte for byte, and the sweep fails if a kind stops being covered."
+test = "iznik-testkit::client::every_frame_it_sends_is_the_golden"
+because = "the goldens are in this repository and the frames never leave the process; a container would only slow the sweep"
+
+[[claim]]
+id = "client-decodes-what-it-is-told"
+statement = "Every control message the golden holds — the handshake reply, a command result, a channel announcement, a detachment, a screen, a mark, a pong and an error — survives the client's decoding and re-encodes to the same bytes; the two the golden keeps deliberately opaque are covered with real payloads instead."
+test = "iznik-testkit::client::it_decodes_every_message_the_golden_holds"
+because = "decoding is a pure function of the bytes; a link between the two ends adds nothing to it"
+
+[[claim]]
+id = "client-records-bytes-and-deltas"
+statement = "Pane bytes arrive with the channel they came in on and concatenate under the pane that channel carries, and deltas are kept in the order they were received with the generation each produced."
+test = "iznik-testkit::client::it_records_pane_bytes_and_deltas_in_order"
+because = "what the client keeps is its own state, and a script over a pipe drives it exactly"
+
+[[claim]]
+id = "client-refuses-to-wait"
+statement = "A client with nothing to receive answers with its deadline rather than waiting, and answers within that deadline and a stated slack, so no test in this workspace can hang on a server that says nothing."
+test = "iznik-testkit::client::it_refuses_to_wait_past_its_deadline"
+because = "the deadline is the client's own timer; a container would add scheduling noise to the one thing being measured"
+
+[[claim]]
+id = "client-returns-credit-when-asked"
+statement = "Asked to keep up, the client returns credit equal to every pane payload it receives and acknowledges every detachment with the channel it was told; not asked, it sends neither."
+test = "iznik-testkit::client::it_returns_credit_and_acknowledges_detachment_when_asked"
+because = "the answers are frames on a pipe, read back and decoded in the same process"
+
+[[claim]]
+id = "client-compresses-when-both-ends-do"
+statement = "After a handshake in which both ends advertised compression, what goes on the wire is not the plain frame and a server that engages the same layer reads back exactly what was sent, four kibibytes of input included; after one in which the server did not, the wire carries the plain frame."
+test = "iznik-testkit::client::it_compresses_only_when_both_ends_advertise_it"
+because = "the leftover-bytes rule is a property of the two layers meeting, and both are in this process"
