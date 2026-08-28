@@ -1,0 +1,75 @@
+# Deltas are an encoding and the reconciler is a pure function over a value in
+# memory — no clock, no process, no socket — so every claim here is proven by
+# an in-process test and a container adds nothing.
+
+[[claim]]
+id = "deltas-golden-holds-both-ways"
+statement = "Every delta in the golden encodes to exactly its bytes and decodes back to exactly itself."
+test = "iznik-protocol::delta_golden::delta_golden_every_line_holds_in_both_directions"
+because = "the delta codec is pure; a container adds nothing"
+
+[[claim]]
+id = "deltas-every-variant-is-pinned"
+statement = "Every Delta variant has a golden line, so no variant is pinned by nothing."
+test = "iznik-protocol::delta_golden::delta_golden_every_variant_has_a_line"
+because = "the delta codec is pure; a container adds nothing"
+
+[[claim]]
+id = "deltas-every-refusal-is-provoked"
+statement = "Every refusal the delta decoder can give is provoked by a payload, each naming the delta whose field ran out."
+test = "iznik-protocol::delta_golden::delta_golden_every_refusal_is_provoked_by_a_line"
+because = "the delta codec is pure; a container adds nothing"
+
+[[claim]]
+id = "deltas-ride-inside-their-message"
+statement = "An encoded delta is exactly the payload the Delta message carries, and survives the round trip through it."
+test = "iznik-protocol::delta_golden::delta_golden_an_encoded_delta_rides_inside_its_message"
+because = "both codecs are pure; a container adds nothing"
+
+[[claim]]
+id = "reconciler-converges"
+statement = "A snapshot followed by its deltas is the next snapshot: over ten thousand generated sequences the model is whole after every change and ends as exactly the model the generator built directly, in under five seconds."
+test = "iznik-protocol::reconcile_property::reconcile_property_a_snapshot_and_its_deltas_converge"
+because = "the reconciler is a pure function over a value in memory; a container adds nothing"
+
+[[claim]]
+id = "reconciler-generation-discipline"
+statement = "A delta numbered anything but the model's generation plus one is refused with GenerationGap and changes nothing; the right number advances the generation by exactly one."
+test = "iznik-protocol::reconcile_property::reconcile_property_a_generation_gap_is_refused_and_changes_nothing"
+because = "the reconciler is a pure function over a value in memory; a container adds nothing"
+
+[[claim]]
+id = "reconciler-refusal-leaves-no-trace"
+statement = "A delta that names an identity the host does not hold, mints one it already holds, carries an empty name, or gives an order that is not a permutation is refused by the variant naming that identity, and the model is exactly what it was."
+test = "iznik-protocol::reconcile_property::reconcile_property_a_refusal_leaves_no_trace"
+because = "the reconciler is a pure function over a value in memory; a container adds nothing"
+
+[[claim]]
+id = "reconciler-normalizes-layouts"
+statement = "A layout a peer wrote uncanonically is stored canonical, so two models holding the same arrangement compare equal."
+test = "iznik-protocol::reconcile_property::reconcile_property_a_layout_is_normalized_on_application"
+because = "the reconciler is a pure function over a value in memory; a container adds nothing"
+
+[[claim]]
+id = "generator-is-its-seed"
+statement = "The generator's seed is the whole of its randomness: the same seed yields the same models, changes and operations, and another seed does not."
+test = "iznik-testkit::generate::generate_a_seed_is_the_whole_of_the_randomness"
+because = "the generator is arithmetic over a seed; a container adds nothing"
+
+[[claim]]
+id = "generator-builds-models-that-hold"
+statement = "Every model the generator builds holds together, and so does every model its changes lead to."
+test = "iznik-testkit::generate::generate_every_model_it_builds_holds_together"
+because = "the generator is arithmetic over a seed; a container adds nothing"
+
+[[claim]]
+id = "generator-sequences-arrive-where-they-say"
+statement = "Every generated sequence applies cleanly to the model it starts from and arrives at exactly the model it names, one generation per delta."
+test = "iznik-testkit::generate::generate_every_sequence_arrives_where_it_says"
+because = "the generator and the reconciler are both pure; a container adds nothing"
+
+[[claim]]
+id = "generator-covers-every-delta"
+statement = "The generator draws every one of the fourteen delta variants, so the convergence property is not proving one delta fourteen times."
+test = "iznik-testkit::generate::generate_changes_cover_every_delta"
+because = "the generator is arithmetic over a seed; a container adds nothing"

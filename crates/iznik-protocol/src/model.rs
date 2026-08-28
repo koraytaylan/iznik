@@ -14,32 +14,33 @@
 //! none, which is dropped wherever there is a parent to drop it into. A
 //! split's weights are then divided by the largest factor they share, because
 //! weights say only how the space is divided: halves are `1, 1` whether a
-//! client called them `1, 1` or `50, 50`, and without that division the factor
-//! a flattening multiplies by accumulates forever and eventually saturates,
-//! which is a pane the wrong size. [`LayoutNode::normalize`] is a pure,
-//! idempotent function the server applies after every operation and to every
-//! layout a client submits.
+//! client called them that or `50, 50`, and without the division the factor a
+//! flattening multiplies by accumulates until it saturates, which is a pane
+//! the wrong size. [`LayoutNode::normalize`] is pure and idempotent, and the
+//! server applies it after every operation and to every layout a client
+//! submits.
 //!
 //! One shape survives normalization: a split holding nothing, at the root,
-//! where there is no parent to drop it into and no child to collapse it to. It
-//! is a layout that places no pane, which is not a layout, and
-//! [`HostModel::validate`] refuses it by name.
+//! with no parent to drop it into and no child to collapse it to. It is a
+//! layout that places no pane, and [`HostModel::validate`] names it.
 //!
 //! On the wire a model is its fields in declaration order: integers
 //! little-endian at their width, a string a four-byte length and then its
 //! UTF-8 bytes, an optional string a presence byte and then the string, a
 //! sequence a four-byte count and then its elements, and a layout node a tag
-//! byte and then its fields. The golden `tests/fixtures/model.jsonl` pins
-//! every byte and this code is held to it. Refusals are [`MessageError`]'s,
-//! the crate's one vocabulary for what a decoder found; a model payload
-//! carries no discriminant, so its refusals name
+//! byte and then its fields. The golden `tests/fixtures/model.jsonl` pins every
+//! byte. Refusals are [`MessageError`]'s, the crate's one vocabulary for what a
+//! decoder found; a model payload carries no discriminant, so its refusals name
 //! [`crate::message::NO_DISCRIMINANT`].
 //!
-//! Nesting is bounded by [`MAXIMUM_LAYOUT_DEPTH`], which the decoder refuses
-//! on the way down rather than recursing to whatever depth the bytes ask for.
-//! That bound is what lets every operation here be written as a plain
-//! recursion: no tree this module hands out is deeper than a stack can walk,
-//! whatever a peer sends.
+//! The delta and command payloads embed a session, a tab, a pane or a layout
+//! and are held to the same invariants, so the writers, the readers and the
+//! per-part validators below are the crate's rather than this module's.
+//!
+//! Nesting is bounded by [`MAXIMUM_LAYOUT_DEPTH`], which the decoder refuses on
+//! the way down rather than recursing to whatever depth the bytes ask for. That
+//! bound is what lets every operation here be a plain recursion: no tree this
+//! module hands out is deeper than a stack can walk.
 
 use core::fmt::{self, Display, Formatter};
 use std::collections::HashSet;
@@ -50,12 +51,11 @@ use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_count, u
 
 /// The deepest a layout tree may nest, counting a bare leaf as one.
 ///
-/// A split of the same direction as its parent is flattened away, so depth
-/// grows only when a person alternates directions; sixty-four alternations is
-/// past any arrangement anybody makes — the innermost pane would be less than
-/// a cell wide — and far below the recursion any thread can afford. It is the
-/// decoder's bound, and therefore the reason every walk of a tree in this
-/// module is safe to write as a recursion.
+/// A split of its parent's direction is flattened away, so depth grows only
+/// when a person alternates directions; sixty-four alternations is past any
+/// arrangement anybody makes — the innermost pane would be under a cell wide —
+/// and far below the recursion any thread can afford. It is the decoder's
+/// bound, and so the reason every walk of a tree here is a recursion.
 pub const MAXIMUM_LAYOUT_DEPTH: usize = 64;
 
 /// The discriminants of [`LayoutNode`], in declaration order.
@@ -113,8 +113,7 @@ pub struct Tab {
 pub struct Pane {
     /// Minted once by the host and never reused.
     pub id: PaneId,
-    /// What the program running in it last called itself; may be empty,
-    /// because a pane has no title until something sets one.
+    /// What the program in it last called itself; empty until one does.
     pub title: String,
     /// Where its shell last said it was, when the shell says so at all.
     pub working_directory: Option<String>,
@@ -179,8 +178,7 @@ pub enum ModelError {
         /// The id both carry.
         pane: PaneId,
     },
-    /// A session holds no tabs; a session with nothing in it is closed, not
-    /// kept.
+    /// A session holds no tabs; an empty session is closed, not kept.
     SessionWithoutTabs {
         /// The empty session.
         session: SessionId,
@@ -212,9 +210,8 @@ pub enum ModelError {
         pane: PaneId,
     },
     /// A split in a tab's layout holds no children, which is a place nothing
-    /// can be drawn in. Normalization drops such a split wherever there is a
-    /// parent to drop it into, so one that reaches here is a whole layout
-    /// that places no pane.
+    /// can be drawn in. Normalization drops one wherever there is a parent to
+    /// drop it into, so one that reaches here places no pane at all.
     EmptySplit {
         /// The tab whose layout it is.
         tab: TabId,
@@ -319,14 +316,13 @@ impl LayoutNode {
     /// dropped, and a split left holding one child replaced by that child.
     ///
     /// Every split's weights are then divided by the largest factor they
-    /// share, so that one arrangement is one tree whatever scale a client
-    /// expressed it in and the factor a flattening multiplies by does not
-    /// accumulate.
+    /// share, so one arrangement is one tree whatever scale a client expressed
+    /// it in and the factor a flattening multiplies by does not accumulate.
     ///
-    /// The result holds no same-direction nesting anywhere and no factor a
-    /// split's children all share, so normalizing it again changes nothing:
-    /// the function is idempotent. Weights saturate at [`u32::MAX`] rather
-    /// than wrap, which costs exact proportions only on a tree whose reduced
+    /// The result holds no same-direction nesting and no factor a split's
+    /// children all share, so normalizing it again changes nothing: the
+    /// function is idempotent. Weights saturate at [`u32::MAX`] rather than
+    /// wrap, which costs exact proportions only on a tree whose reduced
     /// weights already span four billion — a tree nobody arranged.
     #[must_use]
     pub fn normalize(self) -> LayoutNode {
@@ -602,9 +598,11 @@ fn collapse(direction: SplitDirection, children: Vec<Weighted>) -> LayoutNode {
 }
 
 /// The ids a validation has already met, so that "unique across the host" is
-/// one pass rather than a search per identity.
+/// one pass rather than a search per identity. The reconciler holds an
+/// incoming value to the same pass over an empty one, and checks the host's
+/// own ids itself.
 #[derive(Debug, Default)]
-struct SeenIds {
+pub(crate) struct SeenIds {
     /// Every session id met so far.
     sessions: HashSet<SessionId>,
     /// Every tab id met so far.
@@ -642,7 +640,7 @@ impl HostModel {
 ///
 /// The [`ModelError`] of the first invariant the session or anything under it
 /// breaks.
-fn validate_session(seen: &mut SeenIds, session: &Session) -> Result<(), ModelError> {
+pub(crate) fn validate_session(seen: &mut SeenIds, session: &Session) -> Result<(), ModelError> {
     if !seen.sessions.insert(session.id) {
         return Err(ModelError::DuplicateSession {
             session: session.id,
@@ -669,7 +667,7 @@ fn validate_session(seen: &mut SeenIds, session: &Session) -> Result<(), ModelEr
 /// # Errors
 ///
 /// The [`ModelError`] of the first invariant the tab or its layout breaks.
-fn validate_tab(seen: &mut SeenIds, tab: &Tab) -> Result<(), ModelError> {
+pub(crate) fn validate_tab(seen: &mut SeenIds, tab: &Tab) -> Result<(), ModelError> {
     if !seen.tabs.insert(tab.id) {
         return Err(ModelError::DuplicateTab { tab: tab.id });
     }
@@ -684,54 +682,60 @@ fn validate_tab(seen: &mut SeenIds, tab: &Tab) -> Result<(), ModelError> {
             return Err(ModelError::DuplicatePane { pane: pane.id });
         }
     }
-    validate_layout(tab)
+    validate_layout(tab.id, &tab.panes, &tab.layout)
 }
 
-/// Confirms a tab's layout places exactly its panes, each once, in a tree
-/// that is normalized, weighted and no deeper than a model holds.
+/// Confirms a layout places exactly `panes`, each once, in a tree that is
+/// normalized, weighted and no deeper than a model holds. It takes the parts
+/// rather than a whole tab so the reconciler can hold a layout it has not
+/// stored yet to the panes the tab has.
 ///
 /// # Errors
 ///
 /// The [`ModelError`] of the first of those the layout breaks.
-fn validate_layout(tab: &Tab) -> Result<(), ModelError> {
-    let depth = tab.layout.depth();
+pub(crate) fn validate_layout(
+    id: TabId,
+    panes: &[Pane],
+    layout: &LayoutNode,
+) -> Result<(), ModelError> {
+    let depth = layout.depth();
     if depth > MAXIMUM_LAYOUT_DEPTH {
-        return Err(ModelError::LayoutTooDeep { tab: tab.id, depth });
+        return Err(ModelError::LayoutTooDeep { tab: id, depth });
     }
-    if has_empty_split(&tab.layout) {
-        return Err(ModelError::EmptySplit { tab: tab.id });
+    if has_empty_split(layout) {
+        return Err(ModelError::EmptySplit { tab: id });
     }
-    if has_zero_weight(&tab.layout) {
-        return Err(ModelError::ZeroWeight { tab: tab.id });
+    if has_zero_weight(layout) {
+        return Err(ModelError::ZeroWeight { tab: id });
     }
-    let held: HashSet<PaneId> = tab.panes.iter().map(|pane| pane.id).collect();
+    let held: HashSet<PaneId> = panes.iter().map(|pane| pane.id).collect();
     let mut placed = HashSet::new();
-    for leaf in tab.layout.leaves() {
+    for leaf in layout.leaves() {
         if !held.contains(&leaf) {
             return Err(ModelError::LayoutNamesUnknownPane {
-                tab: tab.id,
+                tab: id,
                 pane: leaf,
             });
         }
         if !placed.insert(leaf) {
             return Err(ModelError::LayoutRepeatsPane {
-                tab: tab.id,
+                tab: id,
                 pane: leaf,
             });
         }
     }
-    for pane in &tab.panes {
+    for pane in panes {
         if !placed.contains(&pane.id) {
             return Err(ModelError::PaneMissingFromLayout {
-                tab: tab.id,
+                tab: id,
                 pane: pane.id,
             });
         }
     }
-    if tab.layout.clone().normalize() == tab.layout {
+    if layout.clone().normalize() == *layout {
         Ok(())
     } else {
-        Err(ModelError::UnnormalizedLayout { tab: tab.id })
+        Err(ModelError::UnnormalizedLayout { tab: id })
     }
 }
 
@@ -765,7 +769,7 @@ fn put_host_model(sink: &mut dyn Sink, model: &HostModel) {
 }
 
 /// Appends a session and its tabs.
-fn put_session(sink: &mut dyn Sink, session: &Session) {
+pub(crate) fn put_session(sink: &mut dyn Sink, session: &Session) {
     sink.put(&session.id.0.to_le_bytes());
     put_bytes(sink, session.name.as_bytes());
     put_count(sink, session.tabs.len());
@@ -775,7 +779,7 @@ fn put_session(sink: &mut dyn Sink, session: &Session) {
 }
 
 /// Appends a tab, its panes and its layout.
-fn put_tab(sink: &mut dyn Sink, tab: &Tab) {
+pub(crate) fn put_tab(sink: &mut dyn Sink, tab: &Tab) {
     sink.put(&tab.id.0.to_le_bytes());
     put_bytes(sink, tab.name.as_bytes());
     put_count(sink, tab.panes.len());
@@ -786,7 +790,7 @@ fn put_tab(sink: &mut dyn Sink, tab: &Tab) {
 }
 
 /// Appends a pane.
-fn put_pane(sink: &mut dyn Sink, pane: &Pane) {
+pub(crate) fn put_pane(sink: &mut dyn Sink, pane: &Pane) {
     sink.put(&pane.id.0.to_le_bytes());
     put_bytes(sink, pane.title.as_bytes());
     match pane.working_directory.as_deref() {
@@ -802,7 +806,7 @@ fn put_pane(sink: &mut dyn Sink, pane: &Pane) {
 
 /// Appends a layout node: its tag and then its fields, a child's weight
 /// after the child itself.
-fn put_layout(sink: &mut dyn Sink, node: &LayoutNode) {
+pub(crate) fn put_layout(sink: &mut dyn Sink, node: &LayoutNode) {
     match node {
         LayoutNode::Split {
             direction,
@@ -896,7 +900,7 @@ fn read_host_model(reader: &mut Reader<'_>) -> Result<HostModel, MessageError> {
 /// # Errors
 ///
 /// The refusals [`decode_host_model`] documents.
-fn read_session(reader: &mut Reader<'_>) -> Result<Session, MessageError> {
+pub(crate) fn read_session(reader: &mut Reader<'_>) -> Result<Session, MessageError> {
     let id = SessionId(u64::from_le_bytes(reader.array()?));
     let name = reader.string()?;
     let count = reader.count()?;
@@ -912,7 +916,7 @@ fn read_session(reader: &mut Reader<'_>) -> Result<Session, MessageError> {
 /// # Errors
 ///
 /// The refusals [`decode_host_model`] documents.
-fn read_tab(reader: &mut Reader<'_>) -> Result<Tab, MessageError> {
+pub(crate) fn read_tab(reader: &mut Reader<'_>) -> Result<Tab, MessageError> {
     let id = TabId(u64::from_le_bytes(reader.array()?));
     let name = reader.string()?;
     let count = reader.count()?;
@@ -934,7 +938,7 @@ fn read_tab(reader: &mut Reader<'_>) -> Result<Tab, MessageError> {
 /// # Errors
 ///
 /// The refusals [`decode_host_model`] documents.
-fn read_pane(reader: &mut Reader<'_>) -> Result<Pane, MessageError> {
+pub(crate) fn read_pane(reader: &mut Reader<'_>) -> Result<Pane, MessageError> {
     let id = PaneId(u64::from_le_bytes(reader.array()?));
     let title = reader.string()?;
     let working_directory = if reader.flag()? {
@@ -959,7 +963,10 @@ fn read_pane(reader: &mut Reader<'_>) -> Result<Pane, MessageError> {
 /// # Errors
 ///
 /// The refusals [`decode_host_model`] documents.
-fn read_layout(reader: &mut Reader<'_>, depth: usize) -> Result<LayoutNode, MessageError> {
+pub(crate) fn read_layout(
+    reader: &mut Reader<'_>,
+    depth: usize,
+) -> Result<LayoutNode, MessageError> {
     if depth > MAXIMUM_LAYOUT_DEPTH {
         return Err(MessageError::LayoutTooDeep {
             limit: MAXIMUM_LAYOUT_DEPTH,
