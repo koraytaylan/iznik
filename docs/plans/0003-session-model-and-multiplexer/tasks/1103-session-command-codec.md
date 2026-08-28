@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-protocol/tests/fixtures/command.jsonl"
   - "regression/claims/session-command-codec.toml"
   - "policy/lexicon/session-command-codec.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Session Command Codec
