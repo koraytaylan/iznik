@@ -46,7 +46,7 @@ patience_milliseconds = 40000
 actions = [
   { kind = "add_host", alias = "host0" },
   { kind = "await_state", alias = "host0", is = "connected" },
-  { kind = "upgrade", alias = "host0", force = false, refused = "pane(s)" },
+  { kind = "upgrade", alias = "host0", force = false, refused = "1 pane(s)" },
   { kind = "upgrade", alias = "host0", force = true },
   { kind = "add_host", alias = "host0" },
   { kind = "await_state", alias = "host0", is = "connected" },

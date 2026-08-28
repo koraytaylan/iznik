@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::{CommandId, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
@@ -43,6 +43,14 @@ use crate::transport::{ClientRuntimePaths, Transport};
 /// It is what gives up on commands the host never answered, so it is also the
 /// most a person waits past the timeout before being told.
 pub const EXPIRE_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How many orders a host's task may carry in a row before it reads its link
+/// again.
+///
+/// Large enough that a paste or a burst of typing goes out as fast as it was
+/// handed over, and bounded so that a caller who never stops ordering still
+/// leaves the loop hearing what the host says.
+pub const ORDERS_PER_TURN: usize = 64;
 
 mod task;
 
@@ -130,6 +138,35 @@ pub enum ManagerEvent {
         rows: u16,
         /// The bytes that reproduce it, which is what a caller redraws from.
         bytes: Vec<u8>,
+    },
+    /// The host's whole model, as it said it.
+    ///
+    /// Carried in the protocol's own encoding rather than as a value of this
+    /// crate's, because what is above the manager is a C boundary and one
+    /// schema is better than two. `model()` holds the same thing, decoded.
+    Snapshot {
+        /// The host.
+        host: HostId,
+        /// The generation it stands at.
+        generation: Generation,
+        /// The model, as `decode_host_model` reads it.
+        payload: Vec<u8>,
+    },
+    /// One numbered change to it, in the same encoding.
+    Delta {
+        /// The host.
+        host: HostId,
+        /// The generation this change produces.
+        generation: Generation,
+        /// The change, as `decode_delta` reads it.
+        payload: Vec<u8>,
+    },
+    /// A pane's output has stopped arriving on the channel it was on.
+    Detached {
+        /// The host.
+        host: HostId,
+        /// The pane.
+        pane: PaneId,
     },
     /// A subscribed pane's output, as it arrives.
     ///
@@ -402,10 +439,15 @@ impl HostManager {
     /// host somebody named.
     pub fn add_host(&self, alias: &str) {
         let host = HostId(alias.to_owned());
-        // Twice is once. Starting a second task for one alias would leave the
-        // first detached and still running: two channels, two `ssh` children,
-        // and a model written by whichever of them finished last.
-        if self.hosts.lock().is_ok_and(|held| held.contains_key(&host)) {
+        // Twice is once, while the first is still running. Starting a second
+        // task for one alias would leave the first detached and still going:
+        // two channels, two `ssh` children, and a model written by whichever
+        // of them finished last. A task that has given up is not still
+        // running, and asking for that host again is asking for it afresh.
+        if self.hosts.lock().is_ok_and(|held| {
+            held.get(&host)
+                .is_some_and(|handle| !handle.orders.is_closed())
+        }) {
             return;
         }
         if let Ok(mut model) = self.shared.model.lock()
@@ -525,19 +567,29 @@ impl HostManager {
         self.order(alias, Order::Screen { pane })
     }
 
-    /// Returns flow-control credit for a pane's channel.
+    /// Returns flow-control credit for a pane.
+    ///
+    /// Named by pane rather than by channel, because a channel is the host's
+    /// own numbering and an application knows panes; the channel it is
+    /// carried on is what the model holds.
     ///
     /// # Errors
     ///
-    /// As [`HostManager::reconnect`].
-    pub fn credit(&self, alias: &str, channel: u8, bytes: u32) -> Result<(), ManagerError> {
-        if let Ok(mut model) = self.shared.model.lock()
-            && let Some(view) = model.host_mut(&HostId(alias.to_owned()))
-            && let Some(pane) = view.carrying(channel)
-            && let Some(held) = view.subscription_mut(pane)
-        {
-            held.grant(u64::from(bytes));
-        }
+    /// As [`HostManager::reconnect`], and [`ManagerError::UnknownHost`] when
+    /// no channel is open for that pane.
+    pub fn credit(&self, alias: &str, pane: PaneId, bytes: u32) -> Result<(), ManagerError> {
+        let host = HostId(alias.to_owned());
+        let channel = self
+            .shared
+            .with(&host, |view| {
+                let carried = view.subscription(pane).map(|held| held.channel);
+                if let Some(held) = view.subscription_mut(pane) {
+                    held.grant(u64::from(bytes));
+                }
+                carried
+            })
+            .flatten()
+            .ok_or(ManagerError::UnknownHost { host })?;
         self.order(alias, Order::Credit { channel, bytes })
     }
 
@@ -628,7 +680,16 @@ impl HostManager {
             &bootstrapping(&options),
             options.bootstrap_deadline,
         ));
-        let _gone = removed.map_err(|source| ManagerError::Uninstall { source })?;
+        match removed {
+            Ok(_gone) => {}
+            Err(source) => {
+                // It is still on the host, so it is still held here: a host
+                // nobody holds is a host nobody can ask again, and the only
+                // way back would be to add it from nothing.
+                self.add_host(alias);
+                return Err(ManagerError::Uninstall { source });
+            }
+        }
         // Only once it really came off. A host still holding a server and no
         // longer held here is one nobody can take it off, and the only way
         // back is to add it again.

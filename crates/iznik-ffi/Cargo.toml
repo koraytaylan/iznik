@@ -10,7 +10,10 @@ workspace = true
 
 [lib]
 name = "iznik"
-crate-type = ["cdylib", "staticlib"]
+# `rlib` beside the two the application links, so that this crate's own cases
+# can call the `extern "C"` functions the way a C program does: without it
+# there is no way to test the boundary from inside the workspace.
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 iznik-client = { path = "../iznik-client" }
@@ -18,3 +21,6 @@ iznik-protocol = { path = "../iznik-protocol" }
 
 [dev-dependencies]
 iznik-testkit = { path = "../iznik-testkit" }
+# For the runtime the cases stand a daemon up on. Nothing in `src/` uses it:
+# the boundary owns no runtime, the engine behind it does.
+tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }

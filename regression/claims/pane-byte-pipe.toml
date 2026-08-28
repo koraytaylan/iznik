@@ -1,0 +1,43 @@
+# A pane's bytes, handed to a surface.
+#
+# `test` proofs against a daemon on this machine: what is being asked about is
+# the boundary — which callback comes first, whose obligation the credit is,
+# whether one call is one message — and every one of those is the same over a
+# network as over a socket. What a network adds is `end-to-end-ssh`'s.
+#
+# The atomicity case types into `cat` rather than into the shell it starts in.
+# A shell re-arms its terminal before each line it reads, and what it uses to
+# do that throws away input that arrived but has not been read yet, so a burst
+# typed at a shell is kept in part and by luck. That is the shell's doing and
+# not this boundary's; `cat` re-arms nothing, so what a hundred callers typed
+# is all there to be read.
+
+[[claim]]
+id = "pipe-draws-a-screen-before-any-bytes"
+statement = "Attaching to a pane gives its screen first, with the pane's own size and bytes an emulator reproduces, and only then its output — so an application never draws output onto a surface it has not been told the shape of."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_draws_a_screen_before_it_hands_over_bytes"
+because = "the order the callbacks arrive in is this library's own, and the daemon behind it is real"
+
+[[claim]]
+id = "pipe-stops-a-pane-that-returns-no-credit"
+statement = "A pane whose surface returns no credit stops after the window the host was given, and goes on the moment credit is returned. Flow control is the application's to keep, and an application that does not keep it stalls its own pane."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_stops_a_pane_that_returns_no_credit"
+because = "the window is the server's own and the returning is this boundary's; a container would add a network to an arithmetic both ends already agree on"
+
+[[claim]]
+id = "pipe-keeps-one-call-one-message"
+statement = "A hundred callers type at once, each a pattern of its own. Every call is taken, every caller's line arrives, and every line the pane says is one caller's own and unbroken — never two of them woven together: one call is one message on the wire, which is what keeps a bracketed paste a paste rather than the keys it happens to contain."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_keeps_one_call_one_message"
+because = "the threads are real threads on a real pseudoterminal; what a network would add is delay, not interleaving"
+
+[[claim]]
+id = "pipe-resizes-what-the-program-sees"
+statement = "After a resize the program in the pane says it is the new size: the application decides how large a pane is, and the program is the one that has to believe it."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_resizes_what_the_program_sees"
+because = "`stty` is asked on the host and answers from the pseudoterminal, which is as true over a socket as over SSH"
+
+[[claim]]
+id = "pipe-stops-when-it-is-let-go"
+statement = "Nothing arrives for a pane that was let go, and what had arrived before is untouched."
+test = "iznik-ffi::pane_byte_pipe::pane_byte_pipe_stops_when_it_is_let_go"
+because = "what stops is this library's own delivery, and no host is needed to see that it stopped"

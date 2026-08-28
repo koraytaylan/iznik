@@ -39,22 +39,30 @@ actions = [
 
   # The pane is the same pane wherever it is named.
   { kind = "expect_address", alias = "host1", pane = 1, address = "iznik://host1/1" },
+  # Something for the pane to say while nobody is listening. The daemon is
+  # stopped where it stands, so the shell goes on running and its output waits
+  # in the pane's own pseudoterminal: what the resume carries is bytes the
+  # client was not there to receive, which is the whole point of a cursor.
+  { kind = "input", alias = "host1", pane = 1, text = "(sleep 2; echo across-$((6*7))) &\n" },
   { kind = "pause_host", alias = "host1" },
   { kind = "await_state", alias = "host1", is = "reconnecting" },
   { kind = "resume_host", alias = "host1" },
   { kind = "await_state", alias = "host1", is = "connected" },
   # And it is still the same pane, still carrying, from where it left off.
   { kind = "expect_address", alias = "host1", pane = 1, address = "iznik://host1/1" },
+  # What the pane said while the client could not hear it arrives now, from
+  # the byte the model held.
+  { kind = "await_bytes", alias = "host1", pane = 1, contains = "across-42" },
   { kind = "input", alias = "host1", pane = 1, text = "echo after-$((6*7))\n" },
   { kind = "await_bytes", alias = "host1", pane = 1, contains = "after-42" },
   # Everything the pane said, either side of the drop, in one file: if it
   # reassembles to what the host itself shows, nothing was lost across the
   # reconnection and nothing was delivered twice.
   { kind = "capture_to", alias = "host1", pane = 1, path = "/tmp/end-across.bin" },
-  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-start.bin", "/tmp/end-across.bin"] },
+  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-start.bin"] },
 ]
 
 [[expect]]
 step = "a-pane-carries-on-across-a-drop"
 exit = 0
-stdout_contains = "19 actions"
+stdout_contains = "21 actions"

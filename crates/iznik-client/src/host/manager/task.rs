@@ -17,7 +17,7 @@ use crate::bootstrap::bootstrap_watched;
 use crate::bootstrap::launch::{BootstrapError, Decision, Stage, expiry, launch};
 use crate::commands::{confirm, expire, replay};
 use crate::host::identity::HostId;
-use crate::host::manager::{ManagerEvent, Order, Shared, bootstrapping, seeded};
+use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{Action, HostEvent, HostState, HostStateMachine, UpgradeOffer};
 use crate::model::HostView;
 use crate::reduce::{Effect, Notification, arrived, reduce};
@@ -131,7 +131,14 @@ fn keep(kept: &mut Vec<Order>, order: Order) {
             kept.retain(|held| !about(held, pane));
             kept.push(Order::Subscribe { pane });
         }
-        Order::Unsubscribe { pane } => kept.retain(|held| !about(held, pane)),
+        // Kept, not merely cancelling: the resume that follows a
+        // reconnection asks for every pane the model still holds, so a pane
+        // somebody let go of while the host was down would come back
+        // uninvited unless the letting go is asked for too.
+        Order::Unsubscribe { pane } => {
+            kept.retain(|held| !about(held, pane));
+            kept.push(Order::Unsubscribe { pane });
+        }
         // The latest size and the latest focus, and only those: what is kept
         // is a state to arrive at, not a history to replay, and a person
         // moving between panes for an hour on a host that is down must not
@@ -155,12 +162,13 @@ fn keep(kept: &mut Vec<Order>, order: Order) {
     }
 }
 
-/// Whether a held order is about one pane.
+/// Whether a held order is one pane's subscription, which a later one about
+/// the same pane replaces.
+///
+/// A size is not: a pane subscribed again is still the size it was told.
 fn about(order: &Order, pane: PaneId) -> bool {
     match order {
-        Order::Subscribe { pane: named }
-        | Order::Unsubscribe { pane: named }
-        | Order::Resize { pane: named, .. } => *named == pane,
+        Order::Subscribe { pane: named } | Order::Unsubscribe { pane: named } => *named == pane,
         _otherwise => false,
     }
 }
@@ -188,11 +196,18 @@ async fn connect(
             Ok(reached) => {
                 let mut channel = accept(host, shared, machine, reached).await;
                 // Everything asked for while there was nowhere to send it.
-                for order in kept.drain(..) {
-                    if carry(&mut channel, order).await.is_err() {
+                // What the link would not take stays held: the next
+                // connection is the one that will carry it, and a write that
+                // failed is a link that has just died.
+                let standing = std::mem::take(kept);
+                let mut sent = 0_usize;
+                for order in &standing {
+                    if carry(&mut channel, order.clone()).await.is_err() {
                         break;
                     }
+                    sent = sent.saturating_add(1);
                 }
+                kept.extend(standing.into_iter().skip(sent));
                 return Some(channel);
             }
             Err(error) => {
@@ -294,6 +309,11 @@ async fn accept(
         version,
         offer,
     } = reached;
+    // The snapshot a connection begins with is taken inside the launch, before
+    // there is a loop to hear it in, so it is announced from here: what is
+    // above the manager is told about a host's model the same way whether the
+    // model arrived with the connection or after it.
+    told_the_model(host, shared, &snapshot);
     if let Ok(mut model) = shared.model.lock() {
         match model.host_mut(host) {
             Some(view) => {
@@ -382,16 +402,17 @@ async fn pump(
     orders: &mut UnboundedReceiver<Order>,
     mut channel: RemoteChannel,
 ) -> Ended {
+    let mut carried = 0_usize;
     loop {
         let now = Instant::now();
         let soon = now
             .checked_add(shared.options.expire_interval)
             .unwrap_or(now);
-        // The channel's own read is cancel-safe, so the two may race; the
-        // borrow it holds is why the turn is decided before it is acted on.
-        let turn = tokio::select! {
-            arrived = channel.next(soon) => Turn::Arrived(arrived),
-            order = orders.recv() => Turn::Ordered(order),
+        let turn = next_turn(&mut channel, orders, soon, carried < ORDERS_PER_TURN).await;
+        carried = if matches!(turn, Turn::Ordered(_)) {
+            carried.saturating_add(1)
+        } else {
+            0
         };
         match turn {
             Turn::Arrived(Ok(received)) => {
@@ -424,6 +445,38 @@ async fn pump(
                     return Ended::Gone;
                 }
             }
+        }
+    }
+}
+
+/// The next turn: an order that is already waiting, or whatever the link says.
+///
+/// Orders come first while `ordering`, because a burst of them must not be
+/// paced by what the host happens to be saying: a hundred keystrokes handed
+/// over at once are a hundred orders, and hearing between each of them would
+/// put a round trip between one and the next. After enough in a row the link
+/// is read first instead, so that a caller who never stops ordering cannot
+/// keep this loop from hearing.
+///
+/// The channel's own read is cancel-safe, so the two may race; the borrow it
+/// holds is why the turn is decided here and acted on by the caller.
+async fn next_turn(
+    channel: &mut RemoteChannel,
+    orders: &mut UnboundedReceiver<Order>,
+    soon: Instant,
+    ordering: bool,
+) -> Turn {
+    if ordering {
+        tokio::select! {
+            biased;
+            order = orders.recv() => Turn::Ordered(order),
+            arrived = channel.next(soon) => Turn::Arrived(arrived),
+        }
+    } else {
+        tokio::select! {
+            biased;
+            arrived = channel.next(soon) => Turn::Arrived(arrived),
+            order = orders.recv() => Turn::Ordered(order),
         }
     }
 }
@@ -466,7 +519,12 @@ async fn heard(
         let Ok(message) = decode_to_client(&received.payload) else {
             return true;
         };
-        reduce_under(shared, host, &message)
+        let taken = reduce_under(shared, host, &message);
+        // What the host said about its model goes on as the host said it: the
+        // layer above this one hands those bytes to an application that
+        // decodes them with the protocol's own reader.
+        announced(host, shared, &message);
+        taken
     } else {
         carried(host, shared, &received);
         Vec::new()
@@ -505,6 +563,46 @@ fn carried(host: &HostId, shared: &Arc<Shared>, received: &crate::transport::cha
             bytes: received.payload.clone(),
         });
     }
+}
+
+/// Announces a whole model, in the encoding the host itself uses.
+fn told_the_model(host: &HostId, shared: &Arc<Shared>, model: &iznik_protocol::model::HostModel) {
+    let Ok(payload) = iznik_protocol::model::encode_host_model(model) else {
+        return;
+    };
+    shared.publish(&ManagerEvent::Snapshot {
+        host: host.clone(),
+        generation: model.generation,
+        payload,
+    });
+}
+
+/// Passes on the host's own account of its model, unchanged.
+fn announced(host: &HostId, shared: &Arc<Shared>, message: &iznik_protocol::message::ToClient) {
+    let told = match message {
+        iznik_protocol::message::ToClient::Snapshot {
+            generation,
+            payload,
+        } => ManagerEvent::Snapshot {
+            host: host.clone(),
+            generation: *generation,
+            payload: payload.clone(),
+        },
+        iznik_protocol::message::ToClient::Delta {
+            generation,
+            payload,
+        } => ManagerEvent::Delta {
+            host: host.clone(),
+            generation: *generation,
+            payload: payload.clone(),
+        },
+        iznik_protocol::message::ToClient::PaneDetached { pane, .. } => ManagerEvent::Detached {
+            host: host.clone(),
+            pane: *pane,
+        },
+        _otherwise => return,
+    };
+    shared.publish(&told);
 }
 
 /// Applies one message to the model, with the lock held for that and nothing

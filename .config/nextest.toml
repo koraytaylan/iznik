@@ -67,6 +67,16 @@ threads-required = 12
 filter = 'test(/latency|throughput|baseline/)'
 threads-required = 'num-cpus'
 
+# And so is this one, which is why it is here rather than in the group below.
+# It reads what a hundred lines cost against what one costs, and the reading
+# only says which of the two ways they were carried while the pane on the
+# other end can keep up: on a machine with ninety-six cases on it, a shell
+# reading a hundred lines is slower than a round trip, and the ratio stops
+# being about the loop it was written for.
+[[profile.default.overrides]]
+filter = 'test(connection_manager_carries_a_burst_as_fast_as_it_is_given)'
+threads-required = 'num-cpus'
+
 # Every test in the server crate drives a real shell on a real pseudoterminal
 # and waits on what it prints, so what it measures is not its own work but the
 # machine's willingness to run a shell. Sixteen of those at once, beside the
@@ -84,6 +94,13 @@ test-group = 'shells'
 # signal, which then fails a deadline meant to catch a hang.
 [[profile.default.overrides]]
 filter = 'binary(remote_channel) + binary(remote_launch)'
+test-group = 'shells'
+
+# The boundary's own cases stand the same thing up from further out: a daemon,
+# a socket, and a real shell that a hundred callers type into at once. The same
+# load as the server's own, two crates away.
+[[profile.default.overrides]]
+filter = 'binary(ffi_surface) + binary(pane_byte_pipe)'
 test-group = 'shells'
 
 # The fixture reaper removes every labelled container and network, a sibling

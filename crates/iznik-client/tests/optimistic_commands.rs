@@ -199,9 +199,13 @@ fn optimistic_commands_show_exactly_what_the_host_would_send() {
                     Confirmed::Applied,
                     "the answer retires it"
                 );
+                // Answered and not yet announced: what it did is showing,
+                // and it stays in flight until the host's own change brings
+                // the model to the generation the answer named.
                 assert!(
-                    view.pending.is_empty(),
-                    "and nothing is left waiting for an answer"
+                    view.awaiting(submission.id)
+                        .is_some_and(|held| held.answered.is_some()),
+                    "and it is answered rather than forgotten"
                 );
             }
         }
@@ -367,6 +371,7 @@ fn optimistic_commands_put_back_what_the_host_refuses() {
         );
         assert_eq!(view.model, model, "exactly as it was");
         assert!(view.pending.is_empty(), "with nothing left pending");
+        assert_eq!(view.settled, model, "and the host's own is untouched");
         // An answer to a command nobody here is waiting for changes nothing.
         assert_eq!(
             confirm(&mut view, CommandId(99), &rejected()),

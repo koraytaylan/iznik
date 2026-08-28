@@ -177,6 +177,11 @@ enum Action {
         pane: u64,
         /// What they must hold.
         contains: String,
+        /// How long this one wait may take, when it is shorter than the
+        /// step's own patience — which is how a case about one host staying
+        /// quick while another is ill says what quick means.
+        #[serde(default)]
+        within_milliseconds: Option<u64>,
     },
     /// Write everything received for a pane to a file.
     CaptureTo {
@@ -255,10 +260,40 @@ enum Action {
 struct Heard {
     /// Every byte that has arrived for it, in order.
     bytes: Vec<u8>,
+    /// The byte position the first of them is.
+    from: Option<u64>,
     /// The last screen the host sent for it.
     screen: Option<Vec<u8>>,
-    /// The size that screen was sent at.
+    /// The byte position that screen is exact at.
+    at: Option<u64>,
+    /// The size it was sent at.
     size: Option<(u16, u16)>,
+    /// Where the last screen written to a file was exact at, which is where
+    /// the bytes that follow it begin.
+    marked: Option<u64>,
+}
+
+impl Heard {
+    /// The bytes between two positions in the stream, as far as they are held.
+    ///
+    /// A screen is exact at a position and the capture begins at another, so
+    /// feeding a screen and then every byte held would show what the screen
+    /// already showed a second time. This is the window between them.
+    fn between(&self, first: Option<u64>, last: Option<u64>) -> &[u8] {
+        let Some(from) = self.from else {
+            return &[];
+        };
+        let held = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
+        let start = first.unwrap_or(from).saturating_sub(from);
+        let end = last
+            .map_or(held, |named| named.saturating_sub(from))
+            .min(held);
+        let (start, end) = (
+            usize::try_from(start.min(end)).unwrap_or(0),
+            usize::try_from(end).unwrap_or(self.bytes.len()),
+        );
+        self.bytes.get(start..end).unwrap_or(&[])
+    }
 }
 
 /// Everything the step has heard, as it heard it.
@@ -278,33 +313,52 @@ impl Watched {
                 let _before = self.states.insert(host, state.to_string());
             }
             ManagerEvent::Bytes {
-                host, pane, bytes, ..
+                host,
+                pane,
+                sequence,
+                bytes,
             } => {
-                self.panes
-                    .entry((host, pane))
-                    .or_default()
-                    .bytes
-                    .extend_from_slice(&bytes);
+                let held = self.panes.entry((host, pane)).or_default();
+                if held.from.is_none() {
+                    held.from = Some(sequence.0);
+                }
+                held.bytes.extend_from_slice(&bytes);
             }
             ManagerEvent::Screen {
                 host,
                 pane,
+                sequence,
                 columns,
                 rows,
                 bytes,
-                ..
             } => {
                 let held = self.panes.entry((host, pane)).or_default();
                 held.screen = Some(bytes);
+                held.at = Some(sequence.0);
                 held.size = Some((columns, rows));
             }
-            ManagerEvent::Notify(_) | ManagerEvent::Removed { .. } => {}
+            ManagerEvent::Notify(_)
+            | ManagerEvent::Removed { .. }
+            | ManagerEvent::Detached { .. }
+            | ManagerEvent::Snapshot { .. }
+            | ManagerEvent::Delta { .. } => {}
         }
     }
 
     /// What has been heard about one pane.
     fn pane(&self, alias: &str, pane: u64) -> Option<&Heard> {
         self.panes.get(&(HostId(alias.to_owned()), PaneId(pane)))
+    }
+
+    /// Says that the screen a pane last sent has been written down, so that
+    /// what follows it is the bytes from there on.
+    fn mark_screen(&mut self, alias: &str, pane: u64) {
+        if let Some(held) = self
+            .panes
+            .get_mut(&(HostId(alias.to_owned()), PaneId(pane)))
+        {
+            held.marked = held.at;
+        }
     }
 
     /// Forgets the screen held for a pane.
@@ -585,16 +639,25 @@ fn about_a_pane(
             alias,
             pane,
             contains,
-        } => await_until(
-            events,
-            watched,
-            deadline,
-            &format!("pane {pane} on {alias} saying {contains:?}"),
-            |held| {
-                held.pane(alias, *pane)
-                    .is_some_and(|heard| holds(&heard.bytes, contains.as_bytes()))
-            },
-        ),
+            within_milliseconds,
+        } => {
+            let until = within_milliseconds.map_or(deadline, |named| {
+                let now = Instant::now();
+                now.checked_add(Duration::from_millis(named))
+                    .unwrap_or(now)
+                    .min(deadline)
+            });
+            await_until(
+                events,
+                watched,
+                until,
+                &format!("pane {pane} on {alias} saying {contains:?}"),
+                |held| {
+                    held.pane(alias, *pane)
+                        .is_some_and(|heard| holds(&heard.bytes, contains.as_bytes()))
+                },
+            )
+        }
         Action::CaptureTo { alias, pane, path } => {
             let heard = watched
                 .pane(alias, *pane)
@@ -619,24 +682,19 @@ fn about_a_pane(
             )?;
             let heard = watched
                 .pane(alias, *pane)
-                .and_then(|held| held.screen.as_ref())
+                .and_then(|held| held.screen.clone())
                 .ok_or_else(|| format!("no screen for pane {pane} on {alias}"))?;
-            std::fs::write(path, heard).map_err(|error| format!("{}: {error}", path.display()))
+            std::fs::write(path, &heard).map_err(|error| format!("{}: {error}", path.display()))?;
+            // What follows this screen in the stream is what a reassembly
+            // built on it must be fed, and nothing before it.
+            watched.mark_screen(alias, *pane);
+            Ok(())
         }
         Action::ExpectAddress {
             alias,
             pane,
             address,
-        } => {
-            let named = GlobalPaneId {
-                host: HostId(alias.clone()),
-                pane: PaneId(*pane),
-            };
-            if named.to_string() == *address {
-                return Ok(());
-            }
-            Err(format!("the pane is {named} and not {address}"))
-        }
+        } => addressed(manager, alias, *pane, address),
         Action::ExpectReassembly {
             alias,
             pane,
@@ -674,6 +732,46 @@ fn signal(alias: &str, named: &str) -> Result<(), String> {
     process::run(command, Deadline(SIGNAL_DEADLINE), Output::Capture)
         .map(|_said| ())
         .map_err(|error| error.to_string())
+}
+
+/// Holds a pane the client really has to the address it is known by
+/// everywhere.
+///
+/// The model is asked first, because an address rendered from the action's own
+/// words and compared with the action's own words says nothing about whether
+/// the pane is there.
+///
+/// # Errors
+///
+/// The step's own words when the host holds no such pane, or its address is
+/// not the one named.
+fn addressed(manager: &HostManager, alias: &str, pane: u64, address: &str) -> Result<(), String> {
+    let host = HostId(alias.to_owned());
+    let held = manager.model();
+    let view = held
+        .host(&host)
+        .ok_or_else(|| format!("{alias} is not held"))?;
+    let holds = view
+        .model
+        .sessions
+        .iter()
+        .flat_map(|session| session.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .any(|found| found.id == PaneId(pane));
+    if !holds {
+        return Err(format!("{alias} holds no pane {pane}"));
+    }
+    if view.subscription(PaneId(pane)).is_none() {
+        return Err(format!("pane {pane} on {alias} is not subscribed to"));
+    }
+    let named = GlobalPaneId {
+        host,
+        pane: PaneId(pane),
+    };
+    if named.to_string() == address {
+        return Ok(());
+    }
+    Err(format!("the pane is {named} and not {address}"))
 }
 
 /// Replaces a host's server, or holds it to the refusal that was expected.
@@ -754,6 +852,11 @@ fn reassembled(
             std::fs::read(piece).map_err(|error| format!("{}: {error}", piece.display()))?;
         reassembled.feed(&bytes);
     }
+    // And then the pane's own bytes, from where those pieces left off to
+    // where the screen this is compared against is exact — taken here rather
+    // than captured earlier, so nothing said in between is in one and not the
+    // other.
+    reassembled.feed(heard.between(heard.marked, heard.at));
     let mut mirrored = Vt::new(columns, rows).map_err(|error| error.to_string())?;
     mirrored.feed(truth);
     let shown = reassembled.snapshot().map_err(|error| error.to_string())?;

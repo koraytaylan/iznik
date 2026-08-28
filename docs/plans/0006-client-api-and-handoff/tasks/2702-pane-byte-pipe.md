@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-ffi/tests/pane_byte_pipe.rs"
   - "regression/claims/pane-byte-pipe.toml"
   - "policy/lexicon/pane-byte-pipe.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Pane Byte Pipe

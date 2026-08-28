@@ -142,6 +142,16 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
   The address escapes everything outside RFC 3986's unreserved set rather than only the characters that would break the parse. An alias is whatever a person typed — `unix:/tmp/iznik.sock` holds a colon and two slashes, an SSH alias may hold a space — and the property that matters is that the string written into a log comes back as the host it named. Escaping conservatively costs some readability in a `unix:` address and buys an exact round trip for every alias there is.
 
+  One more came back from plan 0006, where the byte pipe was being proven: a
+  host's task raced an order against a read of its link and let what the host
+  was saying starve what was already waiting to be sent, so a hundred lines
+  handed over at once went out one to a round trip — seconds, where the same
+  hundred now take a fortieth of a second. It takes the orders it has before it
+  hears, bounded by `ORDERS_PER_TURN` so that a caller who never stops ordering
+  cannot keep it from hearing.
+  `connection_manager_carries_a_burst_as_fast_as_it_is_given` fails without
+  that and passes in a thirtieth of its budget with it.
+
 - **Outcome:** Several remote hosts held at once over ordinary SSH, each bootstrapped automatically from a machine that had nothing, each surviving link drops without losing pane identity or bytes, with unambiguous commands applying instantly and reconciling against the server.
 
-_Last updated: 2026-08-28, against `develop` @ `bbf00e4`._
+_Last updated: 2026-08-29, against `develop` @ `bbf00e4`._

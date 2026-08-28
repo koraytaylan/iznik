@@ -7,6 +7,7 @@ arrived
 behind
 broken
 budget
+burst
 carried
 carry
 carrying
@@ -19,8 +20,10 @@ doing
 event
 events
 expire
+floor
 focus
 four
+gathered
 gives
 golden
 gone
@@ -31,6 +34,7 @@ holding
 holds
 input
 isolation
+jitter
 keep
 keeps
 kept
@@ -39,6 +43,7 @@ let
 lets
 listener
 listeners
+longest
 manager
 mix
 mixed
@@ -66,6 +71,7 @@ seeded
 serve
 settle
 shared
+shortest
 shows
 silent
 sleep

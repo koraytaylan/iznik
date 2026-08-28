@@ -42,7 +42,10 @@ actions = [
   { kind = "pause_host", alias = "host1" },
   { kind = "await_state", alias = "host1", is = "reconnecting" },
   { kind = "input", alias = "host0", pane = 1, text = "echo apart-$((6*7))\n" },
-  { kind = "await_bytes", alias = "host0", pane = 1, contains = "apart-42" },
+  # Under a budget of its own, because the whole case is that a healthy host
+  # is not waiting on a sick one: a step-wide patience would pass an echo that
+  # took half a minute.
+  { kind = "await_bytes", alias = "host0", pane = 1, contains = "apart-42", within_milliseconds = 5000 },
   { kind = "resume_host", alias = "host1" },
   { kind = "await_state", alias = "host1", is = "connected" },
 ]

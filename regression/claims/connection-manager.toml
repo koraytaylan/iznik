@@ -49,3 +49,9 @@ id = "manager-reports-every-state-in-order"
 statement = "The states a host goes through are reported on `events()` in the order it went through them — probing first, connected last — and `model()` holds what the host said by then."
 test = "iznik-client::connection_manager::connection_manager_reports_every_state_in_order"
 because = "the events are the manager's own, and a container would only make them slower"
+
+[[claim]]
+id = "manager-carries-a-burst-as-fast-as-it-is-given"
+statement = "A hundred lines handed over at once reach the pane at once, not one to a round trip: a host's task takes the orders already waiting before it hears what the host has to say, so what a person typed or pasted is not paced by what their screen happens to be doing. Bounded, so a caller who never stops ordering still leaves the task hearing."
+test = "iznik-client::connection_manager::connection_manager_carries_a_burst_as_fast_as_it_is_given"
+because = "the starvation is between two branches of the task's own loop, and a local transport shows it exactly — a network would only make the round trip it was paced by longer"

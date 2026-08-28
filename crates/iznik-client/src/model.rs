@@ -91,8 +91,14 @@ pub struct PendingCommand {
     pub id: CommandId,
     /// What was asked.
     pub command: SessionCommand,
-    /// The model as it stood before the local effect was applied.
-    pub rollback: HostModel,
+    /// The generation the host said it reached, once it has answered.
+    ///
+    /// A command is answered before its change is announced, so between those
+    /// two frames its effect is in what this client shows and in nothing the
+    /// host has said yet. It stays here, applied on top like any other, until
+    /// a delta or a snapshot brings the model to that generation — and then it
+    /// is the host's own and this can let it go.
+    pub answered: Option<Generation>,
     /// When it was sent, so it can be given up on.
     pub submitted_at: Instant,
 }
@@ -244,12 +250,12 @@ impl HostView {
         Some(self.pending.remove(at))
     }
 
-    /// Every command sent before `moment`, oldest first.
+    /// Every command sent before `moment` and not yet answered, oldest first.
     #[must_use]
     pub fn sent_before(&self, moment: Instant) -> Vec<CommandId> {
         self.pending
             .iter()
-            .filter(|held| held.submitted_at < moment)
+            .filter(|held| held.answered.is_none() && held.submitted_at < moment)
             .map(|held| held.id)
             .collect()
     }

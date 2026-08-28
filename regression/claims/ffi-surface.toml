@@ -1,0 +1,32 @@
+# The C ABI over the client engine.
+#
+# `test` proofs, called through the `extern "C"` functions themselves rather
+# than through the Rust behind them: what is asserted is what an application
+# sees. The host is a `unix:` alias to a daemon on this machine, because the
+# boundary is what is being proven and the network is `end-to-end-ssh`'s. The
+# same functions against a real C compiler and a real linker are
+# `static-library-and-header`'s, one workstream on.
+
+[[claim]]
+id = "ffi-makes-and-ends-a-client"
+statement = "A null configuration makes a client with every default; one naming a runtime directory that cannot be made answers null and says so against the client's own layer, with a message to read; freeing null is nothing."
+test = "iznik-ffi::ffi_surface::ffi_surface_makes_and_ends_a_client"
+because = "the boundary is the same boundary whatever calls it, and what is proven is what it answers"
+
+[[claim]]
+id = "ffi-carries-events-and-commands"
+statement = "Adding a `unix:` host produces a host-state event and then a snapshot whose payload decodes with `iznik-protocol` itself — one schema, not two — and a `CreateSession` sent in encoded comes back with a number of its own, answered by a command result carrying that number and followed by the session's deltas. The buffer the command was in may be freed as soon as the call returns."
+test = "iznik-ffi::ffi_surface::ffi_surface_carries_events_and_commands"
+because = "the daemon behind it is real and the encoding is the wire's; only the socket is shorter than a network"
+
+[[claim]]
+id = "ffi-calls-back-on-one-thread"
+statement = "Every callback arrives on one thread, asserted by its identity, so an application keeping state in its handler needs no lock for it; and a client with a host on it ends inside a second."
+test = "iznik-ffi::ffi_surface::ffi_surface_calls_back_on_one_thread_and_ends_quickly"
+because = "which thread a call arrives on is a property of this library, and a container would not make it truer"
+
+[[claim]]
+id = "ffi-says-which-layer-failed"
+statement = "Every refusal carries a layer and words: a call with no host named is the client's own, and a host that cannot be reached is the transport's, naming the host. The first question anybody asks about a system this tall is which part of it broke."
+test = "iznik-ffi::ffi_surface::ffi_surface_says_which_layer_failed"
+because = "the layer is decided here, from what the engine reported, and no host is needed to read the answer"

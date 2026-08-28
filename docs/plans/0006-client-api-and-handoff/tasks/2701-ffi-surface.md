@@ -12,7 +12,7 @@ touches:
   - "crates/iznik-ffi/tests/ffi_surface.rs"
   - "regression/claims/ffi-surface.toml"
   - "policy/lexicon/ffi-surface.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # FFI Surface

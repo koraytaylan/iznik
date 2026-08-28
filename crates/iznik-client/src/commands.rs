@@ -22,6 +22,11 @@
 //! the host is applied to the first and the pending effects are put back over
 //! it, so the host never has to reconcile a change it has not made, and a
 //! refusal never undoes one it has.
+//!
+//! "In flight" reaches one frame further than it sounds. The host answers a
+//! command and *then* announces the change, so between those two frames the
+//! command is answered and its effect is still nobody's but this client's. It
+//! stays applied until the model reaches the generation the answer named.
 
 use core::time::Duration;
 use std::time::Instant;
@@ -69,18 +74,11 @@ pub enum Confirmed {
 /// answer that never comes — can put the screen back exactly.
 pub fn submit(view: &mut HostView, command: SessionCommand, now: Instant) -> Submission {
     let id = view.mint();
-    let rollback = view.model.clone();
     let optimistic = locally(&mut view.model, &command);
-    if !optimistic {
-        // Nothing was applied, but a half-applied cascade would have left the
-        // model between two states; putting it back costs a clone and removes
-        // the question.
-        view.model = rollback.clone();
-    }
     view.record(PendingCommand {
         id,
         command,
-        rollback,
+        answered: None,
         submitted_at: now,
     });
     Submission { id, optimistic }
@@ -93,10 +91,22 @@ pub fn submit(view: &mut HostView, command: SessionCommand, now: Instant) -> Sub
 /// the corrected model so that one refusal undoes one thing.
 pub fn confirm(view: &mut HostView, command: CommandId, outcome: &CommandOutcome) -> Confirmed {
     match outcome {
-        CommandOutcome::Applied { .. } => match view.retire(command) {
-            Some(_retired) => Confirmed::Applied,
-            None => Confirmed::Unknown,
-        },
+        CommandOutcome::Applied { generation, .. } => {
+            // Not retired: what it did is showing and the host has not
+            // announced it yet, so it stays until a delta or a snapshot brings
+            // the model to the generation the host says it reached.
+            match view
+                .pending
+                .iter_mut()
+                .find(|held| held.id == command && held.answered.is_none())
+            {
+                Some(held) => {
+                    held.answered = Some(*generation);
+                    Confirmed::Applied
+                }
+                None => Confirmed::Unknown,
+            }
+        }
         CommandOutcome::Rejected { .. } => {
             if roll_back(view, command) {
                 Confirmed::RolledBack
@@ -153,12 +163,16 @@ pub fn expire(
 /// a change the host *has* made.
 pub fn replay(view: &mut HostView) {
     view.model = view.settled.clone();
+    let reached = view.settled.generation;
     let mut standing = std::mem::take(&mut view.pending);
-    for held in &mut standing {
-        held.rollback = view.model.clone();
-        // A command whose effect the host has already announced applies to
-        // nothing and leaves the model where it is, which is right: the model
-        // already shows it.
+    // A command the host answered *and* has now announced is the host's own:
+    // it is in the settled model, and keeping it here would apply it twice.
+    standing.retain(|held| held.answered.is_none_or(|at| at > reached));
+    for held in &standing {
+        // The rest go back on top in the order they were sent — those still
+        // waiting for an answer, and those answered whose change has not
+        // arrived yet, which is the window between the two frames the host
+        // sends for one command.
         let _applied = locally(&mut view.model, &held.command);
     }
     view.pending = standing;
@@ -171,7 +185,11 @@ pub fn replay(view: &mut HostView) {
 /// the model kept with the first is the model from before *both*. Restoring it
 /// and re-applying the rest, in order, undoes exactly the one that was refused.
 fn roll_back(view: &mut HostView, command: CommandId) -> bool {
-    let Some(at) = view.pending.iter().position(|held| held.id == command) else {
+    let Some(at) = view
+        .pending
+        .iter()
+        .position(|held| held.id == command && held.answered.is_none())
+    else {
         return false;
     };
     let _gone = view.pending.remove(at);

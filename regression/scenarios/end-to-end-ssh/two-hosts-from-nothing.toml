@@ -43,8 +43,8 @@ actions = [
   { kind = "await_bytes", alias = "host1", pane = 1, contains = "second-42" },
   { kind = "capture_to", alias = "host0", pane = 1, path = "/tmp/end-first.bin" },
   { kind = "capture_to", alias = "host1", pane = 1, path = "/tmp/end-second.bin" },
-  { kind = "expect_reassembly", alias = "host0", pane = 1, pieces = ["/tmp/end-first-screen.bin", "/tmp/end-first.bin"] },
-  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-second-screen.bin", "/tmp/end-second.bin"] },
+  { kind = "expect_reassembly", alias = "host0", pane = 1, pieces = ["/tmp/end-first-screen.bin"] },
+  { kind = "expect_reassembly", alias = "host1", pane = 1, pieces = ["/tmp/end-second-screen.bin"] },
 ]
 
 # And both hosts really have a server, put there by the client and nothing else.

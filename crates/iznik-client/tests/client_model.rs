@@ -66,7 +66,7 @@ fn sent(id: u64, name: &str, moment: Instant) -> PendingCommand {
             session: SessionId(1),
             name: name.to_owned(),
         },
-        rollback: one_pane(1),
+        answered: None,
         submitted_at: moment,
     }
 }
