@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/session_commands.rs"
   - "regression/claims/session-commands.toml"
   - "policy/lexicon/session-commands.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Session Commands
