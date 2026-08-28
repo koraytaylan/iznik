@@ -16,7 +16,7 @@ touches:
   - "docs/notes/protocol.md"
   - "crates/iznik-protocol/tests/protocol_reference.rs"
   - "policy/lexicon/session-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Session Documentation
