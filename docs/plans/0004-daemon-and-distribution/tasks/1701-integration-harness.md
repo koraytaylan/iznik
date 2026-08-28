@@ -13,7 +13,7 @@ touches:
   - "regression/claims/integration-harness.toml"
   - "regression/scenarios/integration-harness/**"
   - "policy/lexicon/integration-harness.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Integration Harness
