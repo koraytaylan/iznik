@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-server/tests/client_connections.rs"
   - "regression/claims/client-connections.toml"
   - "policy/lexicon/client-connections.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Client Connections
