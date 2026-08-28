@@ -286,6 +286,25 @@ impl Pane {
         Ok(bytes)
     }
 
+    /// At most `limit` bytes from `from`, appended to a buffer the caller
+    /// owns. This is what the multiplexer reads with: a whole-ring read would
+    /// be megabytes for one frame, and the pump is specified to buffer no pane
+    /// bytes of its own beyond the one frame it is sending.
+    ///
+    /// # Errors
+    ///
+    /// [`PaneError::History`] when `from` is older than the oldest byte held.
+    pub fn copy_history(
+        &self,
+        from: Sequence,
+        limit: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<(), PaneError> {
+        let history = self.history.lock().unwrap_or_else(PoisonError::into_inner);
+        history.copy_range(from, limit, out)?;
+        Ok(())
+    }
+
     /// Every change to what the pane looks like, so a watcher is woken rather
     /// than polled. [`Pane::state`] is the same thing for a caller that only
     /// wants to know now.

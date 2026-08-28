@@ -1,0 +1,57 @@
+# One connection, one multiplexer: the pump that fans out the model's changes,
+# starts every subscription the way the resume decision says, and serves pane
+# bytes by credit with the focused pane first. Its acceptance is a measured
+# number under adversarial load, not a functional pass.
+#
+# Every claim here is proven in process, against real `sh` panes and an
+# in-memory sink. The same paths over a real link are proven in plans 0004 and
+# 0005; what is proven here is the scheduler, and a container adds nothing to
+# it but noise in the latency figure it turns on.
+
+[[claim]]
+id = "multiplexer-deltas-arrive-in-order"
+statement = "Every change to the model reaches the client on channel 0 in the order the registry made it, with the generation advancing by exactly one and no snapshot the client did not need; a client forced past the delta channel's capacity is sent the whole model instead, once and last; and a mark reaches it only for a pane it watches, carrying the sequence it happened at."
+test = "iznik-server::multiplexer_assembly::deltas_and_marks_fan_out_in_order"
+because = "the fan-out is in-process by construction; a link would only re-prove framing"
+
+[[claim]]
+id = "multiplexer-an-exit-detaches"
+statement = "A subscribed pane that exits is detached with the channel it was on, and that channel number is held back until the client acknowledges it, so a late frame can never be misattributed to a new pane."
+test = "iznik-server::multiplexer_assembly::a_pane_that_exits_detaches_and_holds_its_channel"
+because = "the channel table's discipline is what is under test, not the wire it is announced on"
+
+[[claim]]
+id = "multiplexer-an-attachment-is-exact"
+statement = "A cold attach announces the channel at the sequence its screen is exact at and then delivers, during a megabyte flood, exactly the history from there, reproducing the pane's own mirror through the oracle; a screen request on that live subscription answers with the truth at the newest byte on the same channel and moves the cursor there, so no byte is delivered twice."
+test = "iznik-server::multiplexer_assembly::attachment_is_exact_under_load"
+because = "the oracle and the pane's mirror are both in this process; a link would add latency, not exactness"
+
+[[claim]]
+id = "multiplexer-a-resume-continues-or-repaints"
+statement = "A reconnect the ring can still answer costs no screen and resumes at exactly the sequence it left off, the halves joining into what the pane said; a reconnect from before the ring's oldest byte takes the cold-attach path instead and is exact from where the pane now is."
+test = "iznik-server::multiplexer_assembly::a_resume_continues_or_takes_the_cold_path"
+because = "which answer is given is the resume decision's, and what follows it is this crate's ring"
+
+[[claim]]
+id = "multiplexer-a-keystroke-stays-immediate"
+statement = "With one pane flooding at line rate and another echoing keystrokes, both subscribed, a thousand keystroke-to-echo round trips through the multiplexer report a ninety-ninth percentile under the twenty-five millisecond budget, with at least a mebibyte of the flood carried alongside them."
+test = "iznik-server::multiplexer_assembly::keystroke_latency_under_flood"
+because = "a container's scheduler would be measured instead of this one's, and the figure is the acceptance"
+
+[[claim]]
+id = "multiplexer-the-link-is-shared-and-follows-focus"
+statement = "Three background panes with equal amounts to say receive shares within one frame of each other, and focus moves both first service and the larger window to the pane the person is looking at, the difference being exactly the increment between the two window sizes."
+test = "iznik-server::multiplexer_assembly::the_scheduler_shares_the_link_and_follows_focus"
+because = "the scheduling order is a pure decision over cursors; a link would only blur what it decided"
+
+[[claim]]
+id = "multiplexer-credit-is-honored-and-nothing-is-buffered"
+statement = "A cursor whose client stops returning credit stops at the window it was given while every other cursor continues, the multiplexer's own memory does not grow with either that cursor's bytes or an unwatched pane's flood of sixteen mebibytes, and a stalled cursor over a two-hundred-millisecond idle interval costs no measurable processor time."
+test = "iznik-server::multiplexer_assembly::credit_is_honored_and_nothing_is_buffered"
+because = "the memory and processor samples are of this process; a container would measure its own runtime too"
+
+[[claim]]
+id = "multiplexer-a-stale-cursor-is-caught-up"
+statement = "A background pane whose cursor has spent its window and then falls further behind than the stale threshold receives no more frames and no catch-up while it has no credit; when it is focused it receives a channel announcement at the newest byte and a screen, and the live bytes that follow reproduce the pane's own mirror through the oracle."
+test = "iznik-server::multiplexer_assembly::a_stale_cursor_is_caught_up_on_focus"
+because = "the threshold and the catch-up are decisions over a cursor and a ring, both in this process"

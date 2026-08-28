@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use core::fmt::{self, Display, Formatter};
 
 use iznik_protocol::identity::{PaneId, Sequence};
+use iznik_protocol::message::MessageError;
 
 use crate::multiplexer::credit::CreditWindow;
 
@@ -72,6 +73,13 @@ pub enum MultiplexerError {
         /// The channel that was acknowledged.
         channel: u8,
     },
+    /// A frame could not be built: a model or a delta larger than a frame
+    /// carries. Nothing was sent, and the client is told rather than left
+    /// waiting for something that cannot be encoded.
+    Encoding {
+        /// What the codec said.
+        detail: String,
+    },
     /// The link under the multiplexer could not take a frame.
     Sink(SinkError),
 }
@@ -96,12 +104,23 @@ impl Display for MultiplexerError {
                 formatter,
                 "channel {channel} was not waiting to be released"
             ),
+            MultiplexerError::Encoding { detail } => {
+                write!(formatter, "a frame could not be built: {detail}")
+            }
             MultiplexerError::Sink(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl core::error::Error for MultiplexerError {}
+
+impl From<MessageError> for MultiplexerError {
+    fn from(error: MessageError) -> MultiplexerError {
+        MultiplexerError::Encoding {
+            detail: error.to_string(),
+        }
+    }
+}
 
 impl From<SinkError> for MultiplexerError {
     fn from(error: SinkError) -> MultiplexerError {
