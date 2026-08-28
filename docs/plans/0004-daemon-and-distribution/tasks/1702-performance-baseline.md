@@ -12,7 +12,7 @@ touches:
   - "docs/notes/baseline.md"
   - "regression/claims/performance-baseline.toml"
   - "policy/lexicon/performance-baseline.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Performance Baseline
