@@ -286,6 +286,35 @@ impl Pane {
         Ok(bytes)
     }
 
+    /// Every change to what the pane looks like, so a watcher is woken rather
+    /// than polled. [`Pane::state`] is the same thing for a caller that only
+    /// wants to know now.
+    #[must_use]
+    pub fn state_updates(&self) -> watch::Receiver<PaneState> {
+        self.state.clone()
+    }
+
+    /// How much history the pane keeps, set to what the shared budget allows.
+    ///
+    /// This is how the budget takes memory back: it decides how much each pane
+    /// may hold and the registry tells the pane, because the ring the pane
+    /// appends to is the pane's own and nothing else can reach it.
+    pub fn set_history_capacity(&self, capacity: usize) {
+        let mut history = self.history.lock().unwrap_or_else(PoisonError::into_inner);
+        history.set_capacity(capacity);
+    }
+
+    /// The child's exit status if it has already ended, without waiting for
+    /// one that has not. [`PaneState::exited`] is what says there is one.
+    ///
+    /// [`Pane::exit_status`] is the same answer for a caller that can wait;
+    /// the registry cannot, because it turns an exit into deltas while it
+    /// holds the model.
+    #[must_use]
+    pub fn exit_status_now(&self) -> Option<ExitStatus> {
+        *self.exit.borrow()
+    }
+
     /// The mirror's screen serialized as VT bytes, exact at its sequence.
     ///
     /// # Errors
