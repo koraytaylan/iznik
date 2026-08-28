@@ -12,7 +12,7 @@ touches:
   - "regression/claims/daemon-lifecycle.toml"
   - "regression/scenarios/daemon-lifecycle/**"
   - "policy/lexicon/daemon-lifecycle.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Daemon Lifecycle
