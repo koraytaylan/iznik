@@ -1,0 +1,33 @@
+# Applying a command drives real panes on real pseudoterminals, but everything
+# claimed here happens in one process on one machine: what a container would
+# add is a network, not an answer.
+
+[[claim]]
+id = "applying-every-command-is-answered-with-what-it-made"
+statement = "Each of the eleven commands is applied and answers Applied with what it made — a session, a tab, a pane, or nothing — at the generation the model reached, and the model shows it."
+test = "iznik-server::session_commands::session_commands_every_command_is_applied_and_answered"
+because = "the mapping is between a command and a registry in one process; a container adds nothing"
+
+[[claim]]
+id = "applying-a-refusal-leaves-no-trace"
+statement = "Every rejection code is given by the command that earns it — an unknown session, tab or pane, an empty name, an order that is not a permutation, a layout with the wrong leaves, a working directory that does not exist — and a refusal changes neither the model, nor the generation, nor the delta stream."
+test = "iznik-server::session_commands::session_commands_every_refusal_leaves_no_trace"
+because = "a refusal is an answer computed from the model in memory; a container adds nothing"
+
+[[claim]]
+id = "applying-a-spawn-failure-is-reported"
+statement = "A pane whose program does not exist answers SpawnFailed with what the pseudoterminal said, adds nothing, says nothing, and moves no generation."
+test = "iznik-server::session_commands::session_commands_a_spawn_failure_is_reported"
+because = "the failure is the operating system refusing an exec on this machine; a container refuses it the same way"
+
+[[claim]]
+id = "applying-answers-exactly-once"
+statement = "A thousand commands produce exactly a thousand answers, each one generation after the last, in under a second."
+test = "iznik-server::session_commands::session_commands_are_answered_exactly_once"
+because = "the answers are values returned in one process; a container adds nothing"
+
+[[claim]]
+id = "applying-starts-a-pane-as-it-was-asked"
+statement = "A pane created with a size and a working directory has a shell that reports both of them."
+test = "iznik-server::session_commands::session_commands_a_pane_starts_where_and_how_it_was_asked"
+because = "the shell is a real process on a real pseudoterminal on this machine; a container adds nothing to what it reports"
