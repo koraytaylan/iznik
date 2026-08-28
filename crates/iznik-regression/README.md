@@ -14,7 +14,7 @@ The binary `iznik-regression step` reads one step as TOML on standard input and 
 | `step::client` | `[steps.client]`: a protocol client over a process that speaks `iznik/1`, with reassembly checked through the oracle. | `integration-harness` (plan 0004) |
 | `step::manager` | `[steps.manager]`: a host manager inside the engine container driving several hosts end to end. | `end-to-end-ssh` (plan 0005) |
 | `step::pane` | `[steps.pane]`: a pane driven inside the host container, with its screen reproduction checked through the oracle. | `fidelity-suite` (plan 0002) |
-| `step::probe` | `[steps.probe]`: the host probe and expectations over its fields. | `host-probe` (plan 0005) |
+| `step::probe` | `[steps.probe]`: a real host probed, and every field of the answer held to what the scenario said it would be. | `host-probe` (plan 0005) |
 | `step::run` | The `run` step: a shell command in the container that names it. | `scenario-driver` (plan 0001) |
 | `step::transport` | `[steps.transport]`: the SSH transport against the fixture's host — a command run, a master made, reused and closed, and each of the four ways a connection fails told apart. | `ssh-control-master` (plan 0005) |
 | `step::upload` | `[steps.upload]`: the artifact upload and the terminfo compilation on the host. | `payload-upload` (plan 0005) |

@@ -13,7 +13,7 @@ touches:
   - "regression/claims/host-probe.toml"
   - "regression/scenarios/host-probe/**"
   - "policy/lexicon/host-probe.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Host Probe

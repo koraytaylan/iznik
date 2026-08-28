@@ -1,0 +1,50 @@
+name = "unwritable-home"
+claims = ["probe-falls-back-when-a-home-is-unwritable"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A home its own user cannot write is a real host: a shared account, a
+# read-only mount, an administrator's idea of tidiness. The probe must still
+# succeed and say where it would put things instead.
+[[steps]]
+id = "take-the-home-away"
+container = "host0"
+run = "chmod 500 /home/iznik && printf locked"
+timeout_seconds = 20
+
+[[steps]]
+id = "the-prefix-falls-back"
+container = "engine"
+timeout_seconds = 40
+
+[steps.probe]
+alias = "host0"
+
+[steps.probe.expect]
+system = "Linux"
+prefix = "/tmp/iznik-1000/iznik"
+
+[[steps]]
+id = "give-it-back"
+container = "host0"
+run = "chmod 700 /home/iznik && printf restored"
+timeout_seconds = 20
+
+[[expect]]
+step = "take-the-home-away"
+exit = 0
+stdout_equals = "locked"
+
+[[expect]]
+step = "the-prefix-falls-back"
+exit = 0
+
+[[expect]]
+step = "give-it-back"
+exit = 0
+stdout_equals = "restored"

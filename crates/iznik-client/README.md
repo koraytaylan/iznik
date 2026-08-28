@@ -8,7 +8,7 @@ The client engine the macOS application links: the SSH transport over the system
 |---|---|---|
 | `bootstrap` | The bootstrap: probe, decide, upload, launch, handshake, snapshot, and the upgrade and uninstall paths. | `remote-launch` (plan 0005) |
 | `bootstrap::launch` | Launching or adopting the daemon on a probed host, and the upgrade decision. | `remote-launch` (plan 0005) |
-| `bootstrap::probe` | The one-round-trip probe of a host and its pure parser. | `host-probe` (plan 0005) |
+| `bootstrap::probe` | One script asked of a host and a pure reading of its answer: the machine, an installed server, the terminal's terminfo and `tic`, and the first prefix the host will let iznik write. | `host-probe` (plan 0005) |
 | `bootstrap::terminfo` | The `xterm-ghostty` terminfo source as a constant, with where it came from. | `terminfo-asset` (plan 0005) |
 | `bootstrap::upload` | Uploading the server artifact and the terminfo over the same channel, with digest verification and an atomic rename. | `payload-upload` (plan 0005) |
 | `commands` | Optimistic commands: the unambiguous ones applied locally at once and confirmed or rolled back by the authoritative delta, the rest waiting one round trip. | `optimistic-commands` (plan 0005) |

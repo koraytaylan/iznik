@@ -1,0 +1,32 @@
+name = "fresh-host"
+claims = ["probe-reads-a-fresh-host"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A host as the image leaves it: ncurses is there so `tic` is, nothing has been
+# installed, and the terminal iznik renders with is not one Debian ships.
+[[steps]]
+id = "a-fresh-host-says-what-it-is"
+container = "engine"
+timeout_seconds = 40
+
+[steps.probe]
+alias = "host0"
+
+[steps.probe.expect]
+system = "Linux"
+machine = "x86_64"
+server = false
+terminfo = false
+tic = true
+prefix = "/home/iznik/.local/share/iznik"
+
+[[expect]]
+step = "a-fresh-host-says-what-it-is"
+exit = 0
+stdout_contains = "Linux on x86_64"
