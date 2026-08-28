@@ -355,6 +355,7 @@ dependencies = [
 name = "iznik-client"
 version = "0.1.0"
 dependencies = [
+ "iznik-harness",
  "iznik-link",
  "iznik-protocol",
  "iznik-testkit",

@@ -22,9 +22,6 @@ use crate::transport::ssh::SshError;
 /// The directory iznik puts things in, under whichever prefix a host allows.
 pub const DIRECTORY_NAME: &str = "iznik";
 
-/// The terminal the application renders with, whose terminfo a host needs.
-pub const TERMINAL_NAME: &str = "xterm-ghostty";
-
 /// How long the probe may take when a caller does not say.
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(30);
 

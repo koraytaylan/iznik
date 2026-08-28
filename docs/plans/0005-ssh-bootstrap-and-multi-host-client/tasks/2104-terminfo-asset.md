@@ -11,7 +11,7 @@ touches:
   - "crates/iznik-client/tests/terminfo_asset.rs"
   - "regression/claims/terminfo-asset.toml"
   - "policy/lexicon/terminfo-asset.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Terminfo Asset

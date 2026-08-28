@@ -1,0 +1,25 @@
+# The terminal the application renders with, told to the programs on a host.
+#
+# Every proof here runs the same `tic` and `infocmp` the host image carries —
+# both come from ncurses, and the fixture's Debian and this machine's are the
+# same family — so compiling the asset in a container would compile it with the
+# same compiler and learn nothing more. What is being proven is a property of
+# the file, and the file is in this repository.
+
+[[claim]]
+id = "terminfo-asset-compiles-silently"
+statement = "`tic -x` compiles the committed entry into a fresh directory and says nothing at all, so a host that installs it sees no warning either."
+test = "iznik-client::terminfo_asset::terminfo_asset_compiles_without_a_word"
+because = "`tic` on this machine is the same `tic` the host image carries, and the file it compiles is the same file"
+
+[[claim]]
+id = "terminfo-asset-advertises-what-it-is-for"
+statement = "The compiled entry is `xterm-ghostty` and advertises twenty-four-bit colour and styled underlines — the capabilities `xterm-256color` would have denied, which is the whole reason iznik carries a terminfo at all."
+test = "iznik-client::terminfo_asset::terminfo_asset_advertises_what_it_is_carried_for"
+because = "what is asked is what a compiled entry says, and `infocmp` says the same thing wherever it is asked"
+
+[[claim]]
+id = "terminfo-asset-names-its-terminal"
+statement = "The entry names `xterm-ghostty` on its first line of content, so what is installed is what a pane's `TERM` will say."
+test = "iznik-client::terminfo_asset::terminfo_asset_names_the_terminal_it_is_for"
+because = "it is a property of a string this crate compiles into itself"
