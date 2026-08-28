@@ -8,14 +8,17 @@
 //! says so.
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iznik_protocol::command::Placement;
 use iznik_protocol::delta::{Delta, RemovalReason};
 use iznik_protocol::identity::{PaneId, SessionId, TabId};
 use iznik_protocol::model::{HostModel, LayoutNode, SplitDirection, Weighted};
 use iznik_protocol::reconcile::apply;
-use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
+use iznik_server::history::ring::PaneHistory;
+use iznik_server::history::{
+    DEFAULT_HISTORY_BUDGET_BYTES, DEFAULT_PANE_HISTORY_BYTES, HistoryBudget,
+};
 use iznik_server::pty::spawn::Program;
 use iznik_server::session::registry::{
     DELTA_BROADCAST_CAPACITY, Numbered, Registry, RegistryDefaults,
@@ -42,10 +45,6 @@ const ROWS: u16 = 24;
 
 /// The deadline every case runs under, so a stall is a named failure.
 const DEADLINE: Duration = Duration::from_secs(30);
-
-/// How long the convergence case is allowed to take, which is the bar an
-/// in-process test is held to.
-const CONVERGENCE_BUDGET: Duration = Duration::from_secs(5);
 
 /// How long a case waits for a shell to say something, in short looks.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -81,6 +80,27 @@ fn registry() -> Result<Registry, MirrorError> {
         path: "sh".into(),
         arguments: Vec::new(),
     })
+}
+
+/// A registry whose panes run `sh` and take their history out of a budget the
+/// caller keeps a handle on.
+///
+/// # Errors
+///
+/// When the mirror thread cannot be started.
+fn registry_sharing(budget: Arc<Mutex<HistoryBudget>>) -> Result<Registry, MirrorError> {
+    let mirrors = MirrorThread::start()?;
+    Ok(Registry::new(
+        RegistryDefaults {
+            program: Program::Command {
+                path: "sh".into(),
+                arguments: Vec::new(),
+            },
+            terminfo_directory: None,
+        },
+        budget,
+        mirrors,
+    ))
 }
 
 /// Everything the registry has said that the receiver has not taken.
@@ -386,6 +406,11 @@ async fn session_registry_each_operation_emits_its_deltas_in_order() {
 /// generated sequences, applying every delta to a copy of the last snapshot
 /// arrives at exactly the next one, and every snapshot holds together.
 ///
+/// How long it takes is nextest's to judge — it prints `SLOW` past five
+/// seconds and kills past sixty — rather than a wall-clock assertion inside a
+/// case that shares the machine with the rest of the suite and would fail an
+/// unrelated change on a loaded one.
+///
 /// # Panics
 ///
 /// When a delta is refused, the two models differ, or a snapshot does not hold
@@ -394,7 +419,6 @@ async fn session_registry_each_operation_emits_its_deltas_in_order() {
 async fn session_registry_deltas_rebuild_the_model() {
     let case = async {
         let mut generator = ModelGenerator::new(SEED);
-        let began = Instant::now();
         for round in 0..SEQUENCES {
             let mut registry = registry().expect("a registry");
             let mut deltas = registry.deltas();
@@ -413,11 +437,6 @@ async fn session_registry_deltas_rebuild_the_model() {
                     .unwrap_or_else(|error| panic!("round {round} is broken: {error}"));
             }
         }
-        let took = began.elapsed();
-        assert!(
-            took <= CONVERGENCE_BUDGET,
-            "{SEQUENCES} sequences of {OPERATIONS} operations took {took:?}"
-        );
     };
     tokio::time::timeout(DEADLINE, case)
         .await
@@ -829,4 +848,66 @@ async fn session_registry_what_a_pane_says_becomes_deltas() {
     tokio::time::timeout(DEADLINE, case)
         .await
         .expect("the ingestion case finishes");
+}
+
+/// How many panes the budget in the eviction case holds at once.
+const BUDGETED_PANES: usize = 3;
+
+/// How many panes that case opens and closes in front of the one that stays.
+const SCRATCH_PANES: usize = 10;
+
+/// A pane that is gone gives its share of the history budget back, so a pane
+/// that stays is not shrunk to pay for panes that no longer exist.
+///
+/// Without that, a closed pane's entry keeps its bytes committed and, being
+/// the least recently focused thing left, sits ahead of every live pane in the
+/// order: it is the live pane's scrollback that is taken away.
+///
+/// # Panics
+///
+/// When the pane that stays loses history to panes that are gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_registry_a_closed_pane_gives_its_history_back() {
+    let case = async {
+        let budget = Arc::new(Mutex::new(HistoryBudget::new(
+            DEFAULT_PANE_HISTORY_BYTES.saturating_mul(BUDGETED_PANES),
+        )));
+        let mut registry = registry_sharing(Arc::clone(&budget)).expect("a registry");
+        let session = registry
+            .create_session("work".to_owned(), COLUMNS, ROWS, None)
+            .await
+            .expect("a session");
+        let (_tab, stays) = panes(&registry.snapshot())
+            .first()
+            .copied()
+            .expect("a pane");
+        let held = |shared: &Arc<Mutex<HistoryBudget>>| {
+            shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .history(stays)
+                .map_or(0, PaneHistory::capacity)
+        };
+        let at_first = held(&budget);
+        assert_eq!(
+            at_first, DEFAULT_PANE_HISTORY_BYTES,
+            "the only pane has a whole ring"
+        );
+        for round in 0..SCRATCH_PANES {
+            let tab = registry
+                .create_tab(session, format!("scratch-{round}"), COLUMNS, ROWS, None)
+                .await
+                .expect("a scratch tab");
+            registry.close_tab(tab).expect("it closes again");
+            assert_eq!(
+                held(&budget),
+                at_first,
+                "round {round} took history from the pane that stays"
+            );
+        }
+        registry.close_session(session).expect("a close");
+    };
+    tokio::time::timeout(DEADLINE, case)
+        .await
+        .expect("the budget case finishes");
 }

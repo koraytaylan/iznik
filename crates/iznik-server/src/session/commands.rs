@@ -24,7 +24,9 @@ fn rejected(error: &RegistryError) -> CommandOutcome {
         RegistryError::EmptyName => RejectionCode::EmptyName,
         RegistryError::NotAPermutation { .. } => RejectionCode::InvalidOrder,
         RegistryError::InvalidLayout { .. } => RejectionCode::InvalidLayout,
-        RegistryError::Spawn(_error) => RejectionCode::SpawnFailed,
+        // A pane that was started and then taken away again is, from the
+        // client's side, a pane that was never made.
+        RegistryError::Spawn(..) | RegistryError::Refused { .. } => RejectionCode::SpawnFailed,
     };
     CommandOutcome::Rejected {
         code,

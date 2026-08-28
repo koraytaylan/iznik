@@ -4,20 +4,19 @@
 //! This is the authoritative host model. Every change to it is a numbered
 //! delta emitted by the operation that caused it, and every delta is applied
 //! to the registry's own model **through the protocol's reconciler** before
-//! anyone else sees it. That is what makes convergence something the registry
-//! can be held to rather than something it hopes for: the model a client
-//! rebuilds from the deltas and the model the registry holds are the same
-//! model because they are the same application of the same function.
+//! anyone else sees it — which is what makes convergence something the
+//! registry can be held to rather than something it hopes for: the model a
+//! client rebuilds and the model the registry holds are the same application
+//! of the same function.
 //!
 //! Identity is minted once from counters that never reuse a value, and
 //! position is derived: closing a tab leaves every surviving tab's id alone.
 //!
-//! A pane's marks, size and exit reach the model by [`Registry::ingest`],
-//! which takes what the panes have reported and turns it into deltas. It
+//! A pane's marks, size and exit reach the model by [`Registry::ingest`]. It
 //! pulls rather than subscribes: a registry lives behind a lock, and a task
 //! that took that lock on every mark would need a handle to the lock the
-//! registry cannot hold until the lock exists. Whoever owns the registry calls
-//! it when a pane signals.
+//! registry cannot hold until the lock exists. Whoever owns it calls `ingest`
+//! when a pane signals.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,21 +31,19 @@ use iznik_protocol::model::{HostModel, LayoutNode, ModelError, Session, Tab, Wei
 use iznik_protocol::reconcile::{ReconcileError, apply};
 use tokio::sync::{broadcast, watch};
 
-use crate::history::ring::PaneHistory;
 use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
 use crate::pane::{Pane, PaneError, PaneState};
 use crate::pty::spawn::{ExitStatus, Program, Signal, SpawnOptions};
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
 
-/// How many deltas a client may fall behind before it must be told the whole
-/// model instead. A receiver that lags and sees `Lagged` sends its client a
-/// fresh `Snapshot`, which is what the client's reconciler would have asked
-/// for anyway, so this is a memory bound and not a correctness one.
+/// How many deltas a client may fall behind before it is told the whole model
+/// instead. A receiver that lags sends its client a fresh `Snapshot`, which is
+/// what its reconciler would have asked for: a memory bound, not a correctness
+/// one.
 pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
 
-/// The weight each side of a new split gets: equal, because the server does
-/// not know how large a cell is and the client that does can say otherwise.
+/// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;
 
 /// A value and the generation of the model it produced.
@@ -61,11 +58,11 @@ pub struct Numbered<Value> {
 /// What every pane a registry spawns has in common.
 #[derive(Clone, Debug)]
 pub struct RegistryDefaults {
-    /// What to run in a pane. The daemon passes [`Program::LoginShell`],
-    /// which is the product rule; a test passes `sh`, which is how a thousand
-    /// operations finish in seconds instead of drawing a thousand prompts.
+    /// What to run in a pane. The daemon passes [`Program::LoginShell`], the
+    /// product rule; a test passes `sh`, which is how a thousand operations
+    /// finish in seconds rather than drawing a thousand prompts.
     pub program: Program,
-    /// The terminfo a ghostty `TERM` needs, when the bootstrap installed it.
+    /// The terminfo a ghostty `TERM` needs, when there is one.
     pub terminfo_directory: Option<PathBuf>,
 }
 
@@ -103,6 +100,12 @@ pub enum RegistryError {
     },
     /// A pseudoterminal or its child could not be started.
     Spawn(PaneError),
+    /// A change the registry's own reconciler refused — a bug above. What was
+    /// started is taken away again, so nothing was made.
+    Refused {
+        /// What was being done.
+        detail: String,
+    },
 }
 
 impl core::fmt::Display for RegistryError {
@@ -127,6 +130,9 @@ impl core::fmt::Display for RegistryError {
                 write!(formatter, "the layout for tab {}: {error}", tab.0)
             }
             RegistryError::Spawn(error) => write!(formatter, "{error}"),
+            RegistryError::Refused { detail } => {
+                write!(formatter, "the registry could not {detail}")
+            }
         }
     }
 }
@@ -150,6 +156,8 @@ struct Watching {
     size: (u16, u16),
     /// Whether its exit has already become deltas.
     ended: bool,
+    /// How many times its end has been seen with no status to report it by.
+    unexplained: usize,
 }
 
 /// The authoritative host model, the panes behind it, and the deltas every
@@ -232,13 +240,10 @@ impl Registry {
     }
 
     /// Emits one delta: applies it to the registry's own model through the
-    /// protocol's reconciler, and only then broadcasts it.
-    ///
-    /// A delta the reconciler refuses is a bug in an operation above, and it
-    /// is neither applied nor sent, so the model and what a client rebuilds
-    /// from the deltas cannot come apart. It is logged, because a change a
-    /// person asked for silently not happening is the thing worth seeing.
-    fn emit(&mut self, delta: Delta) {
+    /// reconciler, and only then broadcasts it. A delta the reconciler refuses
+    /// is a bug above; it is neither applied nor sent, so the model and what a
+    /// client rebuilds cannot come apart, and it is logged.
+    fn emit(&mut self, delta: Delta) -> bool {
         let generation = Generation(self.model.generation.0.saturating_add(1));
         match apply(&mut self.model, generation, &delta) {
             Ok(()) => {
@@ -246,20 +251,17 @@ impl Registry {
                     generation,
                     value: delta,
                 });
+                true
             }
-            Err(error) => Registry::report(&error, &delta),
+            Err(error) => {
+                tracing::error!(%error, ?delta, "the registry built a delta the reconciler refused");
+                false
+            }
         }
     }
 
-    /// Says that a delta the registry built was refused by the reconciler.
-    fn report(error: &ReconcileError, delta: &Delta) {
-        tracing::error!(%error, ?delta, "the registry built a delta the reconciler refused");
-    }
-
-    /// Confirms the model still holds together, which it must after every
-    /// operation. It is a check and not an assertion: a model glitch degrades
-    /// a client, and killing the server over it would cost everyone their
-    /// terminals. The tests are what fail on it.
+    /// Confirms the model holds together after an operation. A check, not an
+    /// assertion: dying of a glitch would cost everyone their terminals.
     fn settled(&self) {
         if cfg!(debug_assertions)
             && let Err(error) = self.model.validate()
@@ -282,19 +284,24 @@ impl Registry {
         id
     }
 
-    /// Spawns a pane, gives it the history the budget allows, and starts
-    /// watching what it has to report.
+    /// Spawns a pane, charges it to the budget, and starts watching it.
     ///
     /// # Errors
     ///
     /// [`RegistryError::Spawn`] when the pseudoterminal or its child cannot be
-    /// started; nothing is minted and nothing is watched.
+    /// started; nothing is minted, charged or watched.
     async fn spawn_pane(
         &mut self,
         columns: u16,
         rows: u16,
         working_directory: Option<PathBuf>,
     ) -> Result<(PaneId, model::Pane), RegistryError> {
+        // What it was asked to start in is what the model shows until the
+        // shell says otherwise: a pane whose directory a client asked for
+        // should not read as having none until the next prompt.
+        let asked_for = working_directory
+            .as_ref()
+            .map(|path| path.display().to_string());
         let options = SpawnOptions {
             program: self.defaults.program.clone(),
             columns,
@@ -303,11 +310,12 @@ impl Registry {
             terminfo_directory: self.defaults.terminfo_directory.clone(),
         };
         let id = PaneId(self.next_pane);
-        let capacity = self.admit(id);
-        let pane = Pane::spawn(&options, capacity, &self.mirrors).await?;
-        // Minted only once the pane exists, so a failed spawn does not consume
-        // an id and leave a hole a person could notice.
+        let pane = Pane::spawn(&options, DEFAULT_PANE_HISTORY_BYTES, &self.mirrors).await?;
+        // Minted, and charged to the budget, only once the pane exists: a
+        // failed spawn consumes no id and leaves no phantom holding bytes that
+        // every other pane would then be short of.
         self.next_pane = self.next_pane.saturating_add(1);
+        self.admit(id);
         self.watching.insert(
             id,
             Watching {
@@ -315,6 +323,7 @@ impl Registry {
                 state: pane.state_updates(),
                 size: (columns, rows),
                 ended: false,
+                unexplained: 0,
             },
         );
         self.panes.insert(id, Arc::new(pane));
@@ -324,24 +333,20 @@ impl Registry {
             model::Pane {
                 id,
                 title: String::new(),
-                working_directory: None,
+                working_directory: asked_for,
                 columns,
                 rows,
             },
         ))
     }
 
-    /// Takes a pane's history out of the budget and says how much it may hold.
-    fn admit(&self, pane: PaneId) -> usize {
+    /// Charges a pane's history to the budget.
+    fn admit(&self, pane: PaneId) {
         let mut budget = self.budget.lock().unwrap_or_else(PoisonError::into_inner);
         budget.insert(pane, DEFAULT_PANE_HISTORY_BYTES);
-        budget
-            .history(pane)
-            .map_or(DEFAULT_PANE_HISTORY_BYTES, PaneHistory::capacity)
     }
 
-    /// Tells every pane how much history the budget now allows it, which is
-    /// how a new pane takes memory back from the least recently focused one.
+    /// Tells every pane what the budget now allows it.
     fn apply_budget(&self) {
         let budget = self.budget.lock().unwrap_or_else(PoisonError::into_inner);
         for (id, pane) in &self.panes {
@@ -351,6 +356,12 @@ impl Registry {
         }
     }
 
+    /// Emits a delta nobody awaits an answer to: the cascades and the
+    /// ingestion. The creates use [`Registry::emit`] and refuse on a refusal.
+    fn announce(&mut self, delta: Delta) {
+        let _said = self.emit(delta);
+    }
+
     /// Says a pane was looked at, so the panes that were not shrink first.
     pub fn touch(&self, pane: PaneId) {
         let mut budget = self.budget.lock().unwrap_or_else(PoisonError::into_inner);
@@ -358,13 +369,12 @@ impl Registry {
     }
 }
 
-/// What a session's first tab is called, since nothing named it.
+/// What a session's first tab is called, nothing having named it.
 const FIRST_TAB_NAME: &str = "shell";
 
-/// The layout with the target's leaf replaced by a split of the target and the
-/// new pane, weights equal, in the direction given, the new pane before or
-/// after it — normalized, which is what flattens the split into a parent that
-/// already divides that way.
+/// The target's leaf replaced by a split of it and the new pane, weights
+/// equal, in the direction given — normalized, which flattens it into a parent
+/// that already divides that way.
 fn split_at(layout: LayoutNode, placement: Placement, added: PaneId) -> LayoutNode {
     let target = Weighted {
         node: LayoutNode::Leaf(placement.target),
@@ -463,7 +473,12 @@ impl Registry {
             tabs: vec![tab],
         };
         let id = session.id;
-        self.emit(Delta::SessionAdded { session });
+        if !self.emit(Delta::SessionAdded { session }) {
+            self.retire(pane_id);
+            return Err(RegistryError::Refused {
+                detail: "make a session".to_owned(),
+            });
+        }
         self.settled();
         Ok(id)
     }
@@ -502,11 +517,16 @@ impl Registry {
             layout: LayoutNode::Leaf(pane_id),
         };
         let id = tab.id;
-        self.emit(Delta::TabAdded {
+        if !self.emit(Delta::TabAdded {
             session,
             tab,
             index,
-        });
+        }) {
+            self.retire(pane_id);
+            return Err(RegistryError::Refused {
+                detail: "make a tab".to_owned(),
+            });
+        }
         self.settled();
         Ok(id)
     }
@@ -515,10 +535,9 @@ impl Registry {
     ///
     /// # Errors
     ///
-    /// [`RegistryError::UnknownTab`], [`RegistryError::UnknownPane`] when the
-    /// tab does not hold the pane the placement names,
-    /// [`RegistryError::InvalidLayout`] when the arrangement would nest past
-    /// what a model holds, and [`RegistryError::Spawn`].
+    /// [`RegistryError::UnknownTab`]; [`RegistryError::UnknownPane`] for a
+    /// placement the tab does not hold; [`RegistryError::InvalidLayout`] for an
+    /// arrangement nested too deep; [`RegistryError::Spawn`].
     pub async fn create_pane(
         &mut self,
         tab: TabId,
@@ -547,8 +566,13 @@ impl Registry {
         }
         let (_id, pane) = self.spawn_pane(columns, rows, working_directory).await?;
         let id = pane.id;
-        self.emit(Delta::PaneAdded { tab, pane });
-        self.emit(Delta::LayoutChanged {
+        if !self.emit(Delta::PaneAdded { tab, pane }) {
+            self.retire(id);
+            return Err(RegistryError::Refused {
+                detail: "make a pane".to_owned(),
+            });
+        }
+        self.announce(Delta::LayoutChanged {
             tab,
             layout: arranged,
         });
@@ -564,6 +588,10 @@ impl Registry {
     /// # Errors
     ///
     /// [`RegistryError::UnknownPane`].
+    ///
+    /// # Panics
+    ///
+    /// Within a Tokio runtime only: ending a pane escalates on a task.
     pub fn close_pane(&mut self, pane: PaneId) -> Result<(), RegistryError> {
         if !self.panes.contains_key(&pane) {
             return Err(RegistryError::UnknownPane { pane });
@@ -574,26 +602,37 @@ impl Registry {
     }
 
     /// Takes a pane out of the model and emits the cascade its going causes:
-    /// the pane, then either the layout that no longer places it or the tab it
-    /// emptied, and the session behind that.
+    /// the pane, then the layout that no longer places it, or the tab it
+    /// emptied and the session behind that.
     fn remove_pane(&mut self, pane: PaneId, reason: RemovalReason) {
         let Some(tab) = self.tab_of_pane(pane) else {
+            // The model has lost it but the child has not gone: end it anyway,
+            // rather than answer for a process nobody can reach.
+            self.retire(pane);
             return;
         };
         let layout = self.tab(tab).map(|held| held.layout.clone());
-        self.emit(Delta::PaneRemoved { pane, reason });
+        self.announce(Delta::PaneRemoved { pane, reason });
         self.retire(pane);
         match layout.and_then(|held| held.remove_leaf(pane)) {
-            Some(arranged) => self.emit(Delta::LayoutChanged {
-                tab,
-                layout: arranged,
-            }),
+            Some(arranged) => {
+                self.announce(Delta::LayoutChanged {
+                    tab,
+                    layout: arranged,
+                });
+            }
             None => self.remove_tab(tab),
         }
     }
 
     /// Ends a pane's child and forgets it, without saying anything: the delta
     /// that removed it has already gone, or the tab's has.
+    ///
+    /// # Panics
+    ///
+    /// [`Pane::close`] escalates to `SIGKILL` on a task, so this must be
+    /// called from within a Tokio runtime; every operation that can remove a
+    /// pane inherits that.
     fn retire(&mut self, pane: PaneId) {
         if let Some(held) = self.panes.remove(&pane)
             && let Err(error) = held.close()
@@ -601,6 +640,11 @@ impl Registry {
             tracing::warn!(%error, pane = pane.0, "a pane did not close cleanly");
         }
         let _watched = self.watching.remove(&pane);
+        self.budget
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(pane);
+        self.apply_budget();
     }
 
     /// Takes a tab out of the model with every pane in it, and the session
@@ -611,7 +655,7 @@ impl Registry {
             .tab(tab)
             .map(|held| held.panes.iter().map(|pane| pane.id).collect())
             .unwrap_or_default();
-        self.emit(Delta::TabRemoved { tab });
+        self.announce(Delta::TabRemoved { tab });
         for pane in panes {
             self.retire(pane);
         }
@@ -623,7 +667,7 @@ impl Registry {
                 .find(|held| held.id == session)
                 .is_some_and(|held| held.tabs.is_empty())
         {
-            self.emit(Delta::SessionRemoved { session });
+            self.announce(Delta::SessionRemoved { session });
         }
     }
 
@@ -632,6 +676,10 @@ impl Registry {
     /// # Errors
     ///
     /// [`RegistryError::UnknownTab`].
+    ///
+    /// # Panics
+    ///
+    /// Within a Tokio runtime only: ending a pane escalates on a task.
     pub fn close_tab(&mut self, tab: TabId) -> Result<(), RegistryError> {
         if self.tab(tab).is_none() {
             return Err(RegistryError::UnknownTab { tab });
@@ -646,6 +694,10 @@ impl Registry {
     /// # Errors
     ///
     /// [`RegistryError::UnknownSession`].
+    ///
+    /// # Panics
+    ///
+    /// Within a Tokio runtime only: ending a pane escalates on a task.
     pub fn close_session(&mut self, session: SessionId) -> Result<(), RegistryError> {
         let Some(held) = self.model.sessions.iter().find(|found| found.id == session) else {
             return Err(RegistryError::UnknownSession { session });
@@ -655,7 +707,7 @@ impl Registry {
             .iter()
             .flat_map(|tab| tab.panes.iter().map(|pane| pane.id))
             .collect();
-        self.emit(Delta::SessionRemoved { session });
+        self.announce(Delta::SessionRemoved { session });
         for pane in panes {
             self.retire(pane);
         }
@@ -679,7 +731,7 @@ impl Registry {
         if !self.model.sessions.iter().any(|held| held.id == session) {
             return Err(RegistryError::UnknownSession { session });
         }
-        self.emit(Delta::SessionRenamed { session, name });
+        self.announce(Delta::SessionRenamed { session, name });
         self.settled();
         Ok(())
     }
@@ -696,13 +748,12 @@ impl Registry {
         if self.tab(tab).is_none() {
             return Err(RegistryError::UnknownTab { tab });
         }
-        self.emit(Delta::TabRenamed { tab, name });
+        self.announce(Delta::TabRenamed { tab, name });
         self.settled();
         Ok(())
     }
 
-    /// Puts a session's tabs in another order, which must name each of them
-    /// once.
+    /// Puts a session's tabs in another order, naming each of them once.
     ///
     /// # Errors
     ///
@@ -725,8 +776,8 @@ impl Registry {
         Ok(())
     }
 
-    /// Arranges a tab another way. The layout is normalized as it is applied,
-    /// and must place exactly the tab's panes, each once.
+    /// Arranges a tab another way, normalized as it is applied, placing
+    /// exactly the tab's panes, each once.
     ///
     /// # Errors
     ///
@@ -792,15 +843,17 @@ impl Registry {
             .tab(source)
             .map(|held| held.layout.clone())
             .and_then(|held| held.remove_leaf(pane));
-        self.emit(Delta::PaneMoved { pane, to_tab });
+        self.announce(Delta::PaneMoved { pane, to_tab });
         match vacated {
-            Some(layout) => self.emit(Delta::LayoutChanged {
-                tab: source,
-                layout,
-            }),
+            Some(layout) => {
+                self.announce(Delta::LayoutChanged {
+                    tab: source,
+                    layout,
+                });
+            }
             None => self.remove_tab(source),
         }
-        self.emit(Delta::LayoutChanged {
+        self.announce(Delta::LayoutChanged {
             tab: to_tab,
             layout: arranged,
         });
@@ -808,6 +861,10 @@ impl Registry {
         Ok(())
     }
 }
+
+/// How many looks for a pane's exit status before it is reported as simply
+/// gone. The reaper records it a moment after the stream closes.
+const EXIT_STATUS_ATTEMPTS: usize = 100;
 
 /// `SIGHUP`'s number, which is what a client is told when a pane's child was
 /// hung up rather than exiting on its own.
@@ -826,6 +883,12 @@ impl Registry {
     ///
     /// It takes what is there and does not wait, so whoever owns the registry
     /// calls it when a pane signals.
+    ///
+    /// # Panics
+    ///
+    /// A pane whose child has ended is taken out of the model, and ending a
+    /// pane escalates to `SIGKILL` on a task, so this must be called from
+    /// within a Tokio runtime.
     pub fn ingest(&mut self) {
         let panes: Vec<PaneId> = self.watching.keys().copied().collect();
         for pane in panes {
@@ -835,9 +898,8 @@ impl Registry {
         self.settled();
     }
 
-    /// The deltas a pane's marks have become. A mark the model does not hold —
-    /// a prompt, a command's start or end, an alternate-screen switch — is a
-    /// client's business and not the model's; the multiplexer forwards it.
+    /// The deltas a pane's marks have become. A mark the model does not hold
+    /// is a client's business, and the multiplexer forwards it.
     fn ingest_marks(&mut self, pane: PaneId) {
         let mut deltas = Vec::new();
         if let Some(watching) = self.watching.get_mut(&pane) {
@@ -864,7 +926,7 @@ impl Registry {
             }
         }
         for delta in deltas {
-            self.emit(delta);
+            self.announce(delta);
         }
     }
 
@@ -883,7 +945,7 @@ impl Registry {
         watching.size = (state.columns, state.rows);
         let ending = state.exited && !watching.ended;
         if resized {
-            self.emit(Delta::PaneResized {
+            self.announce(Delta::PaneResized {
                 pane,
                 columns: state.columns,
                 rows: state.rows,
@@ -895,22 +957,39 @@ impl Registry {
         // The reaper records the status a moment after the stream closes. The
         // pane's going is not reported until it can be reported truthfully:
         // there is no code that stands in for a signal.
-        let Some(status) = self
+        let status = self
             .panes
             .get(&pane)
-            .and_then(|held| held.exit_status_now())
-        else {
-            return;
+            .and_then(|held| held.exit_status_now());
+        let reason = if let Some(status) = status {
+            RemovalReason::Exited(ended_as(status))
+        } else {
+            let looks = self.watching.get_mut(&pane).map_or(usize::MAX, |recorded| {
+                recorded.unexplained = recorded.unexplained.saturating_add(1);
+                recorded.unexplained
+            });
+            if looks < EXIT_STATUS_ATTEMPTS {
+                return;
+            }
+            // A reaper that cannot say how a child ended — one already reaped
+            // by something else — would otherwise leave a dead pane in every
+            // client's model for ever, with nothing able to reach the removal
+            // path. It is gone and nobody can say how, and `Closed` is the
+            // nearest true thing there is to say.
+            tracing::warn!(
+                pane = pane.0,
+                "a pane ended and its status was never recorded"
+            );
+            RemovalReason::Closed
         };
         if let Some(recorded) = self.watching.get_mut(&pane) {
             recorded.ended = true;
         }
-        self.remove_pane(pane, RemovalReason::Exited(ended_as(status)));
+        self.remove_pane(pane, reason);
     }
 }
 
-/// How a child's end is told to a client: a code it chose, or the number of
-/// the signal that ended it.
+/// How a child's end is told: a code it chose, or the signal's number.
 fn ended_as(status: ExitStatus) -> EndedAs {
     match status {
         ExitStatus::Exited(code) => EndedAs::Exited(code),

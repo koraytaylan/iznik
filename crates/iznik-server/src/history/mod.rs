@@ -78,6 +78,15 @@ impl HistoryBudget {
         }
     }
 
+    /// Forgets a pane, giving its share back. Without this a closed pane's
+    /// entry keeps its bytes committed for ever and, being the least recently
+    /// focused thing left, sits ahead of every live pane in the order — so it
+    /// is a live pane's ring that is shrunk to pay for a dead one's.
+    pub fn remove(&mut self, pane: PaneId) {
+        self.entries.retain(|entry| entry.id != pane);
+        self.order.retain(|held| *held != pane);
+    }
+
     /// A pane's ring, if it has one.
     #[must_use]
     pub fn history(&self, pane: PaneId) -> Option<&PaneHistory> {

@@ -50,3 +50,9 @@ id = "registry-what-a-pane-says-becomes-deltas"
 statement = "A title and a working directory a real shell with the integration asset reports, and a size a resize sets, become PaneTitle, PaneWorkingDirectory and PaneResized deltas and reach the model."
 test = "iznik-server::session_registry::session_registry_what_a_pane_says_becomes_deltas"
 because = "the shell is a real bash on a real pseudoterminal on this machine; a container adds nothing to what it reports"
+
+[[claim]]
+id = "registry-a-closed-pane-gives-its-history-back"
+statement = "A pane that is gone gives its share of the shared history budget back, so a pane that stays is not shrunk to pay for panes that no longer exist."
+test = "iznik-server::session_registry::session_registry_a_closed_pane_gives_its_history_back"
+because = "the budget is bookkeeping over numbers in memory; a container adds nothing"
