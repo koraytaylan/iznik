@@ -16,7 +16,7 @@ touches:
   - "crates/iznik-testkit/tests/generate.rs"
   - "regression/claims/deltas-and-reconciler.toml"
   - "policy/lexicon/deltas-and-reconciler.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Deltas and Reconciler
