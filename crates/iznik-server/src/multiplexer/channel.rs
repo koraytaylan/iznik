@@ -129,12 +129,21 @@ impl ChannelTable {
     }
 
     /// Hands the pane the lowest channel that is neither assigned nor waiting
-    /// to be released.
+    /// to be released, or the one it already has.
+    ///
+    /// A pane can be asked for twice — a repaint and a resume are both a
+    /// subscription — and handing out a second channel for it would leave the
+    /// table disagreeing with itself and the first channel unreachable for the
+    /// life of the connection, since nothing but the pane's own entry can
+    /// release it.
     ///
     /// # Errors
     ///
     /// [`MultiplexerError::ChannelsExhausted`] when none of the 255 is free.
     pub fn assign(&mut self, pane: PaneId) -> Result<u8, MultiplexerError> {
+        if let Some(held) = self.channel_of(pane) {
+            return Ok(held);
+        }
         let channel = (FIRST_PANE_CHANNEL..=u8::MAX)
             .find(|candidate| {
                 !self.panes.contains_key(candidate) && !self.released_pending.contains(candidate)
@@ -150,7 +159,12 @@ impl ChannelTable {
     /// there is nothing in flight to hold back.
     pub fn release(&mut self, channel: u8) {
         if let Some(pane) = self.panes.remove(&channel) {
-            let _released = self.channels.remove(&pane);
+            // Only the pane's own entry, so that a table which somehow held
+            // two channels for one pane does not lose the other's reverse
+            // mapping and leak it.
+            if self.channels.get(&pane) == Some(&channel) {
+                let _released = self.channels.remove(&pane);
+            }
             let _added = self.released_pending.insert(channel);
         }
     }

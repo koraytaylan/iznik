@@ -17,7 +17,7 @@ because = "the channel table is a pure table; a container adds nothing"
 
 [[claim]]
 id = "credit-cannot-be-overdrawn-or-overflowed"
-statement = "A credit window never gives out more than it holds, saturates rather than wraps on refill, starts at the background size or the focused one, and never takes back credit a client has already granted."
+statement = "A credit window never gives out more than it holds, never grows past what the client said it can hold however much credit it is offered, and starts at the background size or the focused one."
 test = "iznik-server::channel_multiplexer::channel_multiplexer_credit_cannot_be_overdrawn_or_overflowed"
 because = "a credit window is arithmetic on one number; a container adds nothing"
 
@@ -38,3 +38,15 @@ id = "a-link-failure-is-a-multiplexer-refusal"
 statement = "A sink failure converts to a multiplexer refusal that carries what the link said, and every refusal names the pane or channel it is about."
 test = "iznik-server::channel_multiplexer::channel_multiplexer_a_link_failure_is_a_refusal"
 because = "the conversion is between values; a container adds nothing"
+
+[[claim]]
+id = "a-pane-asked-for-twice-keeps-its-channel"
+statement = "A pane asked for a second time keeps the channel it has, so the table cannot come to disagree with itself and strand a channel for the life of the connection."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_a_pane_asked_for_twice_keeps_its_channel"
+because = "the channel table is a pure table; a container adds nothing"
+
+[[claim]]
+id = "focus-does-not-outrun-the-client"
+statement = "Moving focus adds the difference between the two window sizes rather than setting the remainder to the larger one, so what is already on its way to the client still counts against what it can hold — at either ceiling."
+test = "iznik-server::channel_multiplexer::channel_multiplexer_focus_moves_the_window_without_outrunning_the_client"
+because = "a credit window is arithmetic on two numbers; a container adds nothing"

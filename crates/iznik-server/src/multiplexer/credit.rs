@@ -32,11 +32,24 @@ pub const FRAME_PAYLOAD_LENGTH: u32 = 64 * 1024;
 /// cannot be marked stale while its own window would still have carried it.
 pub const STALE_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
 
+/// How much more the focused window holds than a background one, which is
+/// what focus moving adds to a window and focus leaving takes away.
+const FOCUS_INCREMENT: u32 = FOCUSED_CREDIT_BYTES.saturating_sub(INITIAL_CREDIT_BYTES);
+
 /// How many bytes may still be sent on one channel.
+///
+/// `available` is what is left of the client's grant — what it has said it can
+/// hold, less what has gone out — and `ceiling` is how much it can hold at
+/// all. Keeping both is what makes focus safe: moving the larger window to a
+/// pane adds the difference between the two sizes rather than setting the
+/// remainder to the larger one, so the bytes already in flight to the client
+/// still count against what it can hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CreditWindow {
-    /// The bytes the client has said it has room for and has not been sent.
+    /// The bytes the client has room for that have not been sent.
     available: u32,
+    /// The most the client can hold for this pane at once.
+    ceiling: u32,
 }
 
 impl CreditWindow {
@@ -45,6 +58,7 @@ impl CreditWindow {
     pub fn background() -> CreditWindow {
         CreditWindow {
             available: INITIAL_CREDIT_BYTES,
+            ceiling: INITIAL_CREDIT_BYTES,
         }
     }
 
@@ -53,6 +67,7 @@ impl CreditWindow {
     pub fn focused() -> CreditWindow {
         CreditWindow {
             available: FOCUSED_CREDIT_BYTES,
+            ceiling: FOCUSED_CREDIT_BYTES,
         }
     }
 
@@ -60,6 +75,12 @@ impl CreditWindow {
     #[must_use]
     pub fn available(self) -> u32 {
         self.available
+    }
+
+    /// The most the client can hold for this pane at once.
+    #[must_use]
+    pub fn ceiling(self) -> u32 {
+        self.ceiling
     }
 
     /// Takes bytes from the window and says how many it took, which is never
@@ -71,24 +92,34 @@ impl CreditWindow {
         taken
     }
 
-    /// Gives bytes back, saturating rather than overflowing: a client that
-    /// refills more than it ever consumed is confused, not an arithmetic
-    /// fault, and the window is a ceiling either way.
+    /// Gives bytes back as the client consumes them, never past the ceiling:
+    /// a client that returns more credit than it was ever sent is confused,
+    /// and letting the window grow on its word would let one pane fill its
+    /// memory.
     pub fn refill(&mut self, bytes: u32) {
-        self.available = self.available.saturating_add(bytes);
+        self.available = self.available.saturating_add(bytes).min(self.ceiling);
     }
 
-    /// Widens the window to the focused size, which is what focus moving here
-    /// means. It never narrows: credit a client has already granted is the
-    /// client's promise, and this only tops it up to the size the contract
-    /// says a focused pane may use.
+    /// Moves the larger window here, which is what focus arriving means. It
+    /// adds the difference between the two sizes rather than setting the
+    /// remainder to the larger one, so bytes already in flight still count
+    /// against what the client can hold — and it never takes credit back.
     pub fn widen(&mut self) {
-        self.available = self.available.max(FOCUSED_CREDIT_BYTES);
+        self.ceiling = FOCUSED_CREDIT_BYTES;
+        self.available = self
+            .available
+            .saturating_add(FOCUS_INCREMENT)
+            .min(self.ceiling);
     }
 
-    /// Narrows the window to the background size, which is what focus leaving
-    /// means. Sending less than a client offered is always safe.
+    /// Takes the larger window away again, which is what focus leaving means.
+    /// It subtracts the same difference, so what is outstanding at the client
+    /// plus what may still be sent stays inside the background ceiling.
     pub fn narrow(&mut self) {
-        self.available = self.available.min(INITIAL_CREDIT_BYTES);
+        self.ceiling = INITIAL_CREDIT_BYTES;
+        self.available = self
+            .available
+            .saturating_sub(FOCUS_INCREMENT)
+            .min(self.ceiling);
     }
 }

@@ -1,6 +1,7 @@
 acknowledge
 acknowledged
 acknowledgement
+asked
 assign
 assigned
 awaiting
@@ -9,15 +10,15 @@ constants
 consume
 far
 flowed
-granted
 handed
 how
+increment
 knows
 lag
-moving
+outrunning
+outstanding
 overdrawn
 overflowed
-promised
 refill
 relation
 stale

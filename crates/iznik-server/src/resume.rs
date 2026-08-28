@@ -72,9 +72,14 @@ pub enum StartPlan {
 /// [`StartRequest::ScreenRequest`] is the truth at `newest`, and the cursor
 /// moves there, so no byte is delivered twice.
 ///
-/// A plan never names a sequence the ring does not hold: `Continue { from }`
-/// always satisfies `oldest <= from <= newest`, and `Screen { at }` always has
-/// `at == newest`.
+/// A plan never names a sequence outside the ring it was given:
+/// `Continue { from }` always satisfies `oldest <= from <= newest`, and
+/// `Screen { at }` always has `at == newest`. That is a statement about the
+/// two numbers, and it is only a statement about the pane while the caller
+/// holds it: a pane producing at line rate trims its ring, so a caller that
+/// plans, lets the pane go, and only then reads will find `from` aged out and
+/// the mirror past `at`. The multiplexer plans and starts the subscription
+/// under one hold for that reason.
 #[must_use]
 pub fn plan_start(request: &StartRequest, oldest: Sequence, newest: Sequence) -> StartPlan {
     match request {

@@ -109,13 +109,14 @@ fn channel_multiplexer_holds_a_released_channel_until_it_is_acknowledged() {
     );
 }
 
-/// Credit cannot be overdrawn or overflowed, and focus is the difference
-/// between the two window sizes.
+/// Credit cannot be overdrawn, overflowed, or inflated past what the client
+/// said it can hold — and moving focus keeps the bytes already in flight
+/// counting against that.
 ///
 /// # Panics
 ///
-/// When a window gives out more than it has, wraps, or starts at the wrong
-/// size.
+/// When a window gives out more than it has, wraps, grows past its ceiling, or
+/// lets focus put more in flight than the client can hold.
 #[test]
 fn channel_multiplexer_credit_cannot_be_overdrawn_or_overflowed() {
     assert_eq!(
@@ -133,12 +134,12 @@ fn channel_multiplexer_credit_cannot_be_overdrawn_or_overflowed() {
     assert_eq!(window.consume(1024), 1024, "it gives what it has");
     assert_eq!(
         window.available(),
-        INITIAL_CREDIT_BYTES - 1024,
+        INITIAL_CREDIT_BYTES.saturating_sub(1024),
         "and keeps the rest"
     );
     assert_eq!(
         window.consume(u32::MAX),
-        INITIAL_CREDIT_BYTES - 1024,
+        INITIAL_CREDIT_BYTES.saturating_sub(1024),
         "it never gives more than it has"
     );
     assert_eq!(window.available(), 0, "and is then empty");
@@ -148,31 +149,83 @@ fn channel_multiplexer_credit_cannot_be_overdrawn_or_overflowed() {
     window.refill(u32::MAX);
     assert_eq!(
         window.available(),
-        u32::MAX,
-        "refill saturates, never wraps"
+        INITIAL_CREDIT_BYTES,
+        "a client that returns more credit than it was sent does not widen the window"
+    );
+}
+
+/// Moving focus moves the larger window without letting the client hold more
+/// than it said it can, counting what is already on its way to it.
+///
+/// # Panics
+///
+/// When focus puts more in flight than the ceiling it moves to.
+#[test]
+fn channel_multiplexer_focus_moves_the_window_without_outrunning_the_client() {
+    // A drawn-down background window has a whole background window
+    // outstanding at the client.
+    let mut drawn = CreditWindow::background();
+    let outstanding = drawn.consume(INITIAL_CREDIT_BYTES);
+    assert_eq!(
+        outstanding, INITIAL_CREDIT_BYTES,
+        "the whole window went out"
+    );
+    drawn.widen();
+    assert_eq!(drawn.ceiling(), FOCUSED_CREDIT_BYTES, "the focused ceiling");
+    assert_eq!(
+        outstanding.saturating_add(drawn.available()),
+        FOCUSED_CREDIT_BYTES,
+        "focus put more in flight than a focused client can hold"
+    );
+    drawn.narrow();
+    assert_eq!(
+        drawn.ceiling(),
+        INITIAL_CREDIT_BYTES,
+        "the background ceiling"
+    );
+    assert_eq!(
+        outstanding.saturating_add(drawn.available()),
+        INITIAL_CREDIT_BYTES,
+        "focus leaving left more in flight than a background client can hold"
     );
 
-    let mut moving = CreditWindow::background();
-    moving.widen();
+    let mut fresh = CreditWindow::background();
+    fresh.widen();
     assert_eq!(
-        moving.available(),
+        fresh.available(),
         FOCUSED_CREDIT_BYTES,
         "focus moves the larger window here"
     );
-    moving.narrow();
+    fresh.narrow();
     assert_eq!(
-        moving.available(),
+        fresh.available(),
         INITIAL_CREDIT_BYTES,
         "and takes it away again"
     );
-    let mut granted = CreditWindow::background();
-    granted.refill(FOCUSED_CREDIT_BYTES);
-    let promised = granted.available();
-    granted.widen();
+}
+
+/// A pane asked for twice keeps the channel it has: a repaint and a resume are
+/// both subscriptions, and a second channel would leave the table disagreeing
+/// with itself and the first channel unreachable.
+///
+/// # Panics
+///
+/// When a second request hands out a second channel.
+#[test]
+fn channel_multiplexer_a_pane_asked_for_twice_keeps_its_channel() {
+    let mut table = ChannelTable::new();
+    let first = table.assign(PaneId(1)).expect("a channel");
+    let again = table.assign(PaneId(1)).expect("the same channel");
+    assert_eq!(again, first, "a pane was given a second channel");
+    assert_eq!(table.assigned(), 1, "and the table counted it twice");
+    assert_eq!(table.channel_of(PaneId(1)), Some(first), "one way");
+    assert_eq!(table.pane_of(first), Some(PaneId(1)), "and the other");
+    table.release(first);
+    table.acknowledge(first).expect("the client acknowledges");
     assert_eq!(
-        granted.available(),
-        promised,
-        "widening never takes back credit a client granted"
+        table.assign(PaneId(2)).expect("a channel"),
+        first,
+        "the channel came back, so nothing leaked"
     );
 }
 
