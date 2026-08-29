@@ -1,24 +1,93 @@
 //! `iznik probe <host>`: the bootstrap's probe of a host, printed.
 //!
-//! Filled by task `plumbing-commands` of plan 0006; until then this module holds only its documentation and the stub of its entry point.
+//! What the bootstrap asks a host before it decides anything — what the
+//! machine is, what is already installed on it, where iznik may put things —
+//! answered as one object so that a script can read it and a person can see
+//! why a bootstrap decided what it did.
 
 use std::ffi::OsString;
-use std::io::Write;
 use std::process::ExitCode;
 
-/// The subcommand's entry point: a stub until task `plumbing-commands` replaces its body.
+use iznik_client::bootstrap::launch::BootstrapOptions;
+use iznik_client::bootstrap::probe::{Architecture, HostProbe, OperatingSystem, probe};
+use iznik_client::transport::ssh::SshOptions;
+use iznik_client::transport::{ClientRuntimePaths, Transport};
+
+use crate::output::{Value, line, object, refusal, text};
+use crate::{CLIENT_LAYER, TRANSPORT_LAYER, USAGE_EXIT_CODE, one_host, runtime};
+
+/// What this subcommand takes.
+const USAGE: &str = "usage: iznik probe <host>";
+
+/// The subcommand's entry point.
 ///
 /// The dispatcher hands over every argument after the program name, the
 /// subcommand first, and the module parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
-    let subcommand = arguments.first().map_or_else(String::new, |argument| {
-        argument.to_string_lossy().into_owned()
-    });
-    writeln!(
-        std::io::stderr(),
-        "{subcommand}: not implemented until task plumbing-commands"
-    )
-    .unwrap_or_default();
-    ExitCode::from(crate::USAGE_EXIT_CODE)
+    let Some(alias) = one_host(arguments) else {
+        let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, USAGE);
+        return ExitCode::from(USAGE_EXIT_CODE);
+    };
+    match asked(&alias) {
+        Ok(found) => {
+            let _printed = line(&mut std::io::stdout(), &shaped(&alias, &found));
+            ExitCode::SUCCESS
+        }
+        Err((layer, detail)) => {
+            let _said = refusal(&mut std::io::stderr(), layer, &detail);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Probes the host, and says which layer refused when one did.
+///
+/// # Errors
+///
+/// The layer and what it said.
+fn asked(alias: &str) -> Result<HostProbe, (&'static str, String)> {
+    let held = runtime().map_err(|source| (CLIENT_LAYER, source.to_string()))?;
+    let paths =
+        ClientRuntimePaths::resolve().map_err(|source| (CLIENT_LAYER, source.to_string()))?;
+    let transport = Transport::for_alias(alias, &paths, SshOptions::default());
+    let options = BootstrapOptions::default();
+    held.block_on(probe(&transport, options.probe_deadline))
+        .map_err(|source| (TRANSPORT_LAYER, source.to_string()))
+}
+
+/// The probe as one object.
+fn shaped(alias: &str, found: &HostProbe) -> Value {
+    object(vec![
+        ("host", text(alias)),
+        (
+            "operating_system",
+            text(match found.operating_system {
+                OperatingSystem::Linux => "linux",
+                OperatingSystem::Darwin => "darwin",
+            }),
+        ),
+        (
+            "architecture",
+            text(match found.architecture {
+                Architecture::X86_64 => "x86_64",
+                Architecture::Aarch64 => "aarch64",
+            }),
+        ),
+        (
+            "server",
+            found.server.as_ref().map_or(Value::Null, |installed| {
+                object(vec![
+                    ("version", text(&installed.crate_version)),
+                    (
+                        "protocol_version",
+                        Value::Whole(u64::from(installed.protocol_version)),
+                    ),
+                ])
+            }),
+        ),
+        ("terminfo_installed", Value::Truth(found.terminfo_installed)),
+        ("tic_available", Value::Truth(found.tic_available)),
+        ("prefix", text(&found.prefix.display().to_string())),
+    ])
 }

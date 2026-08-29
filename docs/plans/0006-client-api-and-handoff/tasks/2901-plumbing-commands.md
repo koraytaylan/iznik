@@ -16,7 +16,7 @@ touches:
   - "regression/claims/plumbing-commands.toml"
   - "regression/scenarios/plumbing-commands/**"
   - "policy/lexicon/plumbing-commands.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Plumbing Commands

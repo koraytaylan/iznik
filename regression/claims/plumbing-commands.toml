@@ -1,0 +1,47 @@
+# Structured output for a person or a script, never a screen.
+#
+# The local proofs are `test` proofs against a daemon on this machine, because
+# what is being asked of each command is what it prints and what it exits
+# with, and both are the same whether the host is a socket away or a network
+# away. What a network adds — a probe that has a machine to run on, a tail
+# that has an `ssh` between it and the pane — is the two scenarios.
+
+[[claim]]
+id = "plumbing-says-what-refused-and-why"
+statement = "A command that cannot do what it was asked prints nothing as an answer, says what went wrong in one JSON object on standard error with the layer it came from, and exits non-zero — so a script can tell a failure from an empty answer, and a person is told which part of a system five layers deep refused."
+test = "iznik-cli::plumbing::plumbing_says_what_refused_and_why"
+because = "a socket is not a host to run a probe on wherever it is, and what is proven is what the command does about that"
+
+[[claim]]
+id = "plumbing-refuses-a-command-line-it-cannot-act-on"
+statement = "A command line with no host, or with more than the one it takes, is refused with the usage exit code and one object saying so — never acted on in part, and never confused with a run that failed."
+test = "iznik-cli::plumbing::plumbing_refuses_a_command_line_it_cannot_act_on"
+because = "parsing a command line needs no host at all"
+
+[[claim]]
+id = "plumbing-prints-the-model-a-host-holds"
+statement = "`state` prints the host's model as one object — its generation and its sessions, with the tabs and panes under them — on standard output with nothing on standard error, which is a question a script can ask of a running system without drawing anything."
+test = "iznik-cli::plumbing::plumbing_prints_the_model_a_host_holds"
+because = "the model is the host's own and reaches this the same way over a socket as over a network"
+
+[[claim]]
+id = "plumbing-measures-the-round-trip"
+statement = "`benchmark` types a hundred keystrokes into a pane of its own and prints the shape of what came back: the quickest, the middle, the ninety-ninth and the slowest, in milliseconds. Not an average, which hides the one keystroke in a hundred that took a second — and that one is the one a person notices."
+test = "iznik-cli::plumbing::plumbing_measures_the_round_trip"
+because = "what is proven here is that the distribution is measured and printed; what the numbers are on a network is what the scenario against containers is for"
+
+[[claim]]
+id = "plumbing-tails-a-pane-until-it-is-interrupted"
+statement = "`tail` prints the pane as it stands and then what it says as it says it, one object a line with the bytes in base 64 — because a pane's output is bytes and half a character may arrive before the other half — and an interruption is an ending: it exits zero, rather than dying of the signal."
+test = "iznik-cli::plumbing::plumbing_tails_a_pane_until_it_is_interrupted"
+because = "the pane is a real shell on a real pseudoterminal and the signal is a real signal; the network between them is the scenario's"
+
+[[claim]]
+id = "plumbing-probes-a-host-over-ssh"
+statement = "From the engine, `iznik probe host0` over real SSH prints one object naming what the machine runs, what it is, that no server is installed on it yet, and where iznik may put one — with nothing on standard error."
+scenario = "probe-over-ssh"
+
+[[claim]]
+id = "plumbing-tails-a-pane-over-ssh"
+statement = "From the engine, `iznik tail host0 1` over real SSH prints the pane as it stands, in base 64, and exits zero when it is interrupted — the same thing the local case proves, with a network and a daemon on another machine between the two."
+scenario = "tail-over-ssh"

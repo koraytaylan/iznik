@@ -1,0 +1,50 @@
+name = "tail-over-ssh"
+claims = ["plumbing-tails-a-pane-over-ssh"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A session on a real host, so that there is a pane to tail. Made through the
+# engine's own client, because the plumbing has no command that makes one:
+# these are for driving and inspecting a running system, not for building it.
+[[steps]]
+id = "a-session-to-tail"
+container = "engine"
+timeout_seconds = 90
+
+[steps.manager]
+patience_milliseconds = 40000
+pong_deadline_milliseconds = 2000
+ping_interval_milliseconds = 200
+backoff_initial_milliseconds = 200
+backoff_maximum_milliseconds = 2000
+actions = [
+  { kind = "add_host", alias = "host0" },
+  { kind = "await_state", alias = "host0", is = "connected" },
+  { kind = "create_session", alias = "host0", name = "work" },
+  { kind = "await_delta", alias = "host0", generation = 1 },
+]
+
+# And the tail itself, interrupted the way a person interrupts it — the signal
+# sent to the command and its own status waited for, rather than through
+# something that reports its own. What the tail prints first is the pane as it
+# stands, which is what the daemon sends a client that has just attached.
+[[steps]]
+id = "tail-until-interrupted"
+container = "engine"
+run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik tail host0 1 & tailed=$!; sleep 8; kill -INT $tailed; wait $tailed"
+timeout_seconds = 60
+
+[[expect]]
+step = "tail-until-interrupted"
+exit = 0
+stdout_contains = "\"kind\":\"screen\""
+
+[[expect]]
+step = "tail-until-interrupted"
+exit = 0
+stdout_contains = "\"encoding\":\"base64\""

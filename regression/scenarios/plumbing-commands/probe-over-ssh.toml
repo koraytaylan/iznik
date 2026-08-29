@@ -1,0 +1,33 @@
+name = "probe-over-ssh"
+claims = ["plumbing-probes-a-host-over-ssh"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The probe against a real host over real SSH, printed the way a script reads
+# it. Every local case reaches a socket, where there is no host to run a
+# command on; this is the one that answers.
+[[steps]]
+id = "probe-a-host-with-nothing-on-it"
+container = "engine"
+run = "/iznik/bin/iznik probe host0"
+timeout_seconds = 60
+
+[[expect]]
+step = "probe-a-host-with-nothing-on-it"
+exit = 0
+stdout_contains = "\"operating_system\":\"linux\""
+
+[[expect]]
+step = "probe-a-host-with-nothing-on-it"
+exit = 0
+stdout_contains = "\"server\":null"
+
+[[expect]]
+step = "probe-a-host-with-nothing-on-it"
+exit = 0
+stderr_equals = ""
