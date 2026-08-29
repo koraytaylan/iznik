@@ -1,7 +1,7 @@
 # Soak report
 
 This is the run this task commits: ten minutes with a two-minute warmup, taken
-on 2026-08-29 from the tree that became this commit, whose parent is `bed8722`.
+on 2026-08-29 from the tree that became this commit, whose parent is `b0cebe0`.
 It is not the run a release needs. That one is six hours, is run by a person,
 and is the first item on the [release checklist](release-checklist.md); this
 one is here so that the shape of a report is in the tree, and so that a change
@@ -30,7 +30,10 @@ Round after round, back to back:
    returns no credit.
 2. The daemon stopped where it stands for twenty seconds — twice the ten a
    client waits for a pong before it calls a link gone — and started again, so
-   every client on that host has to notice and come back.
+   every client on that host has to notice and come back. What is stopped is
+   checked to be the daemon before the signal is sent, and its state is read
+   while it is meant to be stopped: a cut that signalled something else, or
+   nothing, is not counted as a cut.
 3. A fresh client that has to reach the host and get a line back from the same
    pane.
 
@@ -63,19 +66,25 @@ Each of these fails the run, and each of them can:
   where it was, sending the truth as it now stands instead — which is what
   losing bytes looks like from a client. One is the attachment; every one
   after it is a reconnection that could not be resumed.
-- **Rounds that did not finish**, fewer than half of them.
+- **Rounds that did not finish**: fewer than half of them finishing.
+- **Sessions never churned**, by the same measure — the second daemon is
+  weighed for the churn, and an idle one is flat for a reason that is not the
+  absence of a leak.
 
 What is not claimed: that consecutive deliveries beginning where the last one
 ended proves no byte was lost. The sequence a client prints is its own cursor,
 so that arithmetic can only catch a client whose own accounting broke. It is
 checked for exactly that, and the screens carry the question it cannot answer.
 
-Both daemons and the held client are weighed once a minute out of `/proc`. The
+Both daemons and the held client are weighed about once a minute out of
+`/proc` — the sampling has a schedule, but a sample is taken between rounds
+rather than in the middle of one, so the spacing is a round longer than the
+interval. The
 daemon is weighed and the per-connection relay is not: a host runs one of each
 and both are called `iznik-server`, so a weighing that took the first one it
 found would be of the daemon at one sample and of a relay at the next.
 
-What the held client printed is reduced to three numbers a line as it is
+What the held client printed is reduced to four fields a line as it is
 written, and read back a window of lines at a time: a command's output is
 captured up to a mebibyte and the end of it is what survives, so a run read in
 one go would be checked from its middle and its beginning called whole.
@@ -85,8 +94,9 @@ one go would be checked from its middle and its beginning called whole.
 - **Duration:** 10 minutes
 - **Warmup:** 2 minutes
 - **Rounds:** 29 attempted, 29 finished
+- **Cuts:** 29, each seen to have stopped the daemon it named
 - **Pane churn:** 29 sessions made and unmade
-- **Held client:** 9867 deliveries, 5771486 bytes, 1 screens
+- **Held client:** 9808 deliveries, 5771486 bytes, 1 screens
 - **Growth ceiling:** 4194304 bytes an hour, after the warmup
 
 
@@ -94,16 +104,16 @@ one go would be checked from its middle and its beginning called whole.
 
 | At | Resident |
 |---|---|
-| 21s | 2740224 |
-| 84s | 2760704 |
-| 148s | 2764800 |
-| 212s | 2764800 |
-| 276s | 2760704 |
-| 340s | 2764800 |
-| 403s | 2768896 |
-| 467s | 2760704 |
-| 531s | 2760704 |
-| 595s | 2768896 |
+| 21s | 2711552 |
+| 84s | 2740224 |
+| 148s | 2744320 |
+| 212s | 2752512 |
+| 276s | 2756608 |
+| 339s | 2752512 |
+| 403s | 2752512 |
+| 467s | 2752512 |
+| 531s | 2744320 |
+| 595s | 2752512 |
 
 Growth after the warmup: 0 bytes an hour.
 
@@ -111,32 +121,32 @@ Growth after the warmup: 0 bytes an hour.
 
 | At | Resident |
 |---|---|
-| 21s | 12189696 |
-| 84s | 12464128 |
-| 148s | 12275712 |
-| 212s | 12263424 |
-| 276s | 12263424 |
-| 340s | 12271616 |
-| 403s | 12316672 |
-| 467s | 12328960 |
-| 531s | 12333056 |
-| 595s | 12324864 |
+| 21s | 10276864 |
+| 84s | 10285056 |
+| 148s | 10289152 |
+| 212s | 10297344 |
+| 276s | 10305536 |
+| 339s | 10289152 |
+| 403s | 10293248 |
+| 467s | 10309632 |
+| 531s | 10326016 |
+| 595s | 10326016 |
 
-Growth after the warmup: 838475 bytes an hour.
+Growth after the warmup: 346955 bytes an hour.
 
 ## The daemon it churns, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 4460544 |
-| 84s | 4333568 |
-| 148s | 4345856 |
-| 212s | 4349952 |
-| 276s | 4354048 |
-| 340s | 4349952 |
-| 403s | 4354048 |
-| 467s | 4354048 |
-| 531s | 4354048 |
-| 595s | 4354048 |
+| 21s | 4472832 |
+| 84s | 4489216 |
+| 148s | 4493312 |
+| 212s | 4489216 |
+| 276s | 4493312 |
+| 339s | 4497408 |
+| 403s | 4497408 |
+| 467s | 4497408 |
+| 531s | 4497408 |
+| 595s | 4493312 |
 
 Growth after the warmup: 57825 bytes an hour.

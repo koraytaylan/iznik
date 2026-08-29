@@ -369,6 +369,59 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   was a cold build. `regression_distribution_*` carries the same override for
   the same reason.
 
+- **Review of `b0cebe0`:** twenty findings, and the governing one was that
+  several of the twenty-one the round before had been moved rather than
+  closed.
+
+  Three were checks that could not fire. `grown` returning nothing was still a
+  pass, so a run whose samples all fell inside its warmup — `--duration 11`
+  with the default ten-minute one — skipped the ceiling on every side and
+  exited zero; nothing measured is now a refusal wherever there was long
+  enough to measure. `alive` could not see a dead held client: the engine's
+  first process is a sleep that never reaps, so an orphan that died kept its
+  entry and its name, and the census counted a zombie as a client; it leaves
+  them out now and reads its answer as a number rather than as anything that
+  is not a nought. And the byte floor was scaled by the rounds that finished
+  while the bytes came from every round attempted, so each failed round handed
+  the check a whole flood's worth of slack — up to half the run. It is scaled
+  by the floods that were really poured.
+
+  Two were things nobody watched. The churn was counted behind an `is_ok` that
+  threw the reason away and no judgement ever looked at it, so a soak where
+  host1 refused every benchmark weighed an idle daemon and called it no leak.
+  And nothing witnessed that the cut reached anything: the round's own wait
+  for `reconnecting` had gone with the rewrite, and `kill -STOP` on a
+  process identifier a dead daemon left in its lock would signal whatever the
+  container handed that number to next. The cut now checks the process it
+  names is the daemon before it signals, reads its state while it is meant to
+  be stopped, and is counted only when that state says stopped.
+
+  Two were about the one screen. `screens > 1` had no floor under it, so if
+  the attachment screen ever stopped arriving one real loss would read as the
+  harmless one; and `attended` waited for any line rather than for that line.
+  Exactly one is right now, and the wait is for a first word that is a screen.
+
+  The rest: the report was still discarded when the ending failed — a detached
+  pane, a jumped stream, one flaky exec after six hours — which is the same
+  hazard the weighing had already been changed to avoid; the container margin
+  was fifteen minutes against about twenty-one of deadlines this module allows
+  before its own clock starts; the attend window was thirty seconds against a
+  client dial allowed forty; `SETTLING_PATIENCE` was inert, clamped to a
+  quarter of itself by a step deadline that was one constant for every step;
+  the census was hand-copied into the scenario and the two had already
+  diverged in the clause the claim rests on, so a case now holds the parsed
+  scenario against the constant; the median case's first half discriminated
+  nothing, because for an odd count the shipped arithmetic and the rejected
+  one are the same expression; the processor was read from a field only x86
+  exports; the filter wrote empty fields, which move every field after them
+  one place left; the scenario's backgrounded relay held the step's own
+  standard error open for twenty seconds; the nextest override was by binary,
+  so ten microsecond cases got a half-hour deadline and every core apiece; and
+  `poured` did not terminate for a number no flood will ever be.
+
+  The module passed a thousand lines again, so what a soak asks the containers
+  to do is `soak/commands.rs` now.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
-_Last updated: 2026-08-29, against `develop` @ `bed8722`._
+_Last updated: 2026-08-29, against `develop` @ `b0cebe0`._

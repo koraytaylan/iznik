@@ -31,6 +31,7 @@ The gates, the policy checks clippy cannot express, the claims registry, the con
 | `policy::unsafe_boundary` | Every crate root but `iznik-ffi`'s forbids unsafe code. | `policy-gates` (plan 0001) |
 | `regression` | `xtask regression images`, `stage` and `reap`: the container images, the staging directory, and the removal of every labelled container. | `regression-images` (plan 0001) |
 | `soak` | `xtask soak`: hours of the end-to-end stack against two fixture hosts with faults, sampling memory and losing no byte. | `soak-and-release` (plan 0006) |
+| `soak::commands` | What a soak asks the containers to do: the census of processes it weighs with, the held client started and stopped, and the link cut and made good again. Written for the `dash` and `mawk` these images carry. | `soak-and-release` (plan 0006) |
 | `soak::report` | What a soak measured and what reading it says: the series, what the held client heard, the growth read from a series, and the report a note is given. No containers and no clock. | `soak-and-release` (plan 0006) |
 | `soak::steps` | The driver steps a soak writes: the pane it opens, the wait for that flood to be over, and the flood and the recovery of every round. | `soak-and-release` (plan 0006) |
 

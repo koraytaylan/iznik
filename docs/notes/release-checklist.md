@@ -42,10 +42,13 @@ This is the item that cannot be automated away. A leak of a few kilobytes per
 reconnection is invisible in every other item on this list and fatal by
 Thursday, and the only thing that finds it is time.
 
-Replace `docs/notes/soak.md` with the report the run prints, keeping its
-preamble: the date, the machine and the tree it was taken from. A release is
-made against a report from that release's tree and not from the last one, and
-those three lines are what let a reviewer tell the two apart.
+In `docs/notes/soak.md`, replace everything from `# Soak report`'s bullets
+downwards — the bullets and the three tables — with what the run prints, and
+leave the prose around them: the date and the tree it was taken from at the
+top, and the two sections that say what ran and what was checked. The command
+prints the numbers and nothing else; the prose is what makes them legible, and
+a release is made against a report from that release's tree and not from the
+last one.
 
 ## 2. The performance baseline, re-measured
 

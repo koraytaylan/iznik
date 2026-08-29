@@ -81,17 +81,23 @@ timeout_seconds = 50
 # took the first one it found would be of the daemon at one sample and of a
 # relay at the next.
 #
-# A relay is held open for the counting, by a shell that keeps its standard
-# input open for as long as the census takes: without one there is nothing to
-# leave out, and a weighing that dropped the guard would count the same.
-# `awk` is piped into rather than substituted into an arithmetic expansion,
-# because `/bin/sh` here is dash and `$((total + ))` is a fatal error there —
-# which a process that exits between reading its name and reading its size
-# would produce.
+# The line that reads the resident size is the soak's own `WEIGH`, word for
+# word, with the name filled in; a case holds the two texts together, because
+# a census transcribed into a scenario is a replica and a replica proves
+# nothing about the one a soak runs.
+#
+# A relay is held open for the counting by a `sleep` holding the write end of
+# a pipe, with the whole group's output redirected so that the backgrounded
+# sleep does not keep the step's own standard error open for twenty seconds
+# after the step is done — which would leave every run of it annotated as
+# incomplete and hide the one thing that stream is for: the `awk: can't open`
+# lines from a process that exited between being named and being weighed.
+# Without a relay there is nothing to leave out, and a weighing that dropped
+# the guard would count the same.
 [[steps]]
 id = "weigh-the-daemon"
 container = "host0"
-run = "for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then binary=$(readlink \"$held/exe\"); break; fi; done; sleep 20 | \"$binary\" --stdio > /dev/null 2>&1 & sleep 2; servers=0; daemons=0; for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then servers=$((servers + 1)); if ! grep -qsa -- --stdio \"$held/cmdline\"; then daemons=$((daemons + 1)); fi; fi; done; total=$(for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\" && ! grep -qsa -- --stdio \"$held/cmdline\"; then awk '/VmRSS/{print $2}' \"$held/status\"; fi; done | awk '{total += $1} END {if (total > 0) print total}'); printf 'servers:%s daemons:%s resident-kibibytes:%s\n' \"$servers\" \"$daemons\" \"$total\""
+run = "for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then binary=$(readlink \"$held/exe\"); break; fi; done; { sleep 20 | \"$binary\" --stdio; } > /dev/null 2>&1 & sleep 2; servers=0; daemons=0; for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then servers=$((servers + 1)); if ! grep -qsa -- --stdio \"$held/cmdline\"; then daemons=$((daemons + 1)); fi; fi; done; total=$(for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\" && ! grep -qsa -- --stdio \"$held/cmdline\"; then awk '/VmRSS/{print $2}' \"$held/status\"; fi; done | awk '{total += $1} END {print total + 0}'); printf 'servers:%s daemons:%s resident-kibibytes:%s\n' \"$servers\" \"$daemons\" \"$total\""
 timeout_seconds = 45
 
 [[expect]]
@@ -115,9 +121,11 @@ step = "weigh-the-daemon"
 exit = 0
 stdout_contains = "servers:2 daemons:1"
 
-# And a resident size that was really read: the total is printed only when
-# something was weighed, so this cannot be met by the format string.
+# And a resident size that was really read. The census prints a nought when
+# it finds nothing, so the expectation asks for a number that is not one:
+# this cannot be met by the format string, nor by a census that matched
+# nothing at all.
 [[expect]]
 step = "weigh-the-daemon"
 exit = 0
-stdout_matches = "resident-kibibytes:[0-9]"
+stdout_matches = "resident-kibibytes:[1-9][0-9]*"

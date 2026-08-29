@@ -37,6 +37,12 @@ pub struct Report {
     pub warmup: Duration,
     /// How many rounds were attempted.
     pub rounds: usize,
+    /// How many floods were poured, which is what the held client is held to
+    /// hearing: a round that floods and then fails afterwards still made its
+    /// pane say every byte of it.
+    pub floods: usize,
+    /// How many cuts were made and seen to have stopped the daemon.
+    pub cuts: usize,
     /// How many of them finished: the link dropped and made good, and the
     /// line typed afterwards heard back.
     pub drops: usize,
@@ -133,12 +139,15 @@ fn middle(samples: &[&Sample]) -> Option<(Duration, u64)> {
 #[must_use]
 pub fn poured(lines: u64) -> u64 {
     let (mut said, mut digits, mut lowest, mut wide) = (0_u64, 1_u64, 1_u64, ONE_DIGIT_NUMBERS);
-    while lowest <= lines {
+    while lowest <= lines && wide > 0 {
         let highest = lowest.saturating_add(wide).saturating_sub(1).min(lines);
         let many = highest.saturating_sub(lowest).saturating_add(1);
         said = said.saturating_add(many.saturating_mul(digits.saturating_add(ENDING)));
         lowest = lowest.saturating_add(wide);
-        wide = wide.saturating_mul(TEN);
+        // A saturating multiplication stops growing rather than wrapping, and
+        // a width that stopped growing while `lowest` had saturated too would
+        // be a loop that never ends. It ends here instead.
+        wide = wide.checked_mul(TEN).unwrap_or(0);
         digits = digits.saturating_add(1);
     }
     said
@@ -248,6 +257,7 @@ pub fn rendered(report: &Report) -> String {
          - **Duration:** {} minutes\n\
          - **Warmup:** {} minutes\n\
          - **Rounds:** {} attempted, {} finished\n\
+         - **Cuts:** {}, each seen to have stopped the daemon it named\n\
          - **Pane churn:** {} sessions made and unmade\n\
          - **Held client:** {} deliveries, {} bytes, {} screens\n\
          - **Growth ceiling:** {SOAK_GROWTH_CEILING_PER_HOUR} bytes an hour, after the warmup\n",
@@ -256,6 +266,7 @@ pub fn rendered(report: &Report) -> String {
         minutes(report.warmup),
         report.rounds,
         report.drops,
+        report.cuts,
         report.churn,
         report.heard.deliveries,
         report.heard.bytes,

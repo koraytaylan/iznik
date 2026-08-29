@@ -34,13 +34,16 @@ threads-required = 'num-cpus'
 
 # Before the rule below, for the same reason the distribution rule is: a soak
 # stands two hosts up, and its own deadlines allow far more than ten minutes.
+# By test and not by binary: this is the only `regression_*` binary whose
+# other cases are arithmetic that finishes in microseconds, and giving those a
+# half-hour deadline and every core apiece would slow every run of the gate.
 # Staging builds the musl binaries (fifteen minutes), the images are built if
 # they are missing, the containers are given the soak's length and a quarter
 # of an hour besides, and every round of it may take four minutes. Thirty is
 # above what the one-minute case may spend inside those deadlines on a cold
 # machine, and a runner that killed it at ten would be reporting the build.
 [[profile.default.overrides]]
-filter = 'binary(/^regression_soak/)'
+filter = 'test(regression_soak_runs_the_whole_stack_for_a_minute)'
 slow-timeout = { period = "120s", terminate-after = 15 }
 # And with the containers to itself: it weighs whole processes over ten
 # minutes, and a scenario's three containers running beside it are what it

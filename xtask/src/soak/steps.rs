@@ -4,8 +4,10 @@
 //! its own credit window. What lives across all of them is the held client,
 //! which is not a step at all.
 
+use core::time::Duration;
+
 use crate::soak::{
-    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLING_PATIENCE, STEP_DEADLINE, WATCHED,
+    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLING_DEADLINE, STEP_DEADLINE, WATCHED,
 };
 
 /// The step that makes the pane the soak holds open and fills its ring.
@@ -13,6 +15,7 @@ use crate::soak::{
 pub fn opening_step() -> String {
     step_of(
         "opening",
+        STEP_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
@@ -36,13 +39,15 @@ pub fn opening_step() -> String {
 pub fn settling_step() -> String {
     step_of(
         "settling",
+        SETTLING_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
              {{ kind = \"subscribe\", alias = \"{WATCHED}\", pane = 1 }},\n  \
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, text = \"echo settled\\n\" }},\n  \
              {{ kind = \"await_bytes\", alias = \"{WATCHED}\", pane = 1, \
-             contains = \"settled\", within_milliseconds = {SETTLING_PATIENCE} }},\n"
+             contains = \"settled\", within_milliseconds = {} }},\n",
+            SETTLING_DEADLINE.as_millis()
         ),
     )
 }
@@ -62,6 +67,7 @@ pub fn settling_step() -> String {
 pub fn flooding_step(round: usize) -> String {
     step_of(
         "flooding",
+        STEP_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
@@ -85,6 +91,7 @@ pub fn flooding_step(round: usize) -> String {
 pub fn recovery_step(round: usize) -> String {
     step_of(
         "recovery",
+        STEP_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
@@ -97,19 +104,26 @@ pub fn recovery_step(round: usize) -> String {
     )
 }
 
-/// One step of the driver, around a list of actions.
+/// One step of the driver, around a list of actions, under a deadline of its
+/// own.
+///
+/// The deadline is the step's rather than one constant for all of them,
+/// because the driver clamps everything a step waits for to it: a step that
+/// asked for twenty minutes of patience inside a four-minute deadline would
+/// get four, and the flood poured before the clock starts is twenty-six times
+/// the size of a round's.
 ///
 /// It names no connection timing at all. What a release soak has to exercise
 /// is the reconnection the product ships, and a step that named its own ping
 /// interval and backoff would be soaking timings nobody runs. The patience is
 /// the step's own and not the product's: it is how long the driver waits
 /// before calling a step failed.
-fn step_of(id: &str, actions: &str) -> String {
+fn step_of(id: &str, deadline: Duration, actions: &str) -> String {
     format!(
         "scenario = \"soak\"\nid = \"{id}\"\ncontainer = \"engine\"\n\
          timeout_seconds = {}\n\n[manager]\npatience_milliseconds = {}\n\
          actions = [\n{actions}]\n",
-        STEP_DEADLINE.as_secs(),
-        STEP_DEADLINE.as_millis()
+        deadline.as_secs(),
+        deadline.as_millis()
     )
 }

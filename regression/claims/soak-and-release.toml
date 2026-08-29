@@ -14,7 +14,7 @@
 
 [[claim]]
 id = "soak-runs-the-whole-stack"
-statement = "A soak of one minute stands two hosts up, holds a client open against a pane on one of them for the whole run, floods that pane, cuts the link underneath it for longer than any deadline either client keeps, makes and unmakes sessions on the other host, and weighs all three sides more than once — with what the held client heard counted and held against what its pane was made to say, because a stream with no gap in it and a stream that was never there look the same to a check that only looks for gaps."
+statement = "A soak of one minute stands two hosts up, holds a client open against a pane on one of them for the whole run, floods that pane, cuts the link underneath it — verifying that what it stopped was the daemon and that the daemon really stopped — makes and unmakes sessions on the other host, and weighs the held client and both daemons. What the held client heard is counted and held against what its pane was made to say, because a stream with no gap in it and a stream that was never there look the same to a check that only looks for gaps."
 test = "xtask::regression_soak::regression_soak_runs_the_whole_stack_for_a_minute"
 because = "it stands the fixture up itself, which is what the soak is; a scenario would be a second fixture inside the first"
 
@@ -43,10 +43,22 @@ test = "xtask::regression_soak::regression_soak_counts_what_a_flood_says"
 because = "it is arithmetic over the numbers, and the same anywhere it is done"
 
 [[claim]]
-id = "soak-judges-a-run-by-what-it-measured"
-statement = "What decides whether a soak passed is asked of a report directly, so it is proven without waiting six hours for one: a run that did everything asked of it passes, and each of a side over the ceiling, a side never weighed at all, a held client that was gone before the end, one that heard less than its pane was made to say, a second screen, and most of the rounds not finishing is refused. This is what holds the ceiling comparison itself — inverting it leaves every other case in the file green."
-test = "xtask::regression_soak::regression_soak_judges_a_run_by_what_it_measured"
+id = "soak-judges-a-run-by-what-it-did"
+statement = "What decides whether a soak passed is asked of a report directly, so it is proven without waiting six hours for one. A run that did everything asked of it passes; a held client gone before the end, one that heard less than its pane was made to say, a screen count that is not exactly one — none means the attachment was never seen, more means bytes it was not carried on from — most of the rounds not finishing, and a run that never churned a session are each refused. What the held client is held to is the floods that were poured and not the rounds that finished, so a round that floods and then fails buys no slack."
+test = "xtask::regression_soak::regression_soak_judges_a_run_by_what_it_did"
 because = "a report is a value, and judging one needs no containers to have made it"
+
+[[claim]]
+id = "soak-judges-a-run-by-what-it-weighed"
+statement = "A side over the ceiling is refused, one under it is not, a side never weighed at all is refused, and so is a side whose samples measure nothing after the warmup — which is the same silence wearing a series, and which would otherwise skip the ceiling entirely and pass. This is what holds the ceiling comparison itself: inverting it leaves every other case in the file green."
+test = "xtask::regression_soak::regression_soak_judges_a_run_by_what_it_weighed"
+because = "a report is a value, and judging one needs no containers to have made it"
+
+[[claim]]
+id = "soak-weighs-with-one-census"
+statement = "The scenario that proves the census works in a container runs the soak's own `WEIGH`, word for word with the name filled in, and a case holds the two texts together after the scenario is parsed. A census transcribed into a scenario is a replica: the two had already drifted in the clause the claim rests on, so dropping the guard that leaves the relay out would have left every proof green while every sample the soak took alternated between a daemon and a relay."
+test = "xtask::regression_soak::regression_soak_weighs_with_one_census"
+because = "both texts are in this repository and comparing them needs nothing else"
 
 [[claim]]
 id = "soak-refuses-a-warmup-that-swallows-the-run"
@@ -62,7 +74,7 @@ because = "it is arithmetic over a series of numbers"
 
 [[claim]]
 id = "soak-compacts-what-the-held-client-prints"
-statement = "What the held client prints is reduced to three numbers a delivery as it is written — where it starts, and how many characters of base 64 and how many of padding carry it — because a soak of hours moves gigabytes through that pane and a file of them could not be read back whole. The filter is run against exactly what `iznik tail` writes and its output handed to the check, so the two are proven to agree rather than assumed to; a gap put into the printed lines is still a gap after the filter has seen them."
+statement = "What the held client prints is reduced to four fields a delivery as it is written — its kind, where it starts, and how many characters of base 64 and how many of padding carry it — because a soak of hours moves tens of megabytes through that pane and a command's output is captured up to one. The filter is run against exactly what `iznik tail` writes and its output handed to the check, so the two are proven to agree rather than assumed to: a gap put into the printed lines is still a gap after the filter has seen them, a line whose kind the filter does not know still comes out with four fields rather than shifting every number one place left, and the line the client prints as it stops is still an ending."
 test = "xtask::regression_soak::regression_soak_compacts_what_the_held_client_prints"
 because = "`awk` is on this machine and the lines are the ones the command writes; a container would put the same two programs somewhere further away"
 
@@ -78,7 +90,7 @@ scenario = "short-soak"
 
 [[claim]]
 id = "soak-committed-a-report-of-ten-minutes"
-statement = "`docs/notes/soak.md` is a report of a real run of at least ten minutes, naming the machine, the duration, the warmup, the drops, the churn, what the held client heard, and both memory series — not a template with the numbers left out."
+statement = "`docs/notes/soak.md` is a report of a real run of at least ten minutes, naming the machine, the duration, the warmup, the rounds, the churn, what the held client heard, and all three memory series."
 test = "xtask::regression_soak::regression_soak_committed_a_report_of_ten_minutes"
 because = "the note is a file in this repository, and what it says is read from it"
 

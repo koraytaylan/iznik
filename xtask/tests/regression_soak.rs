@@ -15,8 +15,8 @@ use core::time::Duration;
 use std::path::{Path, PathBuf};
 
 use xtask::soak::{
-    COMPACT, Heard, Report, SOAK_GROWTH_CEILING_PER_HOUR, Sample, SoakError, asked_for, grown,
-    heard_more, judged, poured, rendered, soaked,
+    COMPACT, FLOOD_LINES, Heard, Report, SERVER_PROCESS, SIDES, SOAK_GROWTH_CEILING_PER_HOUR,
+    Sample, SoakError, WEIGH, asked_for, grown, heard_more, judged, poured, rendered, soaked,
 };
 
 /// How long the case runs the whole stack for.
@@ -44,6 +44,15 @@ const NOTE: &str = "docs/notes/soak.md";
 
 /// The checklist a release runs through, beside it.
 const CHECKLIST: &str = "docs/notes/release-checklist.md";
+
+/// The scenario that proves the soak's census in a container.
+const SCENARIO: &str = "regression/scenarios/soak-and-release/short-soak.toml";
+
+/// What the census names the process it weighs, before a name is put in.
+const NAME: &str = "NAME";
+
+/// The step of that scenario which weighs.
+const WEIGHING_STEP: &str = "weigh-the-daemon";
 
 /// How long the committed report is of, in minutes.
 const REPORTED_MINUTES: u64 = 10;
@@ -170,6 +179,7 @@ fn regression_soak_runs_the_whole_stack_for_a_minute() {
         "Machine",
         "Duration",
         "Rounds",
+        "Cuts",
         "Pane churn",
         "Held client",
         "## The held client, in bytes",
@@ -292,6 +302,19 @@ fn regression_soak_compacts_what_the_held_client_prints() {
         heard_more(&mut stopped, &ending).is_err(),
         "the filter keeps enough of a detached pane for the check to end on it: {ending:?}"
     );
+    // A line whose kind the filter does not recognise still comes out with
+    // four fields, so it is skipped as the one thing it is rather than read
+    // as a delivery whose numbers have all moved one place left.
+    let strange = compacted(
+        "{\"kind\":\"Something_New\",\"pane\":1,\"sequence\":700,\
+                             \"bytes\":\"YWJjZGVmZ2g=\"}\n",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        strange.split_whitespace().count(),
+        4,
+        "every line the filter writes has four fields: {strange:?}"
+    );
     // And a delivery that does not follow the one before it is still caught
     // after passing through the filter.
     let jumped = printed.replace("\"sequence\":5", "\"sequence\":6");
@@ -321,7 +344,12 @@ fn compacted(printed: &str) -> Result<String, String> {
         .arg(&program)
         .arg(&said)
         .output()
-        .map_err(|error| format!("awk: {error}"))?;
+        .map_err(|error| format!("awk: {error}"));
+    // Whatever happened, this leaves nothing behind: /tmp on a machine that
+    // runs these all day is a finite number of inodes, and every other case
+    // in this directory clears up after itself.
+    let _swept = std::fs::remove_dir_all(&directory);
+    let done = done?;
     if !done.status.success() {
         return Err(format!(
             "awk would not take the program: {}",
@@ -344,6 +372,7 @@ fn regression_soak_committed_a_report_of_ten_minutes() {
         "Duration",
         "Warmup",
         "Rounds",
+        "Cuts",
         "Pane churn",
         "Held client",
         "## The held client, in bytes",
@@ -391,19 +420,24 @@ fn regression_soak_checklist_names_a_release_in_order() {
     }
 }
 
+/// How many rounds the report a case spoils stands for.
+const ROUNDS: usize = 10;
+
 /// A report of a run that passed, which a case then spoils one way at a time.
 fn passing() -> Report {
     let level = climbing(0);
     Report {
         machine: "a machine".to_owned(),
         duration: Duration::from_mins(10),
-        warmup: Duration::ZERO,
-        rounds: 10,
-        drops: 10,
-        churn: 10,
+        warmup: NO_WARMUP,
+        rounds: ROUNDS,
+        floods: ROUNDS,
+        cuts: ROUNDS,
+        drops: ROUNDS,
+        churn: ROUNDS,
         heard: Heard {
             deliveries: 100,
-            bytes: poured(30_000).saturating_mul(10),
+            bytes: poured(FLOOD_LINES).saturating_mul(u64::try_from(ROUNDS).unwrap_or(0)),
             screens: 1,
             expected: None,
         },
@@ -416,14 +450,69 @@ fn passing() -> Report {
 /// # Panics
 ///
 /// When a report that should pass does not, or when spoiling one thing about
-/// it is not caught.
+/// what the run did is not caught.
 #[test]
-fn regression_soak_judges_a_run_by_what_it_measured() {
+fn regression_soak_judges_a_run_by_what_it_did() {
     let passes = passing();
     assert!(
         judged(&passes, "", true).is_ok(),
         "a run that did everything asked of it passes"
     );
+    // A held client that was gone before the end.
+    assert!(
+        judged(&passes, "", false).is_err(),
+        "a client that died leaves a stream that is not the run"
+    );
+    // One that heard less than its pane was made to say: bytes went missing.
+    let mut quiet = passing();
+    quiet.heard.bytes = quiet.heard.bytes.saturating_sub(1);
+    assert!(
+        judged(&quiet, "", true).is_err(),
+        "hearing less than was poured is bytes that went missing"
+    );
+    // Held against the floods that were poured and not the rounds that
+    // finished, so a round that flooded and then failed buys no slack.
+    let mut halfway = passing();
+    halfway.drops = ROUNDS.saturating_div(2);
+    halfway.heard.bytes =
+        poured(FLOOD_LINES).saturating_mul(u64::try_from(halfway.drops).unwrap_or(0));
+    assert!(
+        judged(&halfway, "", true).is_err(),
+        "a round that failed after its flood does not excuse the flood it poured"
+    );
+    // Screens: one is the attachment. None means it was never seen, and two
+    // means a resume that could not be served.
+    for screens in [0, 2] {
+        let mut redrawn = passing();
+        redrawn.heard.screens = screens;
+        assert!(
+            judged(&redrawn, "", true).is_err(),
+            "exactly one screen is right, and {screens} was taken"
+        );
+    }
+    // Most of the rounds not finishing, and a run that never churned a
+    // session — which leaves the daemon weighed for the churn weighing an
+    // idle one.
+    let mut idle = passing();
+    idle.drops = 4;
+    assert!(
+        judged(&idle, "nothing came back", true).is_err(),
+        "a run whose rounds did not finish proved nothing"
+    );
+    let mut still = passing();
+    still.churn = 0;
+    assert!(
+        judged(&still, "", true).is_err(),
+        "a run that made and unmade no session weighs an idle daemon"
+    );
+}
+
+/// # Panics
+///
+/// When a side that grew is not caught, or one that was never measured is
+/// taken for one that did not grow.
+#[test]
+fn regression_soak_judges_a_run_by_what_it_weighed() {
     // A side that grew past the ceiling. This is the case that holds the
     // ceiling comparison itself: without it, inverting that comparison leaves
     // every other case in this file green.
@@ -437,46 +526,30 @@ fn regression_soak_judges_a_run_by_what_it_measured() {
     let mut gentle = passing();
     gentle.server = climbing(SOAK_GROWTH_CEILING_PER_HOUR.saturating_div(2));
     assert!(judged(&gentle, "", true).is_ok(), "and one under it passes");
-    // A side that was never weighed at all. A weighing that silently found
-    // nothing every time would otherwise report a flat series and no leak.
-    for spoiling in 0..3 {
+    // A side never weighed at all, and a side whose samples measure nothing
+    // after the warmup — the same silence wearing a series, which would
+    // otherwise skip the ceiling entirely.
+    let one = vec![Sample {
+        at: Duration::ZERO,
+        bytes: RESIDENT,
+    }];
+    for spoiling in 0..SIDES {
         let mut unweighed = passing();
+        let mut unmeasured = passing();
         match spoiling {
-            0 => unweighed.client = Vec::new(),
-            1 => unweighed.server = Vec::new(),
-            _ => unweighed.churned = Vec::new(),
+            0 => (unweighed.client, unmeasured.client) = (Vec::new(), one.clone()),
+            1 => (unweighed.server, unmeasured.server) = (Vec::new(), one.clone()),
+            _ => (unweighed.churned, unmeasured.churned) = (Vec::new(), one.clone()),
         }
         assert!(
             judged(&unweighed, "", true).is_err(),
-            "a side that was never weighed is refused, and side {spoiling} was not"
+            "a side never weighed is refused, and side {spoiling} was not"
+        );
+        assert!(
+            judged(&unmeasured, "", true).is_err(),
+            "a side measuring nothing after the warmup is refused, and side {spoiling} was not"
         );
     }
-    // A held client that was gone before the end.
-    assert!(
-        judged(&passes, "", false).is_err(),
-        "a client that died leaves a stream that is not the run"
-    );
-    // One that heard less than its pane was made to say: bytes went missing.
-    let mut quiet = passing();
-    quiet.heard.bytes = quiet.heard.bytes.saturating_sub(1);
-    assert!(
-        judged(&quiet, "", true).is_err(),
-        "hearing less than was poured is bytes that went missing"
-    );
-    // A second screen: a reconnection the host could not carry on from.
-    let mut redrawn = passing();
-    redrawn.heard.screens = 2;
-    assert!(
-        judged(&redrawn, "", true).is_err(),
-        "a screen after the attachment is a resume that could not be served"
-    );
-    // And most of the rounds not finishing.
-    let mut idle = passing();
-    idle.drops = 4;
-    assert!(
-        judged(&idle, "nothing came back", true).is_err(),
-        "a run whose rounds did not finish proved nothing"
-    );
 }
 
 /// # Panics
@@ -522,42 +595,87 @@ fn regression_soak_refuses_a_warmup_that_swallows_the_run() {
 /// When one sample that caught a flood reads as a leak.
 #[test]
 fn regression_soak_reads_a_peak_as_a_peak() {
-    // A level series with one sample twice the size in its later half, which
-    // is what a flood in flight looks like. Taking the upper of the two
-    // middle samples would make that peak the answer.
+    // Four samples, so each half is two and the middle of each lies between
+    // them. Taking the upper of the two — which is the larger — would make
+    // the peak in the later half the answer for that half.
+    let four: Vec<Sample> = [RESIDENT, RESIDENT, RESIDENT, RESIDENT.saturating_mul(2)]
+        .into_iter()
+        .enumerate()
+        .map(|(at, bytes)| Sample {
+            at: Duration::from_mins(u64::try_from(at).unwrap_or(0)),
+            bytes,
+        })
+        .collect();
+    // The middles are RESIDENT at thirty seconds and one and a half times it
+    // at two and a half minutes: half of RESIDENT over two minutes, which is
+    // a rate this arithmetic can be asked for exactly.
+    let grew = RESIDENT.saturating_div(2);
+    let over = Duration::from_mins(2).as_secs();
+    let wanted = grew.saturating_mul(3600).saturating_div(over);
+    assert_eq!(
+        grown(&four, NO_WARMUP),
+        Some(wanted),
+        "a half of two is read as what lies between its samples and not as the larger of them"
+    );
+    // Taking the larger would give twice that, which is what the arithmetic
+    // this replaced did.
+    assert_ne!(
+        wanted,
+        RESIDENT.saturating_mul(3600).saturating_div(over),
+        "and the two answers are not the same number"
+    );
+    // A level series with one peak at its end grew by nothing at all.
     let mut peaked = climbing(0);
     if let Some(sample) = peaked.last_mut() {
         sample.bytes = sample.bytes.saturating_mul(2);
     }
+    peaked.push(Sample {
+        at: Duration::from_secs(SERIES.saturating_add(EVERY)),
+        bytes: RESIDENT,
+    });
     let rate = grown(&peaked, NO_WARMUP);
     assert_eq!(
         rate,
         Some(0),
         "a level series with one peak in it grew by nothing: {rate:?}"
     );
-    // And a series of four, where each half is two samples, so the middle of
-    // each is between them rather than the larger of them.
-    let four = vec![
-        Sample {
-            at: Duration::from_secs(0),
-            bytes: RESIDENT,
-        },
-        Sample {
-            at: Duration::from_mins(1),
-            bytes: RESIDENT,
-        },
-        Sample {
-            at: Duration::from_mins(2),
-            bytes: RESIDENT,
-        },
-        Sample {
-            at: Duration::from_mins(3),
-            bytes: RESIDENT.saturating_mul(2),
-        },
-    ];
-    let halved = grown(&four, NO_WARMUP);
+}
+
+/// # Panics
+///
+/// When the scenario weighs with anything but the census the soak runs.
+#[test]
+fn regression_soak_weighs_with_one_census() {
+    let said = std::fs::read_to_string(root().join(SCENARIO))
+        .unwrap_or_else(|error| panic!("{SCENARIO}: {error}"));
+    let read: toml::Value =
+        toml::from_str(&said).unwrap_or_else(|error| panic!("{SCENARIO}: {error}"));
+    let census = WEIGH.replace(NAME, SERVER_PROCESS);
+    // The scenario proves the census works in these containers, and it can
+    // only prove it of the text it runs. Transcribing that text is how the
+    // two drift apart in the clause that matters — the `--stdio` guard is the
+    // whole of what the claim says the weighing has to get right — so the
+    // scenario carries this constant word for word and this case says so.
+    // Compared after the file is parsed, because what the shell is handed is
+    // what the file means and not how it is spelled.
+    let weighing = read
+        .get("steps")
+        .and_then(toml::Value::as_array)
+        .and_then(|steps| {
+            steps
+                .iter()
+                .find(|step| step.get("id").and_then(toml::Value::as_str) == Some(WEIGHING_STEP))
+        })
+        .and_then(|step| step.get("run"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{SCENARIO} has a {WEIGHING_STEP} step that runs something"));
     assert!(
-        halved.is_some_and(|held| held < SOAK_GROWTH_CEILING_PER_HOUR.saturating_mul(200)),
-        "and a half of two is not read as its larger sample: {halved:?}"
+        weighing.contains(&census),
+        "the scenario weighs with the soak's own census.\nit runs: {weighing}\nthe soak's is: {census}"
+    );
+    // And what is compared is the clause the claim rests on.
+    assert!(
+        census.contains("--stdio"),
+        "the census this compares still leaves the relay out: {census}"
     );
 }
