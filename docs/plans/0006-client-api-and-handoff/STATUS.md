@@ -501,6 +501,28 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   that lands with its justification, so it is left for one rather than taken
   here; the scenario proves the behaviour in the meantime.
 
+- **What the whole suite found.** Running every proof there is — 550 of them,
+  `--run-ignored all` — turned up one that had rotted. `scenario-driver`'s
+  `unsupported` scenario asked the driver for a `probe` step and expected it to
+  say the kind would be filled by plan 0005; plan 0005 filled it, so the answer
+  had become a parse error and the scenario had been failing quietly ever
+  since. Nothing caught it because that task had no claims file at all: ten
+  scenarios naming ten claims that nowhere declared them, so `claims coverage`
+  had nothing to check.
+
+  Both are closed. The driver no longer names a plan that will fill a kind —
+  every plan has landed — and says instead that the kind is not one it knows;
+  the scenario reaches that answer the only way anything can, by handing the
+  driver a `fault`, which the runner executes outside both containers and
+  never sends to it. And `regression/claims/scenario-driver.toml` now declares
+  all ten.
+
+  The only other failure in the 550 was `baseline_throughput_is_over_its_floor`
+  — eight panes at 62.5 MB/s against one pane's 67.1 — at a load average of
+  four, with five hundred other tests beside it. It passes on its own in under
+  a second. This machine is shared with other work, and a timing figure taken
+  under that load is a measurement of the machine.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
 _Last updated: 2026-08-29, against `develop` @ `06440a4`._

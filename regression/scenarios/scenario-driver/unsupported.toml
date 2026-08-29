@@ -8,13 +8,27 @@ exclusive = false
 hosts = 1
 files = []
 
+# A kind the harness knows and the driver has no arm for: `fault` is executed
+# by the runner, outside both containers, and is never sent to the driver. It
+# is handed to the driver here on purpose, and directly rather than as a
+# scenario step, because that is the only way to reach the arm — anything
+# driving the driver by hand can, and `xtask soak` is one such thing.
+#
+# The driver answers with one record and exits zero: the record carries the
+# step's own exit code, so whoever reads it reads exactly one line and never
+# hangs.
 [[steps]]
-id = "not-yet"
+id = "no-such-kind"
 container = "engine"
-probe = "anything"
+run = "printf 'scenario = \"unsupported\"\\nid = \"no-such-kind\"\\ncontainer = \"engine\"\\ntimeout_seconds = 5\\nfault = \"disconnect-network\"\\n' | /iznik/bin/iznik-regression step"
 timeout_seconds = 10
 
 [[expect]]
-step = "not-yet"
-exit = 2
-stderr_contains = "plan 0005"
+step = "no-such-kind"
+exit = 0
+stdout_contains = "`fault` is not a kind of step this driver knows"
+
+[[expect]]
+step = "no-such-kind"
+exit = 0
+stdout_contains = "\"exit\":2"

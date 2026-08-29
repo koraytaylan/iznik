@@ -1,0 +1,57 @@
+# The driver that runs inside a container and reports one line a step.
+#
+# Every one of these is a scenario, and that is the point: what is claimed is
+# what the runner and the driver do to real containers — a step run in each of
+# them, a fault injected between two, a budget that runs out, a process killed
+# by the identifier it wrote down. There is nothing here a `test` proof could
+# reach, because the thing under test is the harness that reaches containers.
+
+[[claim]]
+id = "scenario-driver-round-trip"
+statement = "A scenario's steps run in order in the container each of them names, and what each said comes back as one line the runner reads."
+scenario = "round-trip"
+
+[[claim]]
+id = "scenario-driver-both-containers"
+statement = "A scenario names the engine and a host in the same run, and a step lands in the one it named rather than in whichever was started first."
+scenario = "both-containers"
+
+[[claim]]
+id = "scenario-driver-cross-container-ssh"
+statement = "The engine reaches a host over real SSH with the credentials the fixture made for that run, which exist nowhere but inside those containers."
+scenario = "cross-container-ssh"
+
+[[claim]]
+id = "scenario-driver-ordering"
+statement = "Steps are run one after another in the order the scenario lists them, and a later one sees what an earlier one left."
+scenario = "ordering"
+
+[[claim]]
+id = "scenario-driver-expected-non-zero"
+statement = "A step that is expected to fail and does is a scenario that passed: what is asserted is the exit code the scenario names, not zero."
+scenario = "expected-non-zero"
+
+[[claim]]
+id = "scenario-driver-fault"
+statement = "A fault step is executed by the runner rather than sent to the driver — the link between two containers is cut and made good again from outside both of them."
+scenario = "fault"
+
+[[claim]]
+id = "scenario-driver-timed-out"
+statement = "A step that outlives its own deadline is killed and reported as timed out, naming the step: a hang is a failure that says what was running, never a wait."
+scenario = "timed-out"
+
+[[claim]]
+id = "scenario-driver-budget"
+statement = "A scenario that outlives its budget is refused as one, so that a suite of them cannot be held open by a single slow case."
+scenario = "budget"
+
+[[claim]]
+id = "scenario-driver-pid-file-kill"
+statement = "A step may name a process by the file it wrote its own identifier to, and the runner kills that one — which is how a scenario stops something it started without matching on a name."
+scenario = "pid-file-kill"
+
+[[claim]]
+id = "scenario-driver-unsupported"
+statement = "A kind the harness knows and the driver has no arm for — `fault`, which the runner executes outside both containers and never sends to the driver — is answered with one record saying so and the usage exit code, rather than with a hang or a panic. Whoever drives the driver by hand reads exactly one line whatever they ask it, which is what the soak depends on."
+scenario = "unsupported"

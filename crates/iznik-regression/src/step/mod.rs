@@ -48,9 +48,9 @@ pub struct Outcome {
 /// failing is.
 #[derive(Debug)]
 pub enum StepError {
-    /// The step's kind has no executor yet.
+    /// The step names a kind this driver does not know.
     Unsupported {
-        /// The kind, and the plan that fills it.
+        /// The kind, as the step spelled it.
         kind: String,
     },
     /// The step read from standard input is not a step.
@@ -76,7 +76,7 @@ impl Display for StepError {
             StepError::Unsupported { kind } => {
                 write!(
                     formatter,
-                    "the `{kind}` step is not implemented in this plan"
+                    "`{kind}` is not a kind of step this driver knows"
                 )
             }
             StepError::Malformed { detail } => write!(formatter, "the step is malformed: {detail}"),
@@ -142,16 +142,6 @@ impl Context {
     #[must_use]
     pub fn distribution(&self) -> PathBuf {
         self.staged.join("distribution")
-    }
-}
-
-/// The plan that fills each kind, for the message an unsupported step
-/// carries; `run` is filled here.
-fn filling_plan(kind: &str) -> &'static str {
-    match kind {
-        "pane" => "plan 0002",
-        "client" => "plan 0004",
-        _ => "plan 0005",
     }
 }
 
@@ -244,7 +234,7 @@ fn record_of(scenario: &str, step: &str, outcome: Result<Outcome, StepError>) ->
             timed_out: false,
             duration_milliseconds: 0,
             stdout: String::new(),
-            stderr: format!("the `{kind}` step is filled by {}", filling_plan(&kind)),
+            stderr: format!("{}", StepError::Unsupported { kind }),
         },
         Err(error) => Record {
             scenario: scenario.to_owned(),
