@@ -22,7 +22,11 @@ use xtask::header::HEADER_PATH;
 
 /// How long the library may take to build, which on a cold cache is the whole
 /// of this workspace at release shape.
-const BUILD_DEADLINE: Deadline = Deadline(Duration::from_mins(30));
+///
+/// Inside the fifteen minutes the claims gate gives a whole run, so that a
+/// build that will not finish is reported as a build that did not finish
+/// rather than as a gate that timed out with nothing to say about why.
+const BUILD_DEADLINE: Deadline = Deadline(Duration::from_mins(10));
 
 /// How long the C compiler is given.
 const COMPILE_DEADLINE: Deadline = Deadline(Duration::from_mins(2));
@@ -179,11 +183,7 @@ fn native_libraries(root: &Path) -> Result<Vec<String>, Failed> {
 ///
 /// # Errors
 ///
-/// When no compiler can be found, or one cannot be run.
-///
-/// # Panics
-///
-/// When the compiler refuses what it was given.
+/// When no compiler can be found, or the one found refuses what it was given.
 fn compiled(root: &Path, made: &Built, into: &Path) -> Result<PathBuf, Failed> {
     let compiler = ["cc", "gcc", "clang"]
         .into_iter()
@@ -203,12 +203,9 @@ fn compiled(root: &Path, made: &Built, into: &Path) -> Result<PathBuf, Failed> {
         .args(&made.native)
         .arg("-o")
         .arg(&program);
-    let done = process::run(build, COMPILE_DEADLINE, Output::Capture)?;
-    assert!(
-        done.status.success(),
-        "{compiler} builds the program: {}",
-        String::from_utf8_lossy(&done.stderr)
-    );
+    // A compiler that refuses is a child that exited non-zero, which the
+    // runner turns into an error carrying what it said.
+    let _built = process::run(build, COMPILE_DEADLINE, Output::Capture)?;
     Ok(program)
 }
 
@@ -289,21 +286,14 @@ fn regression_ffi_smoke_runs_a_c_program_against_a_daemon() {
         running
             .current_dir(&held.path)
             .arg(format!("unix:{}", stack.socket().display()));
+        // A program that fails, or outlasts the deadline, is an error the
+        // runner raises with what the program said in it; what is left to
+        // assert is that it did the thing rather than merely exited.
         let done = process::run(running, RUN_DEADLINE, Output::Capture)?;
         assert!(
-            done.status.success(),
-            "the C program ran the whole sequence: {}",
-            String::from_utf8_lossy(&done.stderr)
-        );
-        assert!(
             String::from_utf8_lossy(&done.stdout).contains("screen first"),
-            "and said so: {}",
+            "the C program ran the whole sequence and said so: {}",
             String::from_utf8_lossy(&done.stdout)
-        );
-        assert!(
-            done.elapsed < RUN_DEADLINE.0,
-            "inside the time an application would wait: {:?}",
-            done.elapsed
         );
         drop(stack);
         Ok(())

@@ -27,8 +27,11 @@
 
 #include "iznik.h"
 
-/* How long anything here waits for something that should happen at once. */
-#define PATIENCE_SECONDS 10
+/* How long the whole run may take, shared by everything it waits for. Under
+ * the deadline the case that runs this gives it, so that what a person reads
+ * when something stalls is the sentence below saying which thing did, and not
+ * a killed process. */
+#define PATIENCE_SECONDS 8
 
 /* How often it looks while waiting. */
 #define LOOK_NANOSECONDS 5000000L
@@ -42,13 +45,23 @@ static const char MARKER[] = "smoke-42";
 
 /* What the callbacks have seen. The application's own thread reads these and
  * iznik's writes them, which is what makes them atomic. */
+static atomic_bool ready = false;
 static atomic_bool answered = false;
 static atomic_bool drew = false;
 static atomic_bool echoed = false;
 static atomic_size_t taken = 0;
 
-/* Our command's number, set before the callback can see it. */
-static uint64_t asked = 0;
+/* Our command's number. Atomic because the thread that learns it is not the
+ * thread that reads it, and zero until it is known: this program sends one
+ * command, so an answer arriving before the number is written is still the
+ * answer to it. */
+static atomic_uint_fast64_t asked = 0;
+
+/* What the pane has said, kept whole: the bytes arrive in whatever pieces the
+ * host sent them, and a marker can fall across two of them. */
+#define KEPT_BYTES 65536
+static uint8_t kept[KEPT_BYTES];
+static atomic_size_t kept_length = 0;
 
 /* Whether a run of bytes holds another. */
 static bool holds(const uint8_t *held, size_t length, const char *wanted) {
@@ -70,7 +83,14 @@ static void heard(const iznik_event *event, void *context) {
     if (event == NULL) {
         return;
     }
-    if (event->kind == IZNIK_EVENT_KIND_COMMAND_RESULT && event->command_id == asked) {
+    if (event->kind == IZNIK_EVENT_KIND_SNAPSHOT) {
+        /* The host's model, which arrives when the link is up: before that,
+         * a command would be handed to a host that has nowhere to send it. */
+        atomic_store(&ready, true);
+    }
+    uint_fast64_t number = atomic_load(&asked);
+    if (event->kind == IZNIK_EVENT_KIND_COMMAND_RESULT &&
+        (number == 0 || event->command_id == number)) {
         atomic_store(&answered, true);
     }
 }
@@ -96,22 +116,49 @@ static void printed(void *context, const uint8_t *bytes, size_t length) {
          * not happen; leaving `echoed` false is what fails the run. */
         return;
     }
-    if (holds(bytes, length, MARKER)) {
+    /* Kept rather than searched where it lands: a marker can arrive in two
+     * pieces, and two pieces are what a pseudoterminal read boundary makes of
+     * anything. */
+    size_t held = atomic_load(&kept_length);
+    if (bytes != NULL && held < KEPT_BYTES) {
+        size_t room = KEPT_BYTES - held;
+        size_t taking = (length < room) ? length : room;
+        memcpy(kept + held, bytes, taking);
+        atomic_store(&kept_length, held + taking);
+    }
+    if (holds(kept, atomic_load(&kept_length), MARKER)) {
         atomic_store(&echoed, true);
     }
 }
 
-/* Waits for one of the flags above, and says whether it came. */
+/* When this run must be finished, whatever it is waiting for. */
+static struct timespec ends_at;
+
+/* Whether the deadline the whole run shares has passed. */
+static bool out_of_time(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return true;
+    }
+    if (now.tv_sec != ends_at.tv_sec) {
+        return now.tv_sec > ends_at.tv_sec;
+    }
+    return now.tv_nsec > ends_at.tv_nsec;
+}
+
+/* Waits for one of the flags above, and says whether it came.
+ *
+ * Against the run's own deadline and not one of its own, so that three things
+ * waited for in turn cannot outlast what the case running this allows. */
 static bool await(atomic_bool *flag) {
     struct timespec look = {0, LOOK_NANOSECONDS};
-    long looks = (PATIENCE_SECONDS * 1000000000L) / LOOK_NANOSECONDS;
-    for (long at = 0; at < looks; at++) {
-        if (atomic_load(flag)) {
-            return true;
+    while (!atomic_load(flag)) {
+        if (out_of_time()) {
+            return false;
         }
         nanosleep(&look, NULL);
     }
-    return false;
+    return true;
 }
 
 /* Says what went wrong, with whatever iznik put in the error. */
@@ -157,6 +204,11 @@ int main(int argc, char **argv) {
         return 2;
     }
     const char *alias = argv[1];
+    if (clock_gettime(CLOCK_MONOTONIC, &ends_at) != 0) {
+        fprintf(stderr, "no clock\n");
+        return 1;
+    }
+    ends_at.tv_sec += PATIENCE_SECONDS;
     iznik_error error = {0, IZNIK_LAYER_CLIENT, NULL};
 
     iznik_configuration configuration = {"./runtime", NULL, NULL, NULL};
@@ -169,17 +221,24 @@ int main(int argc, char **argv) {
         return refused("the host was not taken", &error);
     }
 
+    if (!await(&ready)) {
+        fprintf(stderr, "the host never said what it holds\n");
+        return 1;
+    }
+
     size_t length = 0;
     uint8_t *command = read_whole("./command.bin", &length);
     if (command == NULL) {
         fprintf(stderr, "no command.bin beside this program\n");
         return 1;
     }
-    if (iznik_command(client, alias, command, length, &asked, &error) != IZNIK_OK) {
+    uint64_t number = 0;
+    if (iznik_command(client, alias, command, length, &number, &error) != IZNIK_OK) {
         free(command);
         return refused("the session was not asked for", &error);
     }
     free(command);
+    atomic_store(&asked, number);
     if (!await(&answered)) {
         fprintf(stderr, "the host never answered the command\n");
         return 1;

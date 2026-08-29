@@ -27,7 +27,7 @@ because = "the compiler on this machine reads the same header an application's w
 
 [[claim]]
 id = "header-declares-every-function-and-no-other"
-statement = "Every `extern \"C\"` function the crate declares is in the header, the header declares no other, and every function that states an obligation carries it into the header — where the person who has to keep it will read it, rather than in Rust documentation they will never open."
+statement = "Every `extern \"C\"` function the crate declares is in the header, the header declares no other, and every function that states an obligation carries it into the header — where the person who has to keep it will read it, rather than in Rust documentation they will never open. The obligation is looked for in the block belonging to the declaration and not in everything above it: a generator that stopped writing documentation is what this catches, and a check that read the whole prefix would find the callbacks typedef's own obligations there and pass for every function."
 test = "xtask::header_golden::header_golden_declares_every_function_and_no_other"
 because = "both lists are read from the tree, and comparing them needs nothing else"
 

@@ -137,11 +137,7 @@ fn header_declares(header: &str) -> BTreeSet<String> {
 ///
 /// # Errors
 ///
-/// When no compiler can be found, or one cannot be run.
-///
-/// # Panics
-///
-/// When the compiler it found refuses the header.
+/// When no compiler can be found, or the one found refuses the header.
 fn compiles(header: &Path, arguments: &[&str]) -> Result<(), Failed> {
     let compiler = ["cc", "gcc", "clang"]
         .into_iter()
@@ -149,12 +145,10 @@ fn compiles(header: &Path, arguments: &[&str]) -> Result<(), Failed> {
         .ok_or("no C compiler: looked for cc, gcc and clang")?;
     let mut command = Command::new(compiler);
     command.args(arguments).arg(header);
-    let done = process::run(command, COMPILE_DEADLINE, Output::Capture)?;
-    assert!(
-        done.status.success(),
-        "{compiler} reads the header: {}",
-        String::from_utf8_lossy(&done.stderr)
-    );
+    // A compiler that refuses is a child that exited non-zero, which the
+    // runner turns into an error carrying what it said; there is nothing left
+    // here to assert.
+    let _read = process::run(command, COMPILE_DEADLINE, Output::Capture)?;
     Ok(())
 }
 
@@ -305,10 +299,14 @@ fn header_golden_declares_every_function_and_no_other() {
             if !owed {
                 continue;
             }
+            // The block immediately above the declaration, and not everything
+            // above it: the callbacks typedef states obligations of its own
+            // and sits above every function there is, so a check that read
+            // the whole prefix would pass for all of them and fail for none.
             let stated = header
-                .split(&format!("{named}("))
-                .next()
-                .is_some_and(|before| before.contains("Obligation:"));
+                .split_once(&format!("{named}("))
+                .and_then(|(before, _rest)| before.rsplit("/**").next())
+                .is_some_and(|block| block.contains("Obligation:"));
             assert!(stated, "{named} carries its obligation into the header");
         }
         Ok(())

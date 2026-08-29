@@ -109,6 +109,34 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   name — the testkit, the protocol and a runtime — because the smoke case
   stands a whole daemon up in its own process for a C program to talk to.
 
+- **Review of `4da527b`:** eight, and the first was the worst kind — a case
+  that could not fail. The obligation check read everything above a
+  declaration rather than the block belonging to it, and the callbacks
+  typedef states obligations of its own and sits above every function there
+  is, so it passed for all of them and could have failed for none. It reads
+  the block now, and a header generated without documentation fails it.
+
+  Three were the C program's. Its command number was written by one thread and
+  read by another with nothing between them, which C calls undefined and a
+  race detector calls a bug; it is atomic, and an answer arriving before the
+  number is known is still the answer, because the program sends one command.
+  Its three waits had ten seconds each against a deadline of ten seconds for
+  the whole run, so a stall was a killed process rather than the sentence
+  saying which thing stalled: the waits share one deadline now, inside the
+  runner's. And it searched each delivery of bytes on its own for the line it
+  typed, which a pseudoterminal is free to split in two; it keeps what the
+  pane says and searches that. A fourth was the same shape: it sent its
+  command before the host had said anything, and a command handed to a host
+  with nowhere to send it is dropped while the call still answers well — it
+  waits for the host's model first.
+
+  The rest: `xtask header` resolved its root from the current directory, which
+  this workspace has a function for and a documented reason not to do; the
+  build deadline was twice the gate's own, so a build that would not finish
+  was reported as a gate that timed out; and three assertions sat after calls
+  that raise rather than return on failure, so their careful sentences could
+  never be printed.
+
 - **Review of `f264838`:** eight, and three of them were about what an event
   says. A pane that had gone arrived as a host state carrying "pane 7
   detached", which an application showing states where the connection belongs

@@ -206,7 +206,7 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
     if crate::asked_for_help(arguments) {
         return crate::help_with(USAGE);
     }
-    match write(Path::new(".")) {
+    match write(&crate::repository_root()) {
         Ok(path) => {
             writeln!(std::io::stdout(), "wrote {}", path.display()).unwrap_or_default();
             ExitCode::SUCCESS
