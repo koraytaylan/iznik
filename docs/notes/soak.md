@@ -1,7 +1,7 @@
 # Soak report
 
 This is the run this task commits: ten minutes with a two-minute warmup, taken
-on 2026-08-29 from the tree that became this commit, whose parent is `06440a4`.
+on 2026-08-29 from the tree that became this commit, whose parent is `c45ddd2`.
 It is not the run a release needs. That one is six hours, is run by a person,
 and is the first item on the [release checklist](release-checklist.md); this
 one is here so that the shape of a report is in the tree, and so that a change
@@ -102,7 +102,7 @@ one go would be checked from its middle and its beginning called whole.
 - **Rounds:** 29 attempted, 29 finished, 29 flooded, longest run of failures 0
 - **Cuts:** 29, each seen to have stopped the daemon it named
 - **Pane churn:** 29 sessions made and unmade
-- **Held client:** 9502 deliveries, 5771602 bytes, 1 screens, attached at byte 6288982
+- **Held client:** 9683 deliveries, 5771602 bytes, 1 screens, attached at byte 6288982
 - **Growth ceiling:** 4194304 bytes an hour, after the warmup
 
 
@@ -110,49 +110,49 @@ one go would be checked from its middle and its beginning called whole.
 
 | At | Resident |
 |---|---|
-| 21s | 2793472 |
-| 84s | 2809856 |
+| 21s | 2801664 |
+| 84s | 2797568 |
 | 148s | 2813952 |
-| 212s | 2818048 |
-| 276s | 2809856 |
+| 212s | 2805760 |
+| 276s | 2822144 |
 | 340s | 2818048 |
-| 403s | 2813952 |
-| 467s | 2818048 |
+| 403s | 2809856 |
+| 467s | 2813952 |
 | 531s | 2813952 |
 | 595s | 2822144 |
 
-Growth after the warmup: 38543 bytes an hour.
+Growth after the warmup: 44147 bytes an hour.
 
 ## The daemon it watches, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 10629120 |
-| 84s | 10637312 |
-| 148s | 10633216 |
-| 212s | 10637312 |
-| 276s | 10649600 |
-| 340s | 10637312 |
-| 403s | 10645504 |
-| 467s | 10661888 |
-| 531s | 10698752 |
-| 595s | 10702848 |
+| 21s | 10776576 |
+| 84s | 10801152 |
+| 148s | 10813440 |
+| 212s | 10817536 |
+| 276s | 10821632 |
+| 340s | 10821632 |
+| 403s | 10829824 |
+| 467s | 10854400 |
+| 531s | 10862592 |
+| 595s | 10870784 |
 
-Growth after the warmup: 564050 bytes an hour.
+Growth after the warmup: 492396 bytes an hour.
 
 ## The daemon it churns, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 4431872 |
-| 84s | 4448256 |
-| 148s | 4456448 |
-| 212s | 4456448 |
-| 276s | 4456448 |
-| 340s | 4460544 |
-| 403s | 4460544 |
-| 467s | 4460544 |
-| 531s | 4460544 |
-| 595s | 4460544 |
+| 21s | 4460544 |
+| 84s | 4485120 |
+| 148s | 4485120 |
+| 212s | 4489216 |
+| 276s | 4489216 |
+| 340s | 4493312 |
+| 403s | 4493312 |
+| 467s | 4493312 |
+| 531s | 4493312 |
+| 595s | 4493312 |
 
-Growth after the warmup: 41259 bytes an hour.
+Growth after the warmup: 60531 bytes an hour.

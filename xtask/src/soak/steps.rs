@@ -7,7 +7,7 @@
 use core::time::Duration;
 
 use crate::soak::{
-    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLED_DEADLINE, SPLIT, STEP_DEADLINE, WATCHED,
+    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLED_PATIENCE, SPLIT, STEP_DEADLINE, WATCHED,
 };
 
 /// The step that makes the pane the soak holds open.
@@ -54,12 +54,17 @@ pub fn filling_step() -> String {
 /// already been said is streamed to it. What it waits for is a line the shell
 /// prints, which the shell only reaches once the flood before it is over —
 /// and if the flood is still pouring, this client's window fills with it and
-/// the step fails, which is the caller's cue to ask again.
+/// the wait runs out, which is the caller's cue to ask again.
+///
+/// The step is given as long as any other, because reaching a host is the
+/// same work here as anywhere and a dial alone may take forty seconds; it is
+/// the *wait* that is short, so that an asking which is going to fail fails
+/// quickly rather than spending a whole step deadline finding out.
 #[must_use]
 pub fn settled_step() -> String {
     step_of(
         "settled",
-        SETTLED_DEADLINE,
+        STEP_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
@@ -67,8 +72,7 @@ pub fn settled_step() -> String {
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
              text = \"echo set{SPLIT}tled\\n\" }},\n  \
              {{ kind = \"await_bytes\", alias = \"{WATCHED}\", pane = 1, \
-             contains = \"settled\", within_milliseconds = {} }},\n",
-            SETTLED_DEADLINE.as_millis()
+             contains = \"settled\", within_milliseconds = {SETTLED_PATIENCE} }},\n"
         ),
     )
 }

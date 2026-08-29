@@ -483,6 +483,13 @@ fn regression_soak_judges_a_run_by_what_it_did() {
         judged(&halfway, "", true).is_err(),
         "a round that failed after its flood does not excuse the flood it poured"
     );
+    // A client that heard nothing at all.
+    let mut unheard = passing();
+    unheard.heard.deliveries = 0;
+    assert!(
+        judged(&unheard, "", true).is_err(),
+        "a client that heard nothing heard nothing whole"
+    );
     // A client that attached to a pane which had said nothing: the flood
     // poured before the clock starts never happened, and the ring it fills
     // would be weighed filling itself.
@@ -649,6 +656,21 @@ fn regression_soak_reads_a_peak_as_a_peak() {
     assert!(
         rate.is_some_and(|held| held < SOAK_GROWTH_CEILING_PER_HOUR),
         "one sample that caught a flood is not a leak: {rate:?}"
+    );
+    // And its pull falls away as a run lengthens, which is why a six-hour run
+    // reads tens of kilobytes an hour for the same one peak.
+    let mut longer = climbing(0);
+    longer.extend(climbing(0).into_iter().map(|sample| Sample {
+        at: sample.at.saturating_add(Duration::from_secs(SERIES)),
+        bytes: sample.bytes,
+    }));
+    if let Some(sample) = longer.last_mut() {
+        sample.bytes = sample.bytes.saturating_mul(2);
+    }
+    let diluted = grown(&longer, NO_WARMUP);
+    assert!(
+        diluted < rate,
+        "a longer series with the same peak reads lower: {diluted:?} against {rate:?}"
     );
     // And growth in the last quarter alone is seen, which is the shape of a
     // leak that begins once a ring has filled. Two middles could not see it.

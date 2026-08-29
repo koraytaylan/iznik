@@ -501,6 +501,25 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   that lands with its justification, so it is left for one rather than taken
   here; the scenario proves the behaviour in the meantime.
 
+- **The last of it.** A fifth pass found the soak's machinery clean and four
+  things around it. The step that waits out the ring-filling flood had thirty
+  seconds for everything — a dial the product allows forty for included — so a
+  slow dial would have failed all twenty askings for the same reason and
+  refused a healthy six-hour run before it measured anything; the step has as
+  long as any other now and it is the *wait* that is short, which is what
+  makes a failed asking cheap. What the held client heard was thrown away
+  whenever a container would not answer, printing hours of hearing as a client
+  that heard nothing — the one reading the counting exists to prevent — and a
+  broken stream skipped the judgement entirely, so a run could end without the
+  ceiling ever being applied. Both are kept and made now: the tally survives
+  every ending, and the judgement is made beside whatever went wrong.
+
+  The last was the container margin's own arithmetic, wrong for the second
+  time. It is counted properly now — every deadline this module allows, named
+  — and says what it is: three hours against four of allowance that cannot all
+  be spent at once, because a margin covers the weather rather than the sum of
+  every worst case.
+
 - **Convergence.** A fourth pass over the soak found its machinery clean —
   the cut's lock path and guards, what `iznik tail` prints, the fit's
   arithmetic at six-hour magnitudes, and every figure in the committed note

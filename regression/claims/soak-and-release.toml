@@ -68,7 +68,7 @@ because = "it is what a command line means, which is the same wherever it is rea
 
 [[claim]]
 id = "soak-reads-a-peak-as-a-peak"
-statement = "A level series with one sample twice the size in its later half grew by nothing, and a half of two samples is read as what lies between them rather than as the larger of them — because a flood in flight puts a peak on whichever sample catches it, and taking the upper middle would report megabytes an hour for a process that never grew."
+statement = "Growth is the slope of the line that fits every measured sample. One sample that caught a flood in flight is pulled on by every other, so it stays under the ceiling and its pull falls away as a run lengthens — a longer series with the same peak in it reads lower — rather than becoming the answer. And growth confined to the first or the last quarter of a run is still growth, where two points, however chosen, see only what happened between them and report nothing at all for a leak that begins late, which is the shape a soak of hours exists to reach."
 test = "xtask::regression_soak::regression_soak_reads_a_peak_as_a_peak"
 because = "it is arithmetic over a series of numbers"
 

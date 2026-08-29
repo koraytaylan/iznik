@@ -194,14 +194,15 @@ const DRAINING_INTERVAL: Duration = Duration::from_secs(1);
 /// And how many of them there may be.
 const DRAINING_ATTEMPTS: u32 = 120;
 
-/// How long one asking of whether the pane has gone quiet may take.
+/// How long one asking of whether the pane has gone quiet waits for its
+/// answer, in milliseconds.
 ///
-/// Half a minute, and the command that carries it a minute and a half — so
-/// twenty askings are half an hour of deadline, which is what the margin the
-/// containers are given has to hold. A shell pours six megabytes into a ring
-/// in seconds; this is for a machine with other work on it, not for a slow
-/// shell.
-const SETTLED_DEADLINE: Duration = Duration::from_secs(30);
+/// Fifteen seconds, where the step around it has as long as any other. An
+/// asking that is going to fail fails because the flood is still pouring and
+/// has filled its window, which is known within seconds; what must not be
+/// hurried is the dial before it, which the product allows forty seconds for
+/// and which every one of these would otherwise fail systematically.
+const SETTLED_PATIENCE: u64 = 15_000;
 
 /// How many times it is asked.
 const SETTLED_ATTEMPTS: u32 = 20;
@@ -256,23 +257,28 @@ pub const SERVER_PROCESS: &str = "iznik-server";
 
 /// How much longer than the soak itself its containers may live.
 ///
-/// Podman kills a container when its own timeout runs out, and it counts from
-/// when the container started, while the soak's clock does not start until a
-/// pane is open, the flood that fills its ring has drained and a client is
-/// holding it. What this module allows before that, at its worst: half a
+/// Podman kills a container when its own timeout runs out, counting from when
+/// the container started, while the soak's clock does not start until a pane
+/// is open, the flood that fills its ring has drained and a client is holding
+/// it. Every deadline this module allows before that, at its worst: half a
 /// minute of readiness; two reaches at five minutes each, a reach being a
-/// bootstrap and a bootstrap being allowed six; two steps at ten, since a
-/// step is a write under a command's deadline and a run under its own; half
-/// an hour of asking whether the flood is over; seven minutes of waiting for
-/// the client to attach; and a weighing. What it allows after: a last round
-/// already in flight at two steps and a cut, a churn, and an ending whose
-/// windows are half a minute each.
+/// bootstrap and a bootstrap being allowed six; two steps at ten, a step
+/// being a write under a command's deadline and a run under its own with a
+/// minute besides; twenty askings of whether the flood is over, at ten
+/// apiece by the same reckoning; and seven minutes of attaching. After it: a
+/// last round already in flight at two steps and a cut, a churn, and an
+/// ending whose windows are half a minute each.
 ///
-/// Two hours is above the sum of them, which is a little over one. A
-/// container killed while the soak believes it is running turns hours of
-/// measurement into a fixture error — and into one with nothing in it, since
-/// what podman leaves is an exit status and an empty stream.
-const CONTAINER_MARGIN: Duration = Duration::from_hours(2);
+/// That is a little over four hours of allowance against three of margin, and
+/// it is meant to be: they are the deadlines of things that do not happen
+/// together, and every one of them is a ceiling nothing reaches — a settled
+/// asking takes seconds, and twenty of them only ever happen if a flood is
+/// still pouring after ten minutes. What the margin has to cover is the
+/// weather, not the sum of every worst case at once. A container killed while
+/// the soak believes it is running turns hours of measurement into a fixture
+/// error with nothing in it, since what podman leaves is an exit status and
+/// an empty stream.
+const CONTAINER_MARGIN: Duration = Duration::from_hours(3);
 
 /// How much longer than a step itself the command that runs it may take: the
 /// writing of the step, the driver starting and the answer coming back.
@@ -528,8 +534,13 @@ pub fn soaked(duration: Duration, warmup: Duration) -> Result<Report, SoakError>
     // Whatever the ending said, what it managed to count is kept: a tally
     // that stops where a stream broke is the evidence, and zeroing it would
     // print the run as one that heard nothing at all.
-    let judgement =
-        ending(&fixture, &mut report).and_then(|living| judged(&report, &refused, living));
+    // What went wrong at the end and what the run measured are two answers,
+    // and a person needs both: a stream that broke in the last minute must not
+    // take the growth ceiling with it. What the ending read is in the report
+    // by now, the judgement is made against it either way, and the ending's
+    // own words stand where the judgement had none.
+    let ended = ending(&fixture, &mut report);
+    let judgement = judged(&report, &refused, ended.is_ok()).and(ended);
     if let Err(source) = judgement {
         return Err(SoakError::Judged {
             report: Box::new(report),
@@ -539,14 +550,18 @@ pub fn soaked(duration: Duration, warmup: Duration) -> Result<Report, SoakError>
     Ok(report)
 }
 
-/// Ends the run: asks whether the held client is still there, stops it, and
-/// reads what it heard.
+/// Ends the run: asks whether the held client is still there, lets it catch
+/// up, stops it, and reads what it heard.
+///
+/// What it read goes into the report whatever happens, so that the judgement
+/// beside it is made against what the run measured rather than against
+/// nothing.
 ///
 /// # Errors
 ///
-/// [`SoakError`] for a container that will not answer or a stream that says
-/// the client stopped listening.
-fn ending(fixture: &Fixture, report: &mut Report) -> Result<bool, SoakError> {
+/// [`SoakError`] for a container that would not answer, a stream that says
+/// the client stopped listening, or a client that was gone before the end.
+fn ending(fixture: &Fixture, report: &mut Report) -> Result<(), SoakError> {
     // Alive at the end, and asked before it is stopped: a client that died an
     // hour in leaves a stream with no gap in it, which is what a check that
     // only looks for gaps calls whole.
@@ -557,12 +572,18 @@ fn ending(fixture: &Fixture, report: &mut Report) -> Result<bool, SoakError> {
     // what was queued and the run reports a loss of its own making.
     drained(fixture)?;
     let _stopped = fixture.exec("engine", &stop_tail(), COMMAND_DEADLINE.0)?;
-    let (heard, broken) = heard_by(fixture)?;
+    let (heard, broken) = heard_by(fixture);
     report.heard = heard;
-    match broken {
-        None => Ok(living),
-        Some(detail) => Err(SoakError::Lost { detail }),
+    if let Some(detail) = broken {
+        return Err(SoakError::Lost { detail });
     }
+    if living {
+        return Ok(());
+    }
+    Err(SoakError::Lost {
+        detail: "the held client was gone before the end, so what it heard is not the run"
+            .to_owned(),
+    })
 }
 
 /// Waits for the held client to have attached, or says it never did.
@@ -622,7 +643,7 @@ fn attended(fixture: &Fixture) -> Result<(), SoakError> {
 fn settled(fixture: &Fixture) -> Result<(), SoakError> {
     let mut refused = String::new();
     for _attempt in 0..SETTLED_ATTEMPTS {
-        match step_run(fixture, &settled_step(), SETTLED_DEADLINE) {
+        match step_run(fixture, &settled_step(), STEP_DEADLINE) {
             Ok(_said) => return Ok(()),
             Err(refusal) => refused = refusal.to_string(),
         }
@@ -704,32 +725,37 @@ fn alive(fixture: &Fixture) -> Result<bool, SoakError> {
 /// that none of them reaches the limit, and they are read in order, so the
 /// reckoning carries from one to the next.
 ///
-/// Answers with what was counted and, where the stream broke, the words for
-/// it — never one without the other.
-///
-/// # Errors
-///
-/// [`SoakError::Fixture`] when the container will not say.
-fn heard_by(fixture: &Fixture) -> Result<(Heard, Option<String>), SoakError> {
-    let counted = lines(fixture)?;
+/// Answers with what was counted and, where the reading stopped, the words
+/// for it — never one without the other, and never an error in place of a
+/// count.
+fn heard_by(fixture: &Fixture) -> (Heard, Option<String>) {
     let mut heard = Heard::default();
+    let counted = match lines(fixture) {
+        Ok(counted) => counted,
+        Err(refusal) => return (heard, Some(refusal.to_string())),
+    };
     let mut from = 1;
     while from <= counted {
         let to = from.saturating_add(LINES_AT_ONCE).saturating_sub(1);
-        let window = fixture.exec(
+        // Whatever stops the reading — a window that says the stream broke, a
+        // container that would not answer — what was counted up to there is
+        // kept. Zeroing it would print hours of hearing as a client that
+        // heard nothing, which is the one reading this counting exists to
+        // prevent.
+        let window = match fixture.exec(
             "engine",
             &format!("sed -n '{from},{to}p;{to}q' {TAIL_OUTPUT}"),
             WINDOW_DEADLINE,
-        )?;
-        // A window that says the stream broke ends the reading and not the
-        // report: what was counted up to there is what the client heard, and
-        // it is the number a person needs beside the words.
+        ) {
+            Ok(window) => window,
+            Err(refusal) => return (heard, Some(refusal.to_string())),
+        };
         if let Err(detail) = heard_more(&mut heard, &String::from_utf8_lossy(&window.stdout)) {
-            return Ok((heard, Some(detail)));
+            return (heard, Some(detail));
         }
         from = to.saturating_add(1);
     }
-    Ok((heard, None))
+    (heard, None)
 }
 
 /// Runs rounds back to back until the clock says stop, weighing every side on
