@@ -1,6 +1,8 @@
 # iznik-ffi
 
-The C ABI over `iznik-client`, the one crate that may contain `unsafe`: a single-threaded facade whose every callback arrives on one dedicated thread, whose every function is safe from any thread, and whose header is generated and golden-pinned.
+The C ABI over `iznik-client`, and the one crate in this workspace that may contain `unsafe`: a facade whose every function is safe to call from any thread, whose every callback arrives on one dedicated thread, and whose header is generated and golden-pinned.
+
+**What an application is built against is [`docs/CLIENT.md`](../../docs/CLIENT.md), not this file.** That document is the contract — the threading rules, the ownership rules, the credit protocol, what a reconnection obliges, how query responses are answered, what the marks carry, and a worked example — and where it and this implementation disagree, it wins and this is the bug. A test holds the two together: every name in the contract is in `include/iznik.h` and the reverse, and every obligation the header states is in the contract in the same words.
 
 ## Modules
 
@@ -11,9 +13,13 @@ The C ABI over `iznik-client`, the one crate that may contain `unsafe`: a single
 | `pane` | The pane byte pipe: attach, detach, the output callback that hands bytes straight to a surface, mandatory credit, input that is one message per call, resize and focus. | `pane-byte-pipe` (plan 0006) |
 | `shape` | What turns one event of iznik's own into one of the application's: its kind, its host, its bytes, and the numbers that say which pane, place, generation and command. This crate's own, not part of the ABI. | `ffi-surface` (plan 0006) |
 
+## The header
+
+`include/iznik.h` is generated from this crate by `cargo xtask header` and committed. A signature that changes changes the header in the same commit, where a reviewer sees it; a case regenerates it and compares byte for byte, another edits one signature in a copy of the tree to be sure the comparing works, and a third compiles the header alone as C11 under `-Wall -Wextra -Werror` and again as C++.
+
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. `ffi_surface.rs` calls the `extern "C"` functions the way a C program does, against a daemon on this machine through a `unix:` alias — which is why this crate is built as an `rlib` beside the `cdylib` and `staticlib` an application links.
+Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. `ffi_surface.rs` and `pane_byte_pipe.rs` call the `extern "C"` functions the way a C program does, against a daemon on this machine through a `unix:` alias — which is why this crate is built as an `rlib` beside the `cdylib` and `staticlib` an application links. `xtask/tests/fixtures/ffi/smoke.c` is the C program itself, compiled against the generated header and the static archive and run against a real daemon.
 
 ## What the events say
 

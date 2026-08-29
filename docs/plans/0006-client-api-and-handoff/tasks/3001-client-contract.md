@@ -12,7 +12,7 @@ touches:
   - "xtask/tests/contract_matches_header.rs"
   - "regression/claims/client-contract.toml"
   - "policy/lexicon/client-contract.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Client Contract

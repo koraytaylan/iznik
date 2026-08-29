@@ -1,0 +1,18 @@
+# The specification the implementation is held to.
+#
+# Both proofs are `test` proofs over two documents in this tree, because that
+# is what they are about: whether what a developer is given says the same
+# things as what a compiler is given. A container would hold the same two
+# files.
+
+[[claim]]
+id = "contract-names-everything-the-header-declares-and-no-other"
+statement = "Every name in `include/iznik.h` is named in `docs/CLIENT.md`, and the contract names nothing the header does not declare — so a developer holding the contract is told about the whole surface, and told about nothing that is not there. A name the contract does not mention is a thing nobody was told about; one it invents is a promise nothing keeps."
+test = "xtask::contract_matches_header::contract_names_everything_the_header_declares_and_no_other"
+because = "both are files in this tree, and comparing what they name needs nothing else"
+
+[[claim]]
+id = "contract-states-every-obligation-the-header-does"
+statement = "Every obligation the header states is in the contract in the same words, and the contract states none the header does not — because an obligation stated in one and not the other is the two disagreeing about who has to do what, and this is the document that wins when they disagree."
+test = "xtask::contract_matches_header::contract_states_every_obligation_the_header_does"
+because = "an obligation is a paragraph in each of two files, compared by its words with the wrapping of neither"

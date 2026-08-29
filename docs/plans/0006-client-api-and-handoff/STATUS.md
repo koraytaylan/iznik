@@ -7,7 +7,7 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
 - **Approach:** treat `docs/CLIENT.md` as the specification the implementation is held to, pin the ABI with a golden header and exercise it from C against a real local daemon reached by a `unix:` alias, ship one command that reports which layer is broken with secrets redacted by construction, and soak before release.
-- **Progress:** 5/8 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 6/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
 - **Review of `bbf5669`:** nine findings, every one of them real. The high one
@@ -123,6 +123,12 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   ending, though it is a state that is tried again: one transient failure
   aborted a command that would have connected a moment later, and the harness
   that models this waits forty seconds through exactly that.
+
+- **`client-contract`:** `docs/CLIENT.md` is held to the header by two cases,
+  and both were run against a contract with a name changed and an obligation
+  reworded to be sure they see it. "Verbatim" is read as the words and not the
+  wrapping: a C comment wraps where a comment allows and a document where a
+  paragraph does, so the two are compared with the wrapping of neither.
 
 - **`diagnostics-bundle`:** the redaction is proven over text rather than
   through a planted configuration, because `ssh` finds a user's configuration
