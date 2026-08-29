@@ -1,0 +1,73 @@
+# The two-container fixture every scenario runs in, and the staging that fills
+# it.
+#
+# All of these are `test` proofs in a `regression_` binary rather than
+# scenarios, and for one reason: a scenario is a thing the fixture runs, so a
+# scenario cannot be what proves the fixture. These stand the containers up
+# themselves and ask podman directly what became of them.
+
+[[claim]]
+id = "fixture-containers-answer-by-name"
+statement = "The engine and each host answer to the alias the scenario names, as the unprivileged user everything runs as — so a step lands in the container it named rather than in whichever was started first."
+test = "iznik-harness::regression_fixture::regression_fixture_both_containers_answer_by_name"
+because = "what is asked is what podman did on this machine, and a container is the thing under test"
+
+[[claim]]
+id = "fixture-starts-inside-its-ceiling"
+statement = "With warm images the whole fixture is up inside `FIXTURE_START_CEILING`, and the measured time is printed rather than only compared — because a start that has slowed is a thing a person should see the size of."
+test = "iznik-harness::regression_fixture::regression_fixture_start_latency_is_under_the_ceiling"
+because = "it is a measurement of this machine standing containers up"
+
+[[claim]]
+id = "fixture-uses-credentials-that-exist-nowhere-else"
+statement = "The engine reaches a host with the credentials the fixture generated for that run and with nothing else: no agent, no `~/.ssh` of the developer's, nothing that outlives the run. A test that passes because the machine was already set up is not evidence."
+test = "iznik-harness::regression_fixture::regression_fixture_ssh_uses_generated_credentials_only"
+because = "what is proven is what is inside the containers, which is where the credentials are"
+
+[[claim]]
+id = "fixture-hosts-are-distinct"
+statement = "Two hosts are two machines: each answers to its own name and its own identity, so a multi-host case cannot pass by talking to one of them twice."
+test = "iznik-harness::regression_fixture::regression_fixture_two_hosts_are_distinct"
+because = "it is a property of the containers the fixture started"
+
+[[claim]]
+id = "fixture-cuts-a-network-and-mends-it"
+statement = "A fault detaches a container from the network and reattaches it from outside both containers, which is what a scenario's link drop is: the host stops answering and answers again, and its address may have changed in between."
+test = "iznik-harness::regression_fixture::regression_fixture_network_faults_disconnect_and_reconnect"
+because = "cutting a real network between two real containers is the thing being proven"
+
+[[claim]]
+id = "fixture-stops-resumes-and-kills-a-process"
+statement = "A fault stops a named process, starts it again, and kills it — by the identifier it wrote down rather than by matching on a name, which is how a scenario stops something it started without reaching for anything else on the machine."
+test = "iznik-harness::regression_fixture::regression_fixture_process_faults_pause_resume_and_kill"
+because = "signalling a process inside a container is what is under test"
+
+[[claim]]
+id = "fixture-gives-up-on-a-host-that-never-answers"
+statement = "A host that never answers over SSH is given up on at the readiness cap rather than waited for, and everything started for it is torn down — a hang is a failure that names what was running, never a wait."
+test = "iznik-harness::regression_fixture::regression_fixture_readiness_cap_fails_and_tears_down"
+because = "the case builds a host that cannot answer, which needs the container to exist"
+
+[[claim]]
+id = "fixture-leaves-nothing-behind"
+statement = "Teardown removes every container and network the run made, counting the ones a plain listing would hide."
+test = "iznik-harness::regression_fixture::regression_fixture_teardown_leaves_nothing_behind"
+because = "what is asked afterwards is what podman still holds"
+
+[[claim]]
+id = "fixture-reaps-a-dead-owners-leavings"
+statement = "A container carrying the fixture's labels whose owner has died is removed by the next start; one whose owner is alive is left alone, because a sibling's live fixture is not rubbish; and the reaper a person runs removes both."
+test = "iznik-harness::regression_fixture::regression_fixture_reaper_removes_a_dead_owners_leavings"
+because = "the leavings are real containers and the question is what podman does with them"
+
+[[claim]]
+id = "fixture-reaps-what-is-orphaned-into-it"
+statement = "Every process orphaned into a container is reaped by its first process, and that process is one that waits rather than the idle program. A shell that backgrounds a command and exits leaves it to the first process; where that process never waits the entry is permanent, and nothing shows for minutes while the entries accumulate until the container cannot fork and every command in it fails at once. A six-hour soak found exactly that after four of them, with two thousand orphaned `ssh` control masters in the engine."
+test = "iznik-harness::regression_fixture::regression_fixture_reaps_what_is_orphaned_into_it"
+because = "what a container's first process does with an orphan is a property of that container"
+
+[[claim]]
+id = "fixture-stages-once-and-honours-an-override"
+statement = "Staging builds nothing the second time — the binaries the containers mount are keyed by their content — and a directory named by hand is used as it stands, so a person may put a build of their own in front of the fixture."
+test = "iznik-harness::regression_fixture::regression_fixture_staging_builds_nothing_the_second_time_and_honours_the_override"
+because = "it is what the staging directory holds after two builds, on the machine that built them"

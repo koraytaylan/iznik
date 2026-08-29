@@ -14,4 +14,23 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
 - **Outcome:** A rule-gated Rust workspace with golden-pinned wire primitives, a headless VT oracle, and a two-container Podman regression suite whose scenarios are parallel nextest tests and whose claims registry gates every later plan, with `cargo xtask check` as the one command that says whether a change may land.
 
-_Last updated: 2026-08-28, against `develop` @ `28c330b`._
+- **Found by the soak, 2026-08-29.** A container's first process was the idle
+  program — a `sleep`, which never waits — so every process orphaned into a
+  container stayed in its table for ever. Nothing shows for minutes. Over
+  hours the entries accumulate: a six-hour soak reached four before the engine
+  held two thousand orphaned `ssh` control masters, could no longer fork, and
+  failed five hundred and eighty-one rounds in twenty minutes. Every container
+  now starts with an init that reaps.
+
+  `regression_fixture_reaps_what_is_orphaned_into_it` holds both halves of it,
+  because either alone passes for the wrong reason: that the first process is
+  one that waits, and that fifty orphans leave nothing behind. Each was
+  checked by taking the fix away — the first refuses immediately, the second
+  reports "kept 50 orphans it should have reaped", which is the production
+  defect in miniature.
+
+  This task had declared no claims at all, so nothing here had ever been in
+  the registry; `regression/claims/regression-fixture.toml` now carries eleven,
+  one for each of its cases.
+
+_Last updated: 2026-08-29, against `develop` @ `e0cf2ae`._

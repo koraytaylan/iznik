@@ -39,6 +39,8 @@ network
 networks
 options
 orphan
+orphaned
+orphans
 overridden
 override
 owners
@@ -50,7 +52,10 @@ provision
 public
 readiness
 reap
+reaped
 reaper
+reaping
+reaps
 reconnect
 recovery
 removes

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use iznik_harness::deadline::wait_until;
 use iznik_harness::fixture::{
-    ENGINE_ALIAS, FIXTURE_START_CEILING, Fault, Fixture, FixtureError, FixtureOptions, OWNER_LABEL,
-    Process, RUN_LABEL, Reap, reap,
+    ENGINE_ALIAS, FIXTURE_START_CEILING, Fault, Fixture, FixtureError, FixtureOptions,
+    IDLE_PROGRAM, OWNER_LABEL, Process, RUN_LABEL, Reap, reap,
 };
 use iznik_harness::images::{IMAGE_BUILD_DEADLINE, PROGRAM, ensure_images};
 use iznik_harness::process::{self, Completed, Deadline, Output, ProcessError};
@@ -487,4 +487,73 @@ fn regression_fixture_staging_builds_nothing_the_second_time_and_honours_the_ove
     };
     let chosen = stage_with(&overridden, Deadline(STAGING_DEADLINE)).expect("the override is used");
     assert_eq!(chosen, Path::new("/tmp/iznik-staged-override"));
+}
+
+/// How many processes are orphaned into the container's first process.
+///
+/// Enough that a container without a reaper is unmistakable, and few enough
+/// that a shell makes them in an instant.
+const ORPHANS: usize = 50;
+
+/// How long they are given to be born, exit and be reaped.
+const REAPING: Duration = Duration::from_secs(3);
+
+/// Every process orphaned into a container is reaped by its first process.
+///
+/// A shell that backgrounds a command and exits leaves that command to the
+/// container's first process. Where that process never waits — a `sleep`, as
+/// it was here — the entry it leaves is permanent: nothing shows for minutes,
+/// and over hours the entries accumulate until the container cannot fork and
+/// every command in it fails at once. A six-hour soak found this after four
+/// of them, with two thousand orphaned `ssh` control masters in the engine.
+///
+/// Both halves are asserted, because either alone can pass for the wrong
+/// reason: that the first process is one that reaps rather than the idle
+/// program, and that fifty orphans leave nothing behind.
+///
+/// # Panics
+///
+/// When podman is missing (the message names it), when the first process is
+/// the idle program, or when an orphan is left in the table.
+#[test]
+#[ignore = "needs podman and a musl toolchain; run with --run-ignored all"]
+fn regression_fixture_reaps_what_is_orphaned_into_it() {
+    let fixture = started(1)
+        .unwrap_or_else(|error| panic!("podman and a musl toolchain are needed: {error}"));
+    for alias in [ENGINE_ALIAS, &Fixture::host_alias(0)] {
+        let first = fixture
+            .exec(alias, "cat /proc/1/comm", COMMAND)
+            .unwrap_or_else(|error| panic!("{alias} did not say what it starts with: {error}"));
+        assert_ne!(
+            text(&first).trim(),
+            IDLE_PROGRAM,
+            "{alias} starts with something that reaps, not with the idle program"
+        );
+        // A shell that makes fifty background children and returns leaves
+        // every one of them to the first process.
+        let _orphaned = fixture
+            .exec(
+                alias,
+                &format!("index=0; while [ $index -lt {ORPHANS} ]; do sh -c 'exit 0' & index=$((index + 1)); done; exit 0"),
+                COMMAND,
+            )
+            .unwrap_or_else(|error| panic!("{alias} would not orphan anything: {error}"));
+        thread::sleep(REAPING);
+        // Counted with `awk` rather than `grep -c`, which answers a count of
+        // none with a failing status and would be read here as a container
+        // that would not answer.
+        let left = fixture
+            .exec(
+                alias,
+                "for held in /proc/[0-9]*; do awk '/^State:/{print $2}' \"$held/status\" \
+                 2>/dev/null; done | awk '/^Z/{found++} END{print found + 0}'",
+                COMMAND,
+            )
+            .unwrap_or_else(|error| panic!("{alias} did not count what it holds: {error}"));
+        assert_eq!(
+            text(&left).trim(),
+            "0",
+            "{alias} kept {ORPHANS} orphans it should have reaped"
+        );
+    }
 }

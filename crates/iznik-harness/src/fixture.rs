@@ -59,7 +59,11 @@ const ENGINE_DEADLINE: Duration = Duration::from_mins(1);
 const IDENTITY: &str = "/home/iznik/.ssh/id_ed25519";
 
 /// The engine's main process: nothing, kept alive.
-const IDLE_PROGRAM: &str = "sleep";
+///
+/// Public so that a case can say what a container must *not* start with: it
+/// never waits on anything, so a container whose first process is this one
+/// keeps every orphan it is given for ever.
+pub const IDLE_PROGRAM: &str = "sleep";
 
 /// The idle program's argument: for ever.
 const IDLE_ARGUMENT: &str = "infinity";
@@ -438,6 +442,16 @@ impl Fixture {
         let mut arguments = vec![
             "run",
             "--detach",
+            // A first process that reaps. Without one, every process orphaned
+            // into a container stays in its table for ever: a shell that
+            // backgrounds a command and exits leaves it to the first process,
+            // and the first process here would otherwise be a `sleep`, which
+            // never waits. Nothing shows for minutes; over hours the entries
+            // accumulate until the container cannot fork at all, and every
+            // command in it fails at once. A six-hour soak found this after
+            // four of them, with two thousand orphaned `ssh` control masters
+            // in the engine.
+            "--init",
             "--name",
             &name,
             "--hostname",
