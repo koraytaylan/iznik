@@ -1,0 +1,28 @@
+name = "unreachable-host"
+claims = ["doctor-names-the-layer-that-could-not-be-reached"]
+driver = "engine"
+budget_seconds = 90
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A host that is not there. What matters is that the answer comes quickly and
+# says which layer could not be reached, rather than the command waiting out
+# the retries a client would make on its own.
+[[steps]]
+id = "a-host-that-is-not-there"
+container = "engine"
+run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik doctor nosuchhost"
+timeout_seconds = 45
+
+[[expect]]
+step = "a-host-that-is-not-there"
+exit = 0
+stdout_contains = "\"layer\":\"transport\""
+
+[[expect]]
+step = "a-host-that-is-not-there"
+exit = 0
+stdout_contains = "\"skipped\""

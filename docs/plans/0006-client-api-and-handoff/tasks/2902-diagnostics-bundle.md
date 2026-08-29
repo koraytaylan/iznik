@@ -12,7 +12,7 @@ touches:
   - "regression/claims/diagnostics-bundle.toml"
   - "regression/scenarios/diagnostics-bundle/**"
   - "policy/lexicon/diagnostics-bundle.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Diagnostics Bundle

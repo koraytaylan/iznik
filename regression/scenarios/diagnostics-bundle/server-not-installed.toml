@@ -1,0 +1,27 @@
+name = "server-not-installed"
+claims = ["doctor-says-when-a-host-has-no-server"]
+driver = "engine"
+budget_seconds = 120
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# A host with nothing on it: the probe is asked before anything is installed,
+# so what it says is what was there when the command was run.
+[[steps]]
+id = "a-host-with-nothing-on-it"
+container = "engine"
+run = "/iznik/bin/iznik doctor host0"
+timeout_seconds = 90
+
+[[expect]]
+step = "a-host-with-nothing-on-it"
+exit = 0
+stdout_contains = "\"server\":null"
+
+[[expect]]
+step = "a-host-with-nothing-on-it"
+exit = 0
+stdout_contains = "\"tic_available\""

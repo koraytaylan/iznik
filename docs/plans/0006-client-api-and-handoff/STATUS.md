@@ -7,7 +7,7 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
 - **Approach:** treat `docs/CLIENT.md` as the specification the implementation is held to, pin the ABI with a golden header and exercise it from C against a real local daemon reached by a `unix:` alias, ship one command that reports which layer is broken with secrets redacted by construction, and soak before release.
-- **Progress:** 4/8 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 5/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
 - **Review of `bbf5669`:** nine findings, every one of them real. The high one
@@ -123,6 +123,20 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   ending, though it is a state that is tried again: one transient failure
   aborted a command that would have connected a moment later, and the harness
   that models this waits forty seconds through exactly that.
+
+- **`diagnostics-bundle`:** the redaction is proven over text rather than
+  through a planted configuration, because `ssh` finds a user's configuration
+  from the account and not from the environment — no case can point it at a
+  planted one without touching the real one. So what `ssh` would say is given
+  to the filter directly, and the filter is a function of its own for exactly
+  that reason. Beside it, a whole bundle is collected with secrets planted in
+  the environment, which proves the other half: nothing here reads one.
+
+  The bundle stops waiting at the first failure rather than sitting through
+  the retries a client makes on its own. A host is tried again for ever, so a
+  diagnosis that waited for that would never be written — and what happened on
+  the first attempt, with every state it went through beside it, is the thing
+  somebody ran this to see.
 
 - **`plumbing-commands`:** two things beyond the architecture's description.
   `tail` prints the pane as it stands before it prints what the pane says

@@ -88,16 +88,34 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
 fn timed(alias: &str) -> Result<Vec<Duration>, (&'static str, String)> {
     let uninterrupted = AtomicBool::new(false);
     let (manager, events) = holding(alias, &uninterrupted)?;
-    let (session, pane) = a_pane_of_its_own(&manager, &events, alias)?;
+    measured(&manager, &events, alias, KEYSTROKES)
+}
+
+/// Times `keystrokes` round trips against a host already held.
+///
+/// Its own session, made and closed here, because what is typed appears on
+/// the screen it is typed into and a measurement has no business writing on
+/// somebody's work.
+///
+/// # Errors
+///
+/// The layer and what it said.
+pub(crate) fn measured(
+    manager: &HostManager,
+    events: &std::sync::mpsc::Receiver<ManagerEvent>,
+    alias: &str,
+    keystrokes: usize,
+) -> Result<Vec<Duration>, (&'static str, String)> {
+    let (session, pane) = a_pane_of_its_own(manager, events, alias)?;
     manager
         .subscribe(alias, pane)
         .map_err(|source| (CLIENT_LAYER, source.to_string()))?;
-    let mut taken = Vec::with_capacity(KEYSTROKES);
-    for _keystroke in 0..KEYSTROKES {
+    let mut taken = Vec::with_capacity(keystrokes);
+    for _keystroke in 0..keystrokes {
         // Everything the pane has already said, taken and paid for, so that
         // what is timed below is what this keystroke caused and not what the
         // one before it left behind.
-        settled(&manager, &events, alias, pane);
+        settled(manager, events, alias, pane);
         let began = Instant::now();
         manager
             .input(alias, pane, KEYSTROKE.to_vec())
@@ -113,14 +131,14 @@ fn timed(alias: &str) -> Result<Vec<Duration>, (&'static str, String)> {
                     pane: named, bytes, ..
                 }) if named == pane => {
                     came = true;
-                    credit(&manager, alias, pane, bytes.len());
+                    credit(manager, alias, pane, bytes.len());
                 }
                 Ok(_otherwise) => {}
                 Err(_nothing) => break,
             }
         }
         if !came {
-            let _ended = close(&manager, alias, session);
+            let _ended = close(manager, alias, session);
             return Err((
                 TRANSPORT_LAYER,
                 format!("a keystroke never came back from {alias}"),
@@ -131,7 +149,7 @@ fn timed(alias: &str) -> Result<Vec<Duration>, (&'static str, String)> {
     // The session this made is this command's, and goes with it: a benchmark
     // that left a shell running on every host it measured would be a leak
     // somebody found months later.
-    let _ended = close(&manager, alias, session);
+    let _ended = close(manager, alias, session);
     Ok(taken)
 }
 
@@ -267,7 +285,7 @@ fn pane_of(manager: &HostManager, alias: &str, session: SessionId) -> Option<Pan
 }
 
 /// The distribution as one object.
-fn shaped(alias: &str, taken: &[Duration]) -> Value {
+pub(crate) fn shaped(alias: &str, taken: &[Duration]) -> Value {
     let mut sorted: Vec<Duration> = taken.to_vec();
     sorted.sort_unstable();
     object(vec![

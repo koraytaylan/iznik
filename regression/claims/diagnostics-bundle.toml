@@ -1,0 +1,48 @@
+# One command that says which of five layers is wrong, and never leaks a
+# secret while doing it.
+#
+# The redaction proof is a `test` proof over text, deliberately: what `ssh`
+# would say for a host is given to the filter directly, because `ssh` finds a
+# user's configuration from the account rather than from the environment — so
+# no case can point it at a planted one without touching the real one, and
+# what is being asked is what the filter keeps. The three scenarios are for
+# what only a network and another machine can show.
+
+[[claim]]
+id = "doctor-keeps-only-the-settings-it-names"
+statement = "Of everything `ssh` says it would do for a host, the bundle keeps a named handful — a host, a port, a user and some numbers — and never looks at an identity file, an agent socket or a command to run, each of which can carry key material or a token or print one. Redaction by construction: what could carry a secret is not collected, rather than collected and then scrubbed."
+test = "iznik-cli::doctor::doctor_keeps_only_the_settings_it_names"
+because = "the filter is over text and the text is what `ssh` prints; a host would only put the same text further away"
+
+[[claim]]
+id = "doctor-carries-no-secret-it-was-given-the-chance-to-carry"
+statement = "With tokens and an agent socket planted in the environment, a whole bundle against a real daemon carries none of them: nothing here reads the environment, which is why there is nothing to redact."
+test = "iznik-cli::doctor::doctor_carries_no_secret_it_was_given_the_chance_to_carry"
+because = "an environment is an environment wherever the daemon is"
+
+[[claim]]
+id = "doctor-carries-every-section-for-a-host-that-answers"
+statement = "Every section is present: what this build is, what `ssh` would do, what the probe found, what the server says it is with the tail of its own log, the state the host is in with every state it went through, and what a keystroke costs. What cannot be asked of a socket on this machine says it was skipped rather than carrying an error, because a thing not asked is not a thing that failed."
+test = "iznik-cli::doctor::doctor_carries_every_section_for_a_host_that_answers"
+because = "the daemon is a whole daemon and the sections are this command's own shaping"
+
+[[claim]]
+id = "doctor-says-which-layer-failed-for-a-host-that-does-not-answer"
+statement = "A host that cannot be reached has the layer that refused where its answer belongs, every state it went through beside it, and the sections under it saying they were skipped — so the shape of the document is the diagnosis."
+test = "iznik-cli::doctor::doctor_says_which_layer_failed_for_a_host_that_does_not_answer"
+because = "a path with no socket at it is the same absence anywhere"
+
+[[claim]]
+id = "doctor-reports-a-healthy-host"
+statement = "Against a real host over real SSH: what `ssh` resolved for it, what the machine is, that its server is connected, and a measured keystroke round trip — the whole bundle, from a machine that had nothing on it when the scenario began."
+scenario = "healthy-host"
+
+[[claim]]
+id = "doctor-names-the-layer-that-could-not-be-reached"
+statement = "An alias that is not a host at all yields a bundle naming the transport as what refused, with the sections under it skipped — and it comes back rather than waiting out the retries a client makes on its own, because a diagnosis that never finished would be no diagnosis."
+scenario = "unreachable-host"
+
+[[claim]]
+id = "doctor-says-when-a-host-has-no-server"
+statement = "A host with nothing on it has a probe section saying there is no server there — asked before anything is installed, so what it says is what was true when somebody ran the command."
+scenario = "server-not-installed"

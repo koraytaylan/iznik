@@ -1,0 +1,38 @@
+name = "healthy-host"
+claims = ["doctor-reports-a-healthy-host"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# Everything the bundle collects, against a real host over real SSH: what ssh
+# would do for it, what the machine is, what its server says it is, and what a
+# keystroke costs.
+[[steps]]
+id = "the-whole-bundle"
+container = "engine"
+run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik doctor host0"
+timeout_seconds = 120
+
+[[expect]]
+step = "the-whole-bundle"
+exit = 0
+stdout_contains = "\"host\":\"host0\""
+
+[[expect]]
+step = "the-whole-bundle"
+exit = 0
+stdout_contains = "\"operating_system\":\"linux\""
+
+[[expect]]
+step = "the-whole-bundle"
+exit = 0
+stdout_contains = "\"state\":\"connected\""
+
+[[expect]]
+step = "the-whole-bundle"
+exit = 0
+stdout_contains = "\"median\""
