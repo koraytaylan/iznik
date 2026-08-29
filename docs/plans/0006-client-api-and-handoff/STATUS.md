@@ -501,6 +501,28 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   that lands with its justification, so it is left for one rather than taken
   here; the scenario proves the behaviour in the meantime.
 
+- **Convergence.** A fourth pass over the soak found its machinery clean —
+  the cut's lock path and guards, what `iznik tail` prints, the fit's
+  arithmetic at six-hour magnitudes, and every figure in the committed note
+  reproducing from its own samples. Six things remained, and four were
+  documents: the README's `unix:` line dropped a path component on Linux and
+  named a type nothing declares; two claim statements described the estimator
+  this work replaced and miscounted the commands that used to mistake `--help`
+  for a host; and the container margin's own arithmetic understated the
+  deadlines it is sized against by about fifty minutes, which is now counted
+  properly and given two hours.
+  
+  The sixth was a case that proved the wrong thing: the report meant to hold
+  the "measured nothing after the warmup" branch was being refused by the
+  staleness check beside it, so that branch was held by nothing. Its one
+  sample is late in the run now, and removing the branch fails the case.
+
+  And running everything twice more turned up a race of its own in
+  `fidelity-suite`'s `wait_idle`: it returned as soon as two readings agreed,
+  and on a loaded machine two readings of nothing agree — a pane that had not
+  been scheduled yet looked exactly like one that had finished. It waits for
+  the pane to have said something first.
+
 - **What the whole suite found.** Running every proof there is — 550 of them,
   `--run-ignored all` — turned up one that had rotted. `scenario-driver`'s
   `unsupported` scenario asked the driver for a `probe` step and expected it to

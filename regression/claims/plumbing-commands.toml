@@ -54,6 +54,6 @@ because = "the refusal is the host's own and arrives the same way over a socket 
 
 [[claim]]
 id = "plumbing-every-command-says-what-it-takes"
-statement = "Every subcommand answers `--help` with its own usage line, on standard output, saying nothing on standard error and reaching no host — with the flag anywhere in the line, so that `iznik tail host0 --help` is the same question as `iznik tail --help`. Before this only the dispatcher answered: four of the six took the flag for a host alias and went off to reach a machine by that name, and `tail` refused it for want of a pane."
+statement = "Every subcommand answers `--help` with its own usage line, on standard output, saying nothing on standard error and reaching no host — with the flag anywhere in the line, so that `iznik tail host0 --help` is the same question as `iznik tail --help`. Before this only the dispatcher answered: five of the six took the flag for a host alias and went off to reach a machine by that name, and `tail` refused it for want of a pane."
 test = "iznik-cli::plumbing::plumbing_every_command_says_what_it_takes"
 because = "asking a command what it takes reaches nothing, so a container would only put the same six answers further away"

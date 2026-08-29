@@ -49,7 +49,11 @@ async fn wait_idle(pane: &Pane) -> Sequence {
     for _ in 0..POLL_ATTEMPTS {
         tokio::time::sleep(POLL_INTERVAL).await;
         let now = pane.state().newest;
-        if now == last {
+        // Said something, and then said nothing more. Stillness alone is not
+        // enough: on a machine with other work on it the child may not have
+        // been scheduled yet, and a pane that has said nothing twice looks
+        // exactly like one that has finished saying everything.
+        if now == last && now > Sequence(0) {
             return now;
         }
         last = now;

@@ -550,8 +550,11 @@ fn regression_soak_judges_a_run_by_what_it_weighed() {
     // A side never weighed at all, and a side whose samples measure nothing
     // after the warmup — the same silence wearing a series, which would
     // otherwise skip the ceiling entirely.
+    // One sample, and late enough that the staleness check is satisfied — so
+    // what refuses this report is the branch this case is for and not the one
+    // beside it. A line cannot be fitted through a single point.
     let one = vec![Sample {
-        at: Duration::ZERO,
+        at: Duration::from_mins(9),
         bytes: RESIDENT,
     }];
     for spoiling in 0..SIDES {
@@ -572,7 +575,9 @@ fn regression_soak_judges_a_run_by_what_it_weighed() {
         );
         // And a side whose samples stop partway through: a census that
         // stopped finding it leaves a series that ends early, and a rate read
-        // from it is a rate from whenever it stopped.
+        // from it is a rate from whenever it stopped. This is the check
+        // beside the one above, and the two are held apart by when their last
+        // sample was taken.
         let mut stopped = passing();
         let early: Vec<Sample> = climbing(0)
             .into_iter()

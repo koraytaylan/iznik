@@ -172,10 +172,10 @@ cargo xtask distribution --target aarch64-unknown-linux-musl
 ```
 
 That writes `target/distribution/<triple>/iznik-server`, which is the layout
-the client reads. Name the directory in `IznikOptions.artifacts_directory`
-when you make the client; the `IZNIK_ARTIFACTS_DIRECTORY` variable is the
-command-line tool's way of saying the same thing and the library does not read
-it. Left null, the library looks under its own runtime directory, and a host
+the client reads. Name the directory in the `artifacts_directory` field of the
+`iznik_configuration` you make the client with; the
+`IZNIK_ARTIFACTS_DIRECTORY` variable is the command-line tool's way of saying
+the same thing and the library does not read it. Left null, the library looks under its own runtime directory, and a host
 whose triple it cannot find there is reported as unsupported rather than
 bootstrapped.
 
@@ -195,7 +195,8 @@ where it is not, which is the case on macOS:
 
 ```sh
 iznik-server --daemon
-iznik state "unix:${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/iznik-$(id -u)}/server.sock"
+runtime="${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/iznik}"
+iznik state "unix:${runtime:-${TMPDIR:-/tmp}/iznik-$(id -u)}/server.sock"
 ```
 
 It is the alias the C smoke program and every in-process test use, and it is

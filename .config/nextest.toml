@@ -50,6 +50,15 @@ slow-timeout = { period = "120s", terminate-after = 15 }
 # would be weighing.
 threads-required = 'num-cpus'
 
+# The baseline measures throughput and latency over a window, so what runs
+# beside it is part of what it measures: eight panes sustaining less than one
+# pane's throughput is what a loaded machine looks like, not what a regression
+# looks like. It gets the machine, for the same reason the distribution builds
+# do, and each of its cases takes about a second.
+[[profile.default.overrides]]
+filter = 'binary(/^regression_baseline/)'
+threads-required = 'num-cpus'
+
 # Test binaries that start containers, build release artifacts or measure over
 # a window are named regression_*, are ignored, and get longer deadlines.
 [[profile.default.overrides]]

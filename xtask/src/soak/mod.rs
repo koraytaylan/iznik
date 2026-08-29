@@ -194,14 +194,17 @@ const DRAINING_INTERVAL: Duration = Duration::from_secs(1);
 /// And how many of them there may be.
 const DRAINING_ATTEMPTS: u32 = 120;
 
-/// How long one asking of whether the pane has gone quiet may take, and how
-/// many askings there may be. Half a minute apiece and forty of them: twenty
-/// minutes in all, which is far longer than a shell takes to pour six
-/// megabytes into a ring.
+/// How long one asking of whether the pane has gone quiet may take.
+///
+/// Half a minute, and the command that carries it a minute and a half — so
+/// twenty askings are half an hour of deadline, which is what the margin the
+/// containers are given has to hold. A shell pours six megabytes into a ring
+/// in seconds; this is for a machine with other work on it, not for a slow
+/// shell.
 const SETTLED_DEADLINE: Duration = Duration::from_secs(30);
 
 /// How many times it is asked.
-const SETTLED_ATTEMPTS: u32 = 40;
+const SETTLED_ATTEMPTS: u32 = 20;
 
 /// How many of the held client's lines are read back at a time.
 ///
@@ -255,19 +258,21 @@ pub const SERVER_PROCESS: &str = "iznik-server";
 ///
 /// Podman kills a container when its own timeout runs out, and it counts from
 /// when the container started, while the soak's clock does not start until a
-/// pane is open, a client is holding it and the flood that fills the ring has
-/// drained. What this module allows before that: half a minute of readiness,
-/// two reaches at five minutes each — a reach is a bootstrap, and a bootstrap
-/// is allowed six — two steps written and run at five, seven minutes of
-/// waiting for the client to attach, twenty of waiting for the flood to go
-/// quiet, and a weighing apiece. What it allows after: a last round already
-/// in flight at two step deadlines and a cut, a churn, and an ending whose
+/// pane is open, the flood that fills its ring has drained and a client is
+/// holding it. What this module allows before that, at its worst: half a
+/// minute of readiness; two reaches at five minutes each, a reach being a
+/// bootstrap and a bootstrap being allowed six; two steps at ten, since a
+/// step is a write under a command's deadline and a run under its own; half
+/// an hour of asking whether the flood is over; seven minutes of waiting for
+/// the client to attach; and a weighing. What it allows after: a last round
+/// already in flight at two steps and a cut, a churn, and an ending whose
 /// windows are half a minute each.
 ///
-/// An hour and a half is above the sum of them for any soak worth running,
-/// and a container killed while the soak believes it is running turns hours
-/// of measurement into a fixture error.
-const CONTAINER_MARGIN: Duration = Duration::from_mins(90);
+/// Two hours is above the sum of them, which is a little over one. A
+/// container killed while the soak believes it is running turns hours of
+/// measurement into a fixture error — and into one with nothing in it, since
+/// what podman leaves is an exit status and an empty stream.
+const CONTAINER_MARGIN: Duration = Duration::from_hours(2);
 
 /// How much longer than a step itself the command that runs it may take: the
 /// writing of the step, the driver starting and the answer coming back.
@@ -278,7 +283,7 @@ const STEP_MARGIN: Duration = Duration::from_mins(1);
 /// seconds and a six-hour run is hundreds of windows.
 const WINDOW_DEADLINE: Duration = Duration::from_secs(30);
 
-/// How long any one command in a container may take./// How long any one command in a container may take.
+/// How long any one command in a container may take.
 const COMMAND_DEADLINE: Deadline = Deadline(Duration::from_mins(5));
 
 /// How many bytes are in a kibibyte, which is what `/proc` counts in.
