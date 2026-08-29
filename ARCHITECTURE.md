@@ -412,7 +412,9 @@ Pane output is delivered by callback straight into the application's surface,
 and flow control is mandatory: the application returns credit as its surface
 consumes. The header is generated and golden-pinned, so an accidental ABI
 change fails a test here rather than crashing somebody else's application.
-The full contract is the document plan 0006 publishes.
+The full contract is [`docs/CLIENT.md`](docs/CLIENT.md), which is what an
+application is written against; a test holds it and the header together, name
+by name and obligation by obligation.
 
 ## 8. How it is proven
 
@@ -463,6 +465,17 @@ The full contract is the document plan 0006 publishes.
   x86_64 artifact is run inside the host container, which is the only place
   its static linking is really tested. What needs a Mac to build says so with
   `platform = "darwin"` and reports as deferred rather than as proven.
+- **Hours, before a release.** `xtask soak` runs the whole stack against two
+  hosts for as long as it is given, with a flood poured through a held pane,
+  the daemon stopped underneath it and started again, and sessions made and
+  unmade beside it, weighing the held client and both daemons on a schedule of
+  its own. It refuses a run for growth past a ceiling after the warmup — and
+  equally for a side never weighed, a held client that stopped listening, a
+  client that heard less than its pane was made to say, or a reconnection the
+  host could not carry it on from. A leak of a few kilobytes per reconnection
+  is invisible in everything above and fatal by Thursday, and the only thing
+  that finds it is time; the six-hour run is a person's, and
+  [the release checklist](docs/notes/release-checklist.md) begins with it.
 - **Deadlines everywhere.** No test, gate, scenario step, fixture wait or
   spawned process runs without a bound. A hang is a failure that names what
   was running, never a wait.

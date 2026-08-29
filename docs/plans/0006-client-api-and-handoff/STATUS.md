@@ -1,13 +1,13 @@
-# Plan 0006 — Client API and Handoff — 🚧 In progress
+# Plan 0006 — Client API and Handoff — ✅ Complete
 
 The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file. Task-level truth lives in [tasks/](tasks/) frontmatter; Makina's integration coordinator updates both layers.
 
-- **Status:** 🚧 In progress.
+- **Status:** ✅ Complete.
 
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
 - **Approach:** treat `docs/CLIENT.md` as the specification the implementation is held to, pin the ABI with a golden header and exercise it from C against a real local daemon reached by a `unix:` alias, ship one command that reports which layer is broken with secrets redacted by construction, and soak before release.
-- **Progress:** 7/8 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 8/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
 - **Review of `bbf5669`:** nine findings, every one of them real. The high one
@@ -421,6 +421,34 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
   The module passed a thousand lines again, so what a soak asks the containers
   to do is `soak/commands.rs` now.
+
+- **What `handoff-documentation` found.** The documents said one thing that
+  was not true and one that could not be: the root README described plan 0006
+  as designed and not built, and every crate README said its tests would
+  arrive with the tasks that filled its modules. Both are in the present tense
+  now, and the README gained the section a person building the macOS
+  application starts from — the contract, the header and the archive, the
+  artifacts a bootstrap uploads, the `unix:` alias that needs no SSH, and the
+  one command that says which layer is broken.
+
+  It also found a command that could not be asked what it took. Five of the
+  six `iznik` subcommands read `--help` as a host alias and went off to reach
+  a machine by that name; only the dispatcher answered. The rule this
+  workspace holds documents to — every command a document names answers
+  `--help` — could not have been applied to that binary, and the README now
+  names two of them. Each subcommand answers for itself now, with the flag
+  anywhere in the line, proven by a scenario of `plumbing-commands`.
+
+  **Deviations from the task's `touches`, all recorded.** The fix above is
+  `crates/iznik-cli/src/*.rs` and its proof is a scenario and a claim of
+  `plumbing-commands`, neither of which this task names; `CONTRIBUTING.md` was
+  added to the documents `xtask/tests/readme_commands.rs` holds the binary to,
+  because it is where a person is told which gate to run. What was *not* done:
+  the same document rule wants a case for the `iznik` binary, and that needs
+  `iznik-harness` as a development dependency of `iznik-cli`. Section 3.9 says
+  a manifest is written once and adding a dependency is an architecture change
+  that lands with its justification, so it is left for one rather than taken
+  here; the scenario proves the behaviour in the meantime.
 
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 

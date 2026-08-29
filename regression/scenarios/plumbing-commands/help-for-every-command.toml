@@ -1,0 +1,43 @@
+name = "help-for-every-command"
+claims = ["plumbing-every-command-says-what-it-takes"]
+driver = "engine"
+budget_seconds = 60
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# Every subcommand, asked what it takes rather than asked to do the work. A
+# document that names a command nothing answers to still reads well, so
+# nothing but a case notices; the flag is looked for anywhere in the line,
+# because a person who reaches for it late should not have to reach for it
+# again earlier.
+#
+# No host is reached: that is the point. Each of these would otherwise try to
+# reach one called `--help`, which is what they did before.
+[[steps]]
+id = "every-command-answers"
+container = "engine"
+run = "for named in probe state tail benchmark doctor uninstall; do printf 'asked:%s\\n' \"$named\"; /iznik/bin/iznik \"$named\" --help || exit 1; /iznik/bin/iznik \"$named\" host0 --help || exit 1; done"
+timeout_seconds = 30
+
+[[expect]]
+step = "every-command-answers"
+exit = 0
+stdout_contains = "usage: iznik probe <host>"
+
+[[expect]]
+step = "every-command-answers"
+exit = 0
+stdout_contains = "usage: iznik tail <host> <pane>"
+
+[[expect]]
+step = "every-command-answers"
+exit = 0
+stdout_contains = "usage: iznik uninstall <host>"
+
+[[expect]]
+step = "every-command-answers"
+exit = 0
+stdout_contains = "asked:doctor"

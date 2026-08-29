@@ -13,4 +13,4 @@ Compression is negotiated in `Hello` and engaged from a plain link's parts once 
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace.
+Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace.

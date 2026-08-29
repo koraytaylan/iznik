@@ -51,3 +51,8 @@ id = "plumbing-refuses-a-pane-the-host-does-not-have"
 statement = "A pane the host does not have is a refusal that names the layer, not a wait: a subscription is refused after the call that asked for it returned, and a tail that let that refusal pass would sit for ever printing nothing — which a script cannot tell from a pane that is quiet."
 test = "iznik-cli::plumbing::plumbing_refuses_a_pane_the_host_does_not_have"
 because = "the refusal is the host's own and arrives the same way over a socket as over a network"
+
+[[claim]]
+id = "plumbing-every-command-says-what-it-takes"
+statement = "Every subcommand answers `--help` with its own usage line and success, with the flag anywhere in the line — `iznik tail host0 --help` is the same question as `iznik tail --help`. Before this each of them took the flag for a host alias and went off to reach a machine called `--help`, so a document that named one of these commands named something that could not be asked what it took."
+scenario = "help-for-every-command"

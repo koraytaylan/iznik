@@ -36,6 +36,9 @@ const LOOK: std::time::Duration = std::time::Duration::from_millis(100);
 /// subcommand first, and the module parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     let Some((alias, pane)) = a_host_and_a_pane(arguments) else {
         let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, USAGE);
         return ExitCode::from(USAGE_EXIT_CODE);

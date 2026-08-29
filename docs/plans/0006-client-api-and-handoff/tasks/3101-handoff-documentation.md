@@ -14,7 +14,7 @@ touches:
   - "crates/*/README.md"
   - "xtask/README.md"
   - "policy/lexicon/handoff-documentation.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Handoff Documentation

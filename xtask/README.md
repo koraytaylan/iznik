@@ -2,7 +2,7 @@
 
 The gates, the policy checks clippy cannot express, the claims registry, the container images, staging, distribution, the C header and the soak, behind `cargo xtask`. Depends on neither the emulator nor any product crate, so it builds on a machine with nothing but a Rust toolchain.
 
-`cargo xtask <subcommand>` routes `check`, `gate`, `doctor`, `policy`, `claims`, `regression`, `distribution`, `header` and `soak` to the modules below; `--help` lists them, and each of them answers `--help` with what it takes — including the two whose work has not landed, which say so rather than staying silent. `tests/readme_commands.rs` asks every one of them, so a name here that no binary answers to is a failing test.
+`cargo xtask <subcommand>` routes `check`, `gate`, `doctor`, `policy`, `claims`, `regression`, `distribution`, `header` and `soak` to the modules below; `--help` lists them, and each of them answers `--help` with what it takes. `tests/readme_commands.rs` asks every one of them, so a name here that no binary answers to is a failing test.
 
 ## Modules
 
@@ -37,4 +37,4 @@ The gates, the policy checks clippy cannot express, the claims registry, the con
 
 ## Tests
 
-`tests/skeleton.rs` is the scaffold's own acceptance; the policy, gate, doctor and claims tests arrive with the tasks that fill the modules, and every one of them runs in the `test` gate. `readme_commands.rs` runs every command the READMEs name with `--help`, on the one rule `iznik_harness::documents` holds; `artifact_shape.rs` holds the ELF and Mach-O readers to files made to have each shape, and builds nothing. The two `regression_distribution_*` binaries are ignored by default, because each builds release artifacts; they share a nextest group of one thread, since two release builds at once wait on each other for cargo's package-cache lock.
+`tests/skeleton.rs` is the scaffold's own acceptance; the policy, gate, doctor and claims tests sit beside it, and every one of them runs in the `test` gate. `readme_commands.rs` runs every command the READMEs name with `--help`, on the one rule `iznik_harness::documents` holds; `artifact_shape.rs` holds the ELF and Mach-O readers to files made to have each shape, and builds nothing. The two `regression_distribution_*` binaries are ignored by default, because each builds release artifacts; they share a nextest group of one thread, since two release builds at once wait on each other for cargo's package-cache lock.

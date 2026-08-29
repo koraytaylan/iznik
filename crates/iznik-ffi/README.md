@@ -19,7 +19,7 @@ The C ABI over `iznik-client`, and the one crate in this workspace that may cont
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. `ffi_surface.rs` and `pane_byte_pipe.rs` call the `extern "C"` functions the way a C program does, against a daemon on this machine through a `unix:` alias — which is why this crate is built as an `rlib` beside the `cdylib` and `staticlib` an application links. `xtask/tests/fixtures/ffi/smoke.c` is the C program itself, compiled against the generated header and the static archive and run against a real daemon.
+Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace. `ffi_surface.rs` and `pane_byte_pipe.rs` call the `extern "C"` functions the way a C program does, against a daemon on this machine through a `unix:` alias — which is why this crate is built as an `rlib` beside the `cdylib` and `staticlib` an application links. `xtask/tests/fixtures/ffi/smoke.c` is the C program itself, compiled against the generated header and the static archive and run against a real daemon.
 
 ## What the events say
 

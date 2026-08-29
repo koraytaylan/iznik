@@ -25,6 +25,9 @@ const USAGE: &str = "usage: iznik probe <host>";
 /// subcommand first, and the module parses its own flags.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
+    if crate::asked_for_help(arguments) {
+        return crate::help_with(USAGE);
+    }
     let Some(alias) = one_host(arguments) else {
         let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, USAGE);
         return ExitCode::from(USAGE_EXIT_CODE);

@@ -10,11 +10,36 @@ pub mod state;
 pub mod tail;
 pub mod uninstall;
 
+/// The flag that asks a command what it takes.
+pub const HELP_FLAG: &str = "--help";
+
 /// The exit code of a command line the binary cannot act on: a subcommand it
-/// does not know, a flag it cannot parse, or a subcommand whose task has not
-/// landed yet. Two, the conventional usage-error status, so that a failed run's
-/// one and a refused command line are told apart.
+/// does not know, or a flag it cannot parse. Two, the conventional usage-error
+/// status, so that a failed run's one and a refused command line are told
+/// apart.
 pub const USAGE_EXIT_CODE: u8 = 2;
+
+/// Whether a command line asks what a command takes rather than asking it to
+/// do the work.
+///
+/// Anywhere in the line: `iznik tail host0 --help` is the same question as
+/// `iznik tail --help`, and a person who reaches for the flag late should not
+/// have to reach for it again earlier.
+#[must_use]
+pub fn asked_for_help(arguments: &[std::ffi::OsString]) -> bool {
+    arguments.iter().any(|argument| argument == HELP_FLAG)
+}
+
+/// A command's usage line on standard output, and success.
+///
+/// That is the whole difference between asking and erring: the same line goes
+/// to standard error with [`USAGE_EXIT_CODE`] when nobody asked for it and the
+/// command line cannot be acted on.
+#[must_use]
+pub fn help_with(usage: &str) -> std::process::ExitCode {
+    let _written = std::io::Write::write_fmt(&mut std::io::stdout(), format_args!("{usage}\n"));
+    std::process::ExitCode::SUCCESS
+}
 
 /// The layer a failure of this program's own is from.
 ///

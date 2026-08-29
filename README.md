@@ -16,7 +16,7 @@ built against the C ABI contract that plan 0006 publishes.
 
 ## Status
 
-Five plans have landed. **0001**, the foundations and the regression harness:
+All six plans have landed. **0001**, the foundations and the regression harness:
 the rule-gated workspace, the golden-pinned wire primitives, the headless VT
 oracle, the pseudoterminal harness, and the two-container Podman suite whose
 scenarios are parallel nextest tests and whose claims registry gates every
@@ -34,9 +34,15 @@ user's own `ssh`, bootstrapped from a machine that had nothing, held several at
 once behind a client-side model with optimistic commands, and carried through
 link drops without losing a pane's identity or its bytes.
 
-The one that remains — the client API the macOS application links — is designed
-and not yet built. The design is [`ARCHITECTURE.md`](ARCHITECTURE.md); the work
-is six executable plans under [`docs/plans/`](docs/plans/STATUS.md), run by
+**0006**, the client API and the handoff: the C ABI the application links,
+with a generated header pinned against the crate and a C program that drives a
+real daemon through it; the plumbing commands and the diagnostics bundle that
+say which of five layers is broken; [the contract](docs/CLIENT.md) an
+application is written against; and a soak that runs the whole stack for hours
+and refuses a run that measured nothing.
+
+The design is [`ARCHITECTURE.md`](ARCHITECTURE.md); the work was six
+executable plans under [`docs/plans/`](docs/plans/STATUS.md), run by
 [Makina](https://github.com/koraytaylan/makina).
 
 ## Layout
@@ -116,8 +122,63 @@ carries uploads nothing at all.
 Taking it off removes the binary, the terminfo, the runtime directory and the
 prefix itself where iznik made it. A prefix iznik was lent rather than made —
 `XDG_RUNTIME_DIR` is one of the candidates — keeps everything that was not
-iznik's. The client engine does it through `HostManager::uninstall`; the
-`iznik uninstall <host>` command that wraps it lands with plan 0006.
+iznik's. The client engine does it through `HostManager::uninstall`, and
+`iznik uninstall <host>` is the command that wraps it.
+
+## Building the macOS application against this repository
+
+The application lives in its own repository, is written in Swift, and links
+this one through a C ABI. Everything it needs is built from here.
+
+**The contract is [`docs/CLIENT.md`](docs/CLIENT.md).** Read that, not the
+Rust: it is the threading rules, the ownership rules, the credit protocol,
+what a reconnection obliges, how query responses are answered, what the marks
+carry, and a worked example. Where the contract and the implementation
+disagree, the contract wins and the implementation is the bug.
+
+**The header and the library.**
+
+```sh
+cargo xtask header                       # regenerate include/iznik.h
+cargo build --release --package iznik-ffi # libiznik_ffi.a and libiznik_ffi.so
+```
+
+`include/iznik.h` is committed and pinned: a signature that changes changes
+the header in the same commit, and a test compares them byte for byte. Build
+against that header and link `target/release/libiznik_ffi.a`, or the shared
+library beside it. A static archive needs the system libraries it was built
+against, and they differ by platform, so ask the toolchain rather than
+guessing:
+
+```sh
+cargo rustc --release --package iznik-ffi -- --print native-static-libs
+```
+
+**The servers the client installs.** A client bootstraps a host by uploading
+one, so it has to be able to find them:
+
+```sh
+cargo xtask distribution --target aarch64-apple-darwin
+```
+
+Point `IZNIK_ARTIFACTS_DIRECTORY` at a directory holding one
+`<triple>/iznik-server` per triple you mean to reach —
+`target/distribution/` is laid out that way already.
+
+**Developing without SSH.** A host alias of the form `unix:<path>` names a
+daemon socket on this machine and is reached with no SSH at all: start one
+with `iznik-server --daemon`, then use `unix:$XDG_RUNTIME_DIR/iznik/server.sock`
+wherever a host alias goes. It is the alias the C smoke program and every
+in-process test use, and it is the fastest way to have a real pane in front of
+an application under development.
+
+**When something is wrong**, one command says which of five layers it is —
+`ssh`, the host, the server, the protocol or the client — with secrets
+redacted by construction:
+
+```sh
+iznik doctor <host>
+```
 
 ## Distribution
 

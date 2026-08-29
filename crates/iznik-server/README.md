@@ -42,4 +42,4 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace. Two of them are not ordinary: `regression_baseline.rs` includes `benches/baseline.rs` and is ignored by default, because every case builds and measures a real daemon; `readme_commands.rs` runs every command the READMEs name with `--help`.
+Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace. Two of them are not ordinary: `regression_baseline.rs` includes `benches/baseline.rs` and is ignored by default, because every case builds and measures a real daemon; `readme_commands.rs` runs every command the READMEs name with `--help`.

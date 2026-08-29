@@ -2,7 +2,7 @@
 
 Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor` and `uninstall`, each printing one JSON object per line for a person or a script. Never a user interface: no screen, no interactivity.
 
-The binary is `iznik`, a thin dispatcher over this library: its first argument names the subcommand and the module that owns it, and `--help` lists them.
+The binary is `iznik`, a thin dispatcher over this library: its first argument names the subcommand and the module that owns it, and `--help` lists them. Every subcommand answers `--help` for itself as well, with the flag anywhere in the line, so that asking what one takes never reaches a host.
 
 ## Modules
 
@@ -18,4 +18,4 @@ The binary is `iznik`, a thin dispatcher over this library: its first argument n
 
 ## Tests
 
-Integration tests under `tests/` arrive with the tasks that fill the modules; there is no test module inside `src/`, here or anywhere in the workspace.
+Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace.
