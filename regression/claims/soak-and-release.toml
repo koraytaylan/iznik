@@ -1,0 +1,65 @@
+# Hours of the whole stack, and the list a release runs through.
+#
+# What the soak is for cannot be proven by anything that runs in a test: a leak
+# of a few kilobytes per reconnection needs hours to show. So the proofs here
+# are of the instrument rather than of the result — the schedule runs, the
+# growth check catches a series that climbs, the byte-loss check catches a
+# stream that jumped, and a flooded pane survives a drop in a container — and
+# the result itself is a six-hour run by a person, which the checklist asks for
+# and `docs/notes/soak.md` records.
+#
+# The arithmetic proofs are `test` proofs because a series of numbers is the
+# same series anywhere it is read. The pane proof is a scenario because what it
+# asks about is a real link between two containers being cut.
+
+[[claim]]
+id = "soak-runs-the-whole-stack"
+statement = "A soak of one minute stands two hosts up, holds a client open against a pane on one of them across drops, floods that pane, makes and unmakes sessions on the other, and weighs both sides more than once — with what the held client heard counted, because a stream with no gap in it and a stream that was never there look the same to a check that only looks for gaps."
+test = "xtask::regression_soak::regression_soak_runs_the_whole_stack_for_a_minute"
+because = "it stands the fixture up itself, which is what the soak is; a scenario would be a second fixture inside the first"
+
+[[claim]]
+id = "soak-notices-a-series-that-climbs"
+statement = "A series climbing four times the ceiling is caught, one that levels off is not however high it started, and one climbing half the ceiling passes — so the ceiling is a ceiling and not a ban on growth."
+test = "xtask::regression_soak::regression_soak_notices_a_series_that_climbs"
+because = "a growth is arithmetic over a series of numbers, and the numbers are the same wherever they are read"
+
+[[claim]]
+id = "soak-measures-nothing-before-the-warmup"
+statement = "Nothing before the warmup is measured, and a series with one sample after it says nothing rather than guessing a rate from a single point: a process that has just started is filling the ring every pane keeps and is not leaking."
+test = "xtask::regression_soak::regression_soak_measures_nothing_before_the_warmup"
+because = "what is proven is which samples the arithmetic looks at"
+
+[[claim]]
+id = "soak-notices-a-stream-that-jumped"
+statement = "The byte-loss check reads what the held client printed and counts it: a delivery that does not begin where the one before it ended is a loss, a screen begins the reckoning again rather than breaking it because it is the host sending the truth instead of catching a client up, and nothing at all is nothing heard rather than a stream that was whole."
+test = "xtask::regression_soak::regression_soak_notices_a_stream_that_jumped"
+because = "it is a property of the text the held client writes, and reading it needs no client to have written it"
+
+[[claim]]
+id = "soak-compacts-what-the-held-client-prints"
+statement = "What the held client prints is reduced to three numbers a delivery as it is written — where it starts, and how many characters of base 64 and how many of padding carry it — because a soak of hours moves gigabytes through that pane and a file of them could not be read back whole. The filter is run against exactly what `iznik tail` writes and its output handed to the check, so the two are proven to agree rather than assumed to; a gap put into the printed lines is still a gap after the filter has seen them."
+test = "xtask::regression_soak::regression_soak_compacts_what_the_held_client_prints"
+because = "`awk` is on this machine and the lines are the ones the command writes; a container would put the same two programs somewhere further away"
+
+[[claim]]
+id = "soak-holds-a-flooded-pane-across-a-drop"
+statement = "Twenty thousand lines through a pane held by a client that returns credit for what it takes, the network cut underneath it and brought back, and the stream resumed from where it stopped: the screen, what arrived before the cut and what arrived after it reassemble into one, so the drop lost no byte. What the soak does for hours, once."
+scenario = "short-soak"
+
+[[claim]]
+id = "soak-weighs-what-is-running"
+statement = "The weighing the soak samples with finds exactly one daemon inside these containers and reads a resident size for it out of `/proc` — where `ps` is a busybox with neither the flag nor the column. The relay is left out by name: a host runs one daemon and one `--stdio` relay per connection, both called `iznik-server`, and a weighing that took the first one it found would be of the daemon at one sample and of a relay at the next, reporting a leak and a recovery that neither happened."
+scenario = "short-soak"
+
+[[claim]]
+id = "soak-committed-a-report-of-ten-minutes"
+statement = "`docs/notes/soak.md` is a report of a real run of at least ten minutes, naming the machine, the duration, the warmup, the drops, the churn, what the held client heard, and both memory series — not a template with the numbers left out."
+test = "xtask::regression_soak::regression_soak_committed_a_report_of_ten_minutes"
+because = "the note is a file in this repository, and what it says is read from it"
+
+[[claim]]
+id = "soak-checklist-names-a-release-in-order"
+statement = "The release checklist names the soak report, the baseline, `cargo xtask check`, `xtask claims coverage`, the distribution artifacts and the golden header, in that order — the soak first because it is the only item that takes a working day and the only one that fails for reasons the others cannot see."
+test = "xtask::regression_soak::regression_soak_checklist_names_a_release_in_order"
+because = "the checklist is a file in this repository, and the order is where each name appears in it"

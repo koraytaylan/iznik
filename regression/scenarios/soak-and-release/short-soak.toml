@@ -1,0 +1,110 @@
+name = "short-soak"
+claims = ["soak-holds-a-flooded-pane-across-a-drop", "soak-weighs-what-is-running"]
+driver = "engine"
+budget_seconds = 300
+exclusive = true
+
+[setup]
+hosts = 2
+files = []
+
+# What the soak does for hours, once: a pane flooded through a client that
+# returns credit for what it takes, the link dropped underneath it, and the
+# stream picked up where it stopped. Exclusive because the weighing below is
+# of a whole container, and a second scenario running beside it would be
+# weighed too.
+[[steps]]
+id = "flood-a-held-pane"
+container = "engine"
+timeout_seconds = 120
+
+[steps.client]
+command = "ssh -o BatchMode=yes host0 /iznik/bin/iznik-server --stdio"
+until_quiet_milliseconds = 400
+actions = [
+  { kind = "hello" },
+  { kind = "auto_credit", on = true },
+  { kind = "create_session", name = "soak", columns = 80, rows = 24 },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "seq 1 20000\n" },
+  { kind = "await_bytes", pane = 1, contains = "19999" },
+  { kind = "screen_to", pane = 1, path = "/tmp/short-soak-screen.bin" },
+  { kind = "capture_to", pane = 1, path = "/tmp/short-soak-first.bin" },
+  { kind = "resume_point_to", pane = 1, path = "/tmp/short-soak-point.txt" },
+]
+
+[[steps]]
+id = "drop-the-link"
+container = "host0"
+fault = "disconnect-network"
+timeout_seconds = 20
+
+[[steps]]
+id = "make-it-good"
+container = "host0"
+fault = "reconnect-network"
+timeout_seconds = 20
+
+# The half that makes the flood mean something: what arrives after the drop
+# begins where what arrived before it ended, and the three pieces reassemble
+# into one stream.
+[[steps]]
+id = "lose-no-byte"
+container = "engine"
+timeout_seconds = 120
+
+[steps.client]
+command = "ssh -o BatchMode=yes -o ConnectTimeout=10 host0 /iznik/bin/iznik-server --stdio"
+until_quiet_milliseconds = 400
+actions = [
+  { kind = "hello" },
+  { kind = "auto_credit", on = true },
+  { kind = "resume", pane = 1, from_file = "/tmp/short-soak-point.txt" },
+  { kind = "input", pane = 1, text = "echo after-the-drop\n" },
+  { kind = "await_bytes", pane = 1, contains = "after-the-drop" },
+  { kind = "capture_to", pane = 1, path = "/tmp/short-soak-second.bin" },
+  { kind = "expect_reassembly", pane = 1, pieces = ["/tmp/short-soak-screen.bin", "/tmp/short-soak-first.bin", "/tmp/short-soak-second.bin"] },
+]
+
+# And the churn the soak runs beside it, on the other host: a session made,
+# used and unmade while the pane above is held.
+[[steps]]
+id = "churn-the-other-host"
+container = "engine"
+run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik benchmark host1"
+timeout_seconds = 120
+
+# The soak's own instrument, in the containers it runs in: what the daemon
+# weighs, read out of `/proc` because `ps` here is a busybox with neither the
+# flag nor the column. The relay is left out by name — a host runs one daemon
+# and one `--stdio` relay per client connection and both are called
+# `iznik-server`, so a weighing that took the first one it found would be of
+# the daemon at one sample and of a relay at the next.
+[[steps]]
+id = "weigh-the-daemon"
+container = "host0"
+run = "servers=0; daemons=0; total=0; for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then servers=$((servers + 1)); if ! grep -qsa -- --stdio \"$held/cmdline\"; then daemons=$((daemons + 1)); total=$((total + $(awk '/VmRSS/{print $2}' \"$held/status\"))); fi; fi; done; printf 'servers:%s daemons:%s resident-kibibytes:%s\n' \"$servers\" \"$daemons\" \"$total\""
+timeout_seconds = 30
+
+[[expect]]
+step = "flood-a-held-pane"
+exit = 0
+
+[[expect]]
+step = "lose-no-byte"
+exit = 0
+
+[[expect]]
+step = "churn-the-other-host"
+exit = 0
+stdout_contains = "\"median\""
+
+[[expect]]
+step = "weigh-the-daemon"
+exit = 0
+stdout_contains = "daemons:1"
+
+[[expect]]
+step = "weigh-the-daemon"
+exit = 0
+stdout_contains = "resident-kibibytes:"

@@ -15,7 +15,7 @@ touches:
   - "regression/claims/soak-and-release.toml"
   - "regression/scenarios/soak-and-release/**"
   - "policy/lexicon/soak-and-release.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Soak and Release

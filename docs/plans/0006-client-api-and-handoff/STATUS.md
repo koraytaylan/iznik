@@ -7,7 +7,7 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
 - **Approach:** treat `docs/CLIENT.md` as the specification the implementation is held to, pin the ABI with a golden header and exercise it from C against a real local daemon reached by a `unix:` alias, ship one command that reports which layer is broken with secrets redacted by construction, and soak before release.
-- **Progress:** 6/8 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 7/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
 - **Review of `bbf5669`:** nine findings, every one of them real. The high one
@@ -257,6 +257,46 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   leaves it hearing. Proven by
   `connection_manager_carries_a_burst_as_fast_as_it_is_given`, which fails
   without the fix and passes in a thirtieth of its budget with it.
+- **What `soak-and-release` ran into.** Four things the architecture could not
+  have known, each of which changed the shape of the soak rather than what it
+  proves.
+
+  A step of the driver returns no credit for a pane it subscribes to. So the
+  client that watches the soak's flood cannot be one: it is `iznik tail`, which
+  returns credit for every byte it takes and lives for the whole run. A round's
+  own flood is sized to the two hundred and fifty-six kilobytes a subscription
+  is given, because a round that poured more would stall against a host doing
+  exactly the right thing, and the flood that is bigger than any window is the
+  one poured before the clock starts — which also fills the four-mebibyte ring
+  every pane keeps, so that what is measured afterwards is a stack at its
+  steady state rather than one still filling.
+
+  A host runs one daemon and one `--stdio` relay per connection, and both are
+  called `iznik-server`. The first weighing took whichever `/proc` offered
+  first, so the series alternated between two processes and reported a leak and
+  a recovery that neither happened. The daemon is weighed and the relay is left
+  out by name.
+
+  Every container the fixture starts carries podman's own `--timeout`, ten
+  minutes by default. Two ten-minute runs died at five hundred and fifty
+  seconds before that was the answer; a soak asks for its own length and a
+  quarter of an hour besides.
+
+  And the held client's stream cannot be read back whole — twenty-six megabytes
+  in ten minutes, and the harness returns the last mebibyte of what a command
+  says. It is reduced to three numbers a delivery as it is written, by a filter
+  the case runs against exactly what `iznik tail` prints, so that the check and
+  the thing it checks are proven to agree.
+
+  Two smaller ones. Growth is read as the middle of the first half of the
+  measured samples against the middle of the second: a flood in flight puts a
+  peak on whichever sample catches it, and first-against-last would have read
+  megabytes an hour off a process that never grew. And a round that fails
+  between the pause and the resume would leave the daemon stopped, so a failure
+  starts it again and a soak in which fewer than half the rounds finished
+  refuses rather than reporting the flat series it took while nothing was
+  happening.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
 _Last updated: 2026-08-29, against `develop` @ `bbf00e4`._
