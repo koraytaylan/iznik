@@ -128,15 +128,16 @@ filter = 'binary(remote_channel) + binary(remote_launch) + binary(connection_man
 test-group = 'shells'
 
 # One of those cases is a hundred threads typing into one shell at once and
-# waiting for every line to come back whole. Inside the group it counted for
-# one, which is the mistake the note above this file's `pane_many_share_one_thread`
-# rule describes: it is not the size of a case that starves it but the load it
-# brings. It takes the group whole, so that a wait for a hundred lines is a
-# wait for a hundred lines rather than a measurement of what else was running.
+# waiting for every line to come back whole. The group was not enough: it
+# holds the scenarios and the server's cases, and everything outside it still
+# runs alongside. This is the same shape as the burst measurement above — a
+# hundred lines through a shell — and it takes the same answer, the machine,
+# for the same reason: on a machine with five hundred cases on it a shell is
+# slower than the window, and what fails is the wait rather than the property.
+# The lines it does receive are whole; it is the hundredth that is late.
 [[profile.default.overrides]]
 filter = 'test(pane_byte_pipe_keeps_one_call_one_message)'
-test-group = 'shells'
-threads-required = 12
+threads-required = 'num-cpus'
 
 # The boundary's own cases stand the same thing up from further out: a daemon,
 # a socket, and a real shell that a hundred callers type into at once. The same
