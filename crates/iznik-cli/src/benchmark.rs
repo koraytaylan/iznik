@@ -9,12 +9,14 @@
 
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::{HostManager, ManagerEvent};
-use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::PaneId;
+use iznik_client::reduce::Notification;
+use iznik_protocol::command::{CommandOutcome, Created, SessionCommand};
+use iznik_protocol::identity::{PaneId, SessionId};
 
 use crate::output::{Value, line, object, refusal, text};
 use crate::{CLIENT_LAYER, TRANSPORT_LAYER, USAGE_EXIT_CODE, holding, one_host};
@@ -84,13 +86,18 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
 ///
 /// The layer and what it said.
 fn timed(alias: &str) -> Result<Vec<Duration>, (&'static str, String)> {
-    let (manager, events) = holding(alias)?;
-    let pane = a_pane_of_its_own(&manager, &events, alias)?;
+    let uninterrupted = AtomicBool::new(false);
+    let (manager, events) = holding(alias, &uninterrupted)?;
+    let (session, pane) = a_pane_of_its_own(&manager, &events, alias)?;
     manager
         .subscribe(alias, pane)
         .map_err(|source| (CLIENT_LAYER, source.to_string()))?;
     let mut taken = Vec::with_capacity(KEYSTROKES);
     for _keystroke in 0..KEYSTROKES {
+        // Everything the pane has already said, taken and paid for, so that
+        // what is timed below is what this keystroke caused and not what the
+        // one before it left behind.
+        settled(&manager, &events, alias, pane);
         let began = Instant::now();
         manager
             .input(alias, pane, KEYSTROKE.to_vec())
@@ -104,31 +111,66 @@ fn timed(alias: &str) -> Result<Vec<Duration>, (&'static str, String)> {
             match events.recv_timeout(left) {
                 Ok(ManagerEvent::Bytes {
                     pane: named, bytes, ..
-                }) if named == pane
-                    && KEYSTROKE
-                        .first()
-                        .is_some_and(|wanted| bytes.contains(wanted)) =>
-                {
+                }) if named == pane => {
                     came = true;
+                    credit(&manager, alias, pane, bytes.len());
                 }
                 Ok(_otherwise) => {}
                 Err(_nothing) => break,
             }
         }
         if !came {
+            let _ended = close(&manager, alias, session);
             return Err((
                 TRANSPORT_LAYER,
                 format!("a keystroke never came back from {alias}"),
             ));
         }
         taken.push(began.elapsed());
-        let returned = u32::try_from(KEYSTROKE.len()).unwrap_or(u32::MAX);
-        let _credited = manager.credit(alias, pane, returned);
     }
+    // The session this made is this command's, and goes with it: a benchmark
+    // that left a shell running on every host it measured would be a leak
+    // somebody found months later.
+    let _ended = close(&manager, alias, session);
     Ok(taken)
 }
 
-/// Makes a session on the host and gives back the pane it comes with.
+/// Takes everything the pane has already said, and pays for it.
+///
+/// Credit is the reader's to return, and one that took bytes without
+/// returning any would draw the host's window down until it stopped sending —
+/// which from here looks exactly like a host that stopped answering.
+fn settled(
+    manager: &HostManager,
+    events: &std::sync::mpsc::Receiver<ManagerEvent>,
+    alias: &str,
+    pane: PaneId,
+) {
+    while let Ok(event) = events.try_recv() {
+        if let ManagerEvent::Bytes {
+            pane: named, bytes, ..
+        } = event
+            && named == pane
+        {
+            credit(manager, alias, pane, bytes.len());
+        }
+    }
+}
+
+/// Returns credit for what was consumed.
+fn credit(manager: &HostManager, alias: &str, pane: PaneId, taken: usize) {
+    let owed = u32::try_from(taken).unwrap_or(u32::MAX);
+    let _returned = manager.credit(alias, pane, owed);
+}
+
+/// Closes the session this command made, and says whether it was asked for.
+fn close(manager: &HostManager, alias: &str, session: SessionId) -> bool {
+    manager
+        .command(alias, SessionCommand::CloseSession { session })
+        .is_ok()
+}
+
+/// Makes a session on the host and gives back it and the pane it comes with.
 ///
 /// A pane of its own rather than one somebody is using: what is typed here
 /// appears on the screen it is typed into, and a benchmark has no business
@@ -141,7 +183,7 @@ fn a_pane_of_its_own(
     manager: &HostManager,
     events: &std::sync::mpsc::Receiver<ManagerEvent>,
     alias: &str,
-) -> Result<PaneId, (&'static str, String)> {
+) -> Result<(SessionId, PaneId), (&'static str, String)> {
     let submitted = manager
         .command(
             alias,
@@ -156,32 +198,67 @@ fn a_pane_of_its_own(
     let expires = Instant::now()
         .checked_add(PANE_DEADLINE)
         .ok_or((CLIENT_LAYER, "no clock".to_owned()))?;
+    // The session this command made, learned from the answer to the command
+    // that made it — never by looking for one with the right name, which
+    // would find the one a run before this left behind.
     while Instant::now() < expires {
-        if let Some(pane) = newest_pane(manager, alias) {
-            return Ok(pane);
-        }
         let left = expires.saturating_duration_since(Instant::now());
-        if events.recv_timeout(left).is_err() {
+        let Ok(event) = events.recv_timeout(left) else {
             break;
+        };
+        let ManagerEvent::Notify(Notification::CommandFinished {
+            command, outcome, ..
+        }) = event
+        else {
+            continue;
+        };
+        if command != submitted.id {
+            continue;
         }
+        let CommandOutcome::Applied {
+            created: Created::Session(session),
+            ..
+        } = outcome
+        else {
+            return Err((
+                TRANSPORT_LAYER,
+                format!("{alias} would not make a session: {outcome:?}"),
+            ));
+        };
+        // The answer comes before the change is announced — the host says
+        // what it did and then says what it is — so the session named in it
+        // is not in the model this holds until the delta arrives.
+        while Instant::now() < expires {
+            if let Some(found) = pane_of(manager, alias, session) {
+                return Ok((session, found));
+            }
+            let waiting = expires.saturating_duration_since(Instant::now());
+            if events.recv_timeout(waiting).is_err() {
+                break;
+            }
+        }
+        return Err((
+            TRANSPORT_LAYER,
+            format!("{alias} never said what was in session {}", session.0),
+        ));
     }
     Err((
         TRANSPORT_LAYER,
         format!(
-            "{alias} never made the pane command {} asked for",
+            "{alias} never answered the command {} that asked for a session",
             submitted.id.0
         ),
     ))
 }
 
-/// The pane of the session this made, if the host has said it exists.
-fn newest_pane(manager: &HostManager, alias: &str) -> Option<PaneId> {
+/// The pane of one session, if the host has said it has one.
+fn pane_of(manager: &HostManager, alias: &str, session: SessionId) -> Option<PaneId> {
     let held = manager.model();
     let view = held.host(&HostId(alias.to_owned()))?;
     view.settled
         .sessions
         .iter()
-        .find(|session| session.name == "benchmark")?
+        .find(|holding| holding.id == session)?
         .tabs
         .first()?
         .panes

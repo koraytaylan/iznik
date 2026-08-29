@@ -95,6 +95,35 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   snapshot. The rule names the two refusals instead, and a case drives a
   daemon that answers a command and then starts again to hold it there.
 
+- **Review of `623a2c3`:** seven, and three of them were the benchmark
+  measuring the wrong thing. It returned credit for the keystroke it sent
+  rather than the bytes that came back, and none at all for anything it did
+  not match, so the host's window drained through the run and a longer one
+  would have stalled and called it a host that stopped answering. It found the
+  pane by looking for a session with the right name, which after one run is
+  the session the run before it left — so the second run typed into the first
+  one's pane, and every run leaked a shell; it takes the session from the
+  answer to the command that made it, and closes it at the end. And it timed
+  each keystroke by waiting for output containing the character it had sent,
+  which anything the keystroke before it left behind satisfies at once: the
+  quickest of a hundred was meaningless. It settles what is owed before each
+  one and times what that one caused.
+
+  Two were the tail's. A pane the host does not have is refused after the call
+  that asked for it returned, and the refusal was thrown away — so a tail of a
+  pane that does not exist printed nothing, said nothing and waited for ever,
+  which is exactly what a quiet pane looks like. And it returned credit for a
+  screen, which arrives on the control channel and spends none of the pane's
+  window: the host was handed room this reader had not made.
+
+  The last two were about patience. The signal a tail ends on was listened for
+  only after the host had been reached, and reaching one may mean installing a
+  server on it — six minutes in which an interruption killed the process
+  instead of ending it. And a host that could not be reached was treated as an
+  ending, though it is a state that is tried again: one transient failure
+  aborted a command that would have connected a moment later, and the harness
+  that models this waits forty seconds through exactly that.
+
 - **`plumbing-commands`:** two things beyond the architecture's description.
   `tail` prints the pane as it stands before it prints what the pane says
   next: a cold subscription is answered with a screen and not with history, so

@@ -3,11 +3,15 @@ base64
 benchmark
 bytes
 came
+closes
 commands
+credit
 credited
 denominator
+detached
 drawn
 escaped
+fastest
 fraction
 holding
 host
@@ -33,6 +37,7 @@ quickest
 refusal
 refused
 sessioned
+settled
 shaped
 slowest
 state
@@ -42,6 +47,7 @@ tailing
 tails
 truth
 uninstall
+uninterrupted
 usage
 whole
 worst

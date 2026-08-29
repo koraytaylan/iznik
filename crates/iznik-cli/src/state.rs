@@ -7,6 +7,7 @@
 
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 
 use iznik_client::host::identity::HostId;
 use iznik_protocol::model::{HostModel, Pane, Session, Tab};
@@ -27,7 +28,8 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, USAGE);
         return ExitCode::from(USAGE_EXIT_CODE);
     };
-    let (manager, _events) = match holding(&alias) {
+    let uninterrupted = AtomicBool::new(false);
+    let (manager, _events) = match holding(&alias, &uninterrupted) {
         Ok(held) => held,
         Err((layer, detail)) => {
             let _said = refusal(&mut std::io::stderr(), layer, &detail);

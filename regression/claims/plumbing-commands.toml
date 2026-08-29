@@ -26,13 +26,13 @@ because = "the model is the host's own and reaches this the same way over a sock
 
 [[claim]]
 id = "plumbing-measures-the-round-trip"
-statement = "`benchmark` types a hundred keystrokes into a pane of its own and prints the shape of what came back: the quickest, the middle, the ninety-ninth and the slowest, in milliseconds. Not an average, which hides the one keystroke in a hundred that took a second — and that one is the one a person notices."
+statement = "`benchmark` types a hundred keystrokes into a pane of its own — the session named in the answer to the command that made it, never one found by its name, which would be the one a run before this left behind — and prints the shape of what came back: the quickest, the middle, the ninety-ninth and the slowest, in milliseconds. Not an average, which hides the one keystroke in a hundred that took a second, and that one is the one a person notices. Each keystroke is timed from what it caused and not from what the one before it left, and the session goes when the run does."
 test = "iznik-cli::plumbing::plumbing_measures_the_round_trip"
 because = "what is proven here is that the distribution is measured and printed; what the numbers are on a network is what the scenario against containers is for"
 
 [[claim]]
 id = "plumbing-tails-a-pane-until-it-is-interrupted"
-statement = "`tail` prints the pane as it stands and then what it says as it says it, one object a line with the bytes in base 64 — because a pane's output is bytes and half a character may arrive before the other half — and an interruption is an ending: it exits zero, rather than dying of the signal."
+statement = "`tail` prints the pane as it stands and then what it says as it says it, one object a line with the bytes in base 64 — because a pane's output is bytes and half a character may arrive before the other half — and an interruption is an ending: it exits zero, rather than dying of the signal. The signal is listened for before the host is reached, because reaching one may mean installing a server on it."
 test = "iznik-cli::plumbing::plumbing_tails_a_pane_until_it_is_interrupted"
 because = "the pane is a real shell on a real pseudoterminal and the signal is a real signal; the network between them is the scenario's"
 
@@ -45,3 +45,9 @@ scenario = "probe-over-ssh"
 id = "plumbing-tails-a-pane-over-ssh"
 statement = "From the engine, `iznik tail host0 1` over real SSH prints the pane as it stands, in base 64, and exits zero when it is interrupted — the same thing the local case proves, with a network and a daemon on another machine between the two."
 scenario = "tail-over-ssh"
+
+[[claim]]
+id = "plumbing-refuses-a-pane-the-host-does-not-have"
+statement = "A pane the host does not have is a refusal that names the layer, not a wait: a subscription is refused after the call that asked for it returned, and a tail that let that refusal pass would sit for ever printing nothing — which a script cannot tell from a pane that is quiet."
+test = "iznik-cli::plumbing::plumbing_refuses_a_pane_the_host_does_not_have"
+because = "the refusal is the host's own and arrives the same way over a socket as over a network"

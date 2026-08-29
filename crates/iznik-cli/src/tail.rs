@@ -18,10 +18,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use iznik_client::host::manager::ManagerEvent;
+use iznik_client::reduce::Notification;
 use iznik_protocol::identity::PaneId;
 
 use crate::output::{Value, bytes, line, object, refusal, text};
-use crate::{CLIENT_LAYER, USAGE_EXIT_CODE, holding, runtime};
+use crate::{CLIENT_LAYER, TRANSPORT_LAYER, USAGE_EXIT_CODE, holding, runtime};
 
 /// What this subcommand takes.
 const USAGE: &str = "usage: iznik tail <host> <pane>";
@@ -39,9 +40,31 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, USAGE);
         return ExitCode::from(USAGE_EXIT_CODE);
     };
-    let (manager, events) = match holding(&alias) {
-        Ok(held) => held,
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let told = Arc::clone(&interrupted);
+    let waiting = match runtime() {
+        Ok(built) => built,
+        Err(source) => {
+            let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, &source.to_string());
+            return ExitCode::FAILURE;
+        }
+    };
+    // Listened for before anything that can take minutes: reaching a host may
+    // mean installing a server on it, and an interruption during that must be
+    // this command ending rather than this command being killed.
+    let _watching = waiting.spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            told.store(true, Ordering::Release);
+        }
+    });
+    let (manager, events) = match holding(&alias, &interrupted) {
+        Ok(reached) => reached,
         Err((layer, detail)) => {
+            // Interrupted on the way is an ending, not a failure: nothing was
+            // asked of the host that anybody is waiting to hear about.
+            if interrupted.load(Ordering::Acquire) {
+                return ExitCode::SUCCESS;
+            }
             let _said = refusal(&mut std::io::stderr(), layer, &detail);
             return ExitCode::FAILURE;
         }
@@ -50,29 +73,13 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, &refused.to_string());
         return ExitCode::FAILURE;
     }
-    let interrupted = Arc::new(AtomicBool::new(false));
-    let told = Arc::clone(&interrupted);
-    let held = match runtime() {
-        Ok(held) => held,
-        Err(source) => {
-            let _said = refusal(&mut std::io::stderr(), CLIENT_LAYER, &source.to_string());
-            return ExitCode::FAILURE;
-        }
-    };
-    let _watching = held.spawn(async move {
-        // A signal is the way this command is meant to end, so it is the one
-        // thing it waits for besides the pane.
-        if tokio::signal::ctrl_c().await.is_ok() {
-            told.store(true, Ordering::Release);
-        }
-    });
     // Credit is the application's to return, and this application consumes
     // everything the moment it arrives.
     while !interrupted.load(Ordering::Acquire) {
         let Ok(event) = events.recv_timeout(LOOK) else {
             continue;
         };
-        let (said, printed) = match event {
+        let (owed, printed) = match event {
             ManagerEvent::Screen {
                 pane: named,
                 sequence,
@@ -80,21 +87,45 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
                 rows,
                 bytes: said,
                 ..
-            } if named == pane => (said.clone(), drawn(pane, sequence.0, columns, rows, &said)),
+            } if named == pane => {
+                // No credit: a screen comes on the control channel and spends
+                // none of the pane's window, so returning any would hand the
+                // host room this reader has not made.
+                (0, drawn(pane, sequence.0, columns, rows, &said))
+            }
             ManagerEvent::Bytes {
                 pane: named,
                 sequence,
                 bytes: said,
                 ..
-            } if named == pane => (said.clone(), shaped(pane, sequence.0, &said)),
+            } if named == pane => (said.len(), shaped(pane, sequence.0, &said)),
+            // A pane the host does not have is refused, and a refusal thrown
+            // away here would leave a script unable to tell a pane that does
+            // not exist from a pane that is quiet.
+            ManagerEvent::Notify(Notification::Refused { code, message, .. }) => {
+                let _said = refusal(
+                    &mut std::io::stderr(),
+                    TRANSPORT_LAYER,
+                    &format!("{code:?}: {message}"),
+                );
+                return ExitCode::FAILURE;
+            }
+            // And a pane that has gone is an ending, said rather than waited
+            // out: nothing more will ever arrive for it.
+            ManagerEvent::Detached { pane: named, .. } if named == pane => {
+                let _printed = line(&mut std::io::stdout(), &detached(pane));
+                return ExitCode::SUCCESS;
+            }
             _elsewhere => continue,
         };
         if line(&mut std::io::stdout(), &printed).is_err() {
             // Whoever was reading has gone, which is an ending too.
             break;
         }
-        let taken = u32::try_from(said.len()).unwrap_or(u32::MAX);
-        let _returned = manager.credit(&alias, pane, taken);
+        if owed > 0 {
+            let taken = u32::try_from(owed).unwrap_or(u32::MAX);
+            let _returned = manager.credit(&alias, pane, taken);
+        }
     }
     ExitCode::SUCCESS
 }
@@ -107,6 +138,14 @@ fn shaped(pane: PaneId, sequence: u64, said: &[u8]) -> Value {
         ("sequence", Value::Whole(sequence)),
         ("bytes", bytes(said)),
         ("encoding", text("base64")),
+    ])
+}
+
+/// A pane that has gone, as one object.
+fn detached(pane: PaneId) -> Value {
+    object(vec![
+        ("kind", text("detached")),
+        ("pane", Value::Whole(pane.0)),
     ])
 }
 

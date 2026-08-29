@@ -279,11 +279,25 @@ fn plumbing_measures_the_round_trip() {
                 "{named} is a number: {shape:?}"
             );
         }
+        let quickest = shape.get("minimum").and_then(serde_json::Value::as_f64);
         let middle = shape.get("median").and_then(serde_json::Value::as_f64);
         let worst = shape.get("maximum").and_then(serde_json::Value::as_f64);
         assert!(
             middle <= worst,
             "and the middle is not past the end: {middle:?} {worst:?}"
+        );
+        // A keystroke that went to a daemon and came back took some time. A
+        // zero here would mean the wait was satisfied by something the
+        // keystroke before it left behind, which is the whole distribution
+        // being measured against the wrong thing.
+        assert!(
+            quickest.is_some_and(|fastest| fastest > 0.0),
+            "and the quickest of them took some time: {quickest:?}"
+        );
+        assert_eq!(
+            shape.get("keystrokes").and_then(serde_json::Value::as_u64),
+            Some(100),
+            "with every keystroke counted: {shape:?}"
         );
         assert_eq!(
             shape.get("unit").and_then(serde_json::Value::as_str),
@@ -384,4 +398,37 @@ fn interrupt(child: u32) -> Result<(), Failed> {
         .status()?;
     assert!(done.success(), "the signal was sent");
     Ok(())
+}
+
+/// # Panics
+///
+/// When a pane the host does not have is waited on rather than refused.
+#[test]
+fn plumbing_refuses_a_pane_the_host_does_not_have() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("nopane")?;
+        let runtime = runtime()?;
+        let (stack, alias) = a_daemon(&runtime)?;
+        // A pane number no session on this host has. A tail that waited for
+        // it would wait for ever, and a script could not tell that from a
+        // pane that is quiet.
+        let began = Instant::now();
+        let done = ran(&held, &["tail", &alias, "999"])?;
+        assert!(
+            began.elapsed() < PROMPT,
+            "it answers rather than waiting: {:?}",
+            began.elapsed()
+        );
+        assert_ne!(done.code, Some(0), "and does not succeed");
+        let said = objects(&done.stderr)?;
+        let first = said.first().ok_or("one object says what went wrong")?;
+        assert_eq!(
+            first.get("layer").and_then(serde_json::Value::as_str),
+            Some("transport"),
+            "naming the layer that refused: {first:?}"
+        );
+        drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
 }

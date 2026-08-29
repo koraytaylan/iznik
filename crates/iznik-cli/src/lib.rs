@@ -66,6 +66,7 @@ pub const ARTIFACTS_VARIABLE: &str = "IZNIK_ARTIFACTS_DIRECTORY";
 /// The layer that refused and what it said.
 pub fn holding(
     alias: &str,
+    stop: &std::sync::atomic::AtomicBool,
 ) -> Result<
     (
         iznik_client::host::manager::HostManager,
@@ -92,23 +93,44 @@ pub fn holding(
     let expires = std::time::Instant::now()
         .checked_add(BOOTSTRAP_DEADLINE)
         .ok_or((CLIENT_LAYER, "no clock".to_owned()))?;
-    while std::time::Instant::now() < expires {
-        let left = expires.saturating_duration_since(std::time::Instant::now());
+    // What the host last said went wrong, which is what a deadline that
+    // passes should say rather than that nothing was heard: a host is tried
+    // again after every failure, so the failures on the way are the story.
+    let mut last = None;
+    while std::time::Instant::now() < expires && !stop.load(std::sync::atomic::Ordering::Acquire) {
+        let left = expires
+            .saturating_duration_since(std::time::Instant::now())
+            .min(LOOK);
         match events.recv_timeout(left) {
             Ok(ManagerEvent::Moved {
                 state: HostState::Connected { .. },
                 ..
             }) => return Ok((manager, events)),
+            // Not an ending: a host that could not be reached is tried again,
+            // and the harness that models this waits through exactly this.
             Ok(ManagerEvent::Moved {
                 state: HostState::Failed { error, .. },
                 ..
-            }) => return Err((TRANSPORT_LAYER, error)),
+            }) => last = Some(error),
+            Ok(ManagerEvent::Removed { .. }) => {
+                return Err((
+                    TRANSPORT_LAYER,
+                    last.unwrap_or_else(|| format!("{alias} was given up on")),
+                ));
+            }
             Ok(_otherwise) => {}
-            Err(_nothing) => break,
+            // A timeout is the look coming round again, not an ending.
+            Err(_nothing) => {}
         }
     }
-    Err((TRANSPORT_LAYER, format!("{alias} never answered")))
+    Err((
+        TRANSPORT_LAYER,
+        last.unwrap_or_else(|| format!("{alias} never answered")),
+    ))
 }
+
+/// How long a wait looks before it checks whether it has been interrupted.
+const LOOK: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The one host argument a subcommand takes, or nothing.
 #[must_use]
