@@ -8,14 +8,16 @@ exclusive = false
 hosts = 1
 files = []
 
-# A host that is not there. What matters is that the answer comes quickly and
-# says which layer could not be reached, rather than the command waiting out
-# the retries a client would make on its own.
+# A host that is not there. A failure is not an ending — a host that could not
+# be reached is tried again, and one that failed once may connect on the next
+# attempt — but the same failure twice is the host saying what it is, and the
+# step's timeout is what holds it to answering rather than waiting out its own
+# ceiling.
 [[steps]]
 id = "a-host-that-is-not-there"
 container = "engine"
 run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik doctor nosuchhost"
-timeout_seconds = 45
+timeout_seconds = 30
 
 [[expect]]
 step = "a-host-that-is-not-there"

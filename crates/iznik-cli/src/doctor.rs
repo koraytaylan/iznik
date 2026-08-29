@@ -18,7 +18,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use iznik_client::bootstrap::launch::BootstrapOptions;
-use iznik_client::bootstrap::probe::{HostProbe, RunsRemotely, probe};
+use iznik_client::bootstrap::probe::{HostProbe, ProbeError, RunsRemotely, probe};
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::HostState;
 use iznik_client::transport::ssh::SshOptions;
@@ -27,6 +27,7 @@ use iznik_protocol::message::PROTOCOL_VERSION;
 
 use crate::benchmark::{measured, shaped};
 use crate::output::{Value, line, object, refusal, text};
+use crate::probe::{machine, running};
 use crate::{CLIENT_LAYER, TRANSPORT_LAYER, USAGE_EXIT_CODE, one_host, runtime};
 
 /// What this subcommand takes.
@@ -78,6 +79,9 @@ const KEYSTROKES: usize = 20;
 
 /// How many lines of the daemon's log are carried.
 const LOG_LINES: usize = 40;
+
+/// What a host says when there is no log where a daemon keeps one.
+const NO_LOG: &str = "no-log";
 
 /// What the daemon calls its log, in its runtime directory.
 const LOG_NAME: &str = "server.log";
@@ -159,6 +163,10 @@ fn configured(alias: &str) -> Value {
     let mut asking = Command::new("ssh");
     asking
         .arg("-G")
+        // Whatever a person typed is a host and not an option: without this,
+        // an alias beginning with a dash is read by `ssh` as one of its own,
+        // and one of its own writes a file.
+        .arg("--")
         .arg(alias)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -205,24 +213,26 @@ pub fn kept(said: &str) -> Value {
 ///
 /// What went wrong, in words, including the deadline passing.
 fn bounded(mut command: Command, deadline: Duration) -> Result<String, String> {
-    let mut child = command.spawn().map_err(|source| source.to_string())?;
-    let expires = Instant::now()
-        .checked_add(deadline)
-        .ok_or_else(|| "no clock".to_owned())?;
-    while Instant::now() < expires {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                let done = child
-                    .wait_with_output()
-                    .map_err(|source| source.to_string())?;
-                return Ok(String::from_utf8_lossy(&done.stdout).into_owned());
-            }
-            Ok(None) => std::thread::sleep(LOOK),
-            Err(source) => return Err(source.to_string()),
+    let child = command.spawn().map_err(|source| source.to_string())?;
+    // Read on a thread of its own, because what a child writes has to be
+    // taken as it comes: a pipe nobody is emptying fills, and a child that
+    // cannot write is a child that never exits — which a caller watching only
+    // for the exit would take for a hang of its own making.
+    let (said, heard) = std::sync::mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        let _sent = said.send(child.wait_with_output());
+    });
+    match heard.recv_timeout(deadline) {
+        Ok(Ok(done)) => {
+            let _joined = reading.join();
+            Ok(String::from_utf8_lossy(&done.stdout).into_owned())
         }
+        Ok(Err(source)) => {
+            let _joined = reading.join();
+            Err(source.to_string())
+        }
+        Err(_nothing) => Err(format!("it was still running after {deadline:?}")),
     }
-    let _killed = child.kill();
-    Err(format!("it was still running after {deadline:?}"))
 }
 
 /// What a probe of the host says.
@@ -237,21 +247,44 @@ fn asked(alias: &str) -> Value {
     let options = BootstrapOptions::default();
     match held.block_on(probe(&transport, options.probe_deadline)) {
         Ok(found) => probed(&found),
-        Err(source) => failed(TRANSPORT_LAYER, &source.to_string()),
+        Err(source) => refused_by(&source),
     }
+}
+
+/// Why a probe did not answer, in this program's words.
+///
+/// The kind and never the detail. A transport's detail is what `ssh` printed,
+/// and what `ssh` printed includes whatever a proxy command wrote on its own
+/// standard error — which is a place a token appears. `iznik probe` says the
+/// whole of it to somebody looking at their own screen; this is a document
+/// people paste into bug reports.
+fn refused_by(source: &ProbeError) -> Value {
+    let (layer, why) = match source {
+        ProbeError::Transport { .. } => (TRANSPORT_LAYER, "the host could not be asked".to_owned()),
+        ProbeError::Unsupported {
+            operating_system,
+            architecture,
+        } => (
+            CLIENT_LAYER,
+            format!("this build carries nothing for {operating_system} {architecture}"),
+        ),
+        ProbeError::Malformed { .. } => (
+            TRANSPORT_LAYER,
+            "the host answered something this could not read".to_owned(),
+        ),
+        ProbeError::Unwritable { candidates } => (
+            TRANSPORT_LAYER,
+            format!("nowhere under {} is writable", candidates.len()),
+        ),
+    };
+    failed(layer, &why)
 }
 
 /// A probe's answer as one object.
 fn probed(found: &HostProbe) -> Value {
     object(vec![
-        (
-            "operating_system",
-            text(&format!("{:?}", found.operating_system).to_lowercase()),
-        ),
-        (
-            "architecture",
-            text(&format!("{:?}", found.architecture).to_lowercase()),
-        ),
+        ("operating_system", text(running(found.operating_system))),
+        ("architecture", text(machine(found.architecture))),
         (
             "server",
             found.server.as_ref().map_or(Value::Null, |installed| {
@@ -324,31 +357,51 @@ fn held(alias: &str) -> Answered {
     let Some(expires) = Instant::now().checked_add(REACH_DEADLINE) else {
         return every(CLIENT_LAYER, "no clock");
     };
-    // Until it answers, until it fails once, or until the ceiling. The first
-    // failure is where this stops rather than waiting out the retries: what
-    // is being collected is what happened, and a host is tried again for ever
-    // — a diagnosis that waited for that would never be written.
-    let mut fell = None;
-    while Instant::now() < expires && reached.is_none() && fell.is_none() {
+    // Until it answers or until the ceiling, through failures rather than
+    // stopping at the first: a host that could not be reached is tried again,
+    // and a client that gave up on the first would report as broken a host
+    // that connects a moment later. The ceiling is what keeps this from
+    // waiting for ever.
+    let mut fell = false;
+    let mut twice = false;
+    let mut before: Option<String> = None;
+    while Instant::now() < expires && reached.is_none() && !twice {
         let left = expires.saturating_duration_since(Instant::now()).min(LOOK);
         let Ok(ManagerEvent::Moved { state, .. }) = events.recv_timeout(left) else {
             continue;
         };
-        went.push(state.to_string());
+        went.push(named(&state).to_owned());
         match state {
             HostState::Connected {
                 server_version,
                 upgrade,
             } => reached = Some((server_version, upgrade.is_some())),
-            HostState::Failed { error, .. } => fell = Some(error),
+            // A failure is not an ending — a host that could not be reached
+            // is tried again, and one that failed once may connect on the
+            // next attempt. The same failure twice is different: the host has
+            // said what it is, and waiting for it to say it a third time is
+            // not diagnosis. The words are compared and never written down,
+            // for the reason `named` gives.
+            HostState::Failed { error, .. } => {
+                fell = true;
+                twice = before.as_ref() == Some(&error);
+                before = Some(error);
+            }
             _otherwise => {}
         }
     }
     let transitions = Value::List(went.iter().map(|said| text(said)).collect());
     let Some((version, newer)) = reached else {
+        // What it was doing, and not what anything said about it: the words a
+        // transport uses are the transport's, and `ssh` puts a proxy
+        // command's own output in them.
         let refused = failed(
             TRANSPORT_LAYER,
-            &fell.unwrap_or_else(|| format!("{alias} never answered")),
+            if fell {
+                "it could not be reached"
+            } else {
+                "it did not answer inside the time this waits"
+            },
         );
         return Answered {
             server: refused.clone(),
@@ -376,12 +429,36 @@ fn held(alias: &str) -> Answered {
     }
 }
 
+/// What a state is called on the wire.
+///
+/// The name and not the state's own words: `HostState` prints what went
+/// wrong along with what it is, and what went wrong came from a transport
+/// whose words are not this program's to repeat — `ssh` puts a proxy
+/// command's own output in them, and a proxy command is exactly the kind of
+/// thing that prints a token.
+fn named(state: &HostState) -> &'static str {
+    match state {
+        HostState::Disconnected => "disconnected",
+        HostState::Probing => "probing",
+        HostState::Bootstrapping { .. } => "bootstrapping",
+        HostState::Connecting => "connecting",
+        HostState::Connected { .. } => "connected",
+        HostState::Reconnecting { .. } => "reconnecting",
+        HostState::Failed { .. } => "failed",
+    }
+}
+
 /// The same refusal in all three sections, for what stops all three.
 fn every(layer: &str, detail: &str) -> Answered {
     let refused = failed(layer, detail);
     Answered {
         server: refused.clone(),
-        state: refused,
+        // The same shape as every other way this section is filled: a reader
+        // looking for what it went through finds the field, empty.
+        state: object(vec![
+            ("state", refused),
+            ("went_through", Value::List(Vec::new())),
+        ]),
         round_trip: skipped("nothing could be asked of the host"),
     }
 }
@@ -418,16 +495,27 @@ fn yonder(alias: &str) -> Value {
         return failed(CLIENT_LAYER, "no runtime directory");
     };
     let transport = Transport::for_alias(alias, &paths, SshOptions::default());
-    let asked =
-        format!("{LOG_SCRIPT}\ntail -n {LOG_LINES} \"$runtime/{LOG_NAME}\" 2>/dev/null || true");
+    // Which of the two it is, said out loud: a log with nothing in it and no
+    // log at all are different answers, and this is the section whose whole
+    // job is to say which layer is wrong.
+    let asked = format!(
+        "{LOG_SCRIPT}\nif [ -f \"$runtime/{LOG_NAME}\" ]\n\
+         then tail -n {LOG_LINES} \"$runtime/{LOG_NAME}\"\n\
+         else printf '%s %s\\n' '{NO_LOG}' \"$runtime/{LOG_NAME}\"; fi"
+    );
     // Called inside the runtime and not merely awaited in it: this one is
     // not an `async fn`, so it spawns the child where it is called, and a
     // call from outside a runtime is a panic rather than an error.
     let deadline = BootstrapOptions::default().command_deadline;
     let read = held.block_on(async { RunsRemotely::run(&transport, &asked, deadline).await });
     match read {
+        Ok(said) if said.starts_with(NO_LOG) => failed(
+            TRANSPORT_LAYER,
+            &format!("no log where a daemon keeps one: {}", said.trim()),
+        ),
         Ok(said) => tailed(&said),
-        Err(source) => failed(TRANSPORT_LAYER, &source.to_string()),
+        // The kind and not the words, as everywhere else a transport refuses.
+        Err(_source) => failed(TRANSPORT_LAYER, "the host's log could not be read"),
     }
 }
 

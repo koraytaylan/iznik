@@ -132,11 +132,18 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   that reason. Beside it, a whole bundle is collected with secrets planted in
   the environment, which proves the other half: nothing here reads one.
 
-  The bundle stops waiting at the first failure rather than sitting through
-  the retries a client makes on its own. A host is tried again for ever, so a
-  diagnosis that waited for that would never be written — and what happened on
-  the first attempt, with every state it went through beside it, is the thing
-  somebody ran this to see.
+  The bundle waits through a failure and stops when the same failure comes
+  twice. A host that could not be reached is tried again, so giving up on the
+  first would report as broken a host that connects a moment later — the
+  mistake a review had just found in the commands beside it. But the same
+  words twice are the host saying what it is, and waiting for a third is not
+  diagnosis. A ceiling stands behind both.
+
+  Nothing a transport says goes into the document. What `ssh` prints when it
+  refuses carries whatever a proxy command wrote on its own standard error,
+  which is a place a token appears — so the bundle carries the kind of failure
+  and the state a host was in, in this program's own words, and `iznik probe`
+  is where somebody looking at their own screen sees the rest.
 
 - **`plumbing-commands`:** two things beyond the architecture's description.
   `tail` prints the pane as it stands before it prints what the pane says

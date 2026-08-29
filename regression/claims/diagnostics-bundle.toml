@@ -12,7 +12,7 @@
 id = "doctor-keeps-only-the-settings-it-names"
 statement = "Of everything `ssh` says it would do for a host, the bundle keeps a named handful — a host, a port, a user and some numbers — and never looks at an identity file, an agent socket or a command to run, each of which can carry key material or a token or print one. Redaction by construction: what could carry a secret is not collected, rather than collected and then scrubbed."
 test = "iznik-cli::doctor::doctor_keeps_only_the_settings_it_names"
-because = "the filter is over text and the text is what `ssh` prints; a host would only put the same text further away"
+because = "the filter is over text and the text is what `ssh` prints; a host would only put the same text further away. What a transport says when it refuses is kept out of the bundle the same way — the kind of failure and never its words, because `ssh` puts a proxy command's own output in them"
 
 [[claim]]
 id = "doctor-carries-no-secret-it-was-given-the-chance-to-carry"
@@ -39,7 +39,7 @@ scenario = "healthy-host"
 
 [[claim]]
 id = "doctor-names-the-layer-that-could-not-be-reached"
-statement = "An alias that is not a host at all yields a bundle naming the transport as what refused, with the sections under it skipped — and it comes back rather than waiting out the retries a client makes on its own, because a diagnosis that never finished would be no diagnosis."
+statement = "An alias that is not a host at all yields a bundle naming the transport as what refused, with the sections under it skipped. It waits through a failure, because a host that could not be reached is tried again and one that failed once may connect on the next attempt — and it stops when the same failure comes twice, because that is the host saying what it is rather than something still being tried."
 scenario = "unreachable-host"
 
 [[claim]]

@@ -56,24 +56,34 @@ fn asked(alias: &str) -> Result<HostProbe, (&'static str, String)> {
         .map_err(|source| (TRANSPORT_LAYER, source.to_string()))
 }
 
+/// What a machine runs, on the wire.
+///
+/// Spelled out rather than derived from how the enum prints itself: what
+/// crosses to a script is a name this program chose, and renaming a variant
+/// must be a change somebody makes here on purpose.
+#[must_use]
+pub fn running(held: OperatingSystem) -> &'static str {
+    match held {
+        OperatingSystem::Linux => "linux",
+        OperatingSystem::Darwin => "darwin",
+    }
+}
+
+/// And what it is.
+#[must_use]
+pub fn machine(held: Architecture) -> &'static str {
+    match held {
+        Architecture::X86_64 => "x86_64",
+        Architecture::Aarch64 => "aarch64",
+    }
+}
+
 /// The probe as one object.
 fn shaped(alias: &str, found: &HostProbe) -> Value {
     object(vec![
         ("host", text(alias)),
-        (
-            "operating_system",
-            text(match found.operating_system {
-                OperatingSystem::Linux => "linux",
-                OperatingSystem::Darwin => "darwin",
-            }),
-        ),
-        (
-            "architecture",
-            text(match found.architecture {
-                Architecture::X86_64 => "x86_64",
-                Architecture::Aarch64 => "aarch64",
-            }),
-        ),
+        ("operating_system", text(running(found.operating_system))),
+        ("architecture", text(machine(found.architecture))),
         (
             "server",
             found.server.as_ref().map_or(Value::Null, |installed| {
