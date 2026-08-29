@@ -1,0 +1,44 @@
+# The header a native application is built against, and the library it links.
+#
+# The golden proofs are `test` proofs: a header is text, a C compiler reading
+# it is a program on this machine, and what the crate declares is in the
+# crate — a container would put all three somewhere further away without
+# making any of them more true. The smoke proof is a `regression_` case
+# because it builds a release-shaped library and compiles a C program against
+# it, which is minutes rather than milliseconds.
+
+[[claim]]
+id = "header-is-what-the-crate-makes"
+statement = "The header in the tree is what the crate makes now, byte for byte. It is generated rather than written, so an application cannot be built against a contract the library stopped keeping: a signature that changes changes the committed header in the same commit, where a reviewer sees it."
+test = "xtask::header_golden::header_golden_matches_the_committed_copy"
+because = "generating a header from a crate is reading Rust and writing text, and both are here"
+
+[[claim]]
+id = "header-notices-a-signature-that-changed"
+statement = "A copy of the tree with one argument added to one function yields a header that differs, and the case names the first line where it does — so the pinning is a thing that has been seen to work rather than a thing believed to."
+test = "xtask::header_golden::header_golden_notices_a_signature_that_changed"
+because = "the copy is a copy of this tree, and what is asked of it is what is asked of the tree"
+
+[[claim]]
+id = "header-stands-on-its-own"
+statement = "The header compiles alone as C11 under `-Wall -Wextra -Werror`, and again as C++ — which is what an application including it before anything else of its own does, and what a missing include or a name that is a keyword in one of the two would fail."
+test = "xtask::header_golden::header_golden_compiles_as_c_and_as_cxx"
+because = "the compiler on this machine reads the same header an application's would"
+
+[[claim]]
+id = "header-declares-every-function-and-no-other"
+statement = "Every `extern \"C\"` function the crate declares is in the header, the header declares no other, and every function that states an obligation carries it into the header — where the person who has to keep it will read it, rather than in Rust documentation they will never open."
+test = "xtask::header_golden::header_golden_declares_every_function_and_no_other"
+because = "both lists are read from the tree, and comparing them needs nothing else"
+
+[[claim]]
+id = "smoke-runs-a-c-program-against-a-daemon"
+statement = "A C program compiled against the generated header and the static archive — with the system libraries the toolchain says the archive needs, never guessed — makes a client, holds a host, makes a session, attaches to its pane, types a line, takes the bytes back through the output callback with the screen having come first, returns the credit they cost, lets the pane go and ends the client, against a real daemon, and exits zero inside ten seconds. A Swift developer's first afternoon, proven in C rather than promised."
+test = "xtask::regression_ffi_smoke::regression_ffi_smoke_runs_a_c_program_against_a_daemon"
+because = "the daemon is a whole daemon on this machine and the compiler is the system's own; what SSH would add is a network, which this boundary does not know about"
+
+[[claim]]
+id = "smoke-exports-only-iznik-names"
+statement = "The shared library exports iznik's own names and nothing else of this workspace's, and the static archive — which carries an object for every crate in the tree and can hide nothing — defines every function the header declares. The two are asserted where the toolchain decides them, with `nm`."
+test = "xtask::regression_ffi_smoke::regression_ffi_smoke_exports_only_iznik_names"
+because = "what a linker can see is what `nm` says it can see, on the artifact this build produced"

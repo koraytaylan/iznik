@@ -15,7 +15,7 @@ touches:
   - "xtask/tests/fixtures/ffi/**"
   - "regression/claims/static-library-and-header.toml"
   - "policy/lexicon/static-library-and-header.txt"
-status: planned
+status: done
 merged_as: ""
 ---
 # Static Library and Header

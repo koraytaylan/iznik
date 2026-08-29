@@ -7,7 +7,7 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
 - **Approach:** treat `docs/CLIENT.md` as the specification the implementation is held to, pin the ABI with a golden header and exercise it from C against a real local daemon reached by a `unix:` alias, ship one command that reports which layer is broken with secrets redacted by construction, and soak before release.
-- **Progress:** 2/8 tasks done; 0 blocked; 0 dropped.
+- **Progress:** 3/8 tasks done; 0 blocked; 0 dropped.
 - **Integration:** `planned`; run —; base `develop`; validation base —; mode —; final integration —.
 - **Exceptions:** — (coordinator-owned blocked/dropped reasons are recorded here).
 - **Review of `bbf5669`:** nine findings, every one of them real. The high one
@@ -94,6 +94,20 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   rule "pass on what was taken" read that as a refusal and swallowed the
   snapshot. The rule names the two refusals instead, and a case drives a
   daemon that answers a command and then starts again to hold it there.
+
+- **`static-library-and-header`:** the header is generated with cbindgen and
+  committed, and three things beyond the architecture's description are worth
+  recording. The codes are exported with an `IZNIK_` prefix of their own,
+  because `OK` and `REFUSED` in a header somebody includes beside their own
+  are four of the commonest words there are. What cbindgen produces is passed
+  through one presentation step before it is written: Rust's documentation
+  syntax comes through unchanged, so a link is `[`Name`]` and a section is
+  headed `# Safety`, neither of which means anything in C — the links are
+  flattened to the names the header uses, taken from the same table that
+  renames the types so the two cannot drift, and the heading is written as a
+  sentence. And `xtask` gained development dependencies its `touches` does not
+  name — the testkit, the protocol and a runtime — because the smoke case
+  stands a whole daemon up in its own process for a C program to talk to.
 
 - **Review of `f264838`:** eight, and three of them were about what an event
   says. A pane that had gone arrived as a host state carrying "pane 7

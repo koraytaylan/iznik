@@ -1126,11 +1126,14 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "iznik-harness",
+ "iznik-protocol",
+ "iznik-testkit",
  "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
  "syn 2.0.119",
+ "tokio",
  "toml",
 ]
 

@@ -27,3 +27,12 @@ toml = "=0.9.12"
 sha2 = "=0.11.0"
 # Without its default features: the library, not the clap-driven binary.
 cbindgen = { version = "=0.29.4", default-features = false }
+
+# The smoke case stands a whole daemon up in this process and speaks to it
+# through the boundary a C program links against, so it needs what any other
+# case that stands one up needs — and the protocol, to encode the one command
+# the C program sends.
+[dev-dependencies]
+iznik-testkit = { path = "../crates/iznik-testkit" }
+iznik-protocol = { path = "../crates/iznik-protocol" }
+tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }
