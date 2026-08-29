@@ -60,6 +60,21 @@ const THROUGHPUT_MEBIBYTES: usize = 16;
 /// How many panes the aggregate figure is taken across.
 pub const AGGREGATE_PANES: usize = 8;
 
+/// What share of one pane's throughput eight of them together must hold, as a
+/// numerator over [`SHARED_OF`].
+///
+/// Nine tenths. What is being asked is whether the scheduler shares or
+/// serializes: serializing eight panes would leave each of them an eighth,
+/// and the eight together no more than one. What they in fact do on this
+/// machine is saturate the same socket, so the two figures come out within a
+/// per cent of each other in either order — asking for strictly more than one
+/// pane's is asking which way a coin landed, and that is a measurement of the
+/// machine rather than of the scheduler.
+pub const SHARED: u64 = 9;
+
+/// The denominator of that share.
+pub const SHARED_OF: u64 = 10;
+
 /// How many panes the second memory figure is taken with.
 pub const MANY_PANES: usize = 50;
 

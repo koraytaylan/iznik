@@ -127,6 +127,17 @@ test-group = 'shells'
 filter = 'binary(remote_channel) + binary(remote_launch) + binary(connection_manager) + (binary(manager_traffic) - test(manager_traffic_carries_a_burst_as_fast_as_it_is_given))'
 test-group = 'shells'
 
+# One of those cases is a hundred threads typing into one shell at once and
+# waiting for every line to come back whole. Inside the group it counted for
+# one, which is the mistake the note above this file's `pane_many_share_one_thread`
+# rule describes: it is not the size of a case that starves it but the load it
+# brings. It takes the group whole, so that a wait for a hundred lines is a
+# wait for a hundred lines rather than a measurement of what else was running.
+[[profile.default.overrides]]
+filter = 'test(pane_byte_pipe_keeps_one_call_one_message)'
+test-group = 'shells'
+threads-required = 12
+
 # The boundary's own cases stand the same thing up from further out: a daemon,
 # a socket, and a real shell that a hundred callers type into at once. The same
 # load as the server's own, two crates away.

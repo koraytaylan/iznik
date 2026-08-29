@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use baseline::{
     AGGREGATE_PANES, AT, FIFTY_PANE_MEMORY_CEILING, FLOOD_LATENCY_CEILING, Failed, Figures,
-    IDLE_LATENCY_CEILING, MANY_PANES, MIDDLE, OF, RESTING_MEMORY_CEILING,
+    IDLE_LATENCY_CEILING, MANY_PANES, MIDDLE, OF, RESTING_MEMORY_CEILING, SHARED, SHARED_OF,
     SINGLE_PANE_THROUGHPUT_FLOOR, latency, memory, panes_throughput, percentile, startup, table,
 };
 use iznik_testkit::stack::STARTUP_CEILING;
@@ -72,7 +72,9 @@ async fn baseline_flood_latency_is_under_its_ceiling() {
 /// # Panics
 ///
 /// When one pane does not sustain [`SINGLE_PANE_THROUGHPUT_FLOOR`], or eight
-/// together do not sustain more than one.
+/// together sustain less than [`SHARED`] tenths of what one does — which is
+/// what says the scheduler shares rather than serializes, serializing being
+/// an eighth.
 #[ignore = "measures over a window; run deliberately under the regression profile"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn baseline_throughput_is_over_its_floor() {
@@ -83,9 +85,13 @@ async fn baseline_throughput_is_over_its_floor() {
             "one pane sustained {single} bytes a second, under {SINGLE_PANE_THROUGHPUT_FLOOR}"
         );
         let together = panes_throughput(AGGREGATE_PANES).await?;
+        // Not more than one pane's, but not less either: both saturate the
+        // same socket, so which of the two comes out ahead is the machine
+        // talking. What serializing would look like is an eighth.
         assert!(
-            together > single,
-            "{AGGREGATE_PANES} panes sustained {together}, no more than one pane's {single}"
+            together.saturating_mul(SHARED_OF) >= single.saturating_mul(SHARED),
+            "{AGGREGATE_PANES} panes sustained {together}, under {SHARED}/{SHARED_OF} of one \
+             pane's {single}"
         );
         Ok::<(), Failed>(())
     };

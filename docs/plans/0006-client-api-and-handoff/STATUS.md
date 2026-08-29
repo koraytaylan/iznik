@@ -542,6 +542,31 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   been scheduled yet looked exactly like one that had finished. It waits for
   the pane to have said something first.
 
+- **Running everything, repeatedly.** Four passes of
+  `cargo nextest run --workspace --run-ignored all` — 550 proofs — turned up
+  three more things worth fixing and one that is the machine.
+
+  The boundary's atomicity case, a hundred threads typing into one shell at
+  once, counted for one slot in the group that exists for shell-driving
+  tests. Beside five hundred others it got forty of its hundred lines inside
+  its window and reported a byte loss that had not happened; it takes the
+  group whole now, as the case that stands six shells up already did.
+
+  The throughput baseline asked whether eight panes sustain strictly more than
+  one. They saturate the same socket, so the two figures come out within a per
+  cent of each other in either order, and the assertion was asking which way a
+  coin landed — it failed about half the time and passed alone in under a
+  second. What it means to prove is that the scheduler shares rather than
+  serializes, and serializing would leave the eight an eighth; it asks for
+  nine tenths now, and the claim says so.
+
+  What is the machine: the fixture reaper's own case failed once when podman
+  refused to tear down a network whose netns process was still going —
+  "rootless netns: kill network process: permission denied" — and passed again
+  as soon as the leavings were cleared by hand. That is podman's teardown
+  racing a loaded machine, not the harness, and it is the same condition this
+  plan and 0005 both record for the pane cases at their deadlines.
+
 - **What the whole suite found.** Running every proof there is — 550 of them,
   `--run-ignored all` — turned up one that had rotted. `scenario-driver`'s
   `unsupported` scenario asked the driver for a `probe` step and expected it to

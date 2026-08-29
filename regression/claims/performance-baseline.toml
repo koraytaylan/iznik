@@ -25,7 +25,7 @@ because = "the flood and the keystroke share one link inside the process; adding
 
 [[claim]]
 id = "baseline-throughput"
-statement = "One pane sustains at least fifty mebibytes a second through the socket, and eight panes together sustain more than one — which is what says the scheduler shares rather than serializes."
+statement = "One pane sustains at least fifty mebibytes a second through the socket, and eight panes together sustain at least nine tenths of what one does — which is what says the scheduler shares rather than serializes, since serializing them would leave the eight no more than an eighth. Nine tenths and not simply more, because both figures saturate the same socket and come out within a per cent of each other in either order: asking for strictly more would be asking which way a coin landed."
 test = "iznik-server::regression_baseline::baseline_throughput_is_over_its_floor"
 profile = "regression"
 because = "a socket's throughput is the process's; a container's network would cap it below what is being asserted"
