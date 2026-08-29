@@ -14,7 +14,7 @@
 
 [[claim]]
 id = "soak-runs-the-whole-stack"
-statement = "A soak of one minute stands two hosts up, holds a client open against a pane on one of them across drops, floods that pane, makes and unmakes sessions on the other, and weighs both sides more than once — with what the held client heard counted, because a stream with no gap in it and a stream that was never there look the same to a check that only looks for gaps."
+statement = "A soak of one minute stands two hosts up, holds a client open against a pane on one of them for the whole run, floods that pane, cuts the link underneath it for longer than any deadline either client keeps, makes and unmakes sessions on the other host, and weighs all three sides more than once — with what the held client heard counted and held against what its pane was made to say, because a stream with no gap in it and a stream that was never there look the same to a check that only looks for gaps."
 test = "xtask::regression_soak::regression_soak_runs_the_whole_stack_for_a_minute"
 because = "it stands the fixture up itself, which is what the soak is; a scenario would be a second fixture inside the first"
 
@@ -31,10 +31,34 @@ test = "xtask::regression_soak::regression_soak_measures_nothing_before_the_warm
 because = "what is proven is which samples the arithmetic looks at"
 
 [[claim]]
-id = "soak-notices-a-stream-that-jumped"
-statement = "The byte-loss check reads what the held client printed and counts it: a delivery that does not begin where the one before it ended is a loss, a screen begins the reckoning again rather than breaking it because it is the host sending the truth instead of catching a client up, and nothing at all is nothing heard rather than a stream that was whole."
-test = "xtask::regression_soak::regression_soak_notices_a_stream_that_jumped"
+id = "soak-counts-what-the-held-client-was-sent"
+statement = "What the held client was sent is counted rather than only inspected for gaps. A screen is counted, because that is what losing bytes looks like from a client: the host could not carry it on from where it was and sent the truth as it now stands instead. A detached pane ends the run, because a client that stopped listening leaves a stream with no gap in it, which is exactly what a check that only looks for gaps calls whole. The gap check remains and catches a client whose own accounting broke — the sequence it prints is its own cursor, so two deliveries in a row cannot disagree unless it is — and the reckoning carries from one window of lines to the next."
+test = "xtask::regression_soak::regression_soak_counts_what_the_held_client_was_sent"
 because = "it is a property of the text the held client writes, and reading it needs no client to have written it"
+
+[[claim]]
+id = "soak-counts-what-a-flood-says"
+statement = "How many bytes `seq 1 <lines>` says through a pseudoterminal is arithmetic — the digits of every number and the two characters a terminal ends a line with — so what the held client heard can be held against what its pane was made to say rather than against nothing."
+test = "xtask::regression_soak::regression_soak_counts_what_a_flood_says"
+because = "it is arithmetic over the numbers, and the same anywhere it is done"
+
+[[claim]]
+id = "soak-judges-a-run-by-what-it-measured"
+statement = "What decides whether a soak passed is asked of a report directly, so it is proven without waiting six hours for one: a run that did everything asked of it passes, and each of a side over the ceiling, a side never weighed at all, a held client that was gone before the end, one that heard less than its pane was made to say, a second screen, and most of the rounds not finishing is refused. This is what holds the ceiling comparison itself — inverting it leaves every other case in the file green."
+test = "xtask::regression_soak::regression_soak_judges_a_run_by_what_it_measured"
+because = "a report is a value, and judging one needs no containers to have made it"
+
+[[claim]]
+id = "soak-refuses-a-warmup-that-swallows-the-run"
+statement = "A soak no longer than the warmup it would use is refused rather than run: nothing after the warmup means nothing measured, and nothing measured would pass. `cargo xtask soak --duration 10` with the ten-minute default warmup is that soak, and a number of minutes no duration can hold is refused rather than panicked on by a path whose whole job is to answer a bad command line."
+test = "xtask::regression_soak::regression_soak_refuses_a_warmup_that_swallows_the_run"
+because = "it is what a command line means, which is the same wherever it is read"
+
+[[claim]]
+id = "soak-reads-a-peak-as-a-peak"
+statement = "A level series with one sample twice the size in its later half grew by nothing, and a half of two samples is read as what lies between them rather than as the larger of them — because a flood in flight puts a peak on whichever sample catches it, and taking the upper middle would report megabytes an hour for a process that never grew."
+test = "xtask::regression_soak::regression_soak_reads_a_peak_as_a_peak"
+because = "it is arithmetic over a series of numbers"
 
 [[claim]]
 id = "soak-compacts-what-the-held-client-prints"
@@ -49,7 +73,7 @@ scenario = "short-soak"
 
 [[claim]]
 id = "soak-weighs-what-is-running"
-statement = "The weighing the soak samples with finds exactly one daemon inside these containers and reads a resident size for it out of `/proc` — where `ps` is a busybox with neither the flag nor the column. The relay is left out by name: a host runs one daemon and one `--stdio` relay per connection, both called `iznik-server`, and a weighing that took the first one it found would be of the daemon at one sample and of a relay at the next, reporting a leak and a recovery that neither happened."
+statement = "With a relay held open beside the daemon, the census the soak weighs with counts two processes answering to `iznik-server` and exactly one daemon among them, and reads a resident size that was really taken. The relay is left out by name because a host runs one of each and a weighing that took the first one it found would be of the daemon at one sample and of a relay at the next, reporting a leak and a recovery that neither happened; the reading is out of `/proc` because the engine image carries no `ps` at all."
 scenario = "short-soak"
 
 [[claim]]

@@ -297,6 +297,78 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   refuses rather than reporting the flat series it took while nothing was
   happening.
 
+- **Review of `bed8722`:** twenty-one findings, and the two that matter said
+  the same thing: the soak's advertised failure modes could not be reached.
+
+  The byte-loss check was a tautology. `ManagerEvent::Bytes` carries the byte a
+  delivery starts at, and that number is the client's own cursor before the
+  payload is counted — pane frames carry no sequence at all — so a check that
+  each delivery begins where the last one ended was the client's arithmetic
+  compared with itself. It could not fail. Worse, the one place a lost byte is
+  visible is exactly where the check looked away: a host that cannot carry a
+  client on from where it was sends a screen instead, and screens were
+  forgiven and not counted. What the check now does is count them — one is the
+  attachment, every one after it is a resume that could not be served — hold
+  what the held client heard against what its pane was made to say, which is
+  arithmetic over `seq 1 30000`, and end the run on a detached pane, because a
+  stream that stopped an hour in has no gap in it either. The gap check
+  remains, for the one thing it can catch: a client whose own accounting
+  broke.
+
+  The held client also never experienced the drop it was supposed to prove
+  continuity across. A round paused the daemon only until the round's own
+  client noticed, and that client had been given a four-second pong deadline
+  by the step this task generated, while the held client kept the ten seconds
+  the product ships. The generated step now names no connection timing at all
+  — a release soak that drove reconnection ten times faster than anything
+  ships would be soaking timings nobody runs — and the cut is made by the soak
+  itself, twenty seconds in one command that stops the daemon and starts it
+  again, so a soak that dies in between leaves nothing frozen.
+
+  Six more were about measuring nothing and passing for it. `grown` took the
+  upper of the two middle samples, which for a half of two is the maximum: the
+  committed report's "414534 bytes an hour" was a client whose last measured
+  sample was below its first. A warmup at least as long as the run left
+  nothing measured and passed — `cargo xtask soak --duration 10` was exactly
+  that soak. A side that was never weighed passed. A held client that had died
+  passed. One failed weighing five hours in threw away the whole run. And
+  inverting the ceiling comparison left every case in the tree green, which is
+  now the first thing `regression_soak_judges_a_run_by_what_it_measured`
+  fails on.
+
+  Three were the containers, and all three were things a person could only
+  find by running them there: the engine has no `ps` at all rather than a
+  busybox one, which is what the comment and a claim both said; `/bin/sh` is
+  dash, where the scenario's `$((total + $(awk ...)))` is a fatal error the
+  moment a process exits between being named and being weighed; and the filter
+  the held client's output goes through is mawk, which reads a block at a time
+  — so the first line of a quiet pane sat unwritten and the soak could not
+  tell whether the client had attached at all.
+
+  The rest: a six-hour run's stream is about thirty-eight megabytes and a
+  command's output is captured up to one, tail kept, so it is now read a
+  window of lines at a time; the churned daemon was never weighed, though it
+  is the only one making and unmaking sessions; the report was printed only on
+  success, which is exactly the run whose series somebody has to read; the
+  scenario's weighing was satisfied by its own format string and proved
+  nothing about the relay it claims to leave out, so it now holds one open and
+  counts two; the machine was named by kernel and core count alone; and
+  `Duration::from_mins` panics rather than refusing on a path whose job is to
+  answer a bad command line.
+
+  **Four deviations from the task's `touches`, all forced by one thing.** The
+  module passed a thousand lines under the fixes and this workspace denies a
+  file beside a directory of the same name, so `xtask/src/soak.rs` is now
+  `xtask/src/soak/{mod,report,steps}.rs`. Three files follow from that move:
+  `xtask/README.md` gains the two rows the documentation gate requires for the
+  new modules, and `xtask/tests/skeleton.rs` names the module path in its stub
+  table, which no longer existed. And `.config/nextest.toml` gains an
+  override, which does not follow from the move but from the soak itself: its
+  own deadlines allow far more than the ten minutes every other `regression_*`
+  binary gets, so a cold machine would have reported a hung soak where there
+  was a cold build. `regression_distribution_*` carries the same override for
+  the same reason.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
-_Last updated: 2026-08-29, against `develop` @ `bbf00e4`._
+_Last updated: 2026-08-29, against `develop` @ `bed8722`._

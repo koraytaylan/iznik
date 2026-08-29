@@ -118,7 +118,11 @@ const STUBS: &[(&str, &[&str], &str)] = &[
         "xtask/src/distribution/mod.rs",
     ),
     ("xtask", &["header"], "xtask/src/header.rs"),
-    ("xtask", &["soak", "--duration", "1"], "xtask/src/soak.rs"),
+    (
+        "xtask",
+        &["soak", "--duration", "1"],
+        "xtask/src/soak/mod.rs",
+    ),
     (
         "iznik-server",
         &["--stdio"],

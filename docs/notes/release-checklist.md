@@ -15,10 +15,28 @@ Monday's release is not one. Everything after it is minutes.
 cargo xtask soak
 ```
 
-Six hours against two hosts, with the link dropped and made good on a schedule,
-sessions made and unmade beside it, and a flood through a held pane throughout.
-It fails if either side grows by more than four mebibytes an hour after the
-warmup, or if any reconnection loses a byte.
+Six hours against two hosts. Round after round, back to back: a flood poured
+through a pane a client holds open for the whole run, the daemon stopped
+underneath it for longer than any deadline a client keeps, started again, and a
+host that has to answer afterwards — with sessions made and unmade on the
+second host beside all of it. The sampling has a schedule; the work does not.
+
+It refuses a run for any of these, and each of them is a real outcome to read
+rather than a formality:
+
+- either the held client or either daemon growing by more than four mebibytes
+  an hour after the warmup;
+- a side never weighed at all, which is a census that found nothing and would
+  otherwise report a flat series and no leak;
+- the held client gone before the end, or its pane detached — a stream that
+  stopped early has no gap in it either;
+- the held client hearing fewer bytes than its pane was made to say;
+- a second screen, meaning a reconnection the host could not carry the client
+  on from, so the bytes between were lost;
+- fewer than half the rounds finishing.
+
+The report is printed whether it passed or not. A run that failed the ceiling
+by a hair is exactly the run whose series somebody has to read.
 
 This is the item that cannot be automated away. A leak of a few kilobytes per
 reconnection is invisible in every other item on this list and fatal by

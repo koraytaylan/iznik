@@ -15,7 +15,8 @@ use core::time::Duration;
 use std::path::{Path, PathBuf};
 
 use xtask::soak::{
-    COMPACT, SOAK_GROWTH_CEILING_PER_HOUR, Sample, grown, heard_in, rendered, soaked,
+    COMPACT, Heard, Report, SOAK_GROWTH_CEILING_PER_HOUR, Sample, SoakError, asked_for, grown,
+    heard_more, judged, poured, rendered, soaked,
 };
 
 /// How long the case runs the whole stack for.
@@ -171,8 +172,9 @@ fn regression_soak_runs_the_whole_stack_for_a_minute() {
         "Rounds",
         "Pane churn",
         "Held client",
-        "client",
-        "server",
+        "## The held client, in bytes",
+        "## The daemon it watches, in bytes",
+        "## The daemon it churns, in bytes",
     ] {
         assert!(said.contains(named), "the report carries {named}: {said}");
     }
@@ -180,33 +182,78 @@ fn regression_soak_runs_the_whole_stack_for_a_minute() {
 
 /// # Panics
 ///
-/// When a stream that jumped is called whole, or a whole one is called
-/// broken.
+/// When a screen is not counted, a detached pane is not an ending, or a
+/// client's own accounting going wrong is not caught.
 #[test]
-fn regression_soak_notices_a_stream_that_jumped() {
+fn regression_soak_counts_what_the_held_client_was_sent() {
     // Two deliveries of four bytes each, the second beginning where the first
-    // ended: whole.
-    let whole = "output 0 8 2\noutput 4 8 2\n";
-    let heard = heard_in(whole).unwrap_or_else(|gap| panic!("{gap}"));
+    // ended.
+    let mut heard = Heard::default();
+    heard_more(&mut heard, "output 0 8 2\noutput 4 8 2\n").unwrap_or_else(|gap| panic!("{gap}"));
     assert_eq!(
-        (heard.deliveries, heard.bytes),
-        (2, 8),
-        "and what it heard is counted: {heard:?}"
+        (heard.deliveries, heard.bytes, heard.screens),
+        (2, 8, 0),
+        "what it heard is counted: {heard:?}"
     );
-    // The same stream with a byte missing from the middle is not.
-    assert!(
-        heard_in("output 0 8 2\noutput 5 8 2\n").is_err(),
-        "a delivery that does not begin where the one before it ended is a loss"
+    // A screen is the host failing to carry this client on from where it was,
+    // which is what a lost byte looks like from here. It is counted, and it
+    // begins the reckoning again rather than breaking it.
+    let mut redrawn = Heard::default();
+    heard_more(
+        &mut redrawn,
+        "output 0 8 2\nscreen 99 4 2\noutput 100 8 2\n",
+    )
+    .unwrap_or_else(|gap| panic!("{gap}"));
+    assert_eq!(
+        (redrawn.deliveries, redrawn.screens),
+        (2, 1),
+        "a screen is counted and not called a gap: {redrawn:?}"
     );
-    // A screen is the host sending the truth rather than catching a client
-    // up, so it moves the cursor legitimately.
+    // A detached pane is the client's own ending, and a stream that ends
+    // early is not the run it would otherwise be reported as.
+    let mut detached = Heard::default();
     assert!(
-        heard_in("output 0 8 2\nscreen 99 4 2\noutput 100 8 2\n").is_ok(),
-        "and a screen begins the reckoning again rather than breaking it"
+        heard_more(&mut detached, "output 0 8 2\ndetached 0 0\n").is_err(),
+        "a detached pane ends the run rather than passing quietly"
+    );
+    // And the client's own accounting going wrong is still caught, though it
+    // is not what a lost byte looks like: the sequence it prints is its own
+    // cursor, so two deliveries in a row cannot disagree unless it is broken.
+    let mut broken = Heard::default();
+    assert!(
+        heard_more(&mut broken, "output 0 8 2\noutput 5 8 2\n").is_err(),
+        "a delivery that does not begin where the one before it ended is a broken client"
     );
     // Nothing at all is nothing heard, not a stream that was whole.
-    let nothing = heard_in("").unwrap_or_else(|gap| panic!("{gap}"));
+    let mut nothing = Heard::default();
+    heard_more(&mut nothing, "").unwrap_or_else(|gap| panic!("{gap}"));
     assert_eq!(nothing.deliveries, 0, "nothing heard is nothing heard");
+    // What is read a window at a time is read as one stream: the second
+    // window continues the first.
+    let mut across = Heard::default();
+    heard_more(&mut across, "output 0 8 2\n").unwrap_or_else(|gap| panic!("{gap}"));
+    assert!(
+        heard_more(&mut across, "output 5 8 2\n").is_err(),
+        "and the reckoning carries from one window to the next"
+    );
+}
+
+/// # Panics
+///
+/// When what a pane is made to say is not what the arithmetic says it is.
+#[test]
+fn regression_soak_counts_what_a_flood_says() {
+    // Nine one-digit numbers, each with a carriage return and a line feed.
+    assert_eq!(poured(9), 27, "one digit and an ending, nine times");
+    // And the ninety two-digit ones after them.
+    assert_eq!(poured(99), 27 + 360, "then two digits, ninety times");
+    // The flood a round pours, which is what the held client is held to.
+    assert_eq!(
+        poured(30_000),
+        198_894,
+        "thirty thousand lines is a little under two hundred kilobytes"
+    );
+    assert_eq!(poured(0), 0, "and nothing said is nothing counted");
 }
 
 /// # Panics
@@ -224,23 +271,34 @@ fn regression_soak_compacts_what_the_held_client_prints() {
                    {\"kind\":\"output\",\"pane\":1,\"sequence\":1,\
                    \"bytes\":\"YWJjZA==\",\"encoding\":\"base64\"}\n\
                    {\"kind\":\"output\",\"pane\":1,\"sequence\":5,\
-                   \"bytes\":\"ZWZnaGlqa2w=\",\"encoding\":\"base64\"}\n\
-                   {\"kind\":\"detached\",\"pane\":1}\n";
+                   \"bytes\":\"ZWZnaGlqa2w=\",\"encoding\":\"base64\"}\n";
     let reduced = compacted(printed).unwrap_or_else(|error| panic!("{error}"));
-    let heard = heard_in(&reduced).unwrap_or_else(|gap| panic!("{gap}"));
+    let mut heard = Heard::default();
+    heard_more(&mut heard, &reduced).unwrap_or_else(|gap| panic!("{gap}"));
     // Four bytes then eight, the second beginning where the first ended, and
-    // the screen before them starting the reckoning rather than counting.
+    // the screen before them counted rather than counted as a delivery.
     assert_eq!(
-        (heard.deliveries, heard.bytes),
-        (2, 12),
+        (heard.deliveries, heard.bytes, heard.screens),
+        (2, 12, 1),
         "what the filter wrote is what the check reads: {heard:?}"
+    );
+    // The line the client prints as it stops — which carries neither a
+    // sequence nor any bytes — survives the filter as something the check can
+    // still recognise as an ending.
+    let ending =
+        compacted("{\"kind\":\"detached\",\"pane\":1}\n").unwrap_or_else(|error| panic!("{error}"));
+    let mut stopped = Heard::default();
+    assert!(
+        heard_more(&mut stopped, &ending).is_err(),
+        "the filter keeps enough of a detached pane for the check to end on it: {ending:?}"
     );
     // And a delivery that does not follow the one before it is still caught
     // after passing through the filter.
     let jumped = printed.replace("\"sequence\":5", "\"sequence\":6");
     let broken = compacted(&jumped).unwrap_or_else(|error| panic!("{error}"));
+    let mut jumping = Heard::default();
     assert!(
-        heard_in(&broken).is_err(),
+        heard_more(&mut jumping, &broken).is_err(),
         "a gap survives the filter, or the filter is hiding one"
     );
 }
@@ -252,7 +310,7 @@ fn regression_soak_compacts_what_the_held_client_prints() {
 /// What went wrong when `awk` cannot be run, will not take the program, or
 /// the files it needs cannot be written.
 fn compacted(printed: &str) -> Result<String, String> {
-    let directory = std::env::temp_dir().join("iznik-soak-compact");
+    let directory = std::env::temp_dir().join(format!("iznik-soak-compact-{}", std::process::id()));
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let program = directory.join("compact.awk");
     std::fs::write(&program, format!("{COMPACT}\n")).map_err(|error| error.to_string())?;
@@ -288,8 +346,9 @@ fn regression_soak_committed_a_report_of_ten_minutes() {
         "Rounds",
         "Pane churn",
         "Held client",
-        "## The client, in bytes",
-        "## The server, in bytes",
+        "## The held client, in bytes",
+        "## The daemon it watches, in bytes",
+        "## The daemon it churns, in bytes",
     ] {
         assert!(said.contains(named), "the committed report says {named}");
     }
@@ -330,4 +389,175 @@ fn regression_soak_checklist_names_a_release_in_order() {
         );
         over = at;
     }
+}
+
+/// A report of a run that passed, which a case then spoils one way at a time.
+fn passing() -> Report {
+    let level = climbing(0);
+    Report {
+        machine: "a machine".to_owned(),
+        duration: Duration::from_mins(10),
+        warmup: Duration::ZERO,
+        rounds: 10,
+        drops: 10,
+        churn: 10,
+        heard: Heard {
+            deliveries: 100,
+            bytes: poured(30_000).saturating_mul(10),
+            screens: 1,
+            expected: None,
+        },
+        client: level.clone(),
+        server: level.clone(),
+        churned: level,
+    }
+}
+
+/// # Panics
+///
+/// When a report that should pass does not, or when spoiling one thing about
+/// it is not caught.
+#[test]
+fn regression_soak_judges_a_run_by_what_it_measured() {
+    let passes = passing();
+    assert!(
+        judged(&passes, "", true).is_ok(),
+        "a run that did everything asked of it passes"
+    );
+    // A side that grew past the ceiling. This is the case that holds the
+    // ceiling comparison itself: without it, inverting that comparison leaves
+    // every other case in this file green.
+    let mut grew = passing();
+    grew.server = climbing(SOAK_GROWTH_CEILING_PER_HOUR.saturating_mul(4));
+    assert!(
+        matches!(judged(&grew, "", true), Err(SoakError::Grew { .. })),
+        "a side that grew past the ceiling is refused"
+    );
+    // And one just under it is not, so the ceiling is a ceiling.
+    let mut gentle = passing();
+    gentle.server = climbing(SOAK_GROWTH_CEILING_PER_HOUR.saturating_div(2));
+    assert!(judged(&gentle, "", true).is_ok(), "and one under it passes");
+    // A side that was never weighed at all. A weighing that silently found
+    // nothing every time would otherwise report a flat series and no leak.
+    for spoiling in 0..3 {
+        let mut unweighed = passing();
+        match spoiling {
+            0 => unweighed.client = Vec::new(),
+            1 => unweighed.server = Vec::new(),
+            _ => unweighed.churned = Vec::new(),
+        }
+        assert!(
+            judged(&unweighed, "", true).is_err(),
+            "a side that was never weighed is refused, and side {spoiling} was not"
+        );
+    }
+    // A held client that was gone before the end.
+    assert!(
+        judged(&passes, "", false).is_err(),
+        "a client that died leaves a stream that is not the run"
+    );
+    // One that heard less than its pane was made to say: bytes went missing.
+    let mut quiet = passing();
+    quiet.heard.bytes = quiet.heard.bytes.saturating_sub(1);
+    assert!(
+        judged(&quiet, "", true).is_err(),
+        "hearing less than was poured is bytes that went missing"
+    );
+    // A second screen: a reconnection the host could not carry on from.
+    let mut redrawn = passing();
+    redrawn.heard.screens = 2;
+    assert!(
+        judged(&redrawn, "", true).is_err(),
+        "a screen after the attachment is a resume that could not be served"
+    );
+    // And most of the rounds not finishing.
+    let mut idle = passing();
+    idle.drops = 4;
+    assert!(
+        judged(&idle, "nothing came back", true).is_err(),
+        "a run whose rounds did not finish proved nothing"
+    );
+}
+
+/// # Panics
+///
+/// When a command line that leaves nothing to measure is taken, or one that
+/// cannot overflow is refused.
+#[test]
+fn regression_soak_refuses_a_warmup_that_swallows_the_run() {
+    let asked = |rest: &[&str]| {
+        let mut arguments = vec![std::ffi::OsString::from("soak")];
+        arguments.extend(rest.iter().map(std::ffi::OsString::from));
+        asked_for(&arguments)
+    };
+    assert!(
+        asked(&["--duration", "10", "--warmup", "2"]).is_ok(),
+        "a warmup inside the run is taken"
+    );
+    // The default warmup is ten minutes, so a ten-minute soak asked for
+    // without one would measure none of itself and pass for it.
+    assert!(
+        asked(&["--duration", "10"]).is_err(),
+        "a soak no longer than the warmup it would use is refused"
+    );
+    assert!(
+        asked(&["--duration", "10", "--warmup", "10"]).is_err(),
+        "and so is one exactly as long as its warmup"
+    );
+    // A number that would overflow the arithmetic that turns minutes into a
+    // duration is clamped rather than panicking on a path whose job is to
+    // answer a bad command line with a refusal.
+    assert!(
+        asked(&["--duration", "99999999999999999999999"]).is_err(),
+        "a number no duration can hold is refused rather than panicked on"
+    );
+    assert!(
+        asked(&["--duration", "18446744073709551615"]).is_ok(),
+        "and the largest one that can be read is clamped to something sane"
+    );
+}
+
+/// # Panics
+///
+/// When one sample that caught a flood reads as a leak.
+#[test]
+fn regression_soak_reads_a_peak_as_a_peak() {
+    // A level series with one sample twice the size in its later half, which
+    // is what a flood in flight looks like. Taking the upper of the two
+    // middle samples would make that peak the answer.
+    let mut peaked = climbing(0);
+    if let Some(sample) = peaked.last_mut() {
+        sample.bytes = sample.bytes.saturating_mul(2);
+    }
+    let rate = grown(&peaked, NO_WARMUP);
+    assert_eq!(
+        rate,
+        Some(0),
+        "a level series with one peak in it grew by nothing: {rate:?}"
+    );
+    // And a series of four, where each half is two samples, so the middle of
+    // each is between them rather than the larger of them.
+    let four = vec![
+        Sample {
+            at: Duration::from_secs(0),
+            bytes: RESIDENT,
+        },
+        Sample {
+            at: Duration::from_mins(1),
+            bytes: RESIDENT,
+        },
+        Sample {
+            at: Duration::from_mins(2),
+            bytes: RESIDENT,
+        },
+        Sample {
+            at: Duration::from_mins(3),
+            bytes: RESIDENT.saturating_mul(2),
+        },
+    ];
+    let halved = grown(&four, NO_WARMUP);
+    assert!(
+        halved.is_some_and(|held| held < SOAK_GROWTH_CEILING_PER_HOUR.saturating_mul(200)),
+        "and a half of two is not read as its larger sample: {halved:?}"
+    );
 }
