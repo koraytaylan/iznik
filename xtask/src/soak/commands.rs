@@ -82,17 +82,34 @@ pub const WEIGH: &str = "for held in /proc/[0-9]*; do \
                      awk '/VmRSS/{print $2}' \"$held/status\"; fi; done \
                      | awk '{total += $1} END {print total + 0}'";
 
+/// And what the held client weighs.
+///
+/// Told apart by what it is doing and not only by what it is called: the
+/// churn runs a command of the same name in the same container every round,
+/// and one that overran its deadline is still there when the weighing comes.
+/// The held client is the one tailing a pane.
+pub const WEIGH_CLIENT: &str = "for held in /proc/[0-9]*; do \
+                                if grep -qsx CLIENT \"$held/comm\" && \
+                                grep -qsa -- tail \"$held/cmdline\"; then \
+                                awk '/VmRSS/{print $2}' \"$held/status\"; fi; done \
+                                | awk '{total += $1} END {print total + 0}'";
+
 /// A command that says how many processes answer to a name and are running.
 ///
 /// A zombie is left out. The engine's first process is a sleep that never
 /// reaps anything, so a held client that died is not gone: it keeps its
 /// entry, and its name in it, until the container ends. Counting one would
 /// be counting a client that is no longer listening as one that is.
+///
+/// And so is anything of that name that is not tailing a pane: the churn runs
+/// a command called the same thing in the same container every round, and one
+/// that overran its deadline outlives the command that started it.
 #[must_use]
 pub fn running(process: &str) -> String {
     format!(
         "found=0; for held in /proc/[0-9]*; do \
          if grep -qsx {process} \"$held/comm\" && \
+         grep -qsa -- tail \"$held/cmdline\" && \
          ! awk '/^State:/{{print $2}}' \"$held/status\" 2>/dev/null | grep -qx Z; then \
          found=$((found + 1)); fi; \
          done; printf '%s\\n' \"$found\""
@@ -149,20 +166,24 @@ pub fn stop_tail() -> String {
 /// on that host has to notice and come back. A cut nobody noticed proves
 /// nothing about coming back from one.
 ///
-/// What it stopped is checked twice over: the process the lock names must
-/// answer to the daemon's name before anything is signalled, because a lock a
-/// dead daemon left behind names a process identifier a container will hand
-/// out again; and its state is read while it is meant to be stopped and said
-/// on the way out, so that a cut which signalled something and stopped
-/// nothing is not reported as a cut.
+/// What it stopped is checked twice over. The process the lock names must
+/// answer to the daemon's name and not be a relay — a lock a dead daemon left
+/// behind names a process identifier a container will hand out again, and on
+/// a host the likeliest thing to be holding it is another `iznik-server`,
+/// which is the distinction the census beside this one exists to make. And
+/// its state is read while it is meant to be stopped and said on the way out,
+/// so that a cut which signalled something and stopped nothing is not
+/// reported as a cut. The refusal goes to standard error, because what a
+/// command that exits non-zero said on standard output is not kept.
 #[must_use]
 pub fn cut() -> String {
     format!(
         "if [ -n \"$XDG_RUNTIME_DIR\" ]; then lock=\"$XDG_RUNTIME_DIR/iznik/server.lock\"; \
          else lock=\"${{TMPDIR:-/tmp}}/iznik-$(id -u)/server.lock\"; fi; \
          held=$(cat \"$lock\"); \
-         grep -qsx {SERVER_PROCESS} \"/proc/$held/comm\" || \
-         {{ printf '{NOT_THE_DAEMON}\\n'; exit 1; }}; \
+         if ! grep -qsx {SERVER_PROCESS} \"/proc/$held/comm\" || \
+         grep -qsa -- --stdio \"/proc/$held/cmdline\"; then \
+         printf '{NOT_THE_DAEMON} %s\\n' \"$held\" >&2; exit 1; fi; \
          kill -STOP \"$held\"; sleep {DROP_SECONDS}; \
          printf '{WAS}%s\\n' \"$(awk '/^State:/{{print $2}}' \"/proc/$held/status\")\"; \
          kill -CONT \"$held\""
@@ -232,11 +253,14 @@ pub fn weighed(
     process: &str,
     at: Duration,
 ) -> Result<Sample, SoakError> {
-    let said = fixture.exec(
-        container,
-        &WEIGH.replace("NAME", process),
-        COMMAND_DEADLINE.0,
-    )?;
+    // The daemon is told from the relay beside it by what it is not doing,
+    // and the held client from the churn beside it by what it is.
+    let census = if process == CLIENT_PROCESS {
+        WEIGH_CLIENT.replace("CLIENT", process)
+    } else {
+        WEIGH.replace("NAME", process)
+    };
+    let said = fixture.exec(container, &census, COMMAND_DEADLINE.0)?;
     let kibibytes = String::from_utf8_lossy(&said.stdout)
         .trim()
         .parse::<u64>()

@@ -432,3 +432,45 @@ fn plumbing_refuses_a_pane_the_host_does_not_have() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// Every subcommand, and what it says when asked what it takes.
+const ASKED: &[(&str, &str)] = &[
+    ("probe", "usage: iznik probe <host>"),
+    ("state", "usage: iznik state <host>"),
+    ("tail", "usage: iznik tail <host> <pane>"),
+    ("benchmark", "usage: iznik benchmark <host>"),
+    ("doctor", "usage: iznik doctor <host>"),
+    ("uninstall", "usage: iznik uninstall <host>"),
+];
+
+/// # Panics
+///
+/// When a subcommand does not answer `--help` with its own usage line, or
+/// answers it by going off to reach a host.
+#[test]
+fn plumbing_every_command_says_what_it_takes() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("help")?;
+        for (named, usage) in ASKED {
+            // Asked with nothing else, and asked after what would otherwise
+            // be a host: the flag is a question wherever it appears, so that
+            // a person who reaches for it late need not reach again earlier.
+            for arguments in [vec![*named, "--help"], vec![*named, "host0", "--help"]] {
+                let done = ran(&held, &arguments)?;
+                assert_eq!(done.code, Some(0), "{arguments:?} is a question, not a run");
+                assert_eq!(
+                    done.stdout.trim(),
+                    *usage,
+                    "{arguments:?} answers with its own usage line"
+                );
+                assert!(
+                    done.stderr.is_empty(),
+                    "and says nothing on standard error: {}",
+                    done.stderr
+                );
+            }
+        }
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

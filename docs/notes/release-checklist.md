@@ -26,14 +26,21 @@ rather than a formality:
 
 - either the held client or either daemon growing by more than four mebibytes
   an hour after the warmup;
-- a side never weighed at all, which is a census that found nothing and would
+- a side never weighed at all, or last weighed long before the run ended, or
+  with too few samples after the warmup to read a line through — each of which
+  is a census that stopped finding something, and each of which would
   otherwise report a flat series and no leak;
-- the held client gone before the end, or its pane detached — a stream that
-  stopped early has no gap in it either;
+- the held client gone before the end, its pane detached, or nothing heard
+  from it at all — a stream that stopped early has no gap in it either;
 - the held client hearing fewer bytes than its pane was made to say;
-- a second screen, meaning a reconnection the host could not carry the client
-  on from, so the bytes between were lost;
-- fewer than half the rounds finishing.
+- a screen count that is not exactly one: the first is the attachment, and any
+  after it are bytes the host could not carry the client on from;
+- fewer than half the rounds finishing, or more than three failing one after
+  another, which is what a stack that has stopped answering looks like — a
+  failing round is slower than a healthy one, so counting them is not enough;
+- fewer than half of them churning a session, since the second daemon is
+  weighed for the churn and an idle one is flat for a reason that is not the
+  absence of a leak.
 
 The report is printed whether it passed or not. A run that failed the ceiling
 by a hair is exactly the run whose series somebody has to read.
@@ -42,13 +49,14 @@ This is the item that cannot be automated away. A leak of a few kilobytes per
 reconnection is invisible in every other item on this list and fatal by
 Thursday, and the only thing that finds it is time.
 
-In `docs/notes/soak.md`, replace everything from `# Soak report`'s bullets
-downwards — the bullets and the three tables — with what the run prints, and
-leave the prose around them: the date and the tree it was taken from at the
-top, and the two sections that say what ran and what was checked. The command
-prints the numbers and nothing else; the prose is what makes them legible, and
-a release is made against a report from that release's tree and not from the
-last one.
+Then rewrite `docs/notes/soak.md` around what the run printed. The command
+says a line per sample as it takes it and then the report itself, which begins
+with its own `# Soak report`: take that report, from its bullets down through
+the three tables, and put it under the note's prose in place of the bullets
+and tables that are there. Then correct the prose — the date, the tree, and
+the duration and warmup the first paragraph and the reproduce line name, which
+are a release's six hours and not this note's ten minutes. A release is made
+against a report from that release's tree and not from the last one.
 
 ## 2. The performance baseline, re-measured
 

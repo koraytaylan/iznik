@@ -15,8 +15,9 @@ use core::time::Duration;
 use std::path::{Path, PathBuf};
 
 use xtask::soak::{
-    COMPACT, FLOOD_LINES, Heard, Report, SERVER_PROCESS, SIDES, SOAK_GROWTH_CEILING_PER_HOUR,
-    Sample, SoakError, WEIGH, asked_for, grown, heard_more, judged, poured, rendered, soaked,
+    COMPACT, FLOOD_LINES, Heard, OPENING_FLOOD_LINES, Report, SERVER_PROCESS, SIDES,
+    SOAK_GROWTH_CEILING_PER_HOUR, Sample, SoakError, WEIGH, asked_for, grown, heard_more, judged,
+    poured, rendered, soaked,
 };
 
 /// How long the case runs the whole stack for.
@@ -433,6 +434,7 @@ fn passing() -> Report {
         rounds: ROUNDS,
         floods: ROUNDS,
         cuts: ROUNDS,
+        streak: 0,
         drops: ROUNDS,
         churn: ROUNDS,
         heard: Heard {
@@ -440,6 +442,7 @@ fn passing() -> Report {
             bytes: poured(FLOOD_LINES).saturating_mul(u64::try_from(ROUNDS).unwrap_or(0)),
             screens: 1,
             expected: None,
+            attached: Some(poured(OPENING_FLOOD_LINES)),
         },
         client: level.clone(),
         server: level.clone(),
@@ -480,6 +483,15 @@ fn regression_soak_judges_a_run_by_what_it_did() {
         judged(&halfway, "", true).is_err(),
         "a round that failed after its flood does not excuse the flood it poured"
     );
+    // A client that attached to a pane which had said nothing: the flood
+    // poured before the clock starts never happened, and the ring it fills
+    // would be weighed filling itself.
+    let mut empty = passing();
+    empty.heard.attached = Some(0);
+    assert!(
+        judged(&empty, "", true).is_err(),
+        "a client that attached to an empty pane is a flood that never was"
+    );
     // Screens: one is the attachment. None means it was never seen, and two
     // means a resume that could not be served.
     for screens in [0, 2] {
@@ -504,6 +516,15 @@ fn regression_soak_judges_a_run_by_what_it_did() {
     assert!(
         judged(&still, "", true).is_err(),
         "a run that made and unmade no session weighs an idle daemon"
+    );
+    // And rounds that failed one after another, which is what a stack that
+    // stopped answering looks like — a failing round is slower than a healthy
+    // one, so counting them against the attempts is not enough on its own.
+    let mut gone = passing();
+    gone.streak = ROUNDS;
+    assert!(
+        judged(&gone, "nothing came back", true).is_err(),
+        "a run of failures one after another is a stack that stopped answering"
     );
 }
 
@@ -548,6 +569,23 @@ fn regression_soak_judges_a_run_by_what_it_weighed() {
         assert!(
             judged(&unmeasured, "", true).is_err(),
             "a side measuring nothing after the warmup is refused, and side {spoiling} was not"
+        );
+        // And a side whose samples stop partway through: a census that
+        // stopped finding it leaves a series that ends early, and a rate read
+        // from it is a rate from whenever it stopped.
+        let mut stopped = passing();
+        let early: Vec<Sample> = climbing(0)
+            .into_iter()
+            .filter(|held| held.at < Duration::from_mins(2))
+            .collect();
+        match spoiling {
+            0 => stopped.client = early,
+            1 => stopped.server = early,
+            _ => stopped.churned = early,
+        }
+        assert!(
+            judged(&stopped, "", true).is_err(),
+            "a side that stopped being found is refused, and side {spoiling} was not"
         );
     }
 }
@@ -595,49 +633,48 @@ fn regression_soak_refuses_a_warmup_that_swallows_the_run() {
 /// When one sample that caught a flood reads as a leak.
 #[test]
 fn regression_soak_reads_a_peak_as_a_peak() {
-    // Four samples, so each half is two and the middle of each lies between
-    // them. Taking the upper of the two — which is the larger — would make
-    // the peak in the later half the answer for that half.
-    let four: Vec<Sample> = [RESIDENT, RESIDENT, RESIDENT, RESIDENT.saturating_mul(2)]
-        .into_iter()
-        .enumerate()
-        .map(|(at, bytes)| Sample {
-            at: Duration::from_mins(u64::try_from(at).unwrap_or(0)),
-            bytes,
-        })
-        .collect();
-    // The middles are RESIDENT at thirty seconds and one and a half times it
-    // at two and a half minutes: half of RESIDENT over two minutes, which is
-    // a rate this arithmetic can be asked for exactly.
-    let grew = RESIDENT.saturating_div(2);
-    let over = Duration::from_mins(2).as_secs();
-    let wanted = grew.saturating_mul(3600).saturating_div(over);
-    assert_eq!(
-        grown(&four, NO_WARMUP),
-        Some(wanted),
-        "a half of two is read as what lies between its samples and not as the larger of them"
-    );
-    // Taking the larger would give twice that, which is what the arithmetic
-    // this replaced did.
-    assert_ne!(
-        wanted,
-        RESIDENT.saturating_mul(3600).saturating_div(over),
-        "and the two answers are not the same number"
-    );
-    // A level series with one peak at its end grew by nothing at all.
+    // A level series with one sample twice the size at the end of it, which
+    // is what a flood in flight looks like. A fit through sixty-one samples
+    // moves by a fraction of one of them.
     let mut peaked = climbing(0);
     if let Some(sample) = peaked.last_mut() {
         sample.bytes = sample.bytes.saturating_mul(2);
     }
-    peaked.push(Sample {
-        at: Duration::from_secs(SERIES.saturating_add(EVERY)),
-        bytes: RESIDENT,
-    });
     let rate = grown(&peaked, NO_WARMUP);
-    assert_eq!(
-        rate,
-        Some(0),
-        "a level series with one peak in it grew by nothing: {rate:?}"
+    assert!(
+        rate.is_some_and(|held| held < SOAK_GROWTH_CEILING_PER_HOUR),
+        "one sample that caught a flood is not a leak: {rate:?}"
+    );
+    // And growth in the last quarter alone is seen, which is the shape of a
+    // leak that begins once a ring has filled. Two middles could not see it.
+    let mut late = climbing(0);
+    let began = SERIES.saturating_mul(3).saturating_div(4);
+    for sample in &mut late {
+        if sample.at.as_secs() >= began {
+            let over = sample.at.as_secs().saturating_sub(began);
+            sample.bytes = sample
+                .bytes
+                .saturating_add(over.saturating_mul(RESIDENT).saturating_div(SERIES));
+        }
+    }
+    let lately = grown(&late, NO_WARMUP);
+    assert!(
+        lately.is_some_and(|held| held > SOAK_GROWTH_CEILING_PER_HOUR),
+        "growth in the last quarter is growth: {lately:?}"
+    );
+    // As is growth in the first quarter and nowhere else.
+    let mut early = climbing(0);
+    let over = SERIES.saturating_div(4);
+    for sample in &mut early {
+        let moved = sample.at.as_secs().min(over);
+        sample.bytes = sample
+            .bytes
+            .saturating_add(moved.saturating_mul(RESIDENT).saturating_div(SERIES));
+    }
+    let started = grown(&early, NO_WARMUP);
+    assert!(
+        started.is_some_and(|held| held > 0),
+        "and so is growth in the first: {started:?}"
     );
 }
 

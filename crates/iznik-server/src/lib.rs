@@ -14,8 +14,7 @@ pub mod session;
 pub mod terminal;
 
 /// The exit code of a command line the binary cannot act on: a subcommand it
-/// does not know, a flag it cannot parse, or a subcommand whose task has not
-/// landed yet. Two, the conventional usage-error status, so that a failed run's
+/// does not know, or a flag it cannot parse. Two, the conventional usage-error status, so that a failed run's
 /// one and a refused command line are told apart.
 pub const USAGE_EXIT_CODE: u8 = 2;
 

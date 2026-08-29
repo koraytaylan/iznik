@@ -13,8 +13,8 @@ use std::fmt::Write as _;
 const ONE_DIGIT_NUMBERS: u64 = 9;
 
 use crate::soak::{
-    BASE64_BYTES, BASE64_CHARACTERS, ENDING, HALVES, SECONDS_PER_HOUR, SECONDS_PER_MINUTE, SIDES,
-    SOAK_GROWTH_CEILING_PER_HOUR, TEN,
+    BASE64_BYTES, BASE64_CHARACTERS, ENDING, LEAST_SAMPLES, SECONDS_PER_HOUR, SECONDS_PER_MINUTE,
+    SIDES, SOAK_GROWTH_CEILING_PER_HOUR, TEN,
 };
 
 /// One weighing of one side.
@@ -43,6 +43,10 @@ pub struct Report {
     pub floods: usize,
     /// How many cuts were made and seen to have stopped the daemon.
     pub cuts: usize,
+    /// The longest run of rounds that failed one after another. A machine
+    /// with other work on it drops one here and there; a stack that has
+    /// stopped answering drops every one from then on.
+    pub streak: usize,
     /// How many of them finished: the link dropped and made good, and the
     /// line typed afterwards heard back.
     pub drops: usize,
@@ -73,61 +77,56 @@ impl Report {
 
 /// How much a series grew an hour after the warmup, when it grew at all.
 ///
-/// The measured samples are cut in half and the middle of the first half is
-/// held against the middle of the second: what a leak does is move where a
-/// process sits, and what a flood does is put a peak on top of it. Two points
-/// would be at the mercy of which of the two each of them landed on — a run
-/// whose last sample fell on a peak and whose first fell in a trough would
-/// report megabytes an hour of a process that never grew — and a middle is
-/// neither.
+/// The slope of the line that fits the measured samples best — the ordinary
+/// least-squares one — taken over every one of them rather than between two
+/// of them. Two points, however chosen, see only what happened between the
+/// two: the middles of two halves are blind to growth confined to the first
+/// or the last quarter of a run, which is the shape of a leak that begins
+/// once a ring has filled or a heap has fragmented, and that is the shape a
+/// soak of hours exists to reach. A fit reads growth wherever it happens, and
+/// one sample that caught a flood in flight moves it by a fraction of itself
+/// rather than becoming the answer.
+///
+/// Whole numbers throughout, in the widest they fit: a sum of squared seconds
+/// over six hours is far past what a resident size is measured in.
 ///
 /// Nothing before the warmup is looked at, because a process that is still
 /// growing into its work is not leaking, and a series with fewer than two
-/// samples after it says nothing rather than guessing.
+/// samples after it says nothing rather than guessing. A line that falls is a
+/// process that shrank, which is not growth.
 #[must_use]
 pub fn grown(samples: &[Sample], warmup: Duration) -> Option<u64> {
     let measured: Vec<&Sample> = samples.iter().filter(|held| held.at >= warmup).collect();
-    let (earlier, later) = measured.split_at_checked(measured.len().checked_div(HALVES)?)?;
-    let (earlier, later) = (middle(earlier)?, middle(later)?);
-    let over = later.0.saturating_sub(earlier.0).as_secs();
-    if over == 0 {
+    if measured.len() < LEAST_SAMPLES {
         return None;
     }
-    let grew = later.1.saturating_sub(earlier.1);
-    grew.saturating_mul(SECONDS_PER_HOUR).checked_div(over)
-}
-
-/// When a run of samples was taken, and what a process sat at over it.
-///
-/// The middle of the times because they are evenly spaced, and the middle of
-/// the sizes because they are not: a sorted middle is a size the process
-/// really was, unmoved by the one sample that landed while a flood was in
-/// flight.
-fn middle(samples: &[&Sample]) -> Option<(Duration, u64)> {
-    let first = samples.first()?;
-    let last = samples.last()?;
-    let at = first
-        .at
-        .saturating_add(last.at)
-        .checked_div(HALVES.try_into().ok()?)?;
-    let mut sizes: Vec<u64> = samples.iter().map(|held| held.bytes).collect();
-    sizes.sort_unstable();
-    // The middle of an even count is between two samples, and taking the
-    // upper of them is taking the larger — which for a run of two samples is
-    // taking the maximum, so one peak in the later half would read as a leak
-    // and one in the earlier half would hide one.
-    let above = sizes.len().checked_div(HALVES)?;
-    let below = above.saturating_sub(1);
-    let (above, below) = (sizes.get(above)?, sizes.get(below)?);
-    if sizes.len().checked_rem(HALVES)? == 1 {
-        return Some((at, *above));
+    let many = i128::try_from(measured.len()).ok()?;
+    let seconds = |held: &&Sample| i128::from(held.at.as_secs());
+    let bytes = |held: &&Sample| i128::from(held.bytes);
+    let when: i128 = measured.iter().map(seconds).sum();
+    let what: i128 = measured.iter().map(bytes).sum();
+    let across: i128 = measured
+        .iter()
+        .map(|held| seconds(held).saturating_mul(bytes(held)))
+        .sum();
+    let along: i128 = measured
+        .iter()
+        .map(|held| seconds(held).saturating_mul(seconds(held)))
+        .sum();
+    // The slope as one ratio, so that nothing is divided until the end.
+    let over = many
+        .saturating_mul(along)
+        .saturating_sub(when.saturating_mul(when));
+    if over <= 0 {
+        return None;
     }
-    Some((
-        at,
-        above
-            .saturating_add(*below)
-            .checked_div(u64::try_from(HALVES).ok()?)?,
-    ))
+    let rise = many
+        .saturating_mul(across)
+        .saturating_sub(when.saturating_mul(what));
+    let hourly = rise
+        .saturating_mul(i128::from(SECONDS_PER_HOUR))
+        .checked_div(over)?;
+    Some(u64::try_from(hourly.max(0)).unwrap_or(u64::MAX))
 }
 
 /// How many bytes `seq 1 <lines>` says through a pseudoterminal.
@@ -167,6 +166,10 @@ pub struct Heard {
     /// The byte the next delivery has to begin at, once one has been read;
     /// nothing after a screen, which moves where the client is.
     pub expected: Option<u64>,
+    /// The byte the client attached at, which is how much the pane had
+    /// already said when it arrived — and so the witness that the flood
+    /// poured before it really was poured.
+    pub attached: Option<u64>,
 }
 
 /// Reads another window of what the held client printed into what it heard.
@@ -208,6 +211,7 @@ pub fn heard_more(heard: &mut Heard, said: &str) -> Result<(), String> {
         };
         if kind == "screen" {
             heard.screens = heard.screens.saturating_add(1);
+            heard.attached = heard.attached.or(Some(at));
             heard.expected = None;
             continue;
         }
@@ -256,21 +260,25 @@ pub fn rendered(report: &Report) -> String {
          - **Machine:** {}\n\
          - **Duration:** {} minutes\n\
          - **Warmup:** {} minutes\n\
-         - **Rounds:** {} attempted, {} finished\n\
+         - **Rounds:** {} attempted, {} finished, {} flooded, longest run of \
+         failures {}\n\
          - **Cuts:** {}, each seen to have stopped the daemon it named\n\
          - **Pane churn:** {} sessions made and unmade\n\
-         - **Held client:** {} deliveries, {} bytes, {} screens\n\
+         - **Held client:** {} deliveries, {} bytes, {} screens, attached at byte {}\n\
          - **Growth ceiling:** {SOAK_GROWTH_CEILING_PER_HOUR} bytes an hour, after the warmup\n",
         report.machine,
         minutes(report.duration),
         minutes(report.warmup),
         report.rounds,
         report.drops,
+        report.floods,
+        report.streak,
         report.cuts,
         report.churn,
         report.heard.deliveries,
         report.heard.bytes,
-        report.heard.screens
+        report.heard.screens,
+        report.heard.attached.unwrap_or(0)
     );
     for (side, samples) in report.weighed() {
         let _series = writeln!(

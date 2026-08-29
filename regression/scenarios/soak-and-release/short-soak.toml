@@ -97,7 +97,7 @@ timeout_seconds = 50
 [[steps]]
 id = "weigh-the-daemon"
 container = "host0"
-run = "for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then binary=$(readlink \"$held/exe\"); break; fi; done; { sleep 20 | \"$binary\" --stdio; } > /dev/null 2>&1 & sleep 2; servers=0; daemons=0; for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then servers=$((servers + 1)); if ! grep -qsa -- --stdio \"$held/cmdline\"; then daemons=$((daemons + 1)); fi; fi; done; total=$(for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\" && ! grep -qsa -- --stdio \"$held/cmdline\"; then awk '/VmRSS/{print $2}' \"$held/status\"; fi; done | awk '{total += $1} END {print total + 0}'); printf 'servers:%s daemons:%s resident-kibibytes:%s\n' \"$servers\" \"$daemons\" \"$total\""
+run = "for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then binary=$(readlink \"$held/exe\"); break; fi; done; { sleep 20 | \"$binary\" --stdio; } > /dev/null 2>&1 & sleep 2; servers=0; daemons=0; for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\"; then servers=$((servers + 1)); if ! grep -qsa -- --stdio \"$held/cmdline\"; then daemons=$((daemons + 1)); fi; fi; done; total=$(for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\" && ! grep -qsa -- --stdio \"$held/cmdline\"; then awk '/VmRSS/{print $2}' \"$held/status\"; fi; done | awk '{total += $1} END {print total + 0}'); every=$(for held in /proc/[0-9]*; do if grep -qsx iznik-server \"$held/comm\" ; then awk '/VmRSS/{print $2}' \"$held/status\"; fi; done | awk '{total += $1} END {print total + 0}'); if [ \"$total\" -lt \"$every\" ]; then apart=yes; else apart=no; fi; printf 'servers:%s daemons:%s resident-kibibytes:%s all-servers:%s left-out:%s\n' \"$servers\" \"$daemons\" \"$total\" \"$every\" \"$apart\""
 timeout_seconds = 45
 
 [[expect]]
@@ -125,7 +125,17 @@ stdout_contains = "servers:2 daemons:1"
 # it finds nothing, so the expectation asks for a number that is not one:
 # this cannot be met by the format string, nor by a census that matched
 # nothing at all.
+#
+# The last of them is what holds the guard itself: the same census is run a
+# second time without the clause that leaves the relay out, and what the soak
+# weighs has to come to less than that. Drop the guard from both and this
+# says `left-out:no`.
 [[expect]]
 step = "weigh-the-daemon"
 exit = 0
 stdout_matches = "resident-kibibytes:[1-9][0-9]*"
+
+[[expect]]
+step = "weigh-the-daemon"
+exit = 0
+stdout_contains = "left-out:yes"

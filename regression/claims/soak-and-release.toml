@@ -50,7 +50,7 @@ because = "a report is a value, and judging one needs no containers to have made
 
 [[claim]]
 id = "soak-judges-a-run-by-what-it-weighed"
-statement = "A side over the ceiling is refused, one under it is not, a side never weighed at all is refused, and so is a side whose samples measure nothing after the warmup — which is the same silence wearing a series, and which would otherwise skip the ceiling entirely and pass. This is what holds the ceiling comparison itself: inverting it leaves every other case in the file green."
+statement = "A side over the ceiling is refused and one under it is not. So is a side never weighed at all, one whose samples measure nothing after the warmup, and one whose samples stop long before the run ends — three shapes of the same silence, each of which would otherwise report a flat series and no leak. This is what holds the ceiling comparison itself: inverting it leaves every other case in the file green."
 test = "xtask::regression_soak::regression_soak_judges_a_run_by_what_it_weighed"
 because = "a report is a value, and judging one needs no containers to have made it"
 
@@ -85,7 +85,7 @@ scenario = "short-soak"
 
 [[claim]]
 id = "soak-weighs-what-is-running"
-statement = "With a relay held open beside the daemon, the census the soak weighs with counts two processes answering to `iznik-server` and exactly one daemon among them, and reads a resident size that was really taken. The relay is left out by name because a host runs one of each and a weighing that took the first one it found would be of the daemon at one sample and of a relay at the next, reporting a leak and a recovery that neither happened; the reading is out of `/proc` because the engine image carries no `ps` at all."
+statement = "With a relay held open beside the daemon, two processes answer to `iznik-server` and exactly one of them is a daemon; the census the soak weighs with — run word for word, and run a second time without the clause that leaves the relay out — reads a resident size that was really taken and one that is smaller than the census without the guard. Dropping the guard makes the two the same number. The relay is left out by name because a host runs one of each and a weighing that took the first one it found would be of the daemon at one sample and of a relay at the next, reporting a leak and a recovery that neither happened; the reading is out of `/proc` because the engine image carries no `ps` at all."
 scenario = "short-soak"
 
 [[claim]]

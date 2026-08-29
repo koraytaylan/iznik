@@ -12,7 +12,7 @@ reconnect and nothing else.
 This repository is the server, the client engine the application links, the
 wire protocol between them, the C ABI the application calls, and the harness
 that proves all of it. The macOS application lives in its own repository and is
-built against the C ABI contract that plan 0006 publishes.
+built against [`docs/CLIENT.md`](docs/CLIENT.md), the contract this one keeps.
 
 ## Status
 
@@ -122,13 +122,19 @@ carries uploads nothing at all.
 Taking it off removes the binary, the terminfo, the runtime directory and the
 prefix itself where iznik made it. A prefix iznik was lent rather than made —
 `XDG_RUNTIME_DIR` is one of the candidates — keeps everything that was not
-iznik's. The client engine does it through `HostManager::uninstall`, and
-`iznik uninstall <host>` is the command that wraps it.
+iznik's. The client engine does it through `HostManager::uninstall`, which
+also lets the host go and tells the application it has; `iznik uninstall
+<host>` reaches the host and removes what is on it, having no model to keep.
 
 ## Building the macOS application against this repository
 
 The application lives in its own repository, is written in Swift, and links
 this one through a C ABI. Everything it needs is built from here.
+
+Every path below is under `target/`, which is where cargo writes unless
+`CARGO_TARGET_DIR` says otherwise — and [`CONTRIBUTING.md`](CONTRIBUTING.md)
+asks you to set it to a shared cache. Whatever it is set to, the layout under
+it is the same.
 
 **The contract is [`docs/CLIENT.md`](docs/CLIENT.md).** Read that, not the
 Rust: it is the threading rules, the ownership rules, the credit protocol,
@@ -139,41 +145,66 @@ disagree, the contract wins and the implementation is the bug.
 **The header and the library.**
 
 ```sh
-cargo xtask header                       # regenerate include/iznik.h
-cargo build --release --package iznik-ffi # libiznik_ffi.a and libiznik_ffi.so
+cargo xtask header                        # regenerate include/iznik.h
+cargo build --release --package iznik-ffi # libiznik.a, and libiznik.dylib on a Mac
 ```
 
 `include/iznik.h` is committed and pinned: a signature that changes changes
 the header in the same commit, and a test compares them byte for byte. Build
-against that header and link `target/release/libiznik_ffi.a`, or the shared
-library beside it. A static archive needs the system libraries it was built
-against, and they differ by platform, so ask the toolchain rather than
-guessing:
+against that header and link `target/release/libiznik.a` — the archive is
+named for the library and not for the package — or the dynamic library beside
+it, which is `libiznik.dylib` on macOS and `libiznik.so` on Linux. A static
+archive needs the system libraries it was built against, and they differ by
+platform, so ask the toolchain rather than guessing:
 
 ```sh
 cargo rustc --release --package iznik-ffi -- --print native-static-libs
 ```
 
 **The servers the client installs.** A client bootstraps a host by uploading
-one, so it has to be able to find them:
+one, so it needs a directory of them — one per triple it means to reach. The
+triples are the *hosts'*, not the Mac's: reaching Linux hosts means the two
+musl targets.
 
 ```sh
+cargo xtask distribution --target x86_64-unknown-linux-musl
+cargo xtask distribution --target aarch64-unknown-linux-musl
+```
+
+That writes `target/distribution/<triple>/iznik-server`, which is the layout
+the client reads. Name the directory in `IznikOptions.artifacts_directory`
+when you make the client; the `IZNIK_ARTIFACTS_DIRECTORY` variable is the
+command-line tool's way of saying the same thing and the library does not read
+it. Left null, the library looks under its own runtime directory, and a host
+whose triple it cannot find there is reported as unsupported rather than
+bootstrapped.
+
+Building a Darwin server — for reaching a Mac — needs the SDK path exported,
+which macOS does not export itself:
+
+```sh
+export SDKROOT=$(xcrun --show-sdk-path)
 cargo xtask distribution --target aarch64-apple-darwin
 ```
 
-Point `IZNIK_ARTIFACTS_DIRECTORY` at a directory holding one
-`<triple>/iznik-server` per triple you mean to reach —
-`target/distribution/` is laid out that way already.
-
 **Developing without SSH.** A host alias of the form `unix:<path>` names a
-daemon socket on this machine and is reached with no SSH at all: start one
-with `iznik-server --daemon`, then use `unix:$XDG_RUNTIME_DIR/iznik/server.sock`
-wherever a host alias goes. It is the alias the C smoke program and every
-in-process test use, and it is the fastest way to have a real pane in front of
-an application under development.
+daemon socket on this machine and is reached with no SSH at all. Start one
+with `iznik-server --daemon` and use the socket under its runtime directory —
+`$XDG_RUNTIME_DIR/iznik/` where that is set, and `$TMPDIR/iznik-<user_id>/`
+where it is not, which is the case on macOS:
 
-**When something is wrong**, one command says which of five layers it is —
-`ssh`, the host, the server, the protocol or the client — with secrets
+```sh
+iznik-server --daemon
+iznik state "unix:${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/iznik-$(id -u)}/server.sock"
+```
+
+It is the alias the C smoke program and every in-process test use, and it is
+the fastest way to have a real pane in front of an application under
+development.
+
+**When something is wrong**, one command collects what each layer says — what
+`ssh` would do for this alias, what the probe found, what the server answers,
+what state the host reached, and what a keystroke costs — with secrets
 redacted by construction:
 
 ```sh

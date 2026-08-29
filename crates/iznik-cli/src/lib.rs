@@ -10,6 +10,10 @@ pub mod state;
 pub mod tail;
 pub mod uninstall;
 
+use std::ffi::OsString;
+use std::io::Write as _;
+use std::process::ExitCode;
+
 /// The flag that asks a command what it takes.
 pub const HELP_FLAG: &str = "--help";
 
@@ -26,19 +30,29 @@ pub const USAGE_EXIT_CODE: u8 = 2;
 /// `iznik tail --help`, and a person who reaches for the flag late should not
 /// have to reach for it again earlier.
 #[must_use]
-pub fn asked_for_help(arguments: &[std::ffi::OsString]) -> bool {
+pub fn asked_for_help(arguments: &[OsString]) -> bool {
     arguments.iter().any(|argument| argument == HELP_FLAG)
 }
 
 /// A command's usage line on standard output, and success.
 ///
-/// That is the whole difference between asking and erring: the same line goes
-/// to standard error with [`USAGE_EXIT_CODE`] when nobody asked for it and the
-/// command line cannot be acted on.
+/// The one line this binary writes that is not a JSON object, and the only
+/// one that is an answer rather than an account of a host: a refusal carries
+/// the same words to standard error wrapped as an object, because a script
+/// reading a failure wants a field and a person asking a question wants a
+/// line.
 #[must_use]
-pub fn help_with(usage: &str) -> std::process::ExitCode {
-    let _written = std::io::Write::write_fmt(&mut std::io::stdout(), format_args!("{usage}\n"));
-    std::process::ExitCode::SUCCESS
+pub fn help_with(usage: &str) -> ExitCode {
+    let mut writing = std::io::stdout();
+    // Written and flushed like everything else here, and a write nobody took
+    // is not a success: `iznik probe --help | head -0` has nobody to answer.
+    if writeln!(writing, "{usage}")
+        .and_then(|()| writing.flush())
+        .is_err()
+    {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 /// The layer a failure of this program's own is from.
@@ -159,7 +173,7 @@ const LOOK: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The one host argument a subcommand takes, or nothing.
 #[must_use]
-pub fn one_host(arguments: &[std::ffi::OsString]) -> Option<String> {
+pub fn one_host(arguments: &[OsString]) -> Option<String> {
     let mut rest = arguments.iter().skip(1);
     let named = rest.next()?.to_str()?.to_owned();
     rest.next().is_none().then_some(named)

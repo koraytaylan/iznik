@@ -18,8 +18,8 @@ application costs a reconnect and nothing else.
 This repository holds everything except the macOS application: the server,
 the client engine the application links, the wire protocol between them, the
 C ABI the application calls, and the test harness that proves all of it. The
-application is built in its own repository against the contract that plan 0006
-publishes.
+application is built in its own repository against
+[`docs/CLIENT.md`](docs/CLIENT.md), the contract this one keeps.
 
 ### Non-goals
 
@@ -469,10 +469,12 @@ by name and obligation by obligation.
   hosts for as long as it is given, with a flood poured through a held pane,
   the daemon stopped underneath it and started again, and sessions made and
   unmade beside it, weighing the held client and both daemons on a schedule of
-  its own. It refuses a run for growth past a ceiling after the warmup — and
-  equally for a side never weighed, a held client that stopped listening, a
-  client that heard less than its pane was made to say, or a reconnection the
-  host could not carry it on from. A leak of a few kilobytes per reconnection
+  its own. It refuses a run for growth past a ceiling after the warmup — and equally
+  for a side never weighed or never measured after the warmup, a held client
+  that stopped listening, a client that heard less than its pane was made to
+  say, a reconnection the host could not carry it on from, fewer than half its
+  rounds finishing, or fewer than half of them churning a session, since the
+  second daemon is weighed for the churn and an idle one is flat. A leak of a few kilobytes per reconnection
   is invisible in everything above and fatal by Thursday, and the only thing
   that finds it is time; the six-hour run is a person's, and
   [the release checklist](docs/notes/release-checklist.md) begins with it.

@@ -1,7 +1,7 @@
 # Soak report
 
 This is the run this task commits: ten minutes with a two-minute warmup, taken
-on 2026-08-29 from the tree that became this commit, whose parent is `b0cebe0`.
+on 2026-08-29 from the tree that became this commit, whose parent is `06440a4`.
 It is not the run a release needs. That one is six hours, is run by a person,
 and is the first item on the [release checklist](release-checklist.md); this
 one is here so that the shape of a report is in the tree, and so that a change
@@ -24,7 +24,10 @@ Round after round, back to back:
 
 1. Thirty thousand lines poured through the pane, and a line echoed after them
    that has to come back. A shell runs what it is given in the order it is
-   given, so that line arrives only once the flood has been produced. The
+   given, so that line arrives only once the flood has been produced — and
+   what is waited for is not what was typed, because a terminal echoes a line
+   as it is typed and a wait for a string that appears in the typing is over
+   before the shell has read it. The
    flood is sized to the two hundred and fifty-six kilobytes a subscription is
    given, because the client watching it is a step of the driver and a step
    returns no credit.
@@ -43,32 +46,35 @@ only the one holding the pane: the sessions are made and unmade on the second
 host, so a leak in making one would be there and nowhere else.
 
 Before any of it, eight hundred thousand lines were poured through the pane
-and waited for, so that the ring every pane keeps was full before the first
+and waited out, so that the ring every pane keeps was full before the first
 sample was taken. A server still filling a four-mebibyte ring is growing for a
-reason that is not a leak.
+reason that is not a leak. That flood is poured before the held client
+attaches: no client can be carried along six megabytes at once — it would fall
+far enough behind for the host to stop streaming to it and send the truth
+instead, which is the one thing this run reads as a byte lost.
 
 ## What was checked
 
 Each of these fails the run, and each of them can:
 
-- **Growth**, on every side, read as the middle of the first half of the
-  measured samples against the middle of the second — because a flood in
-  flight puts a peak on whichever sample catches it, and first-against-last
-  would report megabytes an hour for a process that never grew.
-- **A side never weighed.** A census that quietly found nothing would
-  otherwise report an empty table and no leak.
-- **The held client gone**, or its pane detached. A stream that stopped an
-  hour in has no gap in it either.
-- **Bytes that went missing.** What the held client heard is held against what
-  its pane was made to say, which is arithmetic over `seq 1 30000` rather than
-  a guess.
-- **A second screen.** A screen is the host failing to carry a client on from
-  where it was, sending the truth as it now stands instead — which is what
-  losing bytes looks like from a client. One is the attachment; every one
-  after it is a reconnection that could not be resumed.
-- **Rounds that did not finish**: fewer than half of them finishing.
-- **Sessions never churned**, by the same measure — the second daemon is
-  weighed for the churn, and an idle one is flat for a reason that is not the
+- **Growth** past four mebibytes an hour on any of the three sides, read as
+  the slope of the line that fits every measured sample — not as two points,
+  which see only what happened between them and are blind to a leak that
+  begins late;
+- a side never weighed at all, or last weighed long before the run ended, or
+  with too few samples after the warmup to read a line through — each of which
+  is a census that stopped finding something, and each of which would
+  otherwise report a flat series and no leak;
+- the held client gone before the end, its pane detached, or nothing heard
+  from it at all — a stream that stopped early has no gap in it either;
+- the held client hearing fewer bytes than its pane was made to say;
+- a screen count that is not exactly one: the first is the attachment, and any
+  after it are bytes the host could not carry the client on from;
+- fewer than half the rounds finishing, or more than three failing one after
+  another, which is what a stack that has stopped answering looks like — a
+  failing round is slower than a healthy one, so counting them is not enough;
+- fewer than half of them churning a session, since the second daemon is
+  weighed for the churn and an idle one is flat for a reason that is not the
   absence of a leak.
 
 What is not claimed: that consecutive deliveries beginning where the last one
@@ -93,10 +99,10 @@ one go would be checked from its middle and its beginning called whole.
 - **Machine:** Linux 7.0.0-29-generic x86_64, AMD Ryzen 7 PRO 8700GE w/ Radeon 780M Graphics, 61 GiB memory, 16 cores
 - **Duration:** 10 minutes
 - **Warmup:** 2 minutes
-- **Rounds:** 29 attempted, 29 finished
+- **Rounds:** 29 attempted, 29 finished, 29 flooded, longest run of failures 0
 - **Cuts:** 29, each seen to have stopped the daemon it named
 - **Pane churn:** 29 sessions made and unmade
-- **Held client:** 9808 deliveries, 5771486 bytes, 1 screens
+- **Held client:** 9502 deliveries, 5771602 bytes, 1 screens, attached at byte 6288982
 - **Growth ceiling:** 4194304 bytes an hour, after the warmup
 
 
@@ -104,49 +110,49 @@ one go would be checked from its middle and its beginning called whole.
 
 | At | Resident |
 |---|---|
-| 21s | 2711552 |
-| 84s | 2740224 |
-| 148s | 2744320 |
-| 212s | 2752512 |
-| 276s | 2756608 |
-| 339s | 2752512 |
-| 403s | 2752512 |
-| 467s | 2752512 |
-| 531s | 2744320 |
-| 595s | 2752512 |
+| 21s | 2793472 |
+| 84s | 2809856 |
+| 148s | 2813952 |
+| 212s | 2818048 |
+| 276s | 2809856 |
+| 340s | 2818048 |
+| 403s | 2813952 |
+| 467s | 2818048 |
+| 531s | 2813952 |
+| 595s | 2822144 |
 
-Growth after the warmup: 0 bytes an hour.
+Growth after the warmup: 38543 bytes an hour.
 
 ## The daemon it watches, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 10276864 |
-| 84s | 10285056 |
-| 148s | 10289152 |
-| 212s | 10297344 |
-| 276s | 10305536 |
-| 339s | 10289152 |
-| 403s | 10293248 |
-| 467s | 10309632 |
-| 531s | 10326016 |
-| 595s | 10326016 |
+| 21s | 10629120 |
+| 84s | 10637312 |
+| 148s | 10633216 |
+| 212s | 10637312 |
+| 276s | 10649600 |
+| 340s | 10637312 |
+| 403s | 10645504 |
+| 467s | 10661888 |
+| 531s | 10698752 |
+| 595s | 10702848 |
 
-Growth after the warmup: 346955 bytes an hour.
+Growth after the warmup: 564050 bytes an hour.
 
 ## The daemon it churns, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 4472832 |
-| 84s | 4489216 |
-| 148s | 4493312 |
-| 212s | 4489216 |
-| 276s | 4493312 |
-| 339s | 4497408 |
-| 403s | 4497408 |
-| 467s | 4497408 |
-| 531s | 4497408 |
-| 595s | 4493312 |
+| 21s | 4431872 |
+| 84s | 4448256 |
+| 148s | 4456448 |
+| 212s | 4456448 |
+| 276s | 4456448 |
+| 340s | 4460544 |
+| 403s | 4460544 |
+| 467s | 4460544 |
+| 531s | 4460544 |
+| 595s | 4460544 |
 
-Growth after the warmup: 57825 bytes an hour.
+Growth after the warmup: 41259 bytes an hour.

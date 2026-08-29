@@ -8,13 +8,15 @@
 //! goes, a pane flooded, the link dropped and made good again — and watches
 //! what both sides weigh while it does.
 //!
-//! What it fails on: a side growing past a ceiling after the warmup or never
-//! being weighed at all; a held client gone before the end, hearing less than
-//! its pane was made to say, or sent a screen because a reconnection could not
-//! be carried on from where it was; and fewer than half its rounds finishing.
-//! The first is the leak. The rest are all one thing — that what the report
-//! says was measured really was — because a soak that measured nothing is the
-//! easiest passing run there is.
+//! What it fails on: a side growing past a ceiling after the warmup, never
+//! being weighed at all, or last weighed long before the end; a held client
+//! gone before the end, hearing nothing, hearing less than its pane was made
+//! to say, or sent a screen because a reconnection could not be carried on
+//! from where it was; fewer than half its rounds finishing, or more than a
+//! few failing one after another; and fewer than half of them churning a
+//! session. The first is the leak. The rest are all one thing — that what the
+//! report says was measured really was — because a soak that measured nothing
+//! is the easiest passing run there is.
 
 use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
@@ -27,15 +29,17 @@ use iznik_harness::process::Deadline;
 use iznik_harness::staging::{STAGING_DEADLINE, stage};
 
 pub mod commands;
+pub mod judge;
 pub mod report;
 pub mod steps;
 
 pub use crate::soak::commands::{COMPACT, TAIL_OUTPUT, TAIL_TROUBLE, WEIGH};
 use crate::soak::commands::{cut, machine, revive, running, stop_tail, tail_command, weighed};
+pub use crate::soak::judge::judged;
 pub use crate::soak::report::{
     Heard, Report, Sample, grown, heard_more, minutes, poured, rendered,
 };
-use crate::soak::steps::{flooding_step, opening_step, recovery_step, settling_step};
+use crate::soak::steps::{filling_step, flooding_step, opening_step, recovery_step, settled_step};
 
 /// What this subcommand takes.
 const USAGE: &str = "usage: xtask soak [--duration <minutes>] [--warmup <minutes>]";
@@ -48,10 +52,17 @@ pub const SOAK_DURATION: Duration = Duration::from_hours(6);
 /// is still growing into its work.
 pub const SOAK_WARMUP: Duration = Duration::from_mins(10);
 
-/// How much either side may grow, per hour, after the warmup.
+/// How much any side may grow, per hour, after the warmup.
 ///
-/// Four mebibytes: far above what an hour of arithmetic and buffers moves, and
-/// far below what a kilobyte a reconnection would reach in a day.
+/// Four mebibytes: far above what an hour of arithmetic and buffers moves on
+/// a stack that is behaving, and low enough that anything growing steadily is
+/// caught long before a day of it would matter.
+///
+/// What it is not: a floor under every leak worth finding. A soak reconnects
+/// its held client a few hundred times an hour, so a leak of a kilobyte per
+/// reconnection is a few hundred kilobytes an hour and passes this ceiling —
+/// what catches that one is the six-hour run's series, read by a person, not
+/// the ceiling. The ceiling is what fails a run without anybody looking.
 pub const SOAK_GROWTH_CEILING_PER_HOUR: u64 = 4 * 1024 * 1024;
 
 /// How often both sides are weighed, at most.
@@ -70,8 +81,24 @@ const SAMPLE_INTERVAL: Duration = Duration::from_mins(1);
 /// exactly as flat as a series with no leak in it.
 const FINISHED_SHARE: usize = 2;
 
-/// Two, for the halves a measured series is cut into and the middle of each.
-const HALVES: usize = 2;
+/// How long before the end of a run a side's last sample may be.
+///
+/// Five minutes: longer than any interval a soak samples at and longer than
+/// the round a sample waits behind, and short enough that a census which
+/// stopped finding a side is not read as one that stopped growing.
+const STALE_AFTER: Duration = Duration::from_mins(5);
+
+/// How many rounds may fail one after another before a soak is a soak of a
+/// stack that has stopped answering.
+///
+/// Three. A machine with other work on it drops one here and there — that is
+/// what the share above is for — but a host that has gone stays gone, and
+/// every round after it fails. Three in a row is a minute of nothing working.
+const FAILING_STREAK: usize = 3;
+
+/// The fewest samples a line can be fitted through, which is what growth is
+/// read as.
+const LEAST_SAMPLES: usize = 2;
 
 /// How long a run has to have left after its warmup before it is held to
 /// having measured anything.
@@ -91,7 +118,7 @@ const FEWEST_SAMPLES: u32 = 4;
 /// is growing for a reason that is not a leak. Enough to fill it outright —
 /// more than the four mebibytes a pane keeps — so that every sample after it
 /// is of a stack at its steady state.
-const OPENING_FLOOD_LINES: u64 = 800_000;
+pub const OPENING_FLOOD_LINES: u64 = 800_000;
 
 /// How many lines a round's flood is.
 ///
@@ -106,12 +133,6 @@ pub const FLOOD_LINES: u64 = 30_000;
 /// Generous, because a round shares a machine with whatever else is building
 /// on it, and a wait that is merely slow is not one that failed.
 const PATIENCE: u64 = 120_000;
-
-/// And how long the step that waits for the flood poured before the clock
-/// starts may have. Longer than a round's, because that flood is twenty-six
-/// times the size of one; the whole step is given it, because the driver
-/// clamps what a step waits for to the step's own deadline.
-const SETTLING_DEADLINE: Duration = Duration::from_mins(20);
 
 /// How long the daemon is stopped for, in seconds, and the words that say so
 /// where the shell can read them.
@@ -152,6 +173,35 @@ const ATTENDING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// What the held client calls the pane as it stands.
 const SCREEN: &str = "screen";
+
+/// What is typed into the middle of a marker so that what is waited for is
+/// not what was typed.
+///
+/// A terminal echoes a line as it is typed, so a wait for a string that
+/// appears in the typing is over before the shell has read it, let alone run
+/// it. An empty pair of quotes is nothing to a shell and two characters to a
+/// terminal: `flood""ed-7` is echoed as itself and printed as `flooded-7`.
+const SPLIT: &str = "\\\"\\\"";
+
+/// How many askings of a client's output the same answer has to come back to
+/// before it has caught up, how long between them, and how many there may be
+/// in all: three seconds of stillness, looked for over two minutes.
+const DRAINED_FOR: u32 = 3;
+
+/// How long between those askings.
+const DRAINING_INTERVAL: Duration = Duration::from_secs(1);
+
+/// And how many of them there may be.
+const DRAINING_ATTEMPTS: u32 = 120;
+
+/// How long one asking of whether the pane has gone quiet may take, and how
+/// many askings there may be. Half a minute apiece and forty of them: twenty
+/// minutes in all, which is far longer than a shell takes to pour six
+/// megabytes into a ring.
+const SETTLED_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How many times it is asked.
+const SETTLED_ATTEMPTS: u32 = 40;
 
 /// How many of the held client's lines are read back at a time.
 ///
@@ -203,20 +253,30 @@ pub const SERVER_PROCESS: &str = "iznik-server";
 
 /// How much longer than the soak itself its containers may live.
 ///
-/// Podman counts from when a container starts, and the soak's own clock does
-/// not start until two hosts have been reached, a pane made and a flood
-/// poured and waited for. What this module allows before that: thirty seconds
-/// of readiness, two reaches at five minutes each — a reach is a bootstrap,
-/// and a bootstrap is allowed six — and two steps at five. What it allows
-/// after: a last round already in flight, two step deadlines and a cut, then
-/// a churn, then the ending. Three quarters of an hour is above the sum of
-/// them, and a container killed while the soak believes it is running turns
-/// six hours of measurement into a fixture error.
-const CONTAINER_MARGIN: Duration = Duration::from_mins(45);
+/// Podman kills a container when its own timeout runs out, and it counts from
+/// when the container started, while the soak's clock does not start until a
+/// pane is open, a client is holding it and the flood that fills the ring has
+/// drained. What this module allows before that: half a minute of readiness,
+/// two reaches at five minutes each — a reach is a bootstrap, and a bootstrap
+/// is allowed six — two steps written and run at five, seven minutes of
+/// waiting for the client to attach, twenty of waiting for the flood to go
+/// quiet, and a weighing apiece. What it allows after: a last round already
+/// in flight at two step deadlines and a cut, a churn, and an ending whose
+/// windows are half a minute each.
+///
+/// An hour and a half is above the sum of them for any soak worth running,
+/// and a container killed while the soak believes it is running turns hours
+/// of measurement into a fixture error.
+const CONTAINER_MARGIN: Duration = Duration::from_mins(90);
 
 /// How much longer than a step itself the command that runs it may take: the
 /// writing of the step, the driver starting and the answer coming back.
 const STEP_MARGIN: Duration = Duration::from_mins(1);
+
+/// How long one window of the held client's output may take to read. A
+/// tenth of a command's deadline, because reading ten thousand lines is
+/// seconds and a six-hour run is hundreds of windows.
+const WINDOW_DEADLINE: Duration = Duration::from_secs(30);
 
 /// How long any one command in a container may take./// How long any one command in a container may take.
 const COMMAND_DEADLINE: Deadline = Deadline(Duration::from_mins(5));
@@ -424,11 +484,17 @@ pub fn soaked(duration: Duration, warmup: Duration) -> Result<Report, SoakError>
             COMMAND_DEADLINE.0,
         )?;
     }
-    // A pane, a flood big enough to fill the ring it keeps, and the wait for
-    // that flood to be over. Only then does anything start being measured.
+    // A pane, and the flood that fills the ring every pane keeps. A server
+    // still filling a four-mebibyte ring is growing for a reason that is not
+    // a leak, so this is poured and waited out before anything is measured —
+    // and before the held client attaches, because a client cannot be carried
+    // along a flood six megabytes long: it would fall far enough behind for
+    // the host to stop streaming to it and send the truth instead, which is
+    // the one thing this soak reads as a lost byte.
     let _opened = step_run(&fixture, &opening_step(), STEP_DEADLINE)?;
-    let _settled = step_run(&fixture, &settling_step(), SETTLING_DEADLINE)?;
-    // And the client that holds the pane for the whole soak: the one client
+    let _filled = step_run(&fixture, &filling_step(), STEP_DEADLINE)?;
+    settled(&fixture)?;
+    // Then the client that holds the pane for the whole soak: the one client
     // here that returns credit for every byte it takes. Nothing is measured
     // until it has said its first word, because bytes poured before it
     // attached are bytes it was never sent and could not be missing.
@@ -442,6 +508,7 @@ pub fn soaked(duration: Duration, warmup: Duration) -> Result<Report, SoakError>
         rounds: 0,
         floods: 0,
         cuts: 0,
+        streak: 0,
         drops: 0,
         churn: 0,
         heard: Heard::default(),
@@ -453,11 +520,11 @@ pub fn soaked(duration: Duration, warmup: Duration) -> Result<Report, SoakError>
     // Everything from here is the end of a run that has already happened, so
     // none of it may take the report with it. What went wrong is judged
     // beside what was measured, and both are printed.
-    let ended = ending(&fixture, &mut report);
-    let judgement = match ended {
-        Ok(living) => judged(&report, &refused, living),
-        Err(refusal) => Err(refusal),
-    };
+    // Whatever the ending said, what it managed to count is kept: a tally
+    // that stops where a stream broke is the evidence, and zeroing it would
+    // print the run as one that heard nothing at all.
+    let judgement =
+        ending(&fixture, &mut report).and_then(|living| judged(&report, &refused, living));
     if let Err(source) = judgement {
         return Err(SoakError::Judged {
             report: Box::new(report),
@@ -479,9 +546,18 @@ fn ending(fixture: &Fixture, report: &mut Report) -> Result<bool, SoakError> {
     // hour in leaves a stream with no gap in it, which is what a check that
     // only looks for gaps calls whole.
     let living = alive(fixture)?;
+    // Let it catch up before it is interrupted. What it is held to hearing is
+    // every byte its pane was made to say, and the last round's is still
+    // arriving when the clock runs out; a client stopped mid-delivery drops
+    // what was queued and the run reports a loss of its own making.
+    drained(fixture)?;
     let _stopped = fixture.exec("engine", &stop_tail(), COMMAND_DEADLINE.0)?;
-    report.heard = heard_by(fixture)?;
-    Ok(living)
+    let (heard, broken) = heard_by(fixture)?;
+    report.heard = heard;
+    match broken {
+        None => Ok(living),
+        Some(detail) => Err(SoakError::Lost { detail }),
+    }
 }
 
 /// Waits for the held client to have attached, or says it never did.
@@ -525,6 +601,78 @@ fn attended(fixture: &Fixture) -> Result<(), SoakError> {
     })
 }
 
+/// Waits for the flood poured before the clock starts to be over.
+///
+/// Asked by typing a line and waiting for the shell to print it: a shell runs
+/// what it is given in the order it is given, so the line comes back only
+/// once the flood before it has been produced. Each asking is a client of its
+/// own, because a client that asked while the flood was still pouring has its
+/// window filled by it and cannot be carried on — so a failed asking is not a
+/// failure, it is the answer "not yet", and the next one starts fresh.
+///
+/// # Errors
+///
+/// [`SoakError::Lost`] when the pane never goes quiet, with what the last
+/// asking said.
+fn settled(fixture: &Fixture) -> Result<(), SoakError> {
+    let mut refused = String::new();
+    for _attempt in 0..SETTLED_ATTEMPTS {
+        match step_run(fixture, &settled_step(), SETTLED_DEADLINE) {
+            Ok(_said) => return Ok(()),
+            Err(refusal) => refused = refusal.to_string(),
+        }
+    }
+    Err(SoakError::Lost {
+        detail: format!("the pane never went quiet; the last asking said: {refused}"),
+    })
+}
+
+/// Waits for the held client to have caught up.
+///
+/// Its output stops growing when it has taken everything the pane has said.
+/// Not an error when it does not: a client that is still hearing at the end
+/// of its patience is judged on what it heard by then, and the judgement is
+/// the place that says whether that was enough.
+///
+/// # Errors
+///
+/// [`SoakError::Fixture`] when the container will not say how much it has
+/// written.
+fn drained(fixture: &Fixture) -> Result<(), SoakError> {
+    let (mut said, mut still) = (0_u64, 0_u32);
+    for _attempt in 0..DRAINING_ATTEMPTS {
+        let now = lines(fixture)?;
+        still = if now == said {
+            still.saturating_add(1)
+        } else {
+            0
+        };
+        said = now;
+        if still >= DRAINED_FOR {
+            return Ok(());
+        }
+        std::thread::sleep(DRAINING_INTERVAL);
+    }
+    Ok(())
+}
+
+/// How many lines the held client has written.
+///
+/// # Errors
+///
+/// [`SoakError::Fixture`] when the container will not say.
+fn lines(fixture: &Fixture) -> Result<u64, SoakError> {
+    let said = fixture.exec(
+        "engine",
+        &format!("wc -l < {TAIL_OUTPUT}"),
+        COMMAND_DEADLINE.0,
+    )?;
+    Ok(String::from_utf8_lossy(&said.stdout)
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0))
+}
+
 /// Whether the held client is still running.
 ///
 /// # Errors
@@ -551,135 +699,32 @@ fn alive(fixture: &Fixture) -> Result<bool, SoakError> {
 /// that none of them reaches the limit, and they are read in order, so the
 /// reckoning carries from one to the next.
 ///
+/// Answers with what was counted and, where the stream broke, the words for
+/// it — never one without the other.
+///
 /// # Errors
 ///
-/// [`SoakError::Lost`] for a stream with a gap in it or one that says the
-/// client stopped, and [`SoakError::Fixture`] when the container will not
-/// say.
-fn heard_by(fixture: &Fixture) -> Result<Heard, SoakError> {
-    let counted = fixture.exec(
-        "engine",
-        &format!("wc -l < {TAIL_OUTPUT}"),
-        COMMAND_DEADLINE.0,
-    )?;
-    let lines = String::from_utf8_lossy(&counted.stdout)
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(0);
+/// [`SoakError::Fixture`] when the container will not say.
+fn heard_by(fixture: &Fixture) -> Result<(Heard, Option<String>), SoakError> {
+    let counted = lines(fixture)?;
     let mut heard = Heard::default();
     let mut from = 1;
-    while from <= lines {
+    while from <= counted {
         let to = from.saturating_add(LINES_AT_ONCE).saturating_sub(1);
         let window = fixture.exec(
             "engine",
             &format!("sed -n '{from},{to}p;{to}q' {TAIL_OUTPUT}"),
-            COMMAND_DEADLINE.0,
+            WINDOW_DEADLINE,
         )?;
-        heard_more(&mut heard, &String::from_utf8_lossy(&window.stdout))
-            .map_err(|detail| SoakError::Lost { detail })?;
+        // A window that says the stream broke ends the reading and not the
+        // report: what was counted up to there is what the client heard, and
+        // it is the number a person needs beside the words.
+        if let Err(detail) = heard_more(&mut heard, &String::from_utf8_lossy(&window.stdout)) {
+            return Ok((heard, Some(detail)));
+        }
         from = to.saturating_add(1);
     }
-    Ok(heard)
-}
-
-/// Whether a soak proved anything, and what it proved.
-///
-/// Public so that a case can put a report to it directly. What decides
-/// whether a six-hour run passed is worth proving without waiting six hours
-/// for one.
-///
-/// # Errors
-///
-/// [`SoakError::Lost`] when too few rounds finished, when the held client
-/// heard nothing or stopped hearing, when a side was never weighed, or when
-/// the pane's stream was broken; [`SoakError::Grew`] when a side grew past
-/// the ceiling after the warmup.
-pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakError> {
-    let lost = |detail: String| SoakError::Lost { detail };
-    // A soak in which most rounds did not finish is a soak that proved
-    // nothing, however flat the series it took while nothing was happening.
-    // Half rather than all of them, because a stack that stopped answering an
-    // hour in leaves the rest of the run measuring a corpse.
-    if report.drops.saturating_mul(FINISHED_SHARE) < report.rounds {
-        return Err(lost(format!(
-            "only {} of {} rounds finished; the last to fail said: {refused}",
-            report.drops, report.rounds
-        )));
-    }
-    // The churn is the only thing making and unmaking sessions, and the
-    // second daemon is weighed for exactly that reason. A run where it never
-    // ran weighs an idle daemon and calls it no leak.
-    if report.churn.saturating_mul(FINISHED_SHARE) < report.rounds {
-        return Err(lost(format!(
-            "only {} of {} rounds churned a session, so what the second daemon weighs is idle",
-            report.churn, report.rounds
-        )));
-    }
-    if !living {
-        return Err(lost(
-            "the held client was gone before the end, so what it heard is not the run".to_owned(),
-        ));
-    }
-    if report.heard.deliveries == 0 {
-        return Err(lost(
-            "the held client heard nothing, so nothing it heard was whole".to_owned(),
-        ));
-    }
-    // Every byte poured through the pane after the client attached was sent
-    // to it, because it returns credit for all of them. Held against the
-    // floods that were really poured and not against the rounds that
-    // finished: a round that floods and then fails afterwards still made its
-    // pane say every byte of it, and counting it out would hand the check a
-    // whole flood's worth of slack.
-    let poured = poured(FLOOD_LINES).saturating_mul(u64::try_from(report.floods).unwrap_or(0));
-    if report.heard.bytes < poured {
-        return Err(lost(format!(
-            "the held client heard {} bytes of the {poured} its pane was made to say",
-            report.heard.bytes
-        )));
-    }
-    // A screen is a host that could not carry a client on from where it was:
-    // a resume it could not serve, or a pane that fell so far behind it
-    // stopped streaming to it. Exactly one is right. The pane says nothing
-    // while the daemon is stopped, so every cut is one a resume can be served
-    // across, and the attachment is the one screen a run should see; none at
-    // all would mean the attachment was never seen, which leaves one real
-    // loss looking exactly like a healthy run.
-    if report.heard.screens != 1 {
-        return Err(lost(format!(
-            "the held client was sent {} screens and exactly one is right: the first \
-             is its attachment, and any after it are bytes it was not carried on from",
-            report.heard.screens
-        )));
-    }
-    for (side, samples) in report.weighed() {
-        if samples.is_empty() {
-            return Err(lost(format!("the {side} was never weighed at all")));
-        }
-        // Nothing measured after the warmup is not a pass, where there was
-        // long enough to measure. A run whose census stopped matching after
-        // its first sample would otherwise report no growth and exit as
-        // though it had found none. A run too short for four samples cannot
-        // be held to having taken them, and a warmup that leaves nothing at
-        // all is refused before a soak starts.
-        let measurable = report.duration.saturating_sub(report.warmup) >= MEASURABLE_SPAN;
-        let Some(rate) = grown(samples, report.warmup) else {
-            if measurable {
-                return Err(lost(format!(
-                    "the {side} has {} samples and none of them measure anything after the warmup",
-                    samples.len()
-                )));
-            }
-            continue;
-        };
-        if rate > SOAK_GROWTH_CEILING_PER_HOUR {
-            return Err(SoakError::Grew {
-                side: side.to_owned(),
-                rate,
-            });
-        }
-    }
-    Ok(())
+    Ok((heard, None))
 }
 
 /// Runs rounds back to back until the clock says stop, weighing every side on
@@ -691,7 +736,7 @@ pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakEr
 /// made once at the end about how many of them did.
 fn worked(fixture: &Fixture, report: &mut Report, began: Instant) -> String {
     let interval = interval_for(report.duration);
-    let (mut refused, mut weigh_at) = (String::new(), Duration::ZERO);
+    let (mut refused, mut weigh_at, mut failing) = (String::new(), Duration::ZERO, 0_usize);
     while began.elapsed() < report.duration {
         // One round: a flood poured through the pane and waited for, the
         // daemon stopped underneath it for longer than any deadline either
@@ -699,9 +744,14 @@ fn worked(fixture: &Fixture, report: &mut Report, began: Instant) -> String {
         // afterwards.
         report.rounds = report.rounds.saturating_add(1);
         match round(fixture, report) {
-            Ok(()) => report.drops = report.drops.saturating_add(1),
+            Ok(()) => {
+                report.drops = report.drops.saturating_add(1);
+                failing = 0;
+            }
             Err(refusal) => {
                 refused = refusal.to_string();
+                failing = failing.saturating_add(1);
+                report.streak = report.streak.max(failing);
                 writeln!(
                     std::io::stdout(),
                     "round {} did not finish: {refused}",
@@ -764,7 +814,7 @@ fn round(fixture: &Fixture, report: &mut Report) -> Result<(), SoakError> {
     Ok(())
 }
 
-/// Weighs every side once/// Weighs every side once, saying what each of them came to.
+/// Weighs every side once, saying what each of them came to.
 ///
 /// A weighing that fails or comes back as nothing is said and not kept: a
 /// resident size of zero is a process that was not found, and a series with a
@@ -796,7 +846,7 @@ fn weigh(fixture: &Fixture, report: &mut Report, at: Duration) {
     }
 }
 
-/// A command of the tool, with this build's servers/// A command of the tool, with this build's servers where it can find them.
+/// A command of the tool, with this build's servers where it can find them.
 fn tool(rest: &str) -> String {
     format!("IZNIK_ARTIFACTS_DIRECTORY={ARTIFACTS} {TOOL} {rest}")
 }

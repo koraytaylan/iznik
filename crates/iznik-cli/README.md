@@ -1,6 +1,6 @@
 # iznik-cli
 
-Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor` and `uninstall`, each printing one JSON object per line for a person or a script. Never a user interface: no screen, no interactivity.
+Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor` and `uninstall`, each printing one JSON object per line for a person or a script. Never a user interface: no screen, no interactivity. The one line that is not an object is the usage line a command answers `--help` with, which is a question about the command rather than an account of a host.
 
 The binary is `iznik`, a thin dispatcher over this library: its first argument names the subcommand and the module that owns it, and `--help` lists them. Every subcommand answers `--help` for itself as well, with the flag anywhere in the line, so that asking what one takes never reaches a host.
 

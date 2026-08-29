@@ -7,10 +7,10 @@
 use core::time::Duration;
 
 use crate::soak::{
-    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLING_DEADLINE, STEP_DEADLINE, WATCHED,
+    FLOOD_LINES, OPENING_FLOOD_LINES, PATIENCE, SETTLED_DEADLINE, SPLIT, STEP_DEADLINE, WATCHED,
 };
 
-/// The step that makes the pane the soak holds open and fills its ring.
+/// The step that makes the pane the soak holds open.
 #[must_use]
 pub fn opening_step() -> String {
     step_of(
@@ -20,34 +20,55 @@ pub fn opening_step() -> String {
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
              {{ kind = \"create_session\", alias = \"{WATCHED}\", name = \"soak\" }},\n  \
-             {{ kind = \"await_delta\", alias = \"{WATCHED}\", generation = 1 }},\n  \
+             {{ kind = \"await_delta\", alias = \"{WATCHED}\", generation = 1 }},\n"
+        ),
+    )
+}
+
+/// The step that fills the ring every pane keeps, before anything is
+/// measured.
+///
+/// A server still filling a four-mebibyte ring is growing for a reason that
+/// is not a leak. It only types: a step of the driver returns no credit, so a
+/// client of one could not take six megabytes and nothing here waits for it
+/// to. What drains this flood is the held client, which credits for every
+/// byte, and what waits for it is the soak watching that client go quiet.
+#[must_use]
+pub fn filling_step() -> String {
+    step_of(
+        "filling",
+        STEP_DEADLINE,
+        &format!(
+            "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
+             {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
              text = \"seq 1 {OPENING_FLOOD_LINES}\\n\" }},\n"
         ),
     )
 }
 
-/// The step that waits for that flood to be over.
+/// The step that asks whether the pane has gone quiet.
 ///
-/// Its own client, and so its own window: it subscribes after the flood was
-/// typed, which is after those bytes are already in the past, so what streams
-/// to it is one echoed line. A shell runs what it is given in the order it is
-/// given, so the line comes back only once the flood has been produced — and
-/// the clock does not start until it does, because a server still filling the
-/// ring every pane keeps is growing for a reason that is not a leak.
+/// Its own client, and so its own window and its own cursor: a subscription
+/// made now starts at what the pane is saying now, so nothing that has
+/// already been said is streamed to it. What it waits for is a line the shell
+/// prints, which the shell only reaches once the flood before it is over —
+/// and if the flood is still pouring, this client's window fills with it and
+/// the step fails, which is the caller's cue to ask again.
 #[must_use]
-pub fn settling_step() -> String {
+pub fn settled_step() -> String {
     step_of(
-        "settling",
-        SETTLING_DEADLINE,
+        "settled",
+        SETTLED_DEADLINE,
         &format!(
             "  {{ kind = \"add_host\", alias = \"{WATCHED}\" }},\n  \
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
              {{ kind = \"subscribe\", alias = \"{WATCHED}\", pane = 1 }},\n  \
-             {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, text = \"echo settled\\n\" }},\n  \
+             {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
+             text = \"echo set{SPLIT}tled\\n\" }},\n  \
              {{ kind = \"await_bytes\", alias = \"{WATCHED}\", pane = 1, \
              contains = \"settled\", within_milliseconds = {} }},\n",
-            SETTLING_DEADLINE.as_millis()
+            SETTLED_DEADLINE.as_millis()
         ),
     )
 }
@@ -75,7 +96,7 @@ pub fn flooding_step(round: usize) -> String {
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
              text = \"seq 1 {FLOOD_LINES}\\n\" }},\n  \
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
-             text = \"echo flooded-{round}\\n\" }},\n  \
+             text = \"echo flood{SPLIT}ed-{round}\\n\" }},\n  \
              {{ kind = \"await_bytes\", alias = \"{WATCHED}\", pane = 1, \
              contains = \"flooded-{round}\", within_milliseconds = {PATIENCE} }},\n"
         ),
@@ -97,7 +118,7 @@ pub fn recovery_step(round: usize) -> String {
              {{ kind = \"await_state\", alias = \"{WATCHED}\", is = \"connected\" }},\n  \
              {{ kind = \"subscribe\", alias = \"{WATCHED}\", pane = 1 }},\n  \
              {{ kind = \"input\", alias = \"{WATCHED}\", pane = 1, \
-             text = \"echo round-{round}\\n\" }},\n  \
+             text = \"echo rou{SPLIT}nd-{round}\\n\" }},\n  \
              {{ kind = \"await_bytes\", alias = \"{WATCHED}\", pane = 1, \
              contains = \"round-{round}\", within_milliseconds = {PATIENCE} }},\n"
         ),

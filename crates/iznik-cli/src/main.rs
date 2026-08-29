@@ -7,7 +7,9 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 
-use iznik_cli::{USAGE_EXIT_CODE, benchmark, doctor, probe, state, tail, uninstall};
+use iznik_cli::{
+    HELP_FLAG, USAGE_EXIT_CODE, benchmark, doctor, help_with, probe, state, tail, uninstall,
+};
 
 /// The subcommands this binary routes, in the order `--help` lists them.
 const SUBCOMMANDS: &[&str] = &["probe", "state", "tail", "benchmark", "doctor", "uninstall"];
@@ -23,7 +25,7 @@ fn main() -> ExitCode {
         Some("benchmark") => benchmark::run(&arguments),
         Some("doctor") => doctor::run(&arguments),
         Some("uninstall") => uninstall::run(&arguments),
-        Some("--help") => help(),
+        Some(named) if named == HELP_FLAG => help(),
         _ => usage(),
     }
 }
@@ -33,10 +35,10 @@ fn usage_line() -> String {
     format!("usage: iznik <{}> [arguments]", SUBCOMMANDS.join(" | "))
 }
 
-/// `--help`: the usage line on standard output, and success.
+/// `--help`: the usage line on standard output, and success, through the
+/// same writer every subcommand answers with.
 fn help() -> ExitCode {
-    writeln!(std::io::stdout(), "{}", usage_line()).unwrap_or_default();
-    ExitCode::SUCCESS
+    help_with(&usage_line())
 }
 
 /// A first argument the dispatcher does not know, or none: the usage line on

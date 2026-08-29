@@ -1,8 +1,8 @@
-# Plan 0006 — Client API and Handoff — ✅ Complete
+# Plan 0006 — Client API and Handoff — ✅ Done
 
 The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file. Task-level truth lives in [tasks/](tasks/) frontmatter; Makina's integration coordinator updates both layers.
 
-- **Status:** ✅ Complete.
+- **Status:** ✅ Done.
 
 - **Goal:** publish a stable C ABI over `iznik-client` with a byte-pipe surface shaped for libghostty, a golden-tested header and a C smoke program, diagnostics that isolate a fault to one layer, a normative client contract, and a soak that proves the system holds for hours.
 - **Root cause:** the macOS application is built separately, in another language, on another machine — so the boundary has to be specified rather than discovered, proven with C rather than promised, and a fault spanning five layers has to be diagnosable from outside all of them.
@@ -422,6 +422,57 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   The module passed a thousand lines again, so what a soak asks the containers
   to do is `soak/commands.rs` now.
 
+- **Review of `014cbef`, and of `06440a4` beside it:** twenty and fifteen
+  findings. Two of them were the soak's own instruments lying about what they
+  had seen.
+
+  Every step waited for a string that was part of the line it had just typed,
+  and a terminal echoes a line as it is typed — so no step ever waited for its
+  flood. The awaits were over before the shell had read the command, which
+  meant the cut landed mid-flood, the recovery step proved that a pane echoes
+  keystrokes, and the wait that was supposed to let the ring-filling flood
+  finish returned in milliseconds. Seven scenarios elsewhere in this suite
+  already type `echo apart-$((6*7))` and wait for `apart-42` for exactly this
+  reason; the soak had dropped a house convention. Its markers are typed with
+  an empty pair of quotes in the middle of them now, which a shell takes off
+  and a terminal does not.
+
+  And nothing witnessed the flood that fills the ring. A step that ends on an
+  input reports success whether or not the pane took it, and a pane that
+  refuses one says so asynchronously to nobody. What witnesses it now is where
+  the held client attached: the byte it is told the pane has already reached,
+  which for a pane that has poured eight hundred thousand lines is exactly
+  what the arithmetic says it should be.
+
+  Growth was read from two points — the middles of the two halves — which sees
+  only what happened between them: a leak beginning in the last quarter of a
+  run reported zero bytes an hour at any size, and that is the shape a soak of
+  hours exists to reach. It is the slope of the line fitted through every
+  measured sample now, in whole numbers, which reads growth wherever it
+  happens and moves by a fraction of one sample that caught a flood.
+
+  Three more were checks that could not fire or fired wrongly. A stack that
+  dies partway through fails every round from then on, but a failing round is
+  slower than a healthy one, so counting them against the attempts could stay
+  under half for hours — a run of failures one after another is refused now. A
+  census that stopped finding a side left a series that ended early, and a
+  rate from it is a rate from whenever it stopped. And the held client was
+  interrupted with no chance to catch up, against a byte floor whose margin is
+  a tenth of a percent — it is let drain first.
+
+  The rest: the cut told the daemon from a relay by name alone, which is the
+  distinction the census beside it exists to make, and said why it refused on
+  the stream a failed command's words are dropped from; the client census
+  counted any process of that name, and the churn runs one in the same
+  container; the container margin was still under the deadlines this module
+  allows; and the scenario proved the guard that leaves the relay out with a
+  replica of it rather than with the guard.
+
+  From `06440a4`: the README's handoff section named a library file cargo does
+  not write, a socket path that is wrong on the platform the section is for, a
+  distribution command that refuses on a stock Mac, and an environment
+  variable the library does not read — all four now say what the code does.
+
 - **What `handoff-documentation` found.** The documents said one thing that
   was not true and one that could not be: the root README described plan 0006
   as designed and not built, and every crate README said its tests would
@@ -452,4 +503,4 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
-_Last updated: 2026-08-29, against `develop` @ `b0cebe0`._
+_Last updated: 2026-08-29, against `develop` @ `06440a4`._

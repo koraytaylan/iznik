@@ -1,4 +1,6 @@
-//! The one place the binary writes: one hand-built JSON object per line.
+//! Where the binary writes what it found: one hand-built JSON object per
+//! line. The one thing that does not come through here is a usage line, which
+//! is an answer to a question rather than an account of a host.
 //!
 //! By hand, because what these commands print is a handful of shapes and a
 //! writer for them is smaller than the reasoning about which crate should
