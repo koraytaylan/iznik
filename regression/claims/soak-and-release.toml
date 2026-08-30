@@ -99,3 +99,15 @@ id = "soak-checklist-names-a-release-in-order"
 statement = "The release checklist names the soak report, the baseline, `cargo xtask check`, `xtask claims coverage`, the distribution artifacts and the golden header, in that order — the soak first because it is the only item that takes a working day and the only one that fails for reasons the others cannot see."
 test = "xtask::regression_soak::regression_soak_checklist_names_a_release_in_order"
 because = "the checklist is a file in this repository, and the order is where each name appears in it"
+
+[[claim]]
+id = "soak-report-fits-the-note-it-is-written-into"
+statement = "A report of the six hours a release is asked for, put under the prose of the note the checklist sends it to, is inside the thousand lines every file in this repository is held to — because a report whose size follows the length of the run would be printable at ten minutes and unprintable at six hours, which is the only run a release cares about. Each series is shown in at most sixty rows and the last."
+test = "xtask::regression_soak::regression_soak_report_fits_the_note_it_is_written_into"
+because = "the length of a rendered report is arithmetic over a report, and the note's prose is read from the file itself"
+
+[[claim]]
+id = "soak-report-reads-growth-from-every-sample"
+statement = "The growth a report says is the line fitted through every sample the run took and not through the rows the table shows: a series that climbs between the shown rows reports the climb. Showing fewer rows is what a person reads, never what a soak is judged on."
+test = "xtask::regression_soak::regression_soak_report_reads_growth_from_every_sample"
+because = "it is arithmetic over a series of numbers"

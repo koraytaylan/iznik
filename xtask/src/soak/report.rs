@@ -244,6 +244,32 @@ fn decoded_length(characters: u64, padding: u64) -> u64 {
         .saturating_sub(padding)
 }
 
+/// The most rows one series is shown in.
+///
+/// A report has one home — `docs/notes/soak.md`, a document held to a
+/// thousand lines like every other file — and a run six times longer must not
+/// print a report six times longer, or the only run a release cares about is
+/// the one whose report will not fit where the release is told to put it.
+pub const MOST_ROWS: usize = 60;
+
+/// Every `stride`th sample, and always the last one, so that a series of any
+/// length is shown in at most [`MOST_ROWS`] rows.
+///
+/// The last sample is where a reader looks first — it is what the run ended
+/// on — and a stride that does not divide the series would otherwise stop
+/// short of it.
+#[must_use]
+pub fn shown(samples: &[Sample]) -> Vec<Sample> {
+    let stride = samples.len().div_ceil(MOST_ROWS).max(1);
+    let mut rows: Vec<Sample> = samples.iter().copied().step_by(stride).collect();
+    if let Some(last) = samples.last()
+        && rows.last() != Some(last)
+    {
+        rows.push(*last);
+    }
+    rows
+}
+
 /// A duration as the whole minutes a report says.
 #[must_use]
 pub fn minutes(held: Duration) -> u64 {
@@ -281,12 +307,22 @@ pub fn rendered(report: &Report) -> String {
         report.heard.attached.unwrap_or(0)
     );
     for (side, samples) in report.weighed() {
+        let rows = shown(samples);
         let _series = writeln!(
             said,
             "\n## The {side}, in bytes\n\n| At | Resident |\n|---|---|"
         );
-        for sample in samples {
+        for sample in &rows {
             let _row = writeln!(said, "| {}s | {} |", sample.at.as_secs(), sample.bytes);
+        }
+        if rows.len() < samples.len() {
+            let _spaced = writeln!(
+                said,
+                "\nOf {} samples this shows {}, evenly spaced and ending on the \
+                 last. The growth below is read from every one of them.",
+                samples.len(),
+                rows.len()
+            );
         }
         let grew = grown(samples, report.warmup).map_or_else(
             || "nothing measured after the warmup".to_owned(),

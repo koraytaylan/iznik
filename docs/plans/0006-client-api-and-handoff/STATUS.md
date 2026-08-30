@@ -589,6 +589,35 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   a second. This machine is shared with other work, and a timing figure taken
   under that load is a measurement of the machine.
 
+- **What the release soak found, 2026-08-30.** The six hours the checklist
+  asks a person for ran on 2026-08-29 from `24b057d` and passed: a thousand
+  and ten rounds, every one finished and flooded, a thousand and ten cuts each
+  seen to have stopped the daemon it named, one screen on the held client
+  across all of them, and growth of 8388 bytes an hour on the held client
+  against a ceiling of 4194304 — none at all on either daemon. `docs/notes/soak.md` is that run.
+
+  Writing it into the note is where the defect was. The report prints a row
+  per sample, so its length follows the length of the run: ten minutes is
+  twelve rows a series and six hours is three hundred and thirty-seven, which
+  made a note of 1150 lines against a repository that holds every file to a
+  thousand — checked by `xtask`'s own length policy. The only run a release
+  cares about was the one run whose report would not fit where the checklist
+  sends it, and the checklist's item 1 was unexecutable as written.
+
+  A series is now shown in at most sixty rows and the last, evenly spaced,
+  with the count of samples said above the growth so nobody reads the table as
+  the whole census — and the growth stays the line fitted through every
+  sample, which is the half that matters. Both halves are proven and both
+  fail without the fix: showing every sample again gives "a release's report
+  under this note's 98 lines of prose is 1150 lines", and fitting the shown
+  rows instead of all of them is caught by a series built to climb between
+  them. `regression/claims/soak-and-release.toml` declares the two.
+
+  One thing the soak swept in that should never have been committed: a
+  `nohup.out` at the root, from the run's own console, landed in `6f90634`.
+  It is untracked now, ignored, and the transcript kept beside the run's other
+  artifacts.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
 _Last updated: 2026-08-29, against `develop` @ `06440a4`._

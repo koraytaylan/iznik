@@ -14,10 +14,11 @@
 use core::time::Duration;
 use std::path::{Path, PathBuf};
 
+use xtask::policy::length::MAXIMUM_LINES;
 use xtask::soak::{
-    COMPACT, FLOOD_LINES, Heard, OPENING_FLOOD_LINES, Report, SERVER_PROCESS, SIDES,
+    COMPACT, FLOOD_LINES, Heard, MOST_ROWS, OPENING_FLOOD_LINES, Report, SERVER_PROCESS, SIDES,
     SOAK_GROWTH_CEILING_PER_HOUR, Sample, SoakError, WEIGH, asked_for, grown, heard_more, judged,
-    poured, rendered, soaked,
+    poured, rendered, shown, soaked,
 };
 
 /// How long the case runs the whole stack for.
@@ -741,5 +742,110 @@ fn regression_soak_weighs_with_one_census() {
     assert!(
         census.contains("--stdio"),
         "the census this compares still leaves the relay out: {census}"
+    );
+}
+
+/// How long a release's soak runs: the duration the first item of the
+/// checklist asks a person for, which is the run whose report has to fit.
+const RELEASE_SERIES: u64 = 6 * 3600;
+
+/// And how often it weighs a side over that: what the soak's own schedule
+/// works out to for a run of six hours.
+const RELEASE_EVERY: u64 = 64;
+
+/// A release's series: six hours weighed on the soak's own schedule, climbing
+/// by `per_hour`.
+fn release_series(per_hour: u64) -> Vec<Sample> {
+    (0..=RELEASE_SERIES.checked_div(RELEASE_EVERY).unwrap_or(1))
+        .map(|at| {
+            let seconds = at.saturating_mul(RELEASE_EVERY);
+            let grown = per_hour
+                .saturating_mul(seconds)
+                .checked_div(SERIES)
+                .unwrap_or(0);
+            Sample {
+                at: Duration::from_secs(seconds),
+                bytes: RESIDENT.saturating_add(grown),
+            }
+        })
+        .collect()
+}
+
+/// # Panics
+///
+/// When a report of the six hours a release runs does not fit under the prose
+/// of the note it is written into.
+#[test]
+fn regression_soak_report_fits_the_note_it_is_written_into() {
+    let level = release_series(0);
+    let mut report = passing();
+    report.duration = Duration::from_secs(RELEASE_SERIES);
+    report.client = level.clone();
+    report.server = level.clone();
+    report.churned = level;
+    let said = rendered(&report);
+    let committed = std::fs::read_to_string(root().join(NOTE))
+        .unwrap_or_else(|error| panic!("{NOTE}: {error}"));
+    let prose = committed
+        .lines()
+        .take_while(|line| !line.starts_with("- **Machine:**"))
+        .count();
+    let together = prose.saturating_add(said.lines().count());
+    assert!(
+        together <= MAXIMUM_LINES,
+        "a release's report under this note's {prose} lines of prose is {together} lines, \
+         and a file may have {MAXIMUM_LINES}"
+    );
+    for (side, samples) in report.weighed() {
+        assert!(
+            shown(samples).len() <= MOST_ROWS.saturating_add(1),
+            "the {side} is shown in at most {MOST_ROWS} rows and the last"
+        );
+    }
+}
+
+/// # Panics
+///
+/// When the growth a report says is read from the rows it shows rather than
+/// from every sample that was taken.
+#[test]
+fn regression_soak_report_reads_growth_from_every_sample() {
+    let level = release_series(0);
+    let stride = level.len().div_ceil(MOST_ROWS).max(1);
+    let climbing: Vec<Sample> = level
+        .iter()
+        .enumerate()
+        .map(|(at, sample)| Sample {
+            at: sample.at,
+            bytes: if at.checked_rem(stride) == Some(0) {
+                sample.bytes
+            } else {
+                sample.bytes.saturating_add(
+                    SOAK_GROWTH_CEILING_PER_HOUR.saturating_mul(u64::try_from(at).unwrap_or(0)),
+                )
+            },
+        })
+        .collect();
+    let rows = shown(&climbing);
+    let all = grown(&climbing, NO_WARMUP).unwrap_or(0);
+    let fitted = grown(&rows, NO_WARMUP).unwrap_or(0);
+    assert_ne!(
+        all, fitted,
+        "the series has to climb between the rows it is shown in, or nothing is being asked"
+    );
+    let mut report = passing();
+    report.duration = Duration::from_secs(RELEASE_SERIES);
+    report.client = climbing.clone();
+    report.server = climbing.clone();
+    report.churned = climbing;
+    let said = rendered(&report);
+    assert!(
+        said.contains(&format!("Growth after the warmup: {all} bytes an hour.")),
+        "the growth is the fit through every sample, not through the {} rows shown",
+        rows.len()
+    );
+    assert!(
+        !said.contains(&format!("Growth after the warmup: {fitted} bytes an hour.")),
+        "and not the fit through the rows"
     );
 }

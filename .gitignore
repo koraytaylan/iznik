@@ -21,6 +21,11 @@ __pycache__/
 # OS noise
 .DS_Store
 
+# What a long run writes beside itself when it is started with `nohup`: the
+# six-hour soak the release checklist asks for is started that way, and its
+# console output belongs with the run's own artifacts, not in the tree.
+/nohup.out
+
 # Makina runtime state, when it is kept inside the checkout.
 /.worktrees/
 

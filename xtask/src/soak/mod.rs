@@ -37,7 +37,7 @@ pub use crate::soak::commands::{COMPACT, TAIL_OUTPUT, TAIL_TROUBLE, WEIGH};
 use crate::soak::commands::{cut, machine, revive, running, stop_tail, tail_command, weighed};
 pub use crate::soak::judge::judged;
 pub use crate::soak::report::{
-    Heard, Report, Sample, grown, heard_more, minutes, poured, rendered,
+    Heard, MOST_ROWS, Report, Sample, grown, heard_more, minutes, poured, rendered, shown,
 };
 use crate::soak::steps::{filling_step, flooding_step, opening_step, recovery_step, settled_step};
 

@@ -1,16 +1,26 @@
 # Soak report
 
-This is the run this task commits: ten minutes with a two-minute warmup, taken
-on 2026-08-29 from the tree that became this commit, whose parent is `c45ddd2`.
-It is not the run a release needs. That one is six hours, is run by a person,
-and is the first item on the [release checklist](release-checklist.md); this
-one is here so that the shape of a report is in the tree, and so that a change
-which breaks the soak breaks something visible.
+This is a release's run: six hours with a ten-minute warmup, taken on
+2026-08-29 from `24b057d`, by a person at a terminal. It is the first item on
+the [release checklist](release-checklist.md) and the one item there that
+cannot be automated away — a leak of a few kilobytes a reconnection is
+invisible in every other item on that list and fatal by Thursday, and the only
+thing that finds it is time.
+
+It passed. A thousand and ten rounds, every one of them finished and flooded
+and not one failing; a thousand and ten cuts, each seen to have stopped the
+daemon it named; a thousand and ten sessions made and unmade beside them.
+The held client took a hundred and ninety-one mebibytes over three hundred and
+twenty-six thousand deliveries and saw one screen — the attachment — which is
+to say it was carried across every one of those cuts without the host ever
+having to redraw it. The growth: eight thousand three hundred and
+eighty-eight bytes an hour on the held client and none at all on either
+daemon, against a ceiling of four mebibytes.
 
 Reproduce it with:
 
 ```sh
-cargo xtask soak --duration 10 --warmup 2
+cargo xtask soak
 ```
 
 ## What ran
@@ -95,14 +105,13 @@ written, and read back a window of lines at a time: a command's output is
 captured up to a mebibyte and the end of it is what survives, so a run read in
 one go would be checked from its middle and its beginning called whole.
 
-
 - **Machine:** Linux 7.0.0-29-generic x86_64, AMD Ryzen 7 PRO 8700GE w/ Radeon 780M Graphics, 61 GiB memory, 16 cores
-- **Duration:** 10 minutes
-- **Warmup:** 2 minutes
-- **Rounds:** 29 attempted, 29 finished, 29 flooded, longest run of failures 0
-- **Cuts:** 29, each seen to have stopped the daemon it named
-- **Pane churn:** 29 sessions made and unmade
-- **Held client:** 9683 deliveries, 5771602 bytes, 1 screens, attached at byte 6288982
+- **Duration:** 360 minutes
+- **Warmup:** 10 minutes
+- **Rounds:** 1010 attempted, 1010 finished, 1010 flooded, longest run of failures 0
+- **Cuts:** 1010, each seen to have stopped the daemon it named
+- **Pane churn:** 1010 sessions made and unmade
+- **Held client:** 326820 deliveries, 201015872 bytes, 1 screens, attached at byte 6288982
 - **Growth ceiling:** 4194304 bytes an hour, after the warmup
 
 
@@ -110,49 +119,196 @@ one go would be checked from its middle and its beginning called whole.
 
 | At | Resident |
 |---|---|
-| 21s | 2801664 |
-| 84s | 2797568 |
-| 148s | 2813952 |
-| 212s | 2805760 |
-| 276s | 2822144 |
-| 340s | 2818048 |
-| 403s | 2809856 |
-| 467s | 2813952 |
-| 531s | 2813952 |
-| 595s | 2822144 |
+| 21s | 2994176 |
+| 404s | 3006464 |
+| 795s | 3035136 |
+| 1178s | 3026944 |
+| 1562s | 3031040 |
+| 1950s | 3022848 |
+| 2341s | 3031040 |
+| 2724s | 3031040 |
+| 3107s | 3039232 |
+| 3489s | 3026944 |
+| 3872s | 3026944 |
+| 4268s | 3031040 |
+| 4651s | 3031040 |
+| 5045s | 3031040 |
+| 5439s | 3035136 |
+| 5823s | 3026944 |
+| 6220s | 3031040 |
+| 6614s | 3026944 |
+| 7008s | 3026944 |
+| 7391s | 3022848 |
+| 7774s | 3031040 |
+| 8174s | 3035136 |
+| 8568s | 3031040 |
+| 8950s | 3026944 |
+| 9333s | 3031040 |
+| 9718s | 3022848 |
+| 10104s | 3043328 |
+| 10489s | 3067904 |
+| 10872s | 3072000 |
+| 11255s | 3072000 |
+| 11639s | 3063808 |
+| 12025s | 3084288 |
+| 12410s | 3088384 |
+| 12792s | 3080192 |
+| 13175s | 3080192 |
+| 13557s | 3076096 |
+| 13940s | 3088384 |
+| 14323s | 3076096 |
+| 14705s | 3031040 |
+| 15088s | 3031040 |
+| 15470s | 3026944 |
+| 15853s | 3031040 |
+| 16235s | 3026944 |
+| 16618s | 3047424 |
+| 17000s | 3043328 |
+| 17383s | 3047424 |
+| 17766s | 3072000 |
+| 18148s | 3063808 |
+| 18531s | 3072000 |
+| 18913s | 3072000 |
+| 19296s | 3067904 |
+| 19678s | 3067904 |
+| 20061s | 3063808 |
+| 20444s | 3076096 |
+| 20826s | 3076096 |
+| 21209s | 3072000 |
+| 21592s | 3067904 |
 
-Growth after the warmup: 44147 bytes an hour.
+Of 337 samples this shows 57, evenly spaced and ending on the last. The growth below is read from every one of them.
+
+Growth after the warmup: 8388 bytes an hour.
 
 ## The daemon it watches, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 10776576 |
-| 84s | 10801152 |
-| 148s | 10813440 |
-| 212s | 10817536 |
-| 276s | 10821632 |
-| 340s | 10821632 |
-| 403s | 10829824 |
-| 467s | 10854400 |
-| 531s | 10862592 |
-| 595s | 10870784 |
+| 21s | 11534336 |
+| 404s | 11251712 |
+| 795s | 11321344 |
+| 1178s | 11317248 |
+| 1562s | 11296768 |
+| 1950s | 11288576 |
+| 2341s | 11313152 |
+| 2724s | 11313152 |
+| 3107s | 11329536 |
+| 3489s | 11300864 |
+| 3872s | 11296768 |
+| 4268s | 11333632 |
+| 4651s | 11313152 |
+| 5045s | 11337728 |
+| 5439s | 11300864 |
+| 5823s | 11321344 |
+| 6220s | 11366400 |
+| 6614s | 11325440 |
+| 7008s | 11325440 |
+| 7391s | 11300864 |
+| 7774s | 11300864 |
+| 8174s | 11296768 |
+| 8568s | 11378688 |
+| 8950s | 11341824 |
+| 9333s | 11386880 |
+| 9718s | 11436032 |
+| 10104s | 11395072 |
+| 10489s | 11354112 |
+| 10872s | 11235328 |
+| 11255s | 11268096 |
+| 11639s | 11309056 |
+| 12025s | 11280384 |
+| 12410s | 11358208 |
+| 12792s | 11309056 |
+| 13175s | 11304960 |
+| 13557s | 11280384 |
+| 13940s | 11325440 |
+| 14323s | 11280384 |
+| 14705s | 11309056 |
+| 15088s | 11321344 |
+| 15470s | 11407360 |
+| 15853s | 11321344 |
+| 16235s | 11317248 |
+| 16618s | 11296768 |
+| 17000s | 11362304 |
+| 17383s | 11354112 |
+| 17766s | 11329536 |
+| 18148s | 11333632 |
+| 18531s | 11345920 |
+| 18913s | 11264000 |
+| 19296s | 11309056 |
+| 19678s | 11276288 |
+| 20061s | 11300864 |
+| 20444s | 11280384 |
+| 20826s | 11292672 |
+| 21209s | 11317248 |
+| 21592s | 11276288 |
 
-Growth after the warmup: 492396 bytes an hour.
+Of 337 samples this shows 57, evenly spaced and ending on the last. The growth below is read from every one of them.
+
+Growth after the warmup: 0 bytes an hour.
 
 ## The daemon it churns, in bytes
 
 | At | Resident |
 |---|---|
-| 21s | 4460544 |
-| 84s | 4485120 |
-| 148s | 4485120 |
-| 212s | 4489216 |
-| 276s | 4489216 |
-| 340s | 4493312 |
-| 403s | 4493312 |
-| 467s | 4493312 |
-| 531s | 4493312 |
-| 595s | 4493312 |
+| 21s | 4431872 |
+| 404s | 4259840 |
+| 795s | 4259840 |
+| 1178s | 4263936 |
+| 1562s | 4259840 |
+| 1950s | 4259840 |
+| 2341s | 4247552 |
+| 2724s | 4247552 |
+| 3107s | 4259840 |
+| 3489s | 4268032 |
+| 3872s | 4268032 |
+| 4268s | 4263936 |
+| 4651s | 4268032 |
+| 5045s | 4263936 |
+| 5439s | 4259840 |
+| 5823s | 4268032 |
+| 6220s | 4263936 |
+| 6614s | 4263936 |
+| 7008s | 4268032 |
+| 7391s | 4263936 |
+| 7774s | 4263936 |
+| 8174s | 4263936 |
+| 8568s | 4263936 |
+| 8950s | 4263936 |
+| 9333s | 4259840 |
+| 9718s | 4259840 |
+| 10104s | 4268032 |
+| 10489s | 4268032 |
+| 10872s | 4202496 |
+| 11255s | 4194304 |
+| 11639s | 4194304 |
+| 12025s | 4194304 |
+| 12410s | 4198400 |
+| 12792s | 4198400 |
+| 13175s | 4198400 |
+| 13557s | 4198400 |
+| 13940s | 4198400 |
+| 14323s | 4198400 |
+| 14705s | 4194304 |
+| 15088s | 4194304 |
+| 15470s | 4198400 |
+| 15853s | 4198400 |
+| 16235s | 4198400 |
+| 16618s | 4194304 |
+| 17000s | 4202496 |
+| 17383s | 4206592 |
+| 17766s | 4190208 |
+| 18148s | 4210688 |
+| 18531s | 4210688 |
+| 18913s | 4206592 |
+| 19296s | 4194304 |
+| 19678s | 4206592 |
+| 20061s | 4206592 |
+| 20444s | 4198400 |
+| 20826s | 4202496 |
+| 21209s | 4202496 |
+| 21592s | 4202496 |
 
-Growth after the warmup: 60531 bytes an hour.
+Of 337 samples this shows 57, evenly spaced and ending on the last. The growth below is read from every one of them.
+
+Growth after the warmup: 0 bytes an hour.
