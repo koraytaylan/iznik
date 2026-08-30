@@ -646,14 +646,24 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   which cannot have been missed. Proven by forcing a two-second gap: reliably
   failing before, passing after.
 
-  **The same race is latent in nine other cases in `pane.rs`**, every one of
-  which spawns, subscribes and waits for the first prompt. They have never
-  failed, and the same newline does not fix them: five assert on exact bytes,
-  sequences or screen contents, and a newline this case typed is a byte those
-  cases did not expect. Closing it there means reworking what each expects, or
-  a pane that can be subscribed to before its child can print — the second is
-  an API change and neither is a release's work. Recorded here rather than
-  done hastily against proofs that currently hold.
+  **The same race was latent in nine other cases in `pane.rs`**, every one of
+  which spawns, subscribes and waits for the first prompt — and one of them,
+  `remembers-the-alternate-screen`, then failed the gate the same way. It is
+  closed for all ten now, and not by typing at the shell: three read-side
+  attempts each broke five cases, because these are tight against the mark
+  stream and against what the pane answers. What works is passive. A pane now
+  counts the prompts its shell has printed, in `PaneState` beside `newest` and
+  `exited`, incremented where the mark is sent — so it carries what the mark
+  carried, that the emulator has been fed the bytes that said so, and carries
+  it whenever it is asked rather than once. A case reads the count and then
+  drains what the shell said starting up, which waiting for the mark used to
+  take with it.
+
+  Proven both ways: `pane-assembly-counts-a-prompt-that-was-not-heard` shows
+  a receiver made after the prompt hears nothing of it while the pane still
+  counts it, and all ten cases pass with a two-second gap forced between every
+  spawn and its subscription — the window that reliably failed before.
+  Dropping the increment fails ten of the eleven.
 
   With both closed, item 4 answers 392 proven, none failed, none missing, and
   the one deferred that is deferred by design: the Darwin artifacts, which

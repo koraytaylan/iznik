@@ -57,6 +57,14 @@ pub struct PaneState {
     pub oldest: Sequence,
     /// Whether the child has ended and its output stream closed.
     pub exited: bool,
+    /// How many prompts the shell has said it was about to print.
+    ///
+    /// Counted where the mark is sent, so a pane that has prompted once is one
+    /// whose emulator has been fed the bytes that said so. Marks are an event
+    /// and this is not: a client that subscribed after the shell came up would
+    /// wait for a first prompt that had already happened, where reading this
+    /// says what has happened whenever it is asked.
+    pub prompts: u64,
 }
 
 /// Why a pane operation failed.
@@ -207,6 +215,7 @@ impl Pane {
             newest: Sequence(0),
             oldest: Sequence(0),
             exited: false,
+            prompts: 0,
         };
         let (state_tx, state) = watch::channel(initial);
 
@@ -492,13 +501,14 @@ impl VtTask {
         };
         let mut observer = MarkObserver::new();
         let mut screen_state = ScreenState::new();
+        let mut prompts = 0_u64;
         let mut subscribers = 0_usize;
         let mut requests_open = true;
         loop {
             tokio::select! {
                 chunk = output.next() => match chunk {
                     Some(bytes) => {
-                        feed_chunk(
+                        let prompted = feed_chunk(
                             &bytes,
                             &mut mirror,
                             &mut observer,
@@ -507,7 +517,8 @@ impl VtTask {
                             &marks,
                             &responses,
                         );
-                        publish(&state, &history, &mirror, false);
+                        prompts = prompts.saturating_add(prompted);
+                        publish(&state, &history, &mirror, false, prompts);
                     }
                     None => break,
                 },
@@ -518,7 +529,7 @@ impl VtTask {
                     }
                     Some(Request::Resize { columns: width, rows: height }) => {
                         mirror.resize(width, height);
-                        publish(&state, &history, &mirror, false);
+                        publish(&state, &history, &mirror, false, prompts);
                     }
                     Some(Request::Subscribe) => {
                         subscribers = subscribers.saturating_add(1);
@@ -532,7 +543,7 @@ impl VtTask {
                 },
             }
         }
-        publish(&state, &history, &mirror, true);
+        publish(&state, &history, &mirror, true, prompts);
         let _sent = closed.send(());
     }
 }
@@ -549,6 +560,11 @@ fn newest_of(history: &Arc<Mutex<PaneHistory>>) -> Sequence {
 /// remembering the primary screen at each alternate-screen entry — writes the
 /// mirror's answers back to the child when no client is subscribed, and emits the
 /// marks.
+///
+/// Answers how many of those marks said the shell was about to print a prompt,
+/// which the caller adds to what the pane publishes: a mark is heard once and
+/// only by whoever was already listening, and the count is what is left to
+/// read afterwards.
 fn feed_chunk(
     bytes: &[u8],
     mirror: &mut Mirror,
@@ -557,7 +573,7 @@ fn feed_chunk(
     history: &Arc<Mutex<PaneHistory>>,
     marks: &broadcast::Sender<MarkEvent>,
     responses: &InputHandle,
-) {
+) -> u64 {
     let base = history
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -619,9 +635,14 @@ fn feed_chunk(
         mirror.feed(rest);
         drain_responses(mirror, responses);
     }
+    let mut prompted = 0_u64;
     for event in events {
+        if matches!(event.kind, MarkKind::PromptStart) {
+            prompted = prompted.saturating_add(1);
+        }
         let _sent = marks.send(event);
     }
+    prompted
 }
 
 /// Writes the mirror's pending query answers back to the child's input. The
@@ -640,6 +661,7 @@ fn publish(
     history: &Arc<Mutex<PaneHistory>>,
     mirror: &Mirror,
     exited: bool,
+    prompts: u64,
 ) {
     let (newest, oldest) = {
         let history = history.lock().unwrap_or_else(PoisonError::into_inner);
@@ -651,6 +673,7 @@ fn publish(
         newest,
         oldest,
         exited,
+        prompts,
     });
 }
 

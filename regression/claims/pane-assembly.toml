@@ -63,3 +63,9 @@ id = "pane-assembly-remembers-repeated-alternate-switches"
 statement = "Repeated alternate-screen switches in one command — enter, leave, enter — are remembered in order: the reproduction is the last alternate content and reveals the primary as it stood at the last enter."
 test = "iznik-server::pane::pane_remembers_repeated_alternate_switches"
 because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"
+
+[[claim]]
+id = "pane-assembly-counts-a-prompt-that-was-not-heard"
+statement = "The pane counts the prompts its shell has printed, where the mark is sent — so a prompt is still readable after the moment it happened, and a receiver made afterwards, which a broadcast keeps nothing for, hears nothing of it. A command run prints another and the count follows. This is what a case waits on to know a shell has come up: waiting for the mark itself is waiting for something that may already be gone."
+test = "iznik-server::pane::pane_counts_a_prompt_that_was_not_heard"
+because = "the pane is Rust over the emulator and a real pty, identical on the host container and here; the musl binary is covered by fidelity-suite"

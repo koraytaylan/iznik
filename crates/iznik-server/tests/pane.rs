@@ -103,6 +103,34 @@ async fn wait_idle(pane: &Pane) -> Sequence {
     last
 }
 
+/// Waits until the shell has printed its first prompt, read from the pane.
+///
+/// Read rather than waited for as a mark. A broadcast keeps nothing for a
+/// receiver that was not yet there, and a shell can print its first prompt
+/// between the spawn returning and `marks()` being called — which is not a
+/// prompt that arrives late but one that is already gone, so a wait for it
+/// ends at its deadline instead of at the prompt. On a loaded machine that is
+/// a proof failing for what the machine was doing.
+///
+/// The count is taken where the mark is sent, so it says what the mark said
+/// and says it whenever it is asked. Nothing is subscribed to, asked of the
+/// pane or typed at it, so a case that is about what the pane answers, or
+/// about the bytes on its screen, sees exactly what it saw before.
+async fn wait_started(pane: &Pane, marks: &mut broadcast::Receiver<MarkEvent>) -> bool {
+    for _try in 0..POLL_ATTEMPTS {
+        if pane.state().prompts > 0 {
+            // And past what the shell said starting up, which waiting for the
+            // prompt as a mark used to take with it: its own rc file runs
+            // commands, so a case that left them queued would have its next
+            // wait answered by one of those rather than by what it typed.
+            while marks.try_recv().is_ok() {}
+            return true;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    false
+}
+
 /// After input, `screen` reproduced through the oracle shows the echoed line.
 ///
 /// # Panics
@@ -115,9 +143,7 @@ async fn pane_round_trips_a_command_through_the_screen() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     // The output `iznik-42-out` differs from the typed `echo iznik-$((6*7))-out`,
     // so finding it proves the command's output round-tripped, not just its echo.
@@ -151,9 +177,7 @@ async fn pane_history_is_the_byte_stream() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     let content = corpus::generated(0x50a5, 4 * 1024 * 1024);
     let path = std::env::temp_dir().join("iznik-pane-history.bin");
@@ -195,9 +219,7 @@ async fn pane_sequences_are_exact() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
     pane.input(b"true\n".to_vec())
         .expect("a command is accepted");
     wait_kind(&mut marks, is_finished)
@@ -238,9 +260,7 @@ async fn pane_answers_queries_only_without_subscribers() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     // A probe that reads the terminal's cursor-position reply from its own input,
     // in a non-canonical mode so an unterminated reply is delivered at once.
@@ -288,9 +308,7 @@ async fn pane_marks_flow_from_the_shell() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     pane.input(b"cd /tmp && true\n".to_vec())
         .expect("the command is accepted");
@@ -328,9 +346,7 @@ async fn pane_remembers_the_alternate_screen() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     pane.input(
         b"printf 'PRIMARY-LINE\\n'; printf '\\033[?1049h'; printf 'ALTERNATE-LINE\\n'\n".to_vec(),
@@ -377,9 +393,7 @@ async fn pane_resize_reaches_the_child_and_the_state() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     pane.resize(100, 40).expect("the resize is applied");
 
@@ -422,9 +436,7 @@ async fn pane_exits_and_leaves_nothing() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     pane.close().expect("the close signal is sent");
     let status = tokio::time::timeout(DEADLINE, pane.exit_status())
@@ -447,22 +459,10 @@ async fn pane_exits_and_leaves_nothing() {
         .await
         .expect("a second pane spawns");
     let mut running_marks = running.marks();
-    // A prompt this case asked for, rather than the one the shell printed of
-    // its own accord. A broadcast keeps nothing for a receiver that was not
-    // yet there, and this shell's first prompt can be printed between the
-    // spawn returning and the subscription above being made — which is not a
-    // prompt that arrives late but one that is already gone, and a wait for it
-    // ends at its deadline. That is how this case failed a release's `claims
-    // coverage`: the pane above it had spawned, prompted, closed and exited in
-    // twenty-nine milliseconds, and then this prompt did not come in twenty
-    // seconds. A newline typed after subscribing is answered with a prompt
-    // that cannot have been missed.
-    running
-        .input(b"\n".to_vec())
-        .expect("a newline is accepted");
-    wait_kind(&mut running_marks, is_prompt)
-        .await
-        .expect("its prompt");
+    assert!(
+        wait_started(&running, &mut running_marks).await,
+        "its prompt"
+    );
     running
         .input(b"sleep 1000\n".to_vec())
         .expect("a long command runs");
@@ -544,9 +544,7 @@ async fn pane_remembers_repeated_alternate_switches() {
         .await
         .expect("the pane spawns");
     let mut marks = pane.marks();
-    wait_kind(&mut marks, is_prompt)
-        .await
-        .expect("the first prompt");
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     // One printf: primary, enter, alt, leave, primary, enter, alt — ending on the
     // alternate screen after two enters and one leave.
@@ -583,4 +581,43 @@ async fn pane_remembers_repeated_alternate_switches() {
         contains(primary.as_bytes(), b"PRIMARY-TWO"),
         "leaving reveals the primary remembered at the last enter, not a lost one"
     );
+}
+
+/// # Panics
+///
+/// When a prompt that was printed before anything subscribed is not still
+/// readable from the pane, or when a receiver made afterwards hears it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_counts_a_prompt_that_was_not_heard() {
+    let thread = MirrorThread::start().expect("the mirror thread starts");
+    let pane = Pane::spawn(&shell_options(COLUMNS, ROWS), HISTORY_BYTES, &thread)
+        .await
+        .expect("the pane spawns");
+    let mut marks = pane.marks();
+    assert!(wait_started(&pane, &mut marks).await, "the first prompt");
+
+    // A receiver made now cannot hear the prompt that has already been
+    // printed: a broadcast keeps nothing for one that was not there.
+    let mut late = pane.marks();
+    assert!(
+        late.try_recv().is_err(),
+        "a receiver made after the prompt hears nothing of it"
+    );
+    // The pane still says it happened, which is what a case waits on instead.
+    let printed = pane.state().prompts;
+    assert!(printed > 0, "and the pane counts the prompt it printed");
+
+    // And it goes on counting: a command run prints another.
+    pane.input(b"true\n".to_vec())
+        .expect("the command is accepted");
+    wait_kind(&mut marks, is_finished)
+        .await
+        .expect("the command finishes");
+    for _try in 0..POLL_ATTEMPTS {
+        if pane.state().prompts > printed {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!("the prompt after a command is counted too");
 }
