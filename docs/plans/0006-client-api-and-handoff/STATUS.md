@@ -614,9 +614,11 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   them. `regression/claims/soak-and-release.toml` declares the two.
 
   One thing the soak swept in that should never have been committed: a
-  `nohup.out` at the root, from the run's own console, landed in `6f90634`.
-  It is untracked now, ignored, and the transcript kept beside the run's other
-  artifacts.
+  `nohup.out` at the root, from the run's own console. It is out of the
+  history rather than merely deleted from the tip — the two commits that
+  carried it were rewritten before this repository was ever pushed —
+  `.gitignore` refuses it now, and the transcript is kept beside the run's
+  other artifacts.
 
 - **What the release's `claims coverage` found, 2026-08-30.** Item 4 of the
   checklist — every claim over every task, which the gate does not do because
