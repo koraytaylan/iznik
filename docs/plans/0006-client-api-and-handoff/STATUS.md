@@ -620,4 +620,4 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
 
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
-_Last updated: 2026-08-29, against `develop` @ `06440a4`._
+_Last updated: 2026-08-30, against `develop`._
