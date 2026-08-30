@@ -653,6 +653,11 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   an API change and neither is a release's work. Recorded here rather than
   done hastily against proofs that currently hold.
 
+  With both closed, item 4 answers 392 proven, none failed, none missing, and
+  the one deferred that is deferred by design: the Darwin artifacts, which
+  need a Mac to build. Items 2, 3, 4 and 6 of the checklist have been run
+  against this tree; item 5 waits on the two musl targets and that runner.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
-_Last updated: 2026-08-30, against `develop`._
+_Last updated: 2026-08-30, against `develop` @ `1a96848`._
