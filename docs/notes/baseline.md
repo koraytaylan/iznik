@@ -29,21 +29,22 @@ way.
 | Toolchain | rustc 1.97.1 (8bab26f4f 2026-07-14) |
 | Profile | `regression` (release, thin codegen units, debug info) |
 | Shell | `sh`, passed to the daemon, so the figures do not depend on whose machine took them |
-| Measured at | `2789078` |
+| Runtime directory | `/tmp`, a tmpfs — where `XDG_RUNTIME_DIR` puts it on a systemd host |
+| Measured at | `6afd429` |
 
 ## The figures
 
 | Figure | Measured | Ceiling |
 |---|---|---|
-| Keystroke to echo, at rest, median | 0.057 ms | none |
-| Keystroke to echo, at rest, 99th percentile | 0.098 ms | 5.000 ms |
-| Keystroke to echo, under a flood, median | 0.080 ms | none |
-| Keystroke to echo, under a flood, 99th percentile | 0.199 ms | 30.000 ms |
-| One pane's throughput | 96 MiB/s | at least 50 MiB/s |
-| Eight panes' throughput together | 208 MiB/s | more than one pane's |
+| Keystroke to echo, at rest, median | 0.055 ms | none |
+| Keystroke to echo, at rest, 99th percentile | 0.099 ms | 5.000 ms |
+| Keystroke to echo, under a flood, median | 0.083 ms | none |
+| Keystroke to echo, under a flood, 99th percentile | 0.170 ms | 30.000 ms |
+| One pane's throughput | 89 MiB/s | at least 50 MiB/s |
+| Eight panes' throughput together | 212 MiB/s | more than one pane's |
 | Resident memory at rest | 6 MiB | 32 MiB |
-| Resident memory with fifty idle panes | 18 MiB | 256 MiB |
-| Startup to a socket that answers | 12.542 ms | 500.000 ms |
+| Resident memory with fifty idle panes | 17 MiB | 256 MiB |
+| Startup to a socket that answers | 6.398 ms | 500.000 ms |
 
 ## What each one is
 
@@ -51,16 +52,16 @@ way.
 pseudoterminal, timed until its echo arrives on that pane's channel through the
 socket — a thousand round trips, sorted. The flooded figure runs the same
 thousand while another subscribed pane produces at line rate, which is the
-case the whole scheduler exists for: the tail rises from 0.098 ms to 0.199 ms,
-about double, on a number more than a hundred times under the budget a person
-can feel.
+case the whole scheduler exists for: the tail rises from 0.099 ms to 0.170
+ms, about seven tenths again, on a number more than a hundred times under the
+budget a person can feel.
 
 **Throughput** is sixteen mebibytes from each pane's shell, timed from the
 first request to the last byte at the client, with credit returned as it
 arrives. The clock starts before the first pane is asked, not after the last:
 counting bytes a pane produced during the setup against a shorter window is
 what would make eight panes look faster than they are. Eight together sustain
-208 MiB/s — more than twice one pane's 96, which is what says the scheduler
+212 MiB/s — more than twice one pane's 89, which is what says the scheduler
 shares rather than serializes.
 
 **Resident memory** is the daemon process's own, read from `/proc`, at rest and
@@ -78,6 +79,16 @@ and not its capacity, since a ring is allocated as it fills.
 connection accepted — all of what a host does on its first use, which is what
 `--daemon` and the relay wait for. Separating the directory from the daemon
 would report a number nobody waits for.
+
+It is the one figure here that turns on something outside the code, so the
+machine table above names it: the directory and its socket go wherever
+`TMPDIR` points, and this figure is 6.4 ms with that on a tmpfs against 18.5
+ms with it on a disk — the same tree, two runs on the one and four on the
+other, each cluster inside a millisecond and the two twelve apart. A tmpfs
+is what the number is taken on because it is what a daemon gets in earnest:
+a real one puts its socket under `XDG_RUNTIME_DIR`, which is `/run/user/N`
+and a tmpfs on every systemd host. Reading this row without knowing which of
+the two it was is reading a number that could be either.
 
 A file cannot name the commit that adds it. The row above names the commit
 whose tree these figures were measured on, and the commit that records them
