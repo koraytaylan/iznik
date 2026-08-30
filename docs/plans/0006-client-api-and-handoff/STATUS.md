@@ -618,6 +618,41 @@ The roll-up row in [../STATUS.md](../STATUS.md) must stay in sync with this file
   It is untracked now, ignored, and the transcript kept beside the run's other
   artifacts.
 
+- **What the release's `claims coverage` found, 2026-08-30.** Item 4 of the
+  checklist — every claim over every task, which the gate does not do because
+  it verifies only what a run touched — refused two of 393. Both were the
+  proof and not the product, and both are races that only a run of everything
+  at once is wide enough to open.
+
+  `manager-passes-on-no-change-it-could-not-take` counted the models it was
+  handed inside a loop it entered only while the scripted host had been asked
+  once. Asked twice before this thread looked at all — which is what a machine
+  with 381 proofs on it does — the loop never ran, and the drain behind it
+  credited nothing, so a client that had done exactly what the claim says was
+  reported as never passing a model on. It fails in fifteen milliseconds, not
+  at a deadline, which is what said it was not load. The drain now counts what
+  it drains. Reproduced by giving the client a two-second head start, which
+  fails without the change and passes with it.
+
+  `pane-assembly-exits-and-leaves-nothing` waited for a prompt mark on a
+  subscription made after the pane was spawned. A broadcast keeps nothing for
+  a receiver that was not yet there, so a shell that printed its first prompt
+  in that gap left a wait that ended at its twenty-second deadline. The log
+  says it was not the machine: the pane above it had spawned, prompted, closed
+  and exited in twenty-nine milliseconds. It now types a newline after
+  subscribing and waits for the prompt that answers it — a mark it caused,
+  which cannot have been missed. Proven by forcing a two-second gap: reliably
+  failing before, passing after.
+
+  **The same race is latent in nine other cases in `pane.rs`**, every one of
+  which spawns, subscribes and waits for the first prompt. They have never
+  failed, and the same newline does not fix them: five assert on exact bytes,
+  sequences or screen contents, and a newline this case typed is a byte those
+  cases did not expect. Closing it there means reworking what each expects, or
+  a pane that can be subscribed to before its child can print — the second is
+  an API change and neither is a release's work. Recorded here rather than
+  done hastily against proofs that currently hold.
+
 - **Outcome:** A native application can be built against a written, golden-pinned contract without reading Rust, a C program proves the ABI end to end, any fault in the stack can be isolated to one layer with a single command, and the release checklist has a soak behind it.
 
 _Last updated: 2026-08-30, against `develop`._

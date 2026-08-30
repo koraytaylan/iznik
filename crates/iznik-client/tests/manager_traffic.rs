@@ -544,10 +544,19 @@ fn manager_traffic_passes_on_no_change_it_could_not_take() {
                 Err(_nothing) => break,
             }
         }
-        // And whatever is still queued behind what ended the loop.
+        // And whatever is still queued behind what ended the loop, counted
+        // the same way: this client can be asked its second question before
+        // this thread has looked at all, and then every event there is — the
+        // model among them — is still waiting here. A drain that credited
+        // nothing would call that a model never passed on, which is a failure
+        // of the looking and not of the client.
         while let Ok(event) = events.try_recv() {
-            if let ManagerEvent::Delta { generation, .. } = event {
-                panic!("a change this client could not take was passed on: {generation:?}");
+            match event {
+                ManagerEvent::Delta { generation, .. } => {
+                    panic!("a change this client could not take was passed on: {generation:?}")
+                }
+                ManagerEvent::Snapshot { .. } => snapshots = snapshots.saturating_add(1),
+                _otherwise => {}
             }
         }
         assert!(snapshots > 0, "the host's model is passed on");

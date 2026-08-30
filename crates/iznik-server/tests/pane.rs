@@ -447,6 +447,19 @@ async fn pane_exits_and_leaves_nothing() {
         .await
         .expect("a second pane spawns");
     let mut running_marks = running.marks();
+    // A prompt this case asked for, rather than the one the shell printed of
+    // its own accord. A broadcast keeps nothing for a receiver that was not
+    // yet there, and this shell's first prompt can be printed between the
+    // spawn returning and the subscription above being made — which is not a
+    // prompt that arrives late but one that is already gone, and a wait for it
+    // ends at its deadline. That is how this case failed a release's `claims
+    // coverage`: the pane above it had spawned, prompted, closed and exited in
+    // twenty-nine milliseconds, and then this prompt did not come in twenty
+    // seconds. A newline typed after subscribing is answered with a prompt
+    // that cannot have been missed.
+    running
+        .input(b"\n".to_vec())
+        .expect("a newline is accepted");
     wait_kind(&mut running_marks, is_prompt)
         .await
         .expect("its prompt");
