@@ -5,7 +5,7 @@ workstream: "0002"
 kind: task
 depends_on:
   - gpui-adoption
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/src/vt.rs

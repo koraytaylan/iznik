@@ -5,7 +5,7 @@ workstream: "0004"
 kind: task
 depends_on:
   - window-shell
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/assets/default-keybindings.json

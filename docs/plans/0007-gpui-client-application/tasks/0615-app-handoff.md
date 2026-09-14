@@ -6,7 +6,7 @@ kind: task
 depends_on:
   - app-packaging
   - architecture-amendment
-gated: true
+gated: false
 touches:
   - docs/notes/release-checklist.md
   - regression/claims/claims-registry.toml

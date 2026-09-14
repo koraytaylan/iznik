@@ -5,7 +5,7 @@ workstream: "0006"
 kind: chore
 depends_on:
   - app-end-to-end
-gated: true
+gated: false
 touches:
   - ARCHITECTURE.md
   - README.md

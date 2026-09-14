@@ -5,7 +5,7 @@ workstream: "0002"
 kind: task
 depends_on:
   - vt-thread
-gated: true
+gated: false
 touches:
   - crates/iznik-app/benches/grid_budget.rs
   - crates/iznik-app/src/grid.rs

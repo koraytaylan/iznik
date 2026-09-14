@@ -1,11 +1,11 @@
-# Plan 0007 — The Client Application: GPUI Kit Renderer and Shell — ⏳ Awaiting integration
+# Plan 0007 — The Client Application: GPUI Kit Renderer and Shell — 📋 Planned
 
-- **Status:** ⏳ Awaiting integration.
+- **Status:** 📋 Planned.
 - **Goal:** Ship the iznik client application: a GPU-rendered, cross-platform terminal app built fully on GPUI Kit, presenting the existing engine's remote workspaces with a command palette over every capability, tabs at the top, sessions at the bottom, and a custom terminal grid element fed by libghostty-vt.
 - **Root cause:** Plans 0001-0006 built and proved the entire remote terminal system — server, multiplexer, bootstrap, client engine, C ABI — with no user-facing client; the assumed Swift macOS app was replaced by a decision to go cross-platform Rust on GPUI Kit (gpui-component 0.6.1, rebranded gpui-kit), which provides the chrome while leaving the terminal grid over libghostty-vt as the one component to build.
 - **Approach:** Scaffold iznik-app into the workspace with gpui-kit pinned exact and prove the gate runs headless first; bridge HostManager over a tokio runtime into GPUI entities; run client-side libghostty-vt terminals on one dedicated LocalSet thread (the server's mirror-thread pattern); write the one custom grid element against committed headless render budgets; assemble chrome (window, tab bar top, session bar bottom, split dividers) from model deltas; render the command palette as an inventory over the protocol command set and HostManager methods with explanations lifted from the docs; finish with settings, packaging, headless end-to-end proof, and the architecture amendment.
 - **Progress:** 0/15 tasks done; 0 blocked; 0 dropped.
-- **Integration:** `awaiting-integration`; run `000000000F79C0376A60C7490C`; base `develop` @ `e5c6ad027c10704a49fe3ea849c2c8b8180adbe3`; validation base `e5c6ad027c10704a49fe3ea849c2c8b8180adbe3`; mode —; final integration —.
+- **Integration:** `planned`; run —; base `develop` @ `e5c6ad027c10704a49fe3ea849c2c8b8180adbe3`; validation base —; mode —; final integration —.
 - **Exceptions:** —.
 - **Outcome:** A daily-drivable cross-platform iznik application crate in this workspace: remote hosts bootstrapped and multiplexed over the user's own SSH config, panes rendered by GPUI through libghostty-vt with correct query answers and mode-correct input, Rune-style palette and two tab bars composed from gpui-kit components, all gates passing including headless GPUI tests, display-bound proofs recorded as deferred, and the architecture documents amended to name the client application as this workspace's product front end.
 

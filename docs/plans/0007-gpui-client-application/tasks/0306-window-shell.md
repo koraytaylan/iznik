@@ -6,7 +6,7 @@ kind: task
 depends_on:
   - engine-bridge
   - terminal-input-and-ime
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/src/layout.rs

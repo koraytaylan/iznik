@@ -5,7 +5,7 @@ workstream: "0005"
 kind: task
 depends_on:
   - settings-and-theme
-gated: true
+gated: false
 touches:
   - crates/iznik-app/assets/icon.svg
   - crates/iznik-app/src/bundle.rs

@@ -4,7 +4,7 @@ title: "Adopt GPUI Kit: scaffold iznik-app and prove the gate headless"
 workstream: "0001"
 kind: task
 depends_on: []
-gated: true
+gated: false
 touches:
   - Cargo.toml
   - crates/iznik-app/Cargo.toml

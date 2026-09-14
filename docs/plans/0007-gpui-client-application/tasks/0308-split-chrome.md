@@ -5,7 +5,7 @@ workstream: "0003"
 kind: task
 depends_on:
   - window-shell
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/src/splits.rs

@@ -6,7 +6,7 @@ kind: task
 depends_on:
   - action-inventory
   - terminal-grid-element
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/src/settings.rs

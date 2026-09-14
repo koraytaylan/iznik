@@ -7,7 +7,7 @@ depends_on:
   - command-palette
   - split-chrome
   - tab-and-session-bars
-gated: true
+gated: false
 touches:
   - crates/iznik-app/tests/end_to_end.rs
   - docs/notes/app-render.md

@@ -5,7 +5,7 @@ workstream: "0004"
 kind: task
 depends_on:
   - action-inventory
-gated: true
+gated: false
 touches:
   - crates/iznik-app/README.md
   - crates/iznik-app/src/palette.rs
