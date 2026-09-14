@@ -1,14 +1,4 @@
-# Plan 0007 — The Client Application: GPUI Kit Renderer and Shell
-## In scope
-
-- **0001 — Adoption and Engine Bridge.**
-- **0002 — Terminal Rendering.**
-- **0003 — Application Chrome.**
-- **0004 — Command Palette.**
-- **0005 — Application Platform.**
-- **0006 — Proof and Handoff.**
-
-# Scope — The Client Application: GPUI Kit Renderer and Shell
+# Scope — Plan 0007
 
 > Build the client this whole system was built for: a GPU-rendered, cross-platform terminal application on GPUI Kit — command palette over everything with explanations, tabs at the top, sessions at the bottom, and one custom component: the terminal grid fed by `libghostty-vt`.
 
@@ -22,12 +12,12 @@ The application joins this workspace as a crate. The original architecture place
 
 ## In scope
 
-- **Adoption.** The `iznik-app` crate scaffolded into the workspace with `gpui-kit` pinned exact, the dependency allowlist and lexicon entries, a windowed skeleton, and — before anything builds on it — proof that a GPUI application crate passes this workspace's gates headlessly on the Linux development machine, via GPUI's own test context.
-- **The engine bridge.** A tokio runtime owning `HostManager`, an event channel bridged into GPUI entities, host lifecycle surfaced (add, remove, reconnect, upgrade, uninstall), and the client model rendered as chrome state.
-- **Terminal rendering.** The client-side emulator service (one dedicated thread, the mirror-thread pattern the server already proves), and the custom grid element: glyph pipeline, damage tracking, scrollback viewport, selection, IME preedit, credit returned as bytes are consumed, query responses forwarded as input.
-- **Chrome.** The window shell, tab bar at the top, session bar at the bottom, split dividers with drag-resize, driven entirely by the model's deltas.
-- **The command palette.** GPUI actions forming a closed inventory over the protocol's session commands and the `HostManager` methods, explanations lifted from the same documentation the workspace mandates, availability predicates, keybindings derived from the same action set, and the palette overlay on top.
-- **Platform.** Settings and theme (a struct of colors, not a system), packaging as a macOS `.app` bundle and a Linux binary, and the end-to-end headless proof that the application attaches, types, resizes, drops and resumes against the real in-process stack.
+- **0001 — Adoption and Engine Bridge.** The `iznik-app` crate scaffolded into the workspace with `gpui-kit` pinned exact, the dependency allowlist and lexicon entries, a windowed skeleton, and — before anything builds on it — proof that a GPUI application crate passes this workspace's gates headlessly on the Linux development machine, via GPUI's own test context; then a tokio runtime owning `HostManager`, an event channel bridged into GPUI entities, host lifecycle surfaced (add, remove, reconnect, upgrade, uninstall), and the client model rendered as chrome state.
+- **0002 — Terminal Rendering.** The client-side emulator service (one dedicated thread, the mirror-thread pattern the server already proves), and the custom grid element: glyph pipeline, damage tracking, scrollback viewport, selection, IME preedit, credit returned as bytes are consumed, query responses forwarded as input.
+- **0003 — Application Chrome.** The window shell, tab bar at the top, session bar at the bottom, split dividers with drag-resize, driven entirely by the model's deltas.
+- **0004 — Command Palette.** GPUI actions forming a closed inventory over the protocol's session commands and the `HostManager` methods, explanations lifted from the same documentation the workspace mandates, availability predicates, keybindings derived from the same action set, and the palette overlay on top.
+- **0005 — Application Platform.** Settings and theme (a struct of colors, not a system), and packaging as a macOS `.app` bundle and a Linux binary.
+- **0006 — Proof and Handoff.** The end-to-end headless proof that the application attaches, types, resizes, drops and resumes against the real in-process stack; the architecture amendment that names this crate as the product front end; and the registry-wide claims coverage with deferred display-bound proofs named rather than forgotten.
 
 ## Out of scope
 
