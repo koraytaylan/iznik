@@ -7,9 +7,11 @@ depends_on:
   - gpui-adoption
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
   - crates/iznik-app/src/bridge.rs
   - crates/iznik-app/src/host_ui.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/bridge.rs
   - policy/lexicon/engine-bridge.txt
   - regression/claims/engine-bridge.toml

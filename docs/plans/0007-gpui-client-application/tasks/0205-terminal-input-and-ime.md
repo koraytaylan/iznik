@@ -7,8 +7,10 @@ depends_on:
   - terminal-grid-element
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
   - crates/iznik-app/src/input.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/input_encoding.rs
   - policy/lexicon/terminal-input.txt
   - regression/claims/terminal-input.toml

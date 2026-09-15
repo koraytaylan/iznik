@@ -7,8 +7,10 @@ depends_on:
   - vt-thread
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/benches/grid_budget.rs
   - crates/iznik-app/src/grid.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/grid_element.rs
   - docs/notes/app-render.md
   - policy/lexicon/terminal-grid.txt

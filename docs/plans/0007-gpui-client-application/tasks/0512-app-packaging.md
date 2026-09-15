@@ -7,8 +7,10 @@ depends_on:
   - settings-and-theme
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/assets/icon.svg
   - crates/iznik-app/src/bundle.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/bundle_contents.rs
   - docs/notes/release-checklist.md
   - policy/lexicon/app-packaging.txt

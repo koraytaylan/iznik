@@ -4,10 +4,13 @@ title: "Run client-side libghostty-vt terminals on one dedicated thread"
 workstream: "0002"
 kind: task
 depends_on:
+  - engine-bridge
   - gpui-adoption
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/vt.rs
   - crates/iznik-app/tests/vt_thread.rs
   - policy/lexicon/vt-thread-client.txt

@@ -7,8 +7,10 @@ depends_on:
   - window-shell
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
   - crates/iznik-app/src/bars.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/bars.rs
   - policy/lexicon/tab-bars.txt
   - regression/claims/tab-and-session-bars.toml

@@ -5,10 +5,13 @@ workstream: "0005"
 kind: task
 depends_on:
   - action-inventory
+  - command-palette
   - terminal-grid-element
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/settings.rs
   - crates/iznik-app/src/theme.rs
   - crates/iznik-app/tests/settings.rs

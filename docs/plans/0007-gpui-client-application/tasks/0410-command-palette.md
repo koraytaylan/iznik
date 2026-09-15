@@ -7,7 +7,9 @@ depends_on:
   - action-inventory
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/palette.rs
   - crates/iznik-app/tests/palette.rs
   - policy/lexicon/command-palette-app.txt

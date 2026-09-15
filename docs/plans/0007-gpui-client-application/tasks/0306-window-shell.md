@@ -8,8 +8,10 @@ depends_on:
   - terminal-input-and-ime
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
   - crates/iznik-app/src/layout.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/window.rs
   - crates/iznik-app/tests/window_shell.rs
   - policy/lexicon/window-shell.txt

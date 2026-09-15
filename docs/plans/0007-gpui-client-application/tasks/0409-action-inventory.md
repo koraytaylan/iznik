@@ -4,12 +4,15 @@ title: "Build the closed action inventory with explanations and keybindings"
 workstream: "0004"
 kind: task
 depends_on:
+  - split-chrome
   - window-shell
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
   - crates/iznik-app/assets/default-keybindings.json
   - crates/iznik-app/src/actions.rs
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/tests/inventory.rs
   - policy/lexicon/action-inventory.txt
   - regression/claims/action-inventory.toml

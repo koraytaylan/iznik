@@ -4,10 +4,13 @@ title: "Wire split chrome: divider drag to SetLayout, keyboard splits"
 workstream: "0003"
 kind: task
 depends_on:
+  - tab-and-session-bars
   - window-shell
 gated: false
 touches:
+  - crates/iznik-app/Cargo.toml
   - crates/iznik-app/README.md
+  - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/splits.rs
   - crates/iznik-app/tests/splits.rs
   - policy/lexicon/split-chrome.txt

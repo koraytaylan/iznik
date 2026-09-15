@@ -24,7 +24,7 @@ Scaffold the application crate into the workspace, written once with every depen
 
 **Steps:**
 
-1. Add `crates/iznik-app` as a workspace member; write its manifest once: dependencies `gpui-kit` pinned exact at its current release (0.6.1) with the icon crate the kit's documentation names, `iznik-client` and `iznik-protocol` for the engine, and nothing else the plan does not name; development dependency on `iznik-testkit` for the in-process stack. Record the resolved `gpui` version the pin produces.
+1. Add `crates/iznik-app` as a workspace member; write its manifest once: dependencies `gpui-kit` pinned exact at its current release (0.6.1) with the icon crate the kit's documentation names, `iznik-client` and `iznik-protocol` for the engine, and nothing else the plan does not name; development dependencies on `iznik-testkit` and `tokio` for the in-process stack the later engine-bridge cases drive. Record the resolved `gpui` version the pin produces.
 2. Write `policy/dependencies.md` entries with one-sentence justifications for every crate the pin adds, so the dependency allowlist equals the resolved set in both directions.
 3. Add `policy/lexicon/gpui-adoption.txt` with every new word the crate's names introduce.
 4. Write the crate root per house rules, its documentation included from the crate's own README, and a binary `iznik-app` that opens one GPUI window with a themed empty view, answers `--help`, and refuses no display at link time — display absence is a runtime condition, not a build failure.
