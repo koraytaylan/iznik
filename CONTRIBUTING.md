@@ -258,9 +258,13 @@ These are not gateable and they are what review is for:
    environment, reads the developer's `~/.ssh`, or touches anything the
    developer is using. A test that passes only because the machine was
    already set up is not evidence.
-6. Run `cargo xtask check` before every commit. A task is done when its
-   **Done when** command succeeds inside its deadline — not when the code
-   works.
+6. Run `cargo xtask check` before every commit. The factory runs those
+   same five gates after every task, so a red workspace cannot land. A
+   task is done when its **Done when** command succeeds inside its
+   deadline — not when the code works. Done-when names the workspace
+   gate only when this task changes the workspace member set; every
+   other task names its own proof, and the factory still refuses a red
+   tree.
 7. Commit messages: a subject line under 72 characters in the imperative,
    scoped by crate or area (`protocol: pin the frame codec with goldens`),
    and a body that says why, not what — the diff says what.

@@ -17,7 +17,7 @@ docs/plans/
 
 ## Task document contract
 
-Each task file has closed YAML frontmatter (`id`, `title`, four-digit `workstream`, `kind`, `depends_on`, `gated`, `touches`, `status`, and `merged_as`) followed by an exact title, ordered `**Steps:**`, and one falsifiable `- **Done when:**` criterion. Filenames, IDs, workstreams, dependencies, and repository-relative mutation footprints are validated as one DAG. A later task that owns source inside a crate whose `Cargo.toml` another task already claims will have that crate's manifest adopted into its footprint on generation.
+Each task file has closed YAML frontmatter (`id`, `title`, four-digit `workstream`, `kind`, `depends_on`, `gated`, `touches`, `status`, and `merged_as`) followed by an exact title, ordered `**Steps:**`, and one falsifiable `- **Done when:**` criterion. Filenames, IDs, workstreams, dependencies, and repository-relative mutation footprints are validated as one DAG. A later task that owns source inside a crate whose `Cargo.toml` another task already claims will have that crate's manifest adopted into its footprint on generation. The factory quality gates are `cargo xtask check`; Done-when names that workspace gate only on the task that touches the workspace `Cargo.toml`. That task owns a green workspace under the new graph. Every other task names its own package proof. `gated: true` means the host cannot run the task, not that it has quality gates.
 
 Before a generated blueprint is published, a critic model judges each task as a single independently testable target, a compound ticket, or a landlocked one. Compound and landlocked tickets are handed back to the author to split or to pin on the owner. The host does not count types or commas.
 

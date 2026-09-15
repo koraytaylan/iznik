@@ -36,4 +36,4 @@ Make splits interactive: dividers drag to reweight through `SetLayout`, split an
 - A drag that ends where it started sends nothing.
 - Pane resize after re-layout keeps the focused pane's geometry authoritative and observed by every attached surface.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task split-chrome` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task split-chrome` reports every claim proven.

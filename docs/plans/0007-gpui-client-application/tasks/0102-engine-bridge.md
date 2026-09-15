@@ -36,4 +36,4 @@ Give the application its engine: a private tokio runtime owning a `HostManager`,
 - A refused command leaves the model unchanged and produces a notification naming the refusal.
 - The upgrade offer arrives as state a dialog can render, distinct from an error.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task engine-bridge` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task engine-bridge` reports every claim proven.

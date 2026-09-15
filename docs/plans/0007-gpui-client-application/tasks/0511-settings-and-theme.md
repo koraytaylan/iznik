@@ -38,4 +38,4 @@ Persist the application's settings — theme, font, keybinding overrides — as 
 - Malformed settings refuse with the field named and the previous values kept.
 - Keybinding overrides resolve against the inventory; an unknown action in settings is a refusal.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task settings-and-theme` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task settings-and-theme` reports every claim proven.

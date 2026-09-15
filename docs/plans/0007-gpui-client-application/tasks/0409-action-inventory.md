@@ -37,4 +37,4 @@ Enumerate everything the application can do as GPUI actions in one registry: one
 - Every action carries a non-empty explanation and an engine target that exists.
 - Every default chord resolves to exactly one action; no two chords collide.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task action-inventory` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task action-inventory` reports every claim proven.

@@ -38,4 +38,4 @@ Build the window shell: the model's layout tree rendered as panes, each pane a g
 - After a reconnect the surface receives a screen reset before any further output, per the contract.
 - Resize is client-owned: the pane's geometry follows the window, and the last resize wins between surfaces.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task window-shell` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task window-shell` reports every claim proven.

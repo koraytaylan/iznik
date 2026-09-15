@@ -12,6 +12,10 @@ touches:
   - crates/iznik-app/src/lib.rs
   - crates/iznik-app/src/main.rs
   - crates/iznik-app/tests/headless_smoke.rs
+  - crates/iznik-server/Cargo.toml
+  - crates/iznik-server/src/daemon/mod.rs
+  - crates/iznik-server/src/lib.rs
+  - crates/iznik-server/src/multiplexer/mod.rs
   - policy/dependencies.md
   - policy/lexicon/gpui-adoption.txt
   - regression/claims/gpui-adoption.toml
@@ -24,17 +28,19 @@ Scaffold the application crate into the workspace, written once with every depen
 
 **Steps:**
 
-1. Add `crates/iznik-app` as a workspace member; write its manifest once: dependencies `gpui-kit` pinned exact at its current release (0.6.1) with the icon crate the kit's documentation names, `iznik-client` and `iznik-protocol` for the engine, and nothing else the plan does not name; development dependencies on `iznik-testkit` and `tokio` for the in-process stack the later engine-bridge cases drive. Record the resolved `gpui` version the pin produces.
-2. Write `policy/dependencies.md` entries with one-sentence justifications for every crate the pin adds, so the dependency allowlist equals the resolved set in both directions.
-3. Add `policy/lexicon/gpui-adoption.txt` with every new word the crate's names introduce.
-4. Write the crate root per house rules, its documentation included from the crate's own README, and a binary `iznik-app` that opens one GPUI window with a themed empty view, answers `--help`, and refuses no display at link time — display absence is a runtime condition, not a build failure.
-5. Write `crates/iznik-app/tests/headless_smoke.rs` using GPUI's test context to build a window with one styled element and assert on the resulting element tree, proving GPUI tests run headlessly under nextest.
-6. Declare this task's claims in `regression/claims/gpui-adoption.toml` as `test` proofs with their `because`.
+1. Add `crates/iznik-app` as a workspace member; write its manifest once: dependencies `gpui-kit` pinned exact at its current release (0.6.1) with the icon crate the kit's documentation names, `iznik-client` and `iznik-protocol` for the engine, and nothing else the plan does not name; development dependencies on `iznik-testkit` and `tokio` for the in-process stack the later engine-bridge cases drive. Record the resolved `gpui` version the pin produces. Commit the lockfile the pin rewrites.
+2. This task owns a green workspace under the new graph. If the member unmasks a lint in another crate — feature unification is enough — restructure that crate here. Do not allow. Do not leave `cargo xtask check` red for a later task.
+3. Write `policy/dependencies.md` entries with one-sentence justifications for every crate the pin adds, so the dependency allowlist equals the resolved set in both directions.
+4. Add `policy/lexicon/gpui-adoption.txt` with every new word the crate's names introduce.
+5. Write the crate root per house rules, its documentation included from the crate's own README, and a binary `iznik-app` that opens one GPUI window with a themed empty view, answers `--help`, and refuses no display at link time — display absence is a runtime condition, not a build failure.
+6. Write `crates/iznik-app/tests/headless_smoke.rs` using GPUI's test context to build a window with one styled element and assert on the resulting element tree, proving GPUI tests run headlessly under nextest.
+7. Declare this task's claims in `regression/claims/gpui-adoption.toml` as `test` proofs with their `because`.
 
 **Tests:**
 
 - The headless smoke test builds an element tree and asserts its shape without a display.
 - The dependency allowlist resolves to exactly the declared set, and no dependency is unjustified.
 - `cargo doc` is warning-free for the new crate, private items included.
+- `cargo xtask check` succeeds with `iznik-app` as a member, including crates the new graph compiles.
 
 - **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task gpui-adoption` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.

@@ -38,4 +38,4 @@ Make typing correct: key events encoded by the pane's live terminal mode, paste 
 - Paste in bracketed mode wraps and never executes; outside the mode it sends raw.
 - Credit returned equals bytes consumed; a pane that stops consuming is the only one that stops.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task terminal-input` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task terminal-input` reports every claim proven.

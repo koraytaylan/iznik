@@ -32,4 +32,4 @@ Prove the application whole: one headless scenario driving the real in-process s
 - Every assertion reads rendered application state — model mirror, element tree, snapshots — never engine internals.
 - The resume path restores pane content without a repaint of unrelated panes.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app --test end_to_end` passes every case above, `timeout 900 cargo xtask claims verify --task app-end-to-end` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app --test end_to_end` passes every case above, `timeout 900 cargo xtask claims verify --task app-end-to-end` reports every claim proven.

@@ -31,4 +31,4 @@ Rewrite the documents that name a Swift macOS application in another repository,
 - No document names a command the binaries do not answer (`readme_commands`).
 - The architecture, the README and the contract agree on where the application lives and what the C ABI is for.
 
-- **Done when:** `timeout 900 cargo nextest run --package xtask --test policy_links --test readme_commands` passes, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 900 cargo nextest run --package xtask --test policy_links --test readme_commands` passes.

@@ -28,4 +28,4 @@ Close the plan the way the house closes plans: every claim over every task verif
 - Full claims coverage passes over the whole registry, application claims included.
 - The checklist's application section names only commands that exist and pass.
 
-- **Done when:** `timeout 1200 cargo xtask claims coverage` reports every claim proven with none outstanding, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1200 cargo xtask claims coverage` reports every claim proven with none outstanding.

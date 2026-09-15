@@ -37,4 +37,4 @@ Stand up the client's emulator service: one dedicated thread running a `LocalSet
 - A pane with no attached emulator on the client side would hang a querying program; the service proves responses flow and stop when the application answers instead.
 - Snapshots carry contiguous sequence tags; a gap is an error the caller resolves by requesting a fresh screen, never by guessing.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task vt-thread` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task vt-thread` reports every claim proven.

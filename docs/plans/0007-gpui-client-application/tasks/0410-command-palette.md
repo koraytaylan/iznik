@@ -35,4 +35,4 @@ Render the registry as the palette: gpui-component's command palette overlay, fi
 - Dispatch is the action path: a command fired from the palette is indistinguishable on the wire from its keybinding.
 - Explanations render from the registry — the palette adds no text of its own.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task command-palette` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task command-palette` reports every claim proven.

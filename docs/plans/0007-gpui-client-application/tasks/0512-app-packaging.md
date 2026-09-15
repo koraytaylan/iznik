@@ -37,4 +37,4 @@ Produce the shippable shape: a bundler that lays out the macOS `.app` (executabl
 - `cargo xtask app-bundle` refuses a missing binary or a version mismatch and names both.
 - The plist's version equals the workspace version at build time.
 
-- **Done when:** `timeout 600 cargo nextest run --package iznik-app --test bundle_layout` passes every case above, `timeout 600 cargo nextest run --package xtask --test app_bundle` passes, `timeout 900 cargo xtask claims verify --task app-packaging` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 600 cargo nextest run --package iznik-app --test bundle_layout` passes every case above, `timeout 600 cargo nextest run --package xtask --test app_bundle` passes, `timeout 900 cargo xtask claims verify --task app-packaging` reports every claim proven.

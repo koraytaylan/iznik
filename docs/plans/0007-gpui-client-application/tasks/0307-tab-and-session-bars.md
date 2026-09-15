@@ -36,4 +36,4 @@ Compose the Rune-style chrome from kit components, driven entirely by the model:
 - Closing a tab with one pane closes the pane; the exit-status delta removes the entry.
 - A failed host marks its sessions' entries and the banner without touching other hosts' bars.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task tab-and-session-bars` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task tab-and-session-bars` reports every claim proven.

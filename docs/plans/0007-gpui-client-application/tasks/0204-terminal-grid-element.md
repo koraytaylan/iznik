@@ -37,4 +37,4 @@ Write the one custom component: a GPUI element that paints cell snapshots — te
 - An unchanged snapshot triggers no repaint; a one-row change repaints one row.
 - The draw-list budget holds inside its committed ceiling in the benchmark test.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 1200 cargo nextest run --package iznik-app --bench grid_budget --profile regression` prints the budget table inside its ceiling, `timeout 900 cargo xtask claims verify --task terminal-grid` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 1200 cargo nextest run --package iznik-app --bench grid_budget --profile regression` prints the budget table inside its ceiling, `timeout 900 cargo xtask claims verify --task terminal-grid` reports every claim proven.
