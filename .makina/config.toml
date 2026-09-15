@@ -26,10 +26,6 @@ concurrency = 1
 gate_iterations = 3
 # Reviewer requests changes → developer addresses them. Twice.
 reviewer_iterations = 2
-# Per task, all iterations included. The five gates take ten minutes warm;
-# three gate rounds, two review rounds and the developer's own turns fit
-# comfortably in an hour, and a task that does not fit is failed, not waited on.
-wall_clock_secs = 3600
 # The idle watchdog. A step that produces no output for five minutes is dead —
 # a shell waiting on a container that never came up, a test with no deadline,
 # a build script that hung — and is aborted. The longest legitimate silences
