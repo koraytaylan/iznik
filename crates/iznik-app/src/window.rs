@@ -840,7 +840,7 @@ impl WindowShell {
 impl Render for WindowShell {
     fn render(
         &mut self,
-        _window: &mut Window,
+        root_window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let theme = context.theme();
@@ -902,7 +902,7 @@ impl Render for WindowShell {
             .flex()
             .flex_col()
             .on_key_down(context.listener(|shell, event, window, context| {
-                let routed = palette::route_key(shell, event, context);
+                let routed = palette::route_key(shell, event, window, context);
                 if routed || shell.bar_key(event, window, context) {
                     context.stop_propagation();
                 }
@@ -922,6 +922,10 @@ impl Render for WindowShell {
             )
             .child(bars.bottom)
             .child(palette_overlay)
+            .children(gpui_kit::component::Root::render_notification_layer(
+                root_window,
+                context,
+            ))
     }
 }
 impl WindowShell {

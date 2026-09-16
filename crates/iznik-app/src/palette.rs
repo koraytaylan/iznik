@@ -1,9 +1,10 @@
 //! Command palette projection over the closed action inventory.
 
-use gpui_kit::component::Theme;
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::{Theme, WindowExt};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, div,
+    StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window, div,
 };
 use iznik_client::commands::Submission;
 use iznik_client::host::identity::HostId;
@@ -13,8 +14,6 @@ use crate::actions::{ActionId, ActionSpec, INVENTORY, available};
 use crate::host_ui::EngineState;
 use crate::window::WindowShell;
 
-/// Synthetic host name for notices about the palette itself, not a real host.
-const ADD_HOST_NOTICE_HOST: &str = "add-host";
 /// Shown when Add Host is chosen before its host-entry form exists.
 const ADD_HOST_NOT_WIRED_UP: &str = "Adding a host isn't wired up yet.";
 
@@ -207,12 +206,12 @@ pub fn render(
                 specification.name, specification.explanation, keybinding
             ));
         if let Some(target) = shell.cloned() {
-            row = row.on_click(move |_event, _window, application| {
+            row = row.on_click(move |_event, window, application| {
                 let _ignored = target.update(application, |window_shell, context| {
                     window_shell.palette_mut().selected = index;
                     let mut palette_state = std::mem::take(window_shell.palette_mut());
                     let _dispatched =
-                        dispatch_action(window_shell, &mut palette_state, action, context);
+                        dispatch_action(window_shell, &mut palette_state, action, window, context);
                     *window_shell.palette_mut() = palette_state;
                     context.notify();
                 });
@@ -259,17 +258,14 @@ pub fn dispatch_action(
     shell: &mut WindowShell,
     palette: &mut Palette,
     action: ActionId,
+    window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) -> Result<bool, crate::bridge::EngineError> {
     let dispatched = shell.dispatch_action(action)?;
     if dispatched {
         palette.close();
     } else if action == ActionId::AddHost {
-        shell.failure(
-            &HostId(ADD_HOST_NOTICE_HOST.to_owned()),
-            ADD_HOST_NOT_WIRED_UP.to_owned(),
-            context,
-        );
+        window.push_notification(Notification::error(ADD_HOST_NOT_WIRED_UP), context);
     }
     Ok(dispatched)
 }
@@ -296,6 +292,7 @@ impl WindowShell {
         key: &str,
         character: Option<char>,
         result_count: usize,
+        window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> PaletteAction {
         let action = self.palette.key(key, character, result_count);
@@ -303,7 +300,7 @@ impl WindowShell {
             let selected_action = selected_action(self.hosts().state(), &self.palette);
             if let Some(selected_action) = selected_action {
                 let mut palette_state = std::mem::take(&mut self.palette);
-                match dispatch_action(self, &mut palette_state, selected_action, context) {
+                match dispatch_action(self, &mut palette_state, selected_action, window, context) {
                     Ok(true | false) => self.palette = palette_state,
                     Err(error) => {
                         self.palette = palette_state;
@@ -324,6 +321,7 @@ impl WindowShell {
 pub fn route_key(
     shell: &mut WindowShell,
     event: &KeyDownEvent,
+    window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) -> bool {
     let modifiers = &event.keystroke.modifiers;
@@ -340,7 +338,13 @@ pub fn route_key(
         .as_deref()
         .and_then(|text| text.chars().next());
     let result_count = results(shell.hosts().state(), &shell.palette().query).len();
-    let _action = shell.palette_key(&event.keystroke.key, character, result_count, context);
+    let _action = shell.palette_key(
+        &event.keystroke.key,
+        character,
+        result_count,
+        window,
+        context,
+    );
     true
 }
 

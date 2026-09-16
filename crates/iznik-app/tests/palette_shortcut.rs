@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
+use gpui_kit::{AppContext, TestAppContext};
 use iznik_app::bridge::EngineBridge;
 use iznik_app::vt::{VtOptions, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
@@ -179,33 +179,42 @@ fn types_and_deletes(context: &mut TestAppContext) -> Result<(), Failed> {
     Ok(())
 }
 
-/// Select Add Host with Enter and assert the failure banner appears.
+/// Select Add Host with Enter and assert a toast notification appears.
 ///
 /// # Errors
 /// Returns setup or assertion failures.
 ///
 /// # Panics
-/// Panics when the failure banner does not appear.
+/// Panics when the notification does not appear.
 fn add_host_notice(context: &mut TestAppContext) -> Result<(), Failed> {
     context.update(gpui_kit::init);
     let directory = temporary_directory("add-host")?;
     let (bridge, thread) = owners(&directory)?;
     let (_view, context) = context.add_window_view(|window, context| {
-        WindowShell::new(
-            bridge,
-            thread,
-            ShellOptions {
-                update_interval: None,
-                ..ShellOptions::default()
-            },
-            window,
-            context,
-        )
+        let shell = context.new(|context| {
+            WindowShell::new(
+                bridge,
+                thread,
+                ShellOptions {
+                    update_interval: None,
+                    ..ShellOptions::default()
+                },
+                window,
+                context,
+            )
+        });
+        gpui_kit::component::Root::new(shell, window, context)
     });
     context.simulate_keystrokes("ctrl-shift-p");
+    context.update(|window, _application| {
+        assert!(
+            window.try_find("notification").is_none(),
+            "no toast before Add Host is chosen"
+        );
+    });
     context.simulate_keystrokes("enter");
     context.update(|window, _application| {
-        window.find("surface-failure").visible();
+        window.find("notification").visible();
     });
     let _removed = std::fs::remove_dir_all(directory);
     Ok(())

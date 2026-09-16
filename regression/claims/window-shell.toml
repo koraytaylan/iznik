@@ -34,3 +34,9 @@ id = "window-container-layout-and-geometry"
 statement = "Real CreatePane and SetLayout commands change the rendered production window without replacing its existing pane entity; two independently attached windows follow the latest window resize in both their reconciled model and native terminal dimensions."
 test = "iznik-app::regression_window::window_container_split_deltas_and_last_resize"
 because = "Two headless GPUI windows own independent production engines connected through SSH in the standard two-container fixture, combining actual platform resize callbacks with server delta round trips."
+
+[[claim]]
+id = "window-notification-layer"
+statement = "The production window renders the kit's notification layer over its own chrome, so a pushed toast becomes visible without a separate host component."
+test = "iznik-app::palette_shortcut::add_host_without_a_form_shows_a_failure_notice"
+because = "the notification layer is local rendering wiring over the kit's Root, no container needed"
