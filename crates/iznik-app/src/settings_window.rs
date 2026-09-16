@@ -1,17 +1,23 @@
 //! The settings window: a second OS window listing application settings.
 
-use gpui_kit::component::Root;
 use gpui_kit::component::setting::Settings as SettingsPanel;
 use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem, SettingPage};
+use gpui_kit::component::{Root, Theme, ThemeRegistry};
 use gpui_kit::{
-    App, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement, Render,
+    App, AppContext as _, Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
     SharedString, Styled, TestSupportExt, TitlebarOptions, WeakEntity, Window, WindowBounds,
     WindowOptions, div, px, size,
 };
+use libghostty_vt::style::RgbColor;
 
 use crate::actions::INVENTORY;
 use crate::theme::AppTheme;
 use crate::window::WindowShell;
+
+/// Lower bound a font size is clamped to.
+const MIN_FONT_SIZE: f32 = 8.0;
+/// Upper bound a font size is clamped to.
+const MAX_FONT_SIZE: f32 = 32.0;
 
 /// Initial width of the settings window.
 const WINDOW_WIDTH: f32 = 900.0;
@@ -56,7 +62,7 @@ impl Render for SettingsWindow {
     fn render(
         &mut self,
         _window: &mut Window,
-        _context: &mut Context<'_, Self>,
+        context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         div()
             .id("settings-window-content")
@@ -64,7 +70,7 @@ impl Render for SettingsWindow {
             .size_full()
             .child(
                 SettingsPanel::new("iznik-settings")
-                    .page(theme_page(&self.shell))
+                    .page(appearance_page(&self.shell, context))
                     .page(keybindings_page(&self.shell)),
             )
     }
@@ -90,44 +96,17 @@ fn edit_theme(shell: &WeakEntity<WindowShell>, app: &mut App, edit: impl FnOnce(
     });
 }
 
-/// The Theme settings page: foreground, background, font family and size.
-fn theme_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
-    SettingPage::new("Theme").group(
+/// The Appearance settings page: theme selection and terminal typography.
+fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPage {
+    SettingPage::new("Appearance").group(
         SettingGroup::new()
-            .title("Colors")
+            .title("Appearance")
             .item(SettingItem::new(
-                "Foreground",
-                SettingField::input(
-                    {
-                        let shell = shell.clone();
-                        move |app| color_text(theme_of(&shell, app).foreground)
-                    },
-                    {
-                        let shell = shell.clone();
-                        move |value, app| {
-                            if let Some(color) = parse_color(&value) {
-                                edit_theme(&shell, app, |theme| theme.foreground = color);
-                            }
-                        }
-                    },
-                ),
-            ))
-            .item(SettingItem::new(
-                "Background",
-                SettingField::input(
-                    {
-                        let shell = shell.clone();
-                        move |app| color_text(theme_of(&shell, app).background)
-                    },
-                    {
-                        let shell = shell.clone();
-                        move |value, app| {
-                            if let Some(color) = parse_color(&value) {
-                                edit_theme(&shell, app, |theme| theme.background = color);
-                            }
-                        }
-                    },
-                ),
+                "Theme",
+                SettingField::dropdown(theme_options(current), active_theme_name, {
+                    let shell = shell.clone();
+                    move |name, app| select_theme(&shell, &name, app)
+                }),
             ))
             .item(SettingItem::new(
                 "Font Family",
@@ -154,14 +133,55 @@ fn theme_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
                     {
                         let shell = shell.clone();
                         move |value, app| {
-                            if let Ok(font_size) = value.parse() {
-                                edit_theme(&shell, app, |theme| theme.font_size = font_size);
+                            if let Ok(font_size) = value.parse::<f32>() {
+                                let clamped = font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+                                edit_theme(&shell, app, |theme| theme.font_size = clamped);
                             }
                         }
                     },
                 ),
             )),
     )
+}
+
+/// Every registered theme's name, sorted for the dropdown's option list.
+fn theme_options(app: &App) -> Vec<(SharedString, SharedString)> {
+    ThemeRegistry::global(app)
+        .sorted_themes()
+        .into_iter()
+        .map(|config| (config.name.clone(), config.name.clone()))
+        .collect()
+}
+
+/// The name of the theme currently active for the kit's active mode.
+fn active_theme_name(app: &App) -> SharedString {
+    let theme = Theme::global(app);
+    if theme.mode.is_dark() {
+        theme.dark_theme.name.clone()
+    } else {
+        theme.light_theme.name.clone()
+    }
+}
+
+/// Switch the active kit theme and re-derive the terminal's colors from it,
+/// refreshing every open window so the change is visible immediately.
+fn select_theme(shell: &WeakEntity<WindowShell>, name: &SharedString, app: &mut App) {
+    let Some(config) = ThemeRegistry::global(app).themes().get(name).cloned() else {
+        return;
+    };
+    let mode = config.mode;
+    if mode.is_dark() {
+        Theme::global_mut(app).dark_theme = config;
+    } else {
+        Theme::global_mut(app).light_theme = config;
+    }
+    Theme::change(mode, None, app);
+    app.refresh_windows();
+    let colors = Theme::global(app).colors;
+    edit_theme(shell, app, |theme| {
+        theme.foreground = rgb_color(colors.foreground);
+        theme.background = rgb_color(colors.background);
+    });
 }
 
 /// The Keybindings page: the closed inventory's current chords, read-only for now.
@@ -188,23 +208,17 @@ fn keybindings_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
     )))
 }
 
-/// Format a color as the `r,g,b` text the settings file itself uses.
-fn color_text(color: libghostty_vt::style::RgbColor) -> SharedString {
-    SharedString::from(format!("{},{},{}", color.r, color.g, color.b))
+/// Convert a kit `Hsla` color into the terminal's `RgbColor` byte triple.
+fn rgb_color(color: Hsla) -> RgbColor {
+    let packed = u32::from(color.to_rgb());
+    RgbColor {
+        r: channel(packed, 24),
+        g: channel(packed, 16),
+        b: channel(packed, 8),
+    }
 }
 
-/// Parse a `r,g,b` color, accepting only well-formed byte components.
-fn parse_color(value: &str) -> Option<libghostty_vt::style::RgbColor> {
-    let mut parts = value.split(',');
-    let red = parts.next()?.trim().parse().ok()?;
-    let green = parts.next()?.trim().parse().ok()?;
-    let blue = parts.next()?.trim().parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(libghostty_vt::style::RgbColor {
-        r: red,
-        g: green,
-        b: blue,
-    })
+/// One byte of a packed `0xRRGGBBAA` color, shifted into place.
+fn channel(packed: u32, shift: u32) -> u8 {
+    u8::try_from((packed >> shift) & 0xFF).unwrap_or(u8::MAX)
 }
