@@ -1,7 +1,11 @@
 //! Headless proofs for model-driven tab and session bars.
 
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Context, IntoElement, Render, TestAppContext, Window, WindowHandle};
+use gpui_kit::{
+    AppContext, Context, IntoElement, ParentElement, Render, TestAppContext, Window, WindowHandle,
+    div,
+};
 use iznik_app::bars;
 use iznik_app::host_ui::EngineState;
 use iznik_app::window::TabKey;
@@ -126,9 +130,10 @@ impl Render for BarsFixture {
     fn render(
         &mut self,
         _window: &mut Window,
-        _context: &mut Context<'_, Self>,
+        context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        bars::render(&self.state, None, None)
+        let bars = bars::render(context.theme(), &self.state, None, None);
+        div().child(bars.top).child(bars.bottom)
     }
 }
 
@@ -159,6 +164,7 @@ fn check(result: &Result<(), Box<dyn std::error::Error>>) {
 /// # Errors
 /// Returns a closed-window error.
 fn empty_states(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    context.update(gpui_kit::init);
     let handle = context.add_window(|_, _| BarsFixture {
         state: EngineState::new(),
     });
@@ -213,6 +219,7 @@ fn settled_entries(context: &mut TestAppContext) -> Result<(), Box<dyn std::erro
             payload,
         },
     );
+    context.update(gpui_kit::init);
     let handle = context.add_window(|_, _| BarsFixture { state });
     draw(context, handle)?;
     context.update_window(handle.into(), |_, window, _| {

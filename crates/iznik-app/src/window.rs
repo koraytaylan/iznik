@@ -8,8 +8,8 @@ use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme, ElementExt};
 use gpui_kit::{
-    AppContext, Context, Entity, Focusable, IntoElement, KeyDownEvent, ParentElement, Render,
-    Styled, Subscription, Task, Window, div, px,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent,
+    ParentElement, Render, Styled, Subscription, Task, Window, div, px,
 };
 use gpui_kit::{
     InteractiveElement, Pixels, SharedString, Size, StatefulInteractiveElement, TestSupportExt,
@@ -26,7 +26,7 @@ use crate::bars;
 use crate::bridge::{EngineBridge, EngineEvent};
 use crate::grid::GridMetrics;
 use crate::host_ui::{HostUi, Notice, NoticeKind};
-use crate::palette::{self, Palette, PaletteAction};
+use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
 use crate::splits;
 use crate::surface::{PaneSurface, SurfaceFailure};
@@ -125,7 +125,16 @@ pub struct WindowShell {
     /// Latest local routing failure, dismissible without discarding host state.
     last_failure: Option<Notice>,
     /// Transient command palette state rendered over the shell.
-    palette: Palette,
+    pub(crate) palette: Palette,
+    /// Baseline window focus, held until a pane claims it, so shortcuts such
+    /// as opening the palette work before any session exists.
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for WindowShell {
+    fn focus_handle(&self, _context: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl WindowShell {
@@ -153,6 +162,8 @@ impl WindowShell {
             })
         });
         let settings_watcher = options.settings_path.clone().map(Watcher::new);
+        let focus_handle = context.focus_handle();
+        window.focus(&focus_handle, context);
         Self {
             hosts: HostUi::new(bridge),
             thread,
@@ -166,6 +177,7 @@ impl WindowShell {
             _update_task: update_task,
             last_failure: None,
             palette: Palette::default(),
+            focus_handle,
         }
     }
     /// The shared host interface used by tabs, sessions and application actions.
@@ -295,46 +307,6 @@ impl WindowShell {
     #[must_use]
     pub fn selected(&self) -> Option<&TabKey> {
         self.selected.as_ref()
-    }
-    /// Open the command palette and request a repaint.
-    pub fn open_palette(&mut self, context: &mut Context<'_, Self>) {
-        self.palette.open();
-        context.notify();
-    }
-    /// Access the transient palette state for normalized input handlers.
-    #[must_use]
-    pub fn palette(&self) -> &Palette {
-        &self.palette
-    }
-    /// Mutably access the transient palette state for normalized input handlers.
-    pub fn palette_mut(&mut self) -> &mut Palette {
-        &mut self.palette
-    }
-    /// Route one normalized key into the open palette and repaint its overlay.
-    #[must_use]
-    pub fn palette_key(
-        &mut self,
-        key: &str,
-        character: Option<char>,
-        result_count: usize,
-        context: &mut Context<'_, Self>,
-    ) -> PaletteAction {
-        let action = self.palette.key(key, character, result_count);
-        if matches!(action, PaletteAction::Dispatch) {
-            let selected_action = palette::selected_action(self.hosts.state(), &self.palette);
-            if let Some(selected_action) = selected_action {
-                let mut palette_state = std::mem::take(&mut self.palette);
-                match palette::dispatch_action(self, &mut palette_state, selected_action) {
-                    Ok(true | false) => self.palette = palette_state,
-                    Err(error) => {
-                        self.palette = palette_state;
-                        self.failure(&HostId("palette".to_owned()), error.to_string(), context);
-                    }
-                }
-            }
-        }
-        context.notify();
-        action
     }
     /// Apply application theme defaults to the shell and every retained emulator.
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
@@ -795,7 +767,12 @@ impl WindowShell {
         }
     }
     /// Deliver a pane routing failure through the window's existing notice inventory.
-    fn failure(&mut self, host: &HostId, detail: String, context: &mut Context<'_, Self>) {
+    pub(crate) fn failure(
+        &mut self,
+        host: &HostId,
+        detail: String,
+        context: &mut Context<'_, Self>,
+    ) {
         let notice = Notice {
             host: host.clone(),
             kind: NoticeKind::Failure,
@@ -899,27 +876,41 @@ impl Render for WindowShell {
                 },
                 Self::resize_callback(selected, layout, &entity),
             ),
-            _ => div().child("No sessions").into_any_element(),
+            _ => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme.muted_foreground)
+                .child("No sessions")
+                .into_any_element(),
         };
+        let bars = bars::render(
+            theme,
+            self.hosts.state(),
+            self.selected.as_ref(),
+            Some(&entity),
+        );
+        let palette_overlay =
+            palette::render(theme, self.hosts.state(), &self.palette, Some(&entity));
         div()
             .id("window-shell")
             .test_support()
+            .track_focus(&self.focus_handle)
+            .relative()
             .size_full()
             .flex()
             .flex_col()
             .on_key_down(context.listener(|shell, event, window, context| {
-                if shell.bar_key(event, window, context) {
+                let routed = palette::route_key(shell, event, context);
+                if routed || shell.bar_key(event, window, context) {
                     context.stop_propagation();
                 }
             }))
             .bg(theme.background)
             .text_color(theme.foreground)
             .children(self.banners(context))
-            .child(bars::render(
-                self.hosts.state(),
-                self.selected.as_ref(),
-                Some(&entity),
-            ))
+            .child(bars.top)
             .child(
                 div()
                     .id("pane-area")
@@ -929,11 +920,8 @@ impl Render for WindowShell {
                     .w_full()
                     .child(body),
             )
-            .child(palette::render(
-                self.hosts.state(),
-                &self.palette,
-                Some(&entity),
-            ))
+            .child(bars.bottom)
+            .child(palette_overlay)
     }
 }
 impl WindowShell {
@@ -973,16 +961,23 @@ impl WindowShell {
         }
         if let Some(failure) = &self.last_failure {
             banners.push(
-                Alert::error(
-                    "surface-failure",
-                    format!("{}: {}", failure.host, failure.detail),
-                )
-                .banner()
-                .on_close(context.listener(|shell, _, _, context| {
-                    shell.last_failure = None;
-                    context.notify();
-                }))
-                .into_any_element(),
+                div()
+                    .id("surface-failure")
+                    .test_support()
+                    .child(
+                        Alert::error(
+                            "surface-failure-alert",
+                            format!("{}: {}", failure.host, failure.detail),
+                        )
+                        .banner()
+                        .on_close(context.listener(
+                            |shell, _, _, context| {
+                                shell.last_failure = None;
+                                context.notify();
+                            },
+                        )),
+                    )
+                    .into_any_element(),
             );
         }
         banners

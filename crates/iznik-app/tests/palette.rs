@@ -66,6 +66,26 @@ fn palette_keys_drive_state() {
 }
 
 #[test]
+/// Backspace removes the last typed character and resets the selection.
+///
+/// # Panics
+///
+/// Panics when backspace does not shrink the query by one character.
+fn palette_backspace_removes_the_last_character() {
+    let mut palette = Palette::default();
+    palette.open();
+    assert_eq!(palette.key("", Some('a'), 1), PaletteAction::Ignored);
+    assert_eq!(palette.key("", Some('d'), 1), PaletteAction::Ignored);
+    assert_eq!(palette.query, "ad");
+    assert_eq!(palette.key("backspace", None, 1), PaletteAction::Ignored);
+    assert_eq!(palette.query, "a");
+    assert_eq!(palette.key("backspace", None, 1), PaletteAction::Ignored);
+    assert_eq!(palette.query, "");
+    assert_eq!(palette.key("backspace", None, 1), PaletteAction::Ignored);
+    assert_eq!(palette.query, "");
+}
+
+#[test]
 /// Palette selection resolves the same inventory identity the shell dispatches.
 ///
 /// # Panics

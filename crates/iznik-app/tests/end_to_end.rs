@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, TestAppContext,
@@ -41,13 +42,21 @@ impl Render for ApplicationFixture {
     fn render(
         &mut self,
         _window: &mut Window,
-        _context: &mut Context<'_, Self>,
+        context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        let theme = context.theme();
+        let bars = bars::render(theme, &self.state, None, None);
         gpui_kit::div()
             .id("application-root")
             .test_support()
-            .child(bars::render(&self.state, None, None))
-            .child(iznik_app::palette::render(&self.state, &self.palette, None))
+            .child(bars.top)
+            .child(bars.bottom)
+            .child(iznik_app::palette::render(
+                theme,
+                &self.state,
+                &self.palette,
+                None,
+            ))
     }
 }
 
@@ -204,6 +213,7 @@ fn temporary_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
 /// # Errors
 /// Returns encoding or closed-window errors.
 fn assembly(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    context.update(gpui_kit::init);
     let host = HostId("build".to_owned());
     let model = model();
     let mut state = EngineState::new();
