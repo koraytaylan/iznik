@@ -19,6 +19,7 @@ members = [
     "crates/iznik-harness",
     "crates/iznik-testkit",
     "crates/iznik-regression",
+    "crates/iznik-app",
     "xtask",
 ]
 

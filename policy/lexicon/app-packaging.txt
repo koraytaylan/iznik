@@ -1,0 +1,15 @@
+bundle
+bundler
+desktop
+executable
+icon
+identifier
+linux
+macos
+packaging
+plist
+property
+shippable
+stamped
+svg
+tempfile

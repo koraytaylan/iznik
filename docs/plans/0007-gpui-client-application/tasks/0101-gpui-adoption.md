@@ -19,8 +19,8 @@ touches:
   - policy/dependencies.md
   - policy/lexicon/gpui-adoption.txt
   - regression/claims/gpui-adoption.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "94b7d25ac3ac9d0340bb4ab4b438aabc9d9bb9ac"
 ---
 # Adopt GPUI Kit: scaffold iznik-app and prove the gate headless
 

@@ -704,3 +704,132 @@ fn manager_traffic_passes_on_the_model_a_replaced_daemon_sends() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+#[path = "fixtures/stream_host.rs"]
+mod stream_host;
+
+/// Short deadline for a local scripted peer with no process or bootstrap work.
+const CREDIT_DEADLINE: Duration = Duration::from_secs(2);
+
+/// Await one of the script's exact deliveries through the manager's real event path.
+///
+/// # Errors
+/// Returns a missing event, absent receipt or deadline failure.
+fn delivered_receipt(
+    events: &Receiver<ManagerEvent>,
+    bytes: &[u8],
+) -> Result<iznik_client::host::manager::credit::CreditReceipt, Failed> {
+    let event = await_event(
+        events,
+        "credit delivery",
+        CREDIT_DEADLINE,
+        |event| matches!(event, ManagerEvent::Bytes { bytes: actual, .. } if actual == bytes),
+    )?;
+    let ManagerEvent::Bytes {
+        receipt: Some(receipt),
+        ..
+    } = event
+    else {
+        return Err("delivery omitted its receipt".into());
+    };
+    Ok(receipt)
+}
+
+/// # Panics
+/// Fails if a stale, duplicate or rejected submission changes the actual wire credit history.
+#[test]
+fn manager_traffic_returns_only_current_delivery_credit_once() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("credit")?;
+        let runtime = runtime()?;
+        let socket = held.path.join("scripted.sock");
+        let grants = stream_host::start(&runtime, &socket)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        let host = alias(&socket);
+        manager.add_host(&host);
+        await_event(&events, "connected", CREDIT_DEADLINE, |event| {
+            matches!(
+                event,
+                ManagerEvent::Moved {
+                    state: HostState::Connected { .. },
+                    ..
+                }
+            )
+        })?;
+        manager.subscribe(&host, PANE)?;
+        let original = delivered_receipt(&events, stream_host::ORIGINAL_BYTES)?;
+        manager.subscribe(&host, stream_host::OTHER_PANE)?;
+        let independent = delivered_receipt(&events, stream_host::OTHER_BYTES)?;
+        manager.input(&host, PANE, stream_host::REPLACE.to_vec())?;
+        let current = delivered_receipt(&events, stream_host::CURRENT_BYTES)?;
+        assert_eq!(
+            original.bytes(),
+            u32::try_from(stream_host::ORIGINAL_BYTES.len())?,
+            "old receipt count"
+        );
+        assert_eq!(
+            current.bytes(),
+            u32::try_from(stream_host::CURRENT_BYTES.len())?,
+            "current receipt count"
+        );
+        let before = outstanding(&manager, &host, PANE)?;
+        let directory = scratch("credit-unheld")?;
+        let other = self::manager(&directory)?;
+        assert!(
+            other.credit_receipt(&current).is_err(),
+            "an unknown host rejects submission without consuming the receipt"
+        );
+        assert_eq!(
+            outstanding(&manager, &host, PANE)?,
+            before,
+            "rejected submission does not advance accounting"
+        );
+        manager.credit_receipt(&original)?;
+        manager.credit_receipt(&current)?;
+        manager.credit_receipt(&current.clone())?;
+        manager.credit_receipt(&independent)?;
+        manager.input(&host, PANE, stream_host::FINISH.to_vec())?;
+        let actual = grants
+            .recv_timeout(CREDIT_DEADLINE)?
+            .map_err(|error| -> Failed { error.into() })?;
+        assert_eq!(
+            actual,
+            vec![
+                (
+                    stream_host::REPLACEMENT_CHANNEL,
+                    u32::try_from(stream_host::CURRENT_BYTES.len())?
+                ),
+                (
+                    stream_host::OTHER_CHANNEL,
+                    u32::try_from(stream_host::OTHER_BYTES.len())?
+                ),
+            ],
+            "wire barrier observes each current stream once, including the independent pane"
+        );
+        assert_eq!(
+            outstanding(&manager, &host, PANE)?,
+            before
+                .checked_add(u64::from(current.bytes()))
+                .ok_or("fixture overflow")?,
+            "only successfully carried current credit advances accounting"
+        );
+        drop(other);
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Read the accounting observed by public engine consumers.
+///
+/// # Errors
+/// Returns a missing host or subscription in the scripted fixture.
+fn outstanding(manager: &HostManager, host: &str, pane: PaneId) -> Result<u64, Failed> {
+    manager
+        .model()
+        .host(&HostId(host.to_owned()))
+        .and_then(|view| view.subscription(pane))
+        .map(|subscription| subscription.credit_outstanding)
+        .ok_or_else(|| "missing scripted subscription".into())
+}

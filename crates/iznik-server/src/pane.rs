@@ -19,12 +19,10 @@ use std::time::Duration;
 
 use iznik_protocol::identity::Sequence;
 use iznik_protocol::message::MarkKind;
-use nix::sys::signal::{self, Signal as NixSignal};
-use nix::unistd::Pid;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::history::ring::{HistoryError, PaneHistory};
-use crate::pty::spawn::{ExitStatus, PtyError, PtyProcess, Signal, SpawnOptions, spawn};
+use crate::pty::spawn::{ExitStatus, PtyError, PtyProcess, SpawnOptions, spawn};
 use crate::pty::streams::{InputError, InputHandle, OutputStream, streams};
 use crate::terminal::marks::{MarkEvent, MarkObserver};
 use crate::terminal::mirror::{Mirror, MirrorError, MirrorThread};
@@ -162,8 +160,8 @@ impl Drop for Subscription {
 
 /// A pane: a pseudoterminal with a login shell, mirrored and observed, its
 /// history kept, behind one interface. Dropping it kills the child's process
-/// group; a process that has left that group is beyond its reach, as with any
-/// Unix signal.
+/// group and the terminal foreground group; jobs detached from both groups
+/// are beyond terminal group signaling.
 #[derive(Debug)]
 pub struct Pane {
     /// The child's input; each write is put through whole.
@@ -178,8 +176,8 @@ pub struct Pane {
     requests: mpsc::UnboundedSender<Request>,
     /// The child process, shared with the reaper that waits for its exit.
     process: Arc<Mutex<PtyProcess>>,
-    /// The child's process group, for signalling the pane's whole group.
-    group: Pid,
+    /// Runtime timing; tests shorten the close grace period.
+    options: PaneOptions,
     /// The child's exit status, once it has ended.
     exit: watch::Receiver<Option<ExitStatus>>,
 }
@@ -197,11 +195,24 @@ impl Pane {
         history_bytes: usize,
         thread: &MirrorThread,
     ) -> Result<Pane, PaneError> {
+        Self::spawn_with_options(options, history_bytes, thread, PaneOptions::default()).await
+    }
+
+    /// Spawn with caller-selected timing while retaining the production defaults
+    /// in [`Self::spawn`].
+    ///
+    /// # Errors
+    /// Returns the same PTY and mirror initialization failures as [`Self::spawn`].
+    pub async fn spawn_with_options(
+        options: &SpawnOptions,
+        history_bytes: usize,
+        thread: &MirrorThread,
+        pane_options: PaneOptions,
+    ) -> Result<Pane, PaneError> {
         let columns = options.columns;
         let rows = options.rows;
         let process = spawn(options)?;
         let (output, input) = streams(&process)?;
-        let group = Pid::from_raw(i32::try_from(process.process_id()).unwrap_or(i32::MAX));
         let process = Arc::new(Mutex::new(process));
 
         let history = Arc::new(Mutex::new(PaneHistory::new(history_bytes)));
@@ -250,7 +261,7 @@ impl Pane {
             marks,
             requests,
             process,
-            group,
+            options: pane_options,
             exit,
         })
     }
@@ -394,26 +405,29 @@ impl Pane {
             .map_err(|_send| PaneError::Gone)
     }
 
-    /// Ends the child by hanging up its terminal with `SIGHUP`, then escalating to
-    /// `SIGKILL` after `CLOSE_ESCALATION` if it has not gone — an interactive
-    /// shell may ignore a bare `SIGHUP`, so close always ends the pane.
-    /// [`Pane::exit_status`] resolves once the child has gone. Must be called
-    /// within a Tokio runtime, which schedules the escalation.
+    /// Hang up the foreground job, then force cleanup after the configured grace
+    /// period. Keep the shell session alive during that grace period so an
+    /// ignoring foreground job remains discoverable through the terminal.
+    /// [`Pane::exit_status`] resolves once the child has gone. Call within Tokio.
     ///
     /// # Errors
-    ///
-    /// [`PaneError::Pty`] when the hangup cannot be sent.
+    /// Returns `Pty` when the initial hangup cannot be sent.
     pub fn close(&self) -> Result<(), PaneError> {
-        {
-            let process = self.process.lock().unwrap_or_else(PoisonError::into_inner);
-            process.signal(Signal::Hangup).map_err(PaneError::Pty)?;
-        }
-        let group = self.group;
+        self.process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .hangup_terminal()
+            .map_err(PaneError::Pty)?;
+        let process = Arc::clone(&self.process);
+        let delay = self.options.close_escalation;
         let mut exit = self.exit.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(CLOSE_ESCALATION).await;
+            tokio::time::sleep(delay).await;
             if exit.borrow_and_update().is_none() {
-                let _killed = signal::killpg(group, NixSignal::SIGKILL);
+                process
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .kill_terminal_groups();
             }
         });
         Ok(())
@@ -436,14 +450,25 @@ impl Pane {
 
 impl Drop for Pane {
     fn drop(&mut self) {
-        // If the child has not ended, kill its whole process group, so any job it
-        // is running dies too and the pseudoterminal closes — the output then ends
-        // and the reaper reaps it. The exit guard skips a group already reaped;
-        // only the sub-millisecond window between the reaper's wait returning and
-        // its recording the exit could signal a reaped (so possibly recycled)
-        // group, and a process that has left the group escapes regardless.
-        if self.exit.borrow().is_none() {
-            let _killed = signal::killpg(self.group, NixSignal::SIGKILL);
+        // The child wait owns no process mutex, so cleanup cannot wait behind it.
+        self.process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .kill_terminal_groups();
+    }
+}
+
+/// Pane lifecycle timing, configurable without changing the terminal's spawn geometry.
+#[derive(Clone, Copy, Debug)]
+pub struct PaneOptions {
+    /// Grace after foreground hangup before forcing foreground and shell cleanup.
+    pub close_escalation: Duration,
+}
+
+impl Default for PaneOptions {
+    fn default() -> Self {
+        Self {
+            close_escalation: CLOSE_ESCALATION,
         }
     }
 }
@@ -677,28 +702,29 @@ fn publish(
     });
 }
 
-/// Spawns the reaper: once the output has closed it waits for the child, so the
-/// wait never blocks and [`PtyProcess`] is reaped through `wait` — leaving its
-/// drop nothing to kill and no recycled pid to signal.
+/// After output closes, wait on the blocking pool through a PID/completion
+/// handle. EOF need not mean process exit, so the wait holds no terminal-owner
+/// mutex; close and drop can still signal the child while that wait is pending.
 fn reap_on_exit(
     process: Arc<Mutex<PtyProcess>>,
     closed: oneshot::Receiver<()>,
     exit: watch::Sender<Option<ExitStatus>>,
 ) {
     tokio::spawn(async move {
-        // A clean output EOF means the child is gone, so the wait returns at once.
-        // If instead the VT task was cancelled — its sender dropped without a
-        // signal, as when the mirror thread is dropped under a live pane — the
-        // child may still be running; leave it for `PtyProcess`'s own drop to reap
-        // rather than blocking a thread on a wait that would not return.
+        // Cancellation leaves final cleanup to the PTY owner. A normal EOF
+        // starts the wait even if the child closed its descriptors deliberately
+        // and remains alive; forced cleanup can still acquire the owner below.
         if closed.await.is_err() {
             return;
         }
+        let reaper = process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reaper();
         let waited = tokio::task::spawn_blocking(move || {
-            process
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .wait()
+            let status = reaper.wait();
+            drop(process);
+            status
         })
         .await;
         let status = match waited {

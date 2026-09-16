@@ -33,7 +33,7 @@ use iznik_protocol::message::PROTOCOL_VERSION;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::{Pid, Uid, setsid};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{Notify, RwLock, watch};
 
 use crate::connection;
 use crate::daemon::idle::{
@@ -310,19 +310,6 @@ fn told(
     *shutdown.borrow_and_update()
 }
 
-/// Turns what the panes have reported into deltas, records what the daemon is
-/// holding, and says whether it has held nothing for long enough to go.
-async fn spent(
-    registry: &Arc<RwLock<Registry>>,
-    attached: &Attached,
-    idling: &mut Idle,
-    interval: Duration,
-) -> bool {
-    registry.write().await.ingest();
-    idling.observe(panes_of(registry).await, attached.busy());
-    idling.expired(interval)
-}
-
 /// How many panes the host holds, which with the client count is what idleness
 /// is made of.
 async fn panes_of(registry: &Arc<RwLock<Registry>>) -> usize {
@@ -435,45 +422,118 @@ async fn accept_until(
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), DaemonError> {
     let signal = registry.read().await.signal();
-    let attached = Attached::default();
-    let mut idling = Idle::new();
-    let mut terminated = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|source| DaemonError::Io { source })?;
-    // Held outside the loop: a deadline built inside the `select!` is rearmed
-    // by every accept and every pane that speaks, so a busy daemon would never
-    // look at whether it is idle and would then judge its first quiet second
-    // against the time it started.
-    let mut ticker = tokio::time::interval(IDLE_CHECK_INTERVAL);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut listener_loop = AcceptLoop::new(listener, registry, signal)?;
     // Once every sender is gone nothing can ask this daemon to stop, and a
     // `changed` that returns at once for ever would spin.
     let mut asked = true;
-    loop {
-        let due = tokio::select! {
-            accepted = listener.accept() => {
-                admit(accepted, registry, &attached).await;
-                false
-            }
-            changed = shutdown.changed(), if asked => {
-                if told(&changed, &mut shutdown, &mut asked) {
-                    break;
-                }
-                false
-            }
-            _signalled = terminated.recv() => break,
-            () = signal.notified() => {
-                registry.write().await.ingest();
-                false
-            }
-            _tick = ticker.tick() => true,
-        };
-        if due && spent(registry, &attached, &mut idling, options.idle_shutdown).await {
+    while let Some(due) = listener_loop.turn(&mut shutdown, &mut asked).await {
+        if due && listener_loop.spent(options.idle_shutdown).await {
             tracing::info!("the daemon has had nothing to hold; going");
             break;
         }
     }
 
     Ok(())
+}
+
+/// The accept loop's own state: the socket clients knock on, the registry they
+/// are served from, the four events a turn waits on, and how long the daemon
+/// has had nothing to hold. One turn is a method here rather than a call with
+/// eight arguments.
+struct AcceptLoop<'listener> {
+    /// The socket every client knocks on.
+    listener: &'listener tokio::net::UnixListener,
+    /// The sessions and panes this daemon holds.
+    registry: &'listener Arc<RwLock<Registry>>,
+    /// Raised whenever a pane has something to report.
+    signal: Arc<Notify>,
+    /// `SIGTERM`, which ends the daemon.
+    terminated: tokio::signal::unix::Signal,
+    /// The clock the idle check is read against.
+    ticker: tokio::time::Interval,
+    /// The clients attached right now, and who has come and gone.
+    attached: Attached,
+    /// How long it has had nothing to hold.
+    idling: Idle,
+}
+
+impl<'listener> AcceptLoop<'listener> {
+    /// The loop's state, with the `SIGTERM` handler installed.
+    ///
+    /// # Errors
+    ///
+    /// [`DaemonError::Io`] when the signal handler cannot be installed.
+    fn new(
+        listener: &'listener tokio::net::UnixListener,
+        registry: &'listener Arc<RwLock<Registry>>,
+        signal: Arc<Notify>,
+    ) -> Result<AcceptLoop<'listener>, DaemonError> {
+        let terminated = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .map_err(|source| DaemonError::Io { source })?;
+        // Held outside the loop: a deadline built inside the `select!` is
+        // rearmed by every accept and every pane that speaks, so a busy daemon
+        // would never look at whether it is idle and would then judge its
+        // first quiet second against the time it started.
+        let mut ticker = tokio::time::interval(IDLE_CHECK_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Ok(AcceptLoop {
+            listener,
+            registry,
+            signal,
+            terminated,
+            ticker,
+            attached: Attached::default(),
+            idling: Idle::new(),
+        })
+    }
+
+    /// Waits for whatever happens next and does what that turn's event asks for
+    /// at once: a client is admitted onto a connection of its own, a pane's
+    /// report is ingested, and the idle check reports itself as `Some(true)`.
+    /// The three events that mean the daemon should stop report `None`, and
+    /// everything else that is not the idle check `Some(false)`.
+    ///
+    /// # Panics
+    ///
+    /// It spawns through [`admit`], so it must be called from within a Tokio
+    /// runtime.
+    async fn turn(
+        &mut self,
+        shutdown: &mut watch::Receiver<bool>,
+        asked: &mut bool,
+    ) -> Option<bool> {
+        tokio::select! {
+            accepted = self.listener.accept() => {
+                admit(accepted, self.registry, &self.attached).await;
+                Some(false)
+            }
+            changed = shutdown.changed(), if *asked => {
+                if told(&changed, shutdown, asked) {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            _signalled = self.terminated.recv() => None,
+            () = self.signal.notified() => {
+                self.registry.write().await.ingest();
+                Some(false)
+            }
+            _tick = self.ticker.tick() => Some(true),
+        }
+    }
+
+    /// Turns what the panes have reported into deltas, records what the daemon
+    /// is holding, and says whether it has held nothing for long enough to go.
+    /// Asked only when the idle tick fired, so a daemon with a pane saying
+    /// something every millisecond takes this lock on the second, not on every
+    /// report.
+    async fn spent(&mut self, interval: Duration) -> bool {
+        self.registry.write().await.ingest();
+        self.idling
+            .observe(panes_of(self.registry).await, self.attached.busy());
+        self.idling.expired(interval)
+    }
 }
 
 /// The exit status of a command that could not do what it was asked.
@@ -492,6 +552,35 @@ async fn say(line: &str) {
     let mut stdout = tokio::io::stdout();
     let _written = stdout.write_all(format!("{line}\n").as_bytes()).await;
     let _flushed = stdout.flush().await;
+}
+
+/// The options a command line asks for and the runtime paths they are resolved
+/// against, or the status a person sees for whichever of the two could not be
+/// had. Each says its own refusal on standard error, so an entry point's first
+/// two steps are this pair written once.
+///
+/// # Errors
+///
+/// The exit status the caller must return: [`crate::USAGE_EXIT_CODE`] when the
+/// command line does not parse, and [`FAILED`] when this host allows no
+/// runtime directory.
+async fn options_and_paths(
+    arguments: &[OsString],
+) -> Result<(DaemonOptions, RuntimePaths), ExitCode> {
+    let options = match options_from(arguments) {
+        Ok(options) => options,
+        Err(refusal) => {
+            complain(&refusal).await;
+            return Err(ExitCode::from(crate::USAGE_EXIT_CODE));
+        }
+    };
+    match RuntimePaths::resolve() {
+        Ok(paths) => Ok((options, paths)),
+        Err(error) => {
+            complain(&error.to_string()).await;
+            Err(ExitCode::from(FAILED))
+        }
+    }
 }
 
 impl DaemonOptions {
@@ -565,30 +654,27 @@ async fn version() -> ExitCode {
 /// daemon in the foreground, not for detaching; `--daemon` is the detaching
 /// command, and the one the relay and the bootstrap use.
 async fn foreground(arguments: &[OsString]) -> ExitCode {
-    let options = match options_from(arguments) {
-        Ok(options) => options,
-        Err(refusal) => {
-            complain(&refusal).await;
-            return ExitCode::from(crate::USAGE_EXIT_CODE);
-        }
+    let (options, paths) = match options_and_paths(arguments).await {
+        Ok(both) => both,
+        Err(status) => return status,
     };
+    // After the options and the paths, so a command line this machine will not
+    // take is refused before this process leaves the shell that ran it.
     if let Err(error) = setsid() {
         tracing::debug!(%error, "this process kept its caller's session");
     }
-    let paths = match RuntimePaths::resolve() {
-        Ok(paths) => paths,
-        Err(error) => {
-            complain(&error.to_string()).await;
-            return ExitCode::from(FAILED);
-        }
-    };
+    serve_and_report(&paths, options).await
+}
+
+/// Runs the daemon in this process and turns its outcome into a status,
+/// logging and saying what went wrong either way: the log is where a daemon
+/// started with its streams on `/dev/null` can be heard at all.
+async fn serve_and_report(paths: &RuntimePaths, options: DaemonOptions) -> ExitCode {
     let _logging = logging::initialize(&paths.log).await;
     let (_asked, shutdown) = watch::channel(false);
-    match serve(&paths, options, shutdown).await {
+    match serve(paths, options, shutdown).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // Both: the log is where a daemon started with its streams on
-            // `/dev/null` can be heard at all.
             tracing::error!(%error, "the daemon could not run");
             complain(&error.to_string()).await;
             ExitCode::from(FAILED)
@@ -644,19 +730,9 @@ async fn answers_within(socket: &Path, child: &mut tokio::process::Child, cap: D
 /// Starting when one is already running is not an error — it is what the relay
 /// does on every connection — so it says who holds it and succeeds.
 async fn start(arguments: &[OsString]) -> ExitCode {
-    let options = match options_from(arguments) {
-        Ok(options) => options,
-        Err(refusal) => {
-            complain(&refusal).await;
-            return ExitCode::from(crate::USAGE_EXIT_CODE);
-        }
-    };
-    let paths = match RuntimePaths::resolve() {
-        Ok(paths) => paths,
-        Err(error) => {
-            complain(&error.to_string()).await;
-            return ExitCode::from(FAILED);
-        }
+    let (options, paths) = match options_and_paths(arguments).await {
+        Ok(both) => both,
+        Err(status) => return status,
     };
     if socket::answering(&paths.socket).await {
         let holder = lock::holder(&paths.lock).unwrap_or_default();
@@ -713,19 +789,9 @@ async fn start(arguments: &[OsString]) -> ExitCode {
 
 /// `--stop`: end a running daemon and wait for its socket to go.
 async fn stop(arguments: &[OsString]) -> ExitCode {
-    let options = match options_from(arguments) {
-        Ok(options) => options,
-        Err(refusal) => {
-            complain(&refusal).await;
-            return ExitCode::from(crate::USAGE_EXIT_CODE);
-        }
-    };
-    let paths = match RuntimePaths::resolve() {
-        Ok(paths) => paths,
-        Err(error) => {
-            complain(&error.to_string()).await;
-            return ExitCode::from(FAILED);
-        }
+    let (options, paths) = match options_and_paths(arguments).await {
+        Ok(both) => both,
+        Err(status) => return status,
     };
     // The lock is the truth and the recorded id is a courtesy: a daemon that
     // was killed leaves the file behind with an id the system will hand to

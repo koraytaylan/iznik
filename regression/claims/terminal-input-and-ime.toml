@@ -1,0 +1,173 @@
+[[claim]]
+id = "input-mode-fixtures-pin-native-encoding"
+statement = "The committed 72-row matrix pins arrow, keypad and modified-character input bytes across every combination of cursor mode, keypad mode, DEC 1035 keypad suppression and modify-other-keys settings zero through two."
+test = "iznik-app::input_encoding::input_mode_fixtures_pin_the_native_encoder"
+because = "the mode-to-byte contract is deterministic emulator behavior, with no transport or display dependency"
+
+[[claim]]
+id = "input-live-mode-encoding"
+statement = "The owning VT thread encodes all 72 committed key cases using live modes even when the mode-change snapshot has not yet been consumed, and input publishes no additional render frame."
+test = "iznik-app::input_encoding::input_mode_matrix_runs_on_the_owning_thread"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-paste-framing"
+statement = "Paste sanitizes embedded control bytes before framing, follows the live bracketed-paste mode and returns to unframed carriage-return text when that mode is reset."
+test = "iznik-app::input_encoding::input_paste_sanitizes_payload_before_mode_dependent_framing"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-mouse-tracking"
+statement = "Pointer press, release and drag events follow the pane live X10, normal, drag-only and any-motion tracking modes, including SGR coordinates and suppression when no tracking is requested."
+test = "iznik-app::input_encoding::input_mouse_tracks_only_requested_events_in_the_live_protocol"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-wheel-and-geometry"
+statement = "Native mouse input preserves wheel direction and held modifiers and rejects zero-size cells or nonfinite coordinates before calling the native encoder."
+test = "iznik-app::input_encoding::input_mouse_encodes_wheel_and_rejects_invalid_geometry"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-gap-recovery"
+statement = "A terminal with a stream discontinuity rejects input encoding until an authoritative screen restores its mode state."
+test = "iznik-app::input_encoding::input_requires_an_authoritative_terminal_after_a_gap"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-copy-graphemes"
+statement = "Native selection serialization copies wide and combining graphemes without style escapes in either selection direction; an empty range copies empty text and copying emits no render frame."
+test = "iznik-app::input_encoding::input_copy_serializes_selected_graphemes_without_styles"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-copy-frame"
+statement = "Native selection serialization joins soft wraps and copies the displayed history, rejecting stale output, viewport or resize coordinates."
+test = "iznik-app::input_encoding::input_copy_unwraps_and_rejects_a_changed_display_frame"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-extended-key-events"
+statement = "Owned keyboard requests preserve Unicode layout text and repeat events, suppress legacy releases and encode extended-protocol releases when requested by the program."
+test = "iznik-app::input_encoding::input_preserves_unicode_and_extended_key_event_types"
+because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
+
+[[claim]]
+id = "input-credit-counts-consumption"
+statement = "A grid queues credit only after accepting a snapshot, never repeats credit for cloned frames or selection redraws, rejects stale frames and retains grants when submission fails."
+test = "iznik-app::grid_element::grid_credit_counts_consumption_once_and_retries_failed_submission"
+because = "real VT snapshots and GPUI grid consumption completely determine the per-pane accounting; transport scheduling is a separate integration proof"
+
+[[claim]]
+id = "input-credit-is-per-pane"
+statement = "Holding one pane snapshot queues no credit for it while a sibling grid independently grants exactly its consumed bytes."
+test = "iznik-app::grid_element::grid_credit_is_independent_for_each_consuming_pane"
+because = "real VT snapshots and GPUI grid consumption completely determine the per-pane accounting; transport scheduling is a separate integration proof"
+
+[[claim]]
+id = "input-credit-screen-baseline"
+statement = "An authoritative screen rebases the grid sequence baseline without earning stream credit or discarding already owed grants."
+test = "iznik-app::grid_element::grid_credit_rebases_on_a_screen_without_crediting_screen_bytes"
+because = "real VT snapshots and GPUI grid consumption completely determine the per-pane accounting; transport scheduling is a separate integration proof"
+
+[[claim]]
+id = "input-ime-draft"
+statement = "GPUI composition edits only the unsent UTF-16 draft, normalizes surrogate boundaries and partial-replacement selections, sends no preedit bytes, cancels empty marked text and commits Unicode exactly once through the native extended-keyboard encoder."
+test = "iznik-app::ime::ime_edits_utf16_without_sending_preedit"
+because = "headless GPUI input-handler calls and the real VT owner determine draft state and encoded bytes without a transport or native candidate window"
+
+[[claim]]
+id = "input-ime-geometry"
+statement = "GPUI candidate bounds use the emulator cursor row and column plus shaped draft advances, and point queries return UTF-16 boundaries including supplementary-plane text."
+test = "iznik-app::ime::ime_candidate_geometry_uses_the_painted_cursor"
+because = "headless GPUI exercises the actual input-handler geometry and text shaping; native candidate-window presentation is a separate display measurement"
+
+[[claim]]
+id = "input-ime-registration"
+statement = "Focused GPUI text dispatch reaches the grid's registered input handler, while committed Unicode and clipboard paste retain their distinct native encoding paths."
+test = "iznik-app::ime::ime_registration_dispatches_text_and_paste_through_native_modes"
+because = "the headless platform dispatch and native VT encoder determine registration and bytes; a display or transport adds no behavior to this seam"
+
+[[claim]]
+id = "input-keyboard-dispatch"
+statement = "GPUI named-key dispatch follows live cursor and modify-other-keys modes, preserves control and shifted-letter chords, handles function and navigation keys, and sends extra-modifier history chords to the process."
+test = "iznik-app::ime::keyboard_dispatch_uses_live_terminal_modes"
+because = "headless GPUI dispatch and the real native VT encoder fully determine these mapped event bytes without a transport or display"
+
+[[claim]]
+id = "input-keyboard-event-pairing"
+statement = "GPUI repeat and release events reach the extended keyboard protocol, while a release whose press was consumed as local history navigation sends no process input."
+test = "iznik-app::ime::keyboard_dispatch_pairs_repeat_and_release"
+because = "headless platform events and native VT encoding fully determine event pairing without a transport or display"
+
+[[claim]]
+id = "input-keyboard-composition"
+statement = "An active composition and explicit platform character-input preference bypass raw key encoding, including release suppression for presses not sent to the process."
+test = "iznik-app::ime::keyboard_dispatch_leaves_composition_to_the_platform"
+because = "GPUI composition state and dispatched events fully determine this routing without a native candidate window or transport"
+
+[[claim]]
+id = "input-pointer-selection"
+statement = "GPUI left-button drags select and natively copy the displayed text in both directions; an ordinary click clears selection and untracked selection sends no process bytes."
+test = "iznik-app::ime::pointer_dispatch_selects_and_copies_in_both_directions"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-pointer-live-tracking"
+statement = "GPUI pointer dispatch uses live SGR drag tracking before its snapshot is consumed, and X10-filtered motion and releases never become local selection."
+test = "iznik-app::ime::pointer_dispatch_uses_live_tracking_and_never_reinterprets_filtered_events"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-pointer-override"
+statement = "Shift at drag start retains local selection through release, stale fallback cannot start selection on a changed frame, and outside drags clamp to the displayed row edge."
+test = "iznik-app::ime::pointer_dispatch_retains_shift_override_and_rejects_stale_fallback"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-pointer-wheel"
+statement = "GPUI wheel direction, whole-row counts and partial-pixel accumulation reach either local history or native reports according to live tracking, with explicit Shift-wheel local override."
+test = "iznik-app::ime::pointer_wheel_routes_history_and_program_reports_from_live_modes"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-pointer-wheel-limit"
+statement = "A caller-shortened native wheel report limit rejects an excessive tracked burst while preserving the complete distance of an untracked history fallback."
+test = "iznik-app::input_encoding::input_pointer_limits_native_wheel_expansion_without_truncating_history"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-pointer-scale"
+statement = "Native pixel mouse reporting converts logical pointer position and cell geometry using the window backing scale."
+test = "iznik-app::ime::pointer_pixel_protocol_uses_the_window_backing_scale"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-copy-pane-identity"
+statement = "Native selection copy rejects a frame naming another pane even when its sequence and dimensions otherwise match."
+test = "iznik-app::input_encoding::input_copy_rejects_a_frame_from_another_pane"
+because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
+
+[[claim]]
+id = "input-surface-clipboard"
+statement = "The production pane surface retains grid copy and history subscriptions, writes native selection text through GPUI clipboard APIs, and rejects a foreign pane reply before clipboard changes."
+test = "iznik-app::surface::surface_routes_copy_and_history_through_grid_subscriptions"
+because = "headless GPUI subscriptions, clipboard and the native owner prove this local routing; the isolated engine deliberately has no host, so this does not claim transport delivery or backpressure"
+
+[[claim]]
+id = "input-surface-credit-retry"
+statement = "A surface accepts a valid frame before returning its credit; engine rejection leaves that exact grant available once for retry and does not undo the display."
+test = "iznik-app::surface::surface_retains_consumed_credit_when_the_engine_rejects_submission"
+because = "headless GPUI subscriptions, clipboard and the native owner prove this local routing; the isolated engine deliberately has no host, so this does not claim transport delivery or backpressure"
+
+[[claim]]
+id = "input-surface-routing"
+statement = "Retained surface subscriptions send pointer and paste requests to the VT owner, apply local pointer replies to selection, and offer encoded process input to the engine."
+test = "iznik-app::surface::surface_routes_pointer_fallback_and_encoded_process_input"
+because = "headless GPUI subscriptions, clipboard and the native owner prove this local routing; the isolated engine deliberately has no host, so this does not claim transport delivery or backpressure"
+
+[[claim]]
+id = "input-container-surface-backpressure"
+statement = "Holding one production surface's native replies exhausts exactly its 256 KiB transport credit window while a sibling completes two process round trips; consuming the held replies returns delivery receipts and releases exactly the complete 512 KiB flood and its final marker."
+test = "iznik-app::regression_window::credit::surface_credit_is_per_pane"
+because = "This ignored headless GPUI proof uses the standard two-container fixture, actual SSH, production engine, native VT owner and PaneSurface consumption; only the test consumer delays one surface's owned replies."

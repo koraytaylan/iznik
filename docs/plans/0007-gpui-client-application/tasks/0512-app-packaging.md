@@ -16,8 +16,8 @@ touches:
   - policy/lexicon/app-packaging.txt
   - regression/claims/app-packaging.toml
   - xtask/src/distribution/app.rs
-status: planned
-merged_as: ""
+status: done
+merged_as: "0502979"
 ---
 # Package the app: .app bundle layout, icon, version stamping
 

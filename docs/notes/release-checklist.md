@@ -110,7 +110,30 @@ Build each triple twice and compare the digests. They are built with
 `--remap-path-prefix` so that two consecutive builds are byte-identical, and a
 release is where that is checked rather than assumed.
 
-## 6. The golden header
+## 6. The application bundle
+
+```sh
+cargo xtask app-bundle --target x86_64-unknown-linux-gnu --binary <staged-binary> --output <bundle-directory>
+```
+
+Run the command for each release target and retain the generated layout beside
+the distribution manifest. On a Mac, codesign and notarize the `.app` by hand
+and record the machine and identity used. Run the application's headless test
+suite on the development machine:
+
+```sh
+timeout 1800 cargo nextest run --package iznik-app --test end_to_end
+```
+
+Then repeat the render-budget measurement on the release machine:
+
+```sh
+timeout 1200 cargo nextest run --package iznik-app --bench grid_budget --success-output immediate
+```
+
+Record both machine names beside the results.
+
+## 7. The golden header
 
 ```sh
 cargo xtask header

@@ -52,6 +52,7 @@ pub const EXPIRE_INTERVAL: Duration = Duration::from_millis(500);
 /// leaves the loop hearing what the host says.
 pub const ORDERS_PER_TURN: usize = 64;
 
+pub mod credit;
 mod task;
 
 /// How long a caller waits for a host's task to end before it is cut short.
@@ -182,6 +183,9 @@ pub enum ManagerEvent {
         sequence: Sequence,
         /// What arrived.
         bytes: Vec<u8>,
+        /// Delivery-bound credit for these bytes. Engine deliveries always carry it;
+        /// synthetic/offline events may omit it and have only current-stream credit semantics.
+        receipt: Option<credit::CreditReceipt>,
     },
     /// Something worth telling whoever is watching.
     Notify(Notification),
@@ -324,12 +328,10 @@ pub(crate) enum Order {
         /// The pane, or none.
         pane: Option<PaneId>,
     },
-    /// Flow-control credit for a pane's channel.
+    /// Flow-control credit bound to the exact stream which earned it.
     Credit {
-        /// The channel.
-        channel: u8,
-        /// The bytes consumed.
-        bytes: u32,
+        /// Delivery or compatibility grant, checked again at the carrying boundary.
+        receipt: credit::CreditReceipt,
     },
     /// A command already applied to the model, to be sent.
     Command {
@@ -354,6 +356,8 @@ pub(crate) enum Order {
 pub(crate) struct Shared {
     /// What the client knows.
     pub(crate) model: Mutex<ClientModel>,
+    /// Current stream incarnations and once-only delivery credit.
+    pub(crate) credit: Mutex<credit::CreditStreams>,
     /// Everyone listening for events.
     pub(crate) listeners: Mutex<Vec<Sender<ManagerEvent>>>,
     /// What everything runs under.
@@ -538,6 +542,7 @@ impl HostManager {
         write_to(options.log_path.as_deref())?;
         let shared = Arc::new(Shared {
             model: Mutex::new(ClientModel::default()),
+            credit: Mutex::new(credit::CreditStreams::default()),
             listeners: Mutex::new(Vec::new()),
             options,
             artifacts,
@@ -622,6 +627,9 @@ impl HostManager {
         let host = HostId(alias.to_owned());
         let handle = self.take(&host)?;
         self.end(handle);
+        if let Ok(mut credit) = self.shared.credit.lock() {
+            credit.disconnect(&host);
+        }
         if let Ok(mut model) = self.shared.model.lock() {
             let _gone = model.remove(&host);
         }
@@ -713,37 +721,6 @@ impl HostManager {
     /// As [`HostManager::reconnect`].
     pub fn screen(&self, alias: &str, pane: PaneId) -> Result<(), ManagerError> {
         self.order(alias, Order::Screen { pane })
-    }
-
-    /// Returns flow-control credit for a pane.
-    ///
-    /// Named by pane rather than by channel, because a channel is the host's
-    /// own numbering and an application knows panes; the channel it is
-    /// carried on is what the model holds.
-    ///
-    /// # Errors
-    ///
-    /// As [`HostManager::reconnect`], and [`ManagerError::NotCarrying`] when
-    /// the pane is held but is not carrying anything just now.
-    pub fn credit(&self, alias: &str, pane: PaneId, bytes: u32) -> Result<(), ManagerError> {
-        let host = HostId(alias.to_owned());
-        let channel = self
-            .shared
-            .with(&host, |view| {
-                // A pane whose channel another pane has taken carries nothing:
-                // its number is `NO_CHANNEL`, which is the control channel,
-                // and credit sent there is credit the pane never gets — while
-                // the window this client thinks it returned has grown. Neither
-                // the order nor the grant happens.
-                let carried = view.carried(pane)?;
-                if let Some(held) = view.subscription_mut(pane) {
-                    held.grant(u64::from(bytes));
-                }
-                Some(carried)
-            })
-            .ok_or(ManagerError::UnknownHost { host: host.clone() })?
-            .ok_or(ManagerError::NotCarrying { host, pane })?;
-        self.order(alias, Order::Credit { channel, bytes })
     }
 
     /// Sends a session command, showing what it does if what it does is beyond

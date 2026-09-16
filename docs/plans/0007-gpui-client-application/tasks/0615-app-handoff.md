@@ -10,8 +10,8 @@ gated: false
 touches:
   - docs/notes/release-checklist.md
   - regression/claims/claims-registry.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "1f91de5"
 ---
 # Handoff: run the whole registry, record the deferred proofs
 

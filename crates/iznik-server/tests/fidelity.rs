@@ -42,23 +42,17 @@ fn raw_writer(path: &str) -> SpawnOptions {
     }
 }
 
-/// Waits until the pane's newest sequence stops advancing — the child has written
-/// all it will — and returns it.
-async fn wait_idle(pane: &Pane) -> Sequence {
-    let mut last = pane.state().newest;
+/// Waits for the known fixture length rather than mistaking scheduling silence
+/// for producer completion. An excess sequence remains visible to the assertion.
+async fn wait_complete(pane: &Pane, expected: Sequence) -> Sequence {
     for _ in 0..POLL_ATTEMPTS {
-        tokio::time::sleep(POLL_INTERVAL).await;
-        let now = pane.state().newest;
-        // Said something, and then said nothing more. Stillness alone is not
-        // enough: on a machine with other work on it the child may not have
-        // been scheduled yet, and a pane that has said nothing twice looks
-        // exactly like one that has finished saying everything.
-        if now == last && now > Sequence(0) {
-            return now;
+        let newest = pane.state().newest;
+        if newest >= expected {
+            return newest;
         }
-        last = now;
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
-    last
+    pane.state().newest
 }
 
 /// The offset of the first differing byte, or `None` when the two are identical.
@@ -112,7 +106,11 @@ async fn fidelity_is_byte_identical_and_reproduces_every_construct() {
         let pane = Pane::spawn(&raw_writer(&path.to_string_lossy()), HISTORY_BYTES, &thread)
             .await
             .expect("a pane spawns");
-        wait_idle(&pane).await;
+        wait_complete(
+            &pane,
+            Sequence(u64::try_from(content.len()).expect("fixture length")),
+        )
+        .await;
 
         let history = pane.read_history(Sequence(0)).expect("history from zero");
         assert_eq!(
@@ -160,7 +158,11 @@ async fn fidelity_survives_a_flood() {
     let pane = Pane::spawn(&raw_writer(&path.to_string_lossy()), RING_BYTES, &thread)
         .await
         .expect("a pane spawns");
-    let newest = wait_idle(&pane).await;
+    let newest = wait_complete(
+        &pane,
+        Sequence(u64::try_from(FLOOD_BYTES).expect("flood length")),
+    )
+    .await;
     let _removed = std::fs::remove_file(&path);
 
     assert_eq!(

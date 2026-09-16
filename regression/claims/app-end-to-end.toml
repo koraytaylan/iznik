@@ -1,0 +1,17 @@
+[[claim]]
+id = "app-assembly-model"
+statement = "A headless GPUI application renders the session and tab bars and palette from one model snapshot."
+test = "iznik-app::end_to_end::application_assembly_follows_model_deltas"
+because = "the renderer reads the same EngineState mirror as the production shell, while lifecycle transport proofs already run against the real stack"
+
+[[claim]]
+id = "app-assembly-reconciliation"
+statement = "A model tab removal delta updates the headless application's rendered projection while retaining the session entry."
+test = "iznik-app::end_to_end::application_assembly_follows_model_deltas"
+because = "the test applies the canonical reducer delta before drawing the same retained GPUI root"
+
+[[claim]]
+id = "app-shell-in-process-command"
+statement = "The production GPUI window attaches a local in-process host, creates a session and pane through the same action dispatch path used by the shell, and renders the resulting session bar."
+test = "iznik-app::end_to_end::application_shell_drives_the_in_process_stack"
+because = "the fixture starts the real iznik-testkit daemon, drives WindowShell updates, submits CreateSession and CreatePane through dispatch_action, and observes the resulting model before drawing the session bar"

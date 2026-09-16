@@ -536,6 +536,19 @@ impl Fixture {
         self.exec_as(container, USER, command, deadline)
     }
 
+    /// Build a streaming command in a fixture container as its unprivileged user.
+    /// The caller owns standard streams, a deadline, and child cleanup; dropping
+    /// this fixture still removes the container and any process it holds.
+    ///
+    /// # Errors
+    /// Returns [`FixtureError::UnknownContainer`] for an unknown alias.
+    pub fn stream_command(&self, container: &str, command: &str) -> Result<Command, FixtureError> {
+        let name = self.name_of(container)?;
+        let mut process = Command::new(PROGRAM);
+        process.args(["exec", "-i", "--user", USER, name, "sh", "-c", command]);
+        Ok(process)
+    }
+
     /// Generates the credentials inside the containers and the engine's SSH
     /// configuration naming each host by its container name.
     ///

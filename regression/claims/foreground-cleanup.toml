@@ -1,0 +1,29 @@
+[[claim]]
+id = "foreground-fixture-job-control"
+statement = "The committed foreground fixture runs in a process group distinct from its interactive shell, within the same terminal session, and announces readiness from that child."
+test = "iznik-server::pty_spawn::pty_spawn_foreground_fixture_owns_a_separate_group"
+because = "job-control groups and terminal ownership are kernel behavior identical in the container and this isolated real-PTY fixture"
+
+[[claim]]
+id = "foreground-pty-drop"
+statement = "Dropping the direct PTY owner terminates both its interactive shell and the announced, hangup-ignoring foreground job."
+test = "iznik-server::pty_spawn::pty_spawn_drop_kills_the_foreground_job"
+because = "real kernel job-control groups and PTY ownership behave identically in this isolated fixture and a container"
+
+[[claim]]
+id = "foreground-pane-drop"
+statement = "Dropping a pane terminates its announced foreground job and reaps the shell, without relying on the shell pre-exec mark as proof that the job has started."
+test = "iznik-server::pane::pane_exits_and_leaves_nothing"
+because = "the real pane, mirror thread and isolated kernel PTY determine cleanup, so a container adds no behavior"
+
+[[claim]]
+id = "foreground-pane-close"
+statement = "Pane close escalates a hangup-ignoring foreground job after caller-selected grace, terminates the job and shell, and reports the shell exit."
+test = "iznik-server::pane::pane_close_escalates_a_foreground_job"
+because = "the real pane, mirror thread and isolated kernel PTY determine cleanup, so a container adds no behavior"
+
+[[claim]]
+id = "foreground-reaper-mutex"
+statement = "A child that closes terminal descriptors before exiting does not prevent pane close from acquiring the terminal owner and forcing its termination."
+test = "iznik-server::pane::pane_close_remains_available_after_output_ends"
+because = "the real child wait and pane close exercise the mutex boundary directly without needing a network or container"

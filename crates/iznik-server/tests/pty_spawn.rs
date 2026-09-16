@@ -4,6 +4,9 @@
 //! behind. Every child is `sh` but the one login-shell case, and every read is a
 //! `read_until_quiet` with a sub-second quiet interval.
 
+#[path = "fixtures/foreground.rs"]
+mod foreground;
+
 use std::error::Error;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -376,4 +379,85 @@ fn pty_spawn_a_drop_kills_the_child() {
     thread::sleep(Duration::from_millis(200));
     let alive = std::path::Path::new(&format!("/proc/{process_id}")).exists();
     assert!(!alive, "the child was reaped: /proc/{process_id} is gone");
+}
+
+/// The foreground fixture establishes a distinct job-control group and ignores
+/// hangup, so killing only the shell group cannot count as complete teardown.
+///
+/// # Panics
+/// Fails when the fixture does not start in its own foreground process group.
+#[test]
+fn pty_spawn_foreground_fixture_owns_a_separate_group() {
+    use nix::sys::signal::{Signal as NixSignal, killpg};
+    use nix::unistd::{Pid, getsid};
+
+    let mut session = Session::start(&program("bash", &["--noprofile", "--norc", "-i"]))
+        .expect("interactive shell");
+    let fixture = format!(
+        "{}/tests/fixtures/foreground.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    session
+        .send_line(&format!("sh '{fixture}' 1000"))
+        .expect("start foreground fixture");
+    let output = session.reader.read_until_pair(OUTPUT_MARKER);
+    let shell = Pid::from_raw(i32::try_from(session.process.process_id()).expect("shell pid"));
+    let foreground = session
+        .process
+        .master()
+        .process_group_leader()
+        .map(Pid::from_raw);
+    let foreground_session = foreground.map(|group| getsid(Some(group)));
+    // Clean up before assertions: this fixture proof precedes the product repair.
+    let cleanup = foreground.map(|group| killpg(group, NixSignal::SIGKILL));
+    let shell_cleanup = session.process.signal(Signal::Kill);
+    drop(session);
+    assert!(
+        output.contains(&OUTPUT_MARKER),
+        "foreground readiness marker"
+    );
+    assert!(
+        foreground.is_some_and(|group| group != shell),
+        "job control assigns a distinct foreground group"
+    );
+    assert_eq!(
+        foreground_session,
+        Some(Ok(shell)),
+        "foreground job stays in the owned terminal session"
+    );
+    assert_eq!(cleanup, Some(Ok(())), "fixture foreground group cleanup");
+    assert!(shell_cleanup.is_ok(), "fixture shell cleanup");
+}
+
+/// Direct PTY ownership includes the interactive shell's ready foreground job.
+///
+/// # Panics
+/// Fails if either process survives owner drop or foreground identity is invalid.
+#[tokio::test]
+async fn pty_spawn_drop_kills_the_foreground_job() {
+    let mut session = Session::start(&program("bash", &["--noprofile", "--norc", "-i"]))
+        .expect("interactive shell");
+    session
+        .send_line(&foreground::command())
+        .expect("foreground command");
+    let output = session.reader.read_until_pair(OUTPUT_MARKER);
+    let process = session.process.process_id();
+    let group = session
+        .process
+        .master()
+        .process_group_leader()
+        .expect("foreground group");
+    let job =
+        foreground::ForegroundJob::new(u32::try_from(group).expect("positive group"), process)
+            .expect("owned foreground job");
+    assert!(output.contains(&OUTPUT_MARKER), "child readiness");
+    drop(session);
+    assert!(
+        foreground::wait_until_gone(process, foreground::CleanupOptions::default()).await,
+        "shell was reaped"
+    );
+    assert!(
+        foreground::wait_until_gone(job.process, foreground::CleanupOptions::default()).await,
+        "foreground job was terminated"
+    );
 }

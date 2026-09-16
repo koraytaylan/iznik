@@ -3,7 +3,7 @@
 //! A claims file is `regression/claims/<task-id>.toml`, and each `[[claim]]`
 //! has a stable `id`, a present-tense `statement`, and exactly one proof — a
 //! `scenario` under the same task, or a `test` with a `because` that says why
-//! a container adds nothing. Loading validates the whole set at once: ids are
+//! a container adds nothing, or a deferred `display` measurement record. Loading validates the whole set at once: ids are
 //! unique across the registry, every proof is well formed, every file is named
 //! for a real task under `docs/plans/`, every scenario proof names a scenario
 //! that exists, and no scenario of a registered task names a claim the registry
@@ -52,6 +52,13 @@ pub enum Proof {
     Scenario {
         /// The scenario's file stem.
         name: String,
+    },
+    /// A display-bound measurement kept explicitly deferred by the automated gate.
+    Display {
+        /// Existing Markdown record under `docs/notes/`, relative to the repository.
+        record: String,
+        /// Why native display hardware and manual measurement are required.
+        because: String,
     },
     /// A test, by its `package::binary::test` path, with the reason a container
     /// adds nothing to it.
@@ -117,7 +124,9 @@ struct RawClaim {
     scenario: Option<String>,
     /// A test proof, by `package::binary::test` path.
     test: Option<String>,
-    /// Why a test proof needs no container.
+    /// A deferred display measurement record under `docs/notes/`.
+    display: Option<String>,
+    /// Why a test needs no container or a display measurement cannot be automated here.
     because: Option<String>,
     /// The operating system the proof needs, when it needs a named one.
     platform: Option<String>,
@@ -132,19 +141,19 @@ impl RawClaim {
     ///
     /// [`RegistryError::BothProofs`] or [`RegistryError::NeitherProof`] when the
     /// count is not one, and [`RegistryError::TestWithoutBecause`] when a test
-    /// proof has no reason.
+    /// proof has no reason; `DisplayRecord` when a display measurement has no reason.
     fn proof(&self, task: &str) -> Result<Proof, RegistryError> {
-        match (self.scenario.as_ref(), self.test.as_ref()) {
-            (Some(_scenario), Some(_test)) => Err(RegistryError::BothProofs {
+        match (
+            self.scenario.as_ref(),
+            self.test.as_ref(),
+            self.display.as_ref(),
+        ) {
+            (None, None, None) => Err(RegistryError::NeitherProof {
                 task: task.to_owned(),
                 id: self.id.clone(),
             }),
-            (None, None) => Err(RegistryError::NeitherProof {
-                task: task.to_owned(),
-                id: self.id.clone(),
-            }),
-            (Some(name), None) => Ok(Proof::Scenario { name: name.clone() }),
-            (None, Some(name)) => {
+            (Some(name), None, None) => Ok(Proof::Scenario { name: name.clone() }),
+            (None, Some(name), None) => {
                 let because =
                     self.because
                         .clone()
@@ -157,6 +166,25 @@ impl RawClaim {
                     because,
                 })
             }
+            (None, None, Some(record)) => {
+                let because = self
+                    .because
+                    .as_ref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .ok_or_else(|| RegistryError::DisplayRecord {
+                        task: task.to_owned(),
+                        id: self.id.clone(),
+                        reason: "a display measurement requires a nonempty `because`".to_owned(),
+                    })?;
+                Ok(Proof::Display {
+                    record: record.clone(),
+                    because: because.clone(),
+                })
+            }
+            _ => Err(RegistryError::BothProofs {
+                task: task.to_owned(),
+                id: self.id.clone(),
+            }),
         }
     }
 }
@@ -208,14 +236,23 @@ pub enum RegistryError {
         /// The claim.
         id: String,
     },
-    /// A claim names both a scenario and a test.
+    /// A deferred display record is missing, malformed or lacks a reason.
+    DisplayRecord {
+        /// The task.
+        task: String,
+        /// The claim.
+        id: String,
+        /// The invalid record requirement.
+        reason: String,
+    },
+    /// A claim names more than one proof category.
     BothProofs {
         /// The task.
         task: String,
         /// The claim.
         id: String,
     },
-    /// A claim names neither a scenario nor a test.
+    /// A claim names no proof category.
     NeitherProof {
         /// The task.
         task: String,
@@ -267,13 +304,17 @@ impl Display for RegistryError {
                 formatter,
                 "claim `{id}` of task `{task}` has a test proof but no `because`"
             ),
+            RegistryError::DisplayRecord { task, id, reason } => write!(
+                formatter,
+                "claim `{id}` of task `{task}` has an invalid display record: {reason}"
+            ),
             RegistryError::BothProofs { task, id } => write!(
                 formatter,
-                "claim `{id}` of task `{task}` names both a scenario and a test"
+                "claim `{id}` of task `{task}` names more than one of scenario, test and display"
             ),
             RegistryError::NeitherProof { task, id } => write!(
                 formatter,
-                "claim `{id}` of task `{task}` names neither a scenario nor a test"
+                "claim `{id}` of task `{task}` names none of scenario, test and display"
             ),
             RegistryError::ScenarioFileMissing { task, id, path } => write!(
                 formatter,
@@ -323,6 +364,7 @@ pub fn load(root: &Path) -> Result<Registry, RegistryError> {
         parse_file(&file, &task, &mut claims, &mut origin)?;
     }
     check_scenario_proofs(root, &claims)?;
+    check_display_records(root, &claims)?;
     check_scenario_claims(root, &claims)?;
     Ok(Registry { claims })
 }
@@ -518,4 +560,34 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Validate deferred display records without interpreting their content as proof.
+///
+/// # Errors
+/// Returns `DisplayRecord` for paths outside `docs/notes/`, non-Markdown paths,
+/// traversal components or records that are not existing files.
+fn check_display_records(root: &Path, claims: &[Claim]) -> Result<(), RegistryError> {
+    for claim in claims {
+        let Proof::Display { record, .. } = &claim.proof else {
+            continue;
+        };
+        let path = Path::new(record);
+        if !path.starts_with("docs/notes")
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+            || !root.join(path).is_file()
+        {
+            return Err(RegistryError::DisplayRecord {
+                task: claim.task.clone(),
+                id: claim.id.clone(),
+                reason: format!(
+                    "`{record}` must be an existing Markdown file under docs/notes with only normal relative path components"
+                ),
+            });
+        }
+    }
+    Ok(())
 }

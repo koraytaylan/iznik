@@ -10,6 +10,8 @@
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nix::sys::signal::{self, Signal as NixSignal};
 use nix::sys::wait::{WaitStatus, waitpid};
@@ -167,8 +169,8 @@ impl Error for PtyError {
 }
 
 /// A spawned program on a pseudoterminal, in its own session. Dropping it kills
-/// the child's process group: nothing this crate spawns outlives the value that
-/// owns it.
+/// the shell group and the terminal foreground group. Jobs detached from both
+/// groups are outside terminal group signaling.
 pub struct PtyProcess {
     /// The master end, kept open for the pane's lifetime and used to resize.
     master: Box<dyn MasterPty + Send>,
@@ -177,7 +179,7 @@ pub struct PtyProcess {
     /// The child's process id, which is also its process group.
     process_id: u32,
     /// Whether the child has been reaped, so the drop need not kill it.
-    reaped: bool,
+    reaped: Arc<AtomicBool>,
 }
 
 impl core::fmt::Debug for PtyProcess {
@@ -242,19 +244,53 @@ impl PtyProcess {
     ///
     /// [`PtyError::Wait`] when the child cannot be waited for.
     pub fn wait(&mut self) -> Result<ExitStatus, PtyError> {
-        let status = waitpid(self.pid(), None).map_err(|source| PtyError::Wait {
-            source: Box::new(source),
-        })?;
-        self.reaped = true;
-        match status {
-            WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
-            WaitStatus::Signaled(_pid, signal, _dumped) => {
-                Ok(ExitStatus::Signalled(signal_of(signal)))
-            }
-            other => Err(PtyError::Wait {
-                source: format!("unexpected wait status: {other:?}").into(),
-            }),
+        self.reaper().wait()
+    }
+
+    /// Give the reaper a PID and shared completion flag, without borrowing the
+    /// terminal owner across the blocking wait. Callers schedule exactly one wait
+    /// and keep this owner alive until it returns.
+    pub(crate) fn reaper(&self) -> ProcessReaper {
+        ProcessReaper {
+            process: self.pid(),
+            reaped: Arc::clone(&self.reaped),
         }
+    }
+
+    /// Hang up the current foreground group, leaving the shell session alive
+    /// until forced cleanup if that job ignores the signal. At a shell prompt,
+    /// the shell itself is the foreground group and receives the hangup.
+    ///
+    /// # Errors
+    /// Returns `Signal` when the foreground group cannot be signaled.
+    pub(crate) fn hangup_terminal(&self) -> Result<(), PtyError> {
+        let foreground = self.foreground_group().unwrap_or_else(|| self.pid());
+        signal::killpg(foreground, NixSignal::SIGHUP).map_err(|source| PtyError::Signal {
+            source: Box::new(source),
+        })
+    }
+
+    /// Best-effort forced cleanup of the owned shell and its ordinary foreground
+    /// job. Query while the session leader still exists; killing it first can
+    /// detach the controlling terminal and lose the foreground identity.
+    pub(crate) fn kill_terminal_groups(&self) {
+        if self.reaped.load(Ordering::Acquire) {
+            return;
+        }
+        if let Some(foreground) = self.foreground_group()
+            && foreground != self.pid()
+        {
+            let _killed = signal::killpg(foreground, NixSignal::SIGKILL);
+        }
+        let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
+    }
+
+    /// Read a positive foreground group from the owned terminal descriptor.
+    fn foreground_group(&self) -> Option<Pid> {
+        self.master
+            .process_group_leader()
+            .filter(|group| *group > 0)
+            .map(Pid::from_raw)
     }
 
     /// The child's process id as a [`Pid`], saturating an impossible overflow.
@@ -264,14 +300,44 @@ impl PtyProcess {
 }
 
 impl Drop for PtyProcess {
-    /// Kills the child's process group and reaps it, so a dropped process
-    /// leaves nothing behind.
+    /// Stop the foreground job before the shell, then reap the owned child.
     fn drop(&mut self) {
-        if self.reaped {
+        if self.reaped.load(Ordering::Acquire) {
             return;
         }
-        let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
-        let _reaped = waitpid(self.pid(), None);
+        self.kill_terminal_groups();
+        let _reaped = self.reaper().wait();
+    }
+}
+
+/// One blocking child wait, independent of the mutex guarding terminal operations.
+#[derive(Debug)]
+pub(crate) struct ProcessReaper {
+    /// Owned shell PID; its PTY owner remains alive for the duration of the wait.
+    process: Pid,
+    /// Publish completion before any owner can attempt subsequent cleanup.
+    reaped: Arc<AtomicBool>,
+}
+
+impl ProcessReaper {
+    /// Reap the child and publish its status without holding a terminal mutex.
+    ///
+    /// # Errors
+    /// Returns `Wait` when the kernel refuses the wait or reports an unexpected status.
+    pub(crate) fn wait(self) -> Result<ExitStatus, PtyError> {
+        let status = waitpid(self.process, None).map_err(|source| PtyError::Wait {
+            source: Box::new(source),
+        })?;
+        self.reaped.store(true, Ordering::Release);
+        match status {
+            WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
+            WaitStatus::Signaled(_pid, signal, _dumped) => {
+                Ok(ExitStatus::Signalled(signal_of(signal)))
+            }
+            other => Err(PtyError::Wait {
+                source: format!("unexpected wait status: {other:?}").into(),
+            }),
+        }
     }
 }
 
@@ -326,7 +392,7 @@ pub fn spawn(options: &SpawnOptions) -> Result<PtyProcess, PtyError> {
         master: pair.master,
         _child: child,
         process_id,
-        reaped: false,
+        reaped: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -341,12 +407,18 @@ fn command_of(options: &SpawnOptions) -> CommandBuilder {
             command
         }
     };
-    match &options.terminfo_directory {
-        Some(directory) => {
-            command.env(TERM_VARIABLE, TERM_GHOSTTY);
-            command.env(TERMINFO_VARIABLE, directory);
-        }
-        None => command.env(TERM_VARIABLE, TERM_FALLBACK),
+    if let Some(directory) = &options.terminfo_directory {
+        command.env(TERM_VARIABLE, TERM_GHOSTTY);
+        command.env(TERMINFO_VARIABLE, directory);
+    } else {
+        command.env(TERM_VARIABLE, TERM_FALLBACK);
+        // The daemon's own environment is the SSH session that started it, so
+        // a `TERMINFO` in it names that host's terminfo tree — not the one the
+        // pane's `TERM` was found in, and on a host iznik is running from
+        // elsewhere often not there at all. The fallback `TERM` promises a
+        // pane whose curses library searches the system default, which is what
+        // removing the variable makes true.
+        command.env_remove(TERMINFO_VARIABLE);
     }
     command.env(COLORTERM_VARIABLE, COLORTERM_VALUE);
     command.env(TERM_PROGRAM_VARIABLE, TERM_PROGRAM_VALUE);

@@ -17,8 +17,8 @@ touches:
   - crates/iznik-app/tests/settings.rs
   - policy/lexicon/settings-theme.txt
   - regression/claims/settings-and-theme.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "521b574"
 ---
 # Add settings and theme: one struct of colors, hot-applied
 

@@ -3,12 +3,15 @@
 //! marks, state and exit — the four things a pane is, held together by one VT
 //! task, doing what the architecture's anatomy of a pane says they do.
 
-use std::path::Path;
+#[path = "fixtures/foreground.rs"]
+mod foreground;
+
+use foreground::{CleanupOptions, process_exists, wait_until_gone};
 use std::time::Duration;
 
 use iznik_protocol::identity::Sequence;
 use iznik_protocol::message::MarkKind;
-use iznik_server::pane::Pane;
+use iznik_server::pane::{Pane, PaneOptions};
 use iznik_server::pty::spawn::{Program, SpawnOptions};
 use iznik_server::terminal::marks::MarkEvent;
 use iznik_server::terminal::mirror::MirrorThread;
@@ -75,11 +78,6 @@ async fn wait_kind(
 /// Whether a mark ends a command.
 fn is_finished(kind: &MarkKind) -> bool {
     matches!(kind, MarkKind::CommandFinished { .. })
-}
-
-/// Whether a mark starts a prompt.
-fn is_prompt(kind: &MarkKind) -> bool {
-    matches!(kind, MarkKind::PromptStart)
 }
 
 /// How many times a state poll retries, and how long between tries — together a
@@ -463,38 +461,84 @@ async fn pane_exits_and_leaves_nothing() {
         wait_started(&running, &mut running_marks).await,
         "its prompt"
     );
-    running
-        .input(b"sleep 1000\n".to_vec())
-        .expect("a long command runs");
-    wait_kind(&mut running_marks, |kind| {
-        matches!(kind, MarkKind::CommandExecuted)
-    })
-    .await
-    .expect("the sleep is running");
+    let job = foreground_job(&running)
+        .await
+        .expect("foreground job is ready");
     let pid = running.process_id();
     assert!(process_exists(pid), "the child is running before the drop");
     drop(running);
     drop(running_marks);
     assert!(
-        wait_until_gone(pid).await,
+        wait_until_gone(pid, CleanupOptions::default()).await,
         "dropping the pane left no process for pid {pid}"
+    );
+    assert!(
+        wait_until_gone(job.process, CleanupOptions::default()).await,
+        "foreground job ended on pane drop"
     );
 }
 
-/// Whether a process with `pid` still exists, by its `/proc` entry.
-fn process_exists(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+/// Await the child-authored title after the shell has established job control.
+///
+/// # Errors
+/// Returns input, readiness, PID or session validation failures.
+async fn foreground_job(
+    pane: &Pane,
+) -> Result<foreground::ForegroundJob, Box<dyn std::error::Error>> {
+    let mut marks = pane.marks();
+    pane.input(format!("{}\n", foreground::command()).into_bytes())?;
+    let event = wait_kind(
+        &mut marks,
+        |kind| matches!(kind, MarkKind::Title { text } if text.starts_with("iznik-foreground:")),
+    )
+    .await
+    .ok_or("foreground readiness deadline")?;
+    let MarkKind::Title { text } = event.kind else {
+        return Err("missing foreground title".into());
+    };
+    let process = text
+        .strip_prefix("iznik-foreground:")
+        .ok_or("foreground title prefix")?
+        .parse()?;
+    foreground::ForegroundJob::new(process, pane.process_id())
 }
 
-/// Whether `pid` is gone within the poll budget, polling its `/proc` entry.
-async fn wait_until_gone(pid: u32) -> bool {
-    for _ in 0..POLL_ATTEMPTS {
-        if !process_exists(pid) {
-            return true;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
-    !process_exists(pid)
+/// Close escalates a foreground job that ignores hangup without losing its group.
+///
+/// # Panics
+/// Fails when close cannot reap the shell or terminate the ready foreground job.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_close_escalates_a_foreground_job() {
+    let thread = MirrorThread::start().expect("mirror thread");
+    let pane = Pane::spawn_with_options(
+        &shell_options(COLUMNS, ROWS),
+        HISTORY_BYTES,
+        &thread,
+        PaneOptions {
+            close_escalation: Duration::from_millis(10),
+        },
+    )
+    .await
+    .expect("pane");
+    let mut marks = pane.marks();
+    assert!(wait_started(&pane, &mut marks).await, "shell prompt");
+    let job = foreground_job(&pane)
+        .await
+        .expect("foreground job is ready");
+    let process = pane.process_id();
+    pane.close().expect("foreground hangup");
+    let status = tokio::time::timeout(Duration::from_secs(2), pane.exit_status())
+        .await
+        .expect("close deadline");
+    assert!(status.is_some(), "shell exit is reported");
+    assert!(
+        wait_until_gone(process, CleanupOptions::default()).await,
+        "shell is reaped"
+    );
+    assert!(
+        wait_until_gone(job.process, CleanupOptions::default()).await,
+        "foreground job is gone"
+    );
 }
 
 /// Many panes sharing one mirror thread — the production configuration — each
@@ -517,7 +561,7 @@ async fn pane_many_share_one_thread() {
         panes.push((pane, marks));
     }
     for (index, (pane, marks)) in panes.iter_mut().enumerate() {
-        wait_kind(marks, is_prompt).await.expect("a prompt");
+        assert!(wait_started(pane, marks).await, "a prompt");
         pane.input(format!("echo $((6*7))-{index}\n").into_bytes())
             .expect("a command is accepted");
         wait_kind(marks, is_finished).await.expect("it finishes");
@@ -620,4 +664,69 @@ async fn pane_counts_a_prompt_that_was_not_heard() {
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     panic!("the prompt after a command is counted too");
+}
+
+/// A child can close every terminal descriptor and keep running; its waiter must
+/// not retain the process mutex needed by close escalation.
+///
+/// # Panics
+/// Fails when EOF prevents close from signaling and reaping the still-live child.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_close_remains_available_after_output_ends() {
+    use nix::sys::signal::{Signal as NixSignal, kill};
+    use nix::unistd::Pid;
+    use std::sync::Arc;
+
+    let thread = MirrorThread::start().expect("mirror thread");
+    let mut options = shell_options(COLUMNS, ROWS);
+    options.program = Program::Command {
+        path: "sh".into(),
+        arguments: vec![
+            "-c".into(),
+            "trap '' HUP; exec 0<&- 1>&- 2>&-; exec sleep 1000".into(),
+        ],
+    };
+    let pane = Arc::new(
+        Pane::spawn_with_options(
+            &options,
+            HISTORY_BYTES,
+            &thread,
+            PaneOptions {
+                close_escalation: Duration::from_millis(10),
+            },
+        )
+        .await
+        .expect("descriptor-closing child"),
+    );
+    assert!(
+        foreground::wait_until(CleanupOptions::default(), || pane.state().exited).await,
+        "output EOF is observed"
+    );
+    assert!(
+        pane.exit_status_now().is_none(),
+        "child still runs after output EOF"
+    );
+    let process = pane.process_id();
+    let closing = Arc::clone(&pane);
+    let close = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || closing.close()),
+    )
+    .await;
+    if close.is_err() {
+        let process = Pid::from_raw(i32::try_from(process).expect("owned pid"));
+        let _cleanup = kill(process, NixSignal::SIGKILL);
+    }
+    assert!(
+        matches!(close, Ok(Ok(Ok(())))),
+        "close can acquire the terminal owner while the child wait is pending: {close:?}"
+    );
+    let status = tokio::time::timeout(Duration::from_secs(2), pane.exit_status())
+        .await
+        .expect("exit deadline");
+    assert!(status.is_some(), "close reports child exit");
+    assert!(
+        wait_until_gone(process, CleanupOptions::default()).await,
+        "closed child was reaped"
+    );
 }

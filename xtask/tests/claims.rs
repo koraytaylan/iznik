@@ -281,12 +281,20 @@ fn claims_a_scenario_naming_an_undeclared_claim_is_rejected() {
 
 /// Runs a `git` command in a tree, returning its standard output.
 ///
+/// The developer's own Git configuration is left out of it: `core.hooksPath`
+/// is what Git documents as the way to switch every hook off, and a hook a
+/// developer has installed — a `commit-msg` that reads the subject of these
+/// fixture commits, say — would otherwise decide whether these cases pass on
+/// whose machine runs them. What is under test is the selection, not the
+/// machine.
+///
 /// # Errors
 ///
 /// When git cannot be run or exits non-zero.
 fn git(tree: &Tree, arguments: &[&str]) -> Result<String, std::io::Error> {
     let output = Command::new("git")
         .current_dir(tree.root())
+        .args(["-c", "core.hooksPath=/dev/null"])
         .args(arguments)
         .output()?;
     if !output.status.success() {
@@ -586,4 +594,114 @@ fn claims_a_platform_is_known_by_either_of_its_names() {
         verify::is_this_platform(std::env::consts::OS),
         "and the machine running is the platform it says it is"
     );
+}
+
+/// A recorded display measurement stays deferred on the current operating system.
+///
+/// # Panics
+/// Fails if a display record schedules a test or becomes proven from a report.
+#[test]
+fn claims_display_records_stay_deferred_on_the_running_platform() {
+    let tree = Tree::new("display").expect("tree");
+    tree.task("alpha").expect("task");
+    tree.write(
+        "docs/notes/display.md",
+        "# Display measurement\nDeferred.\n",
+    )
+    .expect("record");
+    tree.claims("alpha", &format!(
+        "[[claim]]\nid = \"demo-passes\"\nstatement = \"Native timing is measured.\"\ndisplay = \"docs/notes/display.md\"\nbecause = \"requires a native display\"\nplatform = \"{}\"\n",
+        std::env::consts::OS
+    )).expect("claim");
+    let registry = registry::load(tree.root()).expect("valid registry");
+    let claims: Vec<_> = registry.claims().iter().collect();
+    assert!(
+        verify::plan(&claims).is_empty(),
+        "display records never invoke nextest"
+    );
+    let captured = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claims/report.xml"),
+    )
+    .expect("report");
+    for report in ["", captured.as_str()] {
+        let outcomes = verify::interpret_report(&claims, report);
+        assert_eq!(outcomes.len(), 1);
+        let Status::Deferred { reason } = &outcomes[0].status else {
+            panic!("display record must remain deferred: {:?}", outcomes[0]);
+        };
+        assert!(reason.contains("requires a native display"), "{reason}");
+        assert!(reason.contains("docs/notes/display.md"), "{reason}");
+        assert!(verify::Report { outcomes }.holds());
+    }
+}
+
+/// Display records obey the same exclusive category rule as automated proofs.
+///
+/// # Panics
+/// Fails if a display record can be paired with another proof or omit its reason.
+#[test]
+fn claims_display_records_require_one_category_and_a_reason() {
+    let tree = Tree::new("display-category").expect("tree");
+    tree.task("alpha").expect("task");
+    tree.write("docs/notes/display.md", "# Deferred\n")
+        .expect("record");
+    let header = "[[claim]]\nid = \"display\"\nstatement = \"Native timing.\"\ndisplay = \"docs/notes/display.md\"\n";
+    for extra in [
+        "scenario = \"one\"",
+        "test = \"demo::unit::passes\"",
+        "scenario = \"one\"\ntest = \"demo::unit::passes\"",
+    ] {
+        tree.claims(
+            "alpha",
+            &format!("{header}because = \"native display\"\n{extra}\n"),
+        )
+        .expect("claims");
+        let error = registry::load(tree.root()).expect_err("ambiguous proof");
+        assert!(matches!(error, RegistryError::BothProofs { .. }), "{error}");
+    }
+    for reason in ["", "because = \"\"", "because = \"   \""] {
+        tree.claims("alpha", &format!("{header}{reason}\n"))
+            .expect("claims");
+        let error = registry::load(tree.root()).expect_err("missing reason");
+        assert!(
+            matches!(error, RegistryError::DisplayRecord { .. }),
+            "{error}"
+        );
+    }
+}
+
+/// Records must be existing Markdown notes with normal repository-relative paths.
+///
+/// # Panics
+/// Fails if a missing, external, traversing, directory or non-Markdown record loads.
+#[test]
+fn claims_display_records_require_an_existing_markdown_note() {
+    let tree = Tree::new("display-path").expect("tree");
+    tree.task("alpha").expect("task");
+    tree.write("docs/notes/display.md", "# Deferred\n")
+        .expect("record");
+    tree.write("docs/display.md", "# Outside notes\n")
+        .expect("outside");
+    tree.write("docs/notes/display.txt", "Deferred\n")
+        .expect("text");
+    let absolute = tree
+        .root()
+        .join("docs/notes/display.md")
+        .display()
+        .to_string();
+    for record in [
+        "docs/notes/missing.md",
+        "docs/display.md",
+        "docs/notes/../display.md",
+        "docs/notes/display.txt",
+        "docs/notes",
+        absolute.as_str(),
+    ] {
+        tree.claims("alpha", &format!("[[claim]]\nid = \"display\"\nstatement = \"Native timing.\"\ndisplay = {record:?}\nbecause = \"native display\"\n")).expect("claims");
+        let error = registry::load(tree.root()).expect_err("invalid note");
+        assert!(
+            matches!(error, RegistryError::DisplayRecord { .. }),
+            "{record}: {error}"
+        );
+    }
 }

@@ -10,115 +10,781 @@
 
 ## Workspace
 
+- `accesskit` — reached from `accesskit_atspi_common`, `accesskit_consumer`, `accesskit_macos`, `accesskit_unix`, `accesskit_windows` and 4 more.
+- `accesskit_atspi_common` — reached from `accesskit_unix`.
+- `accesskit_consumer` — reached from `accesskit_atspi_common`, `accesskit_macos`, `accesskit_windows`.
+- `accesskit_macos` — reached from `gpui-pre-macos`.
+- `accesskit_unix` — reached from `gpui-pre-linux`.
+- `accesskit_windows` — reached from `gpui-pre-windows`.
+- `addr2line` — reached from `backtrace`.
+- `adler2` — reached from `miniz_oxide`, `simd-adler32`.
+- `aes` — reached from `cbc`, `oo7`.
+- `ahash` — reached from `foldhash`, `tracing-log`, `zed-xim`.
 - `aho-corasick` — reached from `regex` and `tracing-subscriber`.
+- `aligned` — reached from `av-scenechange`.
+- `aligned-vec` — reached from `pulp`, `rav1e`, `v_frame`.
+- `allocator-api2` — reached from `bumpalo`, `hashbrown`, `libghostty-vt`.
+- `android_system_properties` — reached from `iana-time-zone`, `wgpu-hal`.
+- `annotate-snippets` — reached from `bindgen`, `serde-saphyr`, `winnow`.
 - `anstream` — reached from `libtest-mimic`.
 - `anstyle` — reached from `libtest-mimic`.
 - `anstyle-parse` — reached from `libtest-mimic`.
 - `anstyle-query` — reached from `libtest-mimic`.
 - `anstyle-wincon` — reached from `libtest-mimic`.
 - `anyhow` — reached from `portable-pty`.
+- `arbitrary` — reached from `bitflags`, `chrono`, `const-oid`, `euclid`, `globset` and 18 more.
+- `arc-swap` — reached from `rust-i18n-support`, `triomphe`.
+- `arg_enum_proc_macro` — reached from `av-scenechange`, `rav1e`.
+- `arraydeque` — reached from `granit-parser`.
+- `arrayref` — reached from `tiny-skia`, `tiny-skia-path`.
+- `arrayvec` — reached from `anstyle-parse`, `av-scenechange`, `av1-grain`, `avif-serialize`, `kurbo` and 11 more.
+- `as-raw-xcb-connection` — reached from `gpui-pre-linux`, `x11rb`, `xcb`, `xkbcommon`.
+- `as-slice` — reached from `aligned`.
+- `ash` — reached from `gpu-allocator`, `wgpu-hal`.
+- `ashpd` — reached from `gpui-pre-linux`, `oo7`.
+- `async-broadcast` — reached from `zbus`.
+- `async-channel` — reached from `accesskit_unix`, `async-executor`, `async-io`, `async-process`, `blocking` and 6 more.
+- `async-compression` — reached from `gpui-pre-http-client`, `gpui-pre-reqwest`.
+- `async-executor` — reached from `accesskit_unix`, `async-process`, `piper`, `smol`, `zbus`.
+- `async-fs` — reached from `oo7`, `smol`.
+- `async-io` — reached from `async-executor`, `async-net`, `async-process`, `async-signal`, `futures-concurrency` and 6 more.
+- `async-lock` — reached from `async-executor`, `async-fs`, `async-process`, `async-signal`, `oo7` and 2 more.
+- `async-net` — reached from `async-io`, `smol`.
+- `async-process` — reached from `smol`, `zbus`.
+- `async-recursion` — reached from `zbus`.
+- `async-signal` — reached from `async-process`.
+- `async-task` — reached from `accesskit_unix`, `async-executor`, `async-process`, `blocking`, `calloop` and 4 more.
+- `async-trait` — reached from `ashpd`, `tracing-attributes`, `zbus`.
+- `atomic` — reached from `postage`, `uuid`.
+- `atomic-waker` — reached from `async-signal`, `async-task`, `h2`, `hyper`, `piper`.
+- `atspi` — reached from `accesskit_unix`.
+- `atspi-common` — reached from `accesskit_atspi_common`, `atspi`, `atspi-proxies`.
+- `atspi-proxies` — reached from `atspi`.
+- `autocfg` — reached from `async-io`, `memoffset`, `num-traits`.
+- `av-scenechange` — reached from `rav1e`.
+- `av1-grain` — reached from `rav1e`.
+- `avif-serialize` — reached from `ravif`.
+- `backtrace` — reached from `addr2line`, `clap_builder`, `globwalk`, `gpui-pre`, `gpui-pre-scheduler` and 4 more.
+- `base62` — reached from `rust-i18n-support`.
+- `base64` — reached from `gpui-pre-reqwest`, `hyper-util`, `rustls`, `rustls-webpki`, `serde-saphyr` and 2 more.
+- `bindgen` — reached from `gpui-pre`, `gpui-pre-media`, `libghostty-vt-sys`, `zstd-sys`.
+- `bit-set` — reached from `naga`, `proptest`, `wgpu-core`, `wgpu-hal`.
+- `bit-vec` — reached from `bit-set`, `proptest`, `wgpu-core`.
+- `bit_field` — reached from `exr`.
 - `bitflags` — reached from `cbindgen`, `libghostty-vt`, `nix` and `portable-pty`.
+- `bitstream-io` — reached from `rav1e`.
+- `block` — reached from `cocoa`, `cocoa-foundation`, `core-graphics2`, `core-video`, `gpui-pre-apple` and 4 more.
 - `block-buffer` — reached from `sha2`.
+- `block-padding` — reached from `inout`.
+- `block2` — reached from `dispatch2`, `gpui-pre-macos`, `objc2-app-kit`, `objc2-cloud-kit`, `objc2-core-data` and 12 more.
+- `blocking` — reached from `async-fs`, `async-io`, `async-net`, `async-process`, `oo7` and 2 more.
+- `borsh` — reached from `arrayvec`, `bit-set`, `bit-vec`, `indexmap`, `ordered-float` and 3 more.
+- `bstr` — reached from `globset`, `ignore`, `regex-automata`, `shellexpand`, `sysinfo`.
+- `built` — reached from `rav1e`.
+- `bumpalo` — reached from `hashbrown`, `wasm-bindgen-macro-support`.
+- `bytemuck` — reached from `bitflags`, `euclid`, `font-types`, `gpui-pre-linux`, `gpui-pre-wgpu` and 20 more.
+- `bytemuck_derive` — reached from `bytemuck`.
+- `byteorder` — reached from `atspi-proxies`, `hash32`, `lebe`, `png`, `rav1e` and 1 more.
+- `byteorder-lite` — reached from `image`, `image-webp`.
 - `bytes` — reached from `tokio`.
+- `bzip2` — reached from `async-compression`, `compression-codecs`, `rustls-webpki`.
+- `calloop` — reached from `calloop-wayland-source`, `gpui-pre-linux`.
+- `calloop-wayland-source` — reached from `gpui-pre-linux`.
+- `cbc` — reached from `oo7`.
 - `cbindgen` — generates `include/iznik.h` from the FFI crate, so the C ABI is golden-pinned rather than hand-copied.
 - `cc` — reached from `zstd`.
+- `cexpr` — reached from `bindgen`.
 - `cfg-if` — reached from `cbindgen`, `nix`, `portable-pty`, `sha2`, `tracing-subscriber` and `zstd`.
 - `cfg_aliases` — reached from `nix` and `portable-pty`.
+- `cgl` — reached from `io-surface`.
+- `chacha20` — reached from `rand`.
+- `chrono` — reached from `built`, `foldhash`, `gpui-base`, `gpui-component`, `gpui-pre` and 8 more.
+- `cipher` — reached from `aes`, `cbc`, `chacha20`, `oo7`.
+- `clang-sys` — reached from `bindgen`, `cexpr`.
 - `clap` — reached from `libtest-mimic`.
 - `clap_builder` — reached from `libtest-mimic`.
 - `clap_derive` — reached from `libtest-mimic`.
 - `clap_lex` — reached from `libtest-mimic`.
+- `cocoa` — reached from `gpui-pre-apple`, `gpui-pre-macos`, `metal`, `zed-scap`.
+- `cocoa-foundation` — reached from `cocoa`.
+- `codespan-reporting` — reached from `naga`.
+- `color_quant` — reached from `gif`, `image`.
 - `colorchoice` — reached from `libtest-mimic`.
+- `compression-codecs` — reached from `async-compression`.
+- `compression-core` — reached from `async-compression`, `compression-codecs`.
+- `concurrent-queue` — reached from `async-channel`, `async-executor`, `async-io`, `polling`.
+- `console_error_panic_hook` — reached from `gpui-pre-platform`, `gpui-pre-web`, `wasm_thread`.
 - `const-oid` — reached from `sha2`.
+- `const-random` — reached from `ahash`.
+- `const-random-macro` — reached from `const-random`.
+- `convert_case` — reached from `derive_more-impl`, `proptest-macro`.
+- `core-foundation` — reached from `cocoa`, `cocoa-foundation`, `core-graphics`, `core-graphics-helmer-fork`, `core-graphics-types` and 11 more.
+- `core-foundation-sys` — reached from `core-foundation`, `gpui-pre-macos`, `iana-time-zone`, `io-surface`, `security-framework` and 4 more.
+- `core-graphics` — reached from `cocoa`, `core-text`, `gpui-pre-macos`, `zed-font-kit`.
+- `core-graphics-helmer-fork` — reached from `zed-scap`.
+- `core-graphics-types` — reached from `cocoa-foundation`, `core-graphics`, `core-graphics-helmer-fork`, `metal`.
+- `core-graphics2` — reached from `core-video`.
+- `core-text` — reached from `gpui-component`, `gpui-pre-macos`, `zed-font-kit`.
+- `core-video` — reached from `gpui-pre`, `gpui-pre-apple`, `gpui-pre-media`.
+- `core_detect` — reached from `encoding_rs`.
+- `core_maths` — reached from `cosmic-text`, `harfrust`, `read-fonts`, `rustybuzz`, `skrifa` and 2 more.
+- `cosmic-text` — reached from `gpui-pre-wgpu`.
 - `cpufeatures` — reached from `sha2`.
+- `crc32fast` — reached from `flate2`, `image`, `object`, `png`, `tiff` and 1 more.
+- `crossbeam-deque` — reached from `ignore`, `rayon-core`.
+- `crossbeam-epoch` — reached from `crossbeam-deque`.
+- `crossbeam-queue` — reached from `postage`.
+- `crossbeam-utils` — reached from `arc-swap`, `concurrent-queue`, `crossbeam-deque`, `crossbeam-epoch`, `crossbeam-queue` and 3 more.
+- `crunchy` — reached from `half`, `tiny-keccak`.
 - `crypto-common` — reached from `sha2`.
+- `ctor` — reached from `gpui-pre`, `gpui-pre-macos`.
+- `data-url` — reached from `usvg`.
+- `deranged` — reached from `time`.
+- `derive_more` — reached from `gpui-pre`, `gpui-pre-apple`, `gpui-pre-http-client`.
+- `derive_more-impl` — reached from `derive_more`.
 - `digest` — reached from `sha2`.
+- `dirs` — reached from `shellexpand`, `zed-font-kit`.
+- `dirs-sys` — reached from `dirs`.
+- `dispatch` — reached from `metal`, `screencapturekit-sys`.
+- `dispatch2` — reached from `core-graphics2`, `gpui-pre-macos`, `objc2-core-foundation`, `objc2-core-graphics`, `objc2-core-location` and 2 more.
+- `displaydoc` — reached from `icu_collections`, `icu_locale_core`, `icu_properties`, `icu_provider`, `tinystr` and 1 more.
+- `dlib` — reached from `wayland-sys`, `yeslogic-fontconfig-sys`.
+- `document-features` — reached from `flate2`, `quick-xml`, `taffy`, `wgpu`, `wgpu-core`.
 - `downcast-rs` — reached from `portable-pty`.
+- `dunce` — reached from `gpui-pre-windows`, `open`.
+- `dwrote` — reached from `zed-font-kit`.
+- `dyn-clone` — reached from `schemars`.
+- `either` — reached from `itertools`, `rayon`, `schemars`, `tokio-socks`, `writeable`.
+- `embed-resource` — reached from `gpui-pre`.
+- `encoding_rs` — reached from `encoding_rs_io`, `gpui-pre-reqwest`, `quick-xml`, `tendril`, `xim-ctext`.
+- `encoding_rs_io` — reached from `serde-saphyr`.
+- `endi` — reached from `oo7`, `zvariant`.
+- `enum-iterator` — reached from `gpui-component`.
+- `enum-iterator-derive` — reached from `enum-iterator`.
+- `enumflags2` — reached from `ashpd`, `atspi-common`, `zbus`, `zvariant`, `zvariant_derive`.
+- `enumflags2_derive` — reached from `enumflags2`.
+- `enumn` — reached from `accesskit`.
+- `equator` — reached from `aligned-vec`.
+- `equator-macro` — reached from `equator`.
 - `equivalent` — reached from `cbindgen` and `toml`.
+- `erased-serde` — reached from `icu_provider`, `serde-saphyr`, `value-bag-serde1`.
 - `errno` — reached from `cbindgen` and `tokio`.
 - `escape8259` — reached from `libtest-mimic`.
+- `etagere` — reached from `gpui-pre`, `gpui-pre-apple`, `gpui-pre-wgpu`, `gpui-pre-windows`.
+- `euclid` — reached from `etagere`, `kurbo`, `lyon_geom`.
+- `event-listener` — reached from `async-broadcast`, `async-lock`, `async-process`, `event-listener-strategy`, `zbus`.
+- `event-listener-strategy` — reached from `async-broadcast`, `async-channel`, `async-lock`.
+- `exr` — reached from `image`.
 - `fastrand` — reached from `cbindgen`.
+- `fax` — reached from `tiff`.
+- `fdeflate` — reached from `png`.
 - `filedescriptor` — reached from `portable-pty`.
+- `filetime` — reached from `notify`.
 - `find-msvc-tools` — reached from `zstd`.
+- `fixedbitset` — reached from `futures-concurrency`.
+- `flate2` — reached from `async-compression`, `compression-codecs`, `gpui-pre-reqwest`, `libfuzzer-sys`, `object` and 6 more.
+- `float-cmp` — reached from `strict-num`.
+- `float-ord` — reached from `zed-font-kit`.
+- `float_next_after` — reached from `lyon_tessellation`.
+- `fluent-uri` — reached from `lsp-types`.
+- `flume` — reached from `async-lock`, `async-task`, `gpui-pre-scheduler`.
+- `fnv` — reached from `ahash`, `h2`, `hashbrown`, `indexmap`, `ropey` and 1 more.
+- `foldhash` — reached from `hashbrown`, `toml`.
+- `font-types` — reached from `read-fonts`.
+- `fontconfig-parser` — reached from `fontdb`.
+- `fontdb` — reached from `cosmic-text`, `usvg`.
+- `foreign-types` — reached from `cocoa`, `core-graphics`, `core-graphics-helmer-fork`, `core-text`, `gpui-pre-apple` and 3 more.
+- `foreign-types-macros` — reached from `foreign-types`.
+- `foreign-types-shared` — reached from `foreign-types`.
+- `form_urlencoded` — reached from `hyper`, `serde_urlencoded`, `url`.
+- `freetype-sys` — reached from `zed-font-kit`.
+- `fsevent-sys` — reached from `notify`.
+- `futf` — reached from `tendril`.
+- `futures` — reached from `anyhow`, `async-compression`, `async-trait`, `atomic-waker`, `atspi` and 26 more.
+- `futures-channel` — reached from `ashpd`, `futures`, `futures-util`, `gpui-pre-reqwest`, `hyper` and 5 more.
+- `futures-concurrency` — reached from `gpui-pre`, `tokio`.
+- `futures-core` — reached from `async-broadcast`, `async-channel`, `async-signal`, `calloop`, `flume` and 17 more.
+- `futures-executor` — reached from `async-recursion`, `futures`, `ordered-stream`, `tokio-socks`.
+- `futures-io` — reached from `async-compression`, `async-io`, `async-signal`, `blocking`, `calloop` and 7 more.
+- `futures-lite` — reached from `accesskit_unix`, `async-broadcast`, `async-channel`, `async-executor`, `async-fs` and 19 more.
+- `futures-macro` — reached from `futures-util`.
+- `futures-sink` — reached from `flume`, `futures`, `futures-channel`, `futures-util`, `h2` and 1 more.
+- `futures-task` — reached from `futures`, `futures-executor`, `futures-util`.
+- `futures-util` — reached from `accesskit_unix`, `ashpd`, `async-broadcast`, `futures`, `futures-executor` and 17 more.
+- `generic-array` — reached from `block-padding`, `inout`, `tinyvec`.
+- `gethostname` — reached from `x11rb`.
 - `getrandom` — reached from `cbindgen` and `zstd`.
+- `gif` — reached from `image`, `resvg`.
+- `gimli` — reached from `addr2line`.
+- `gl_generator` — reached from `glutin_wgl_sys`.
+- `glob` — reached from `clang-sys`, `fontconfig-parser`, `gif`, `globset`, `image` and 2 more.
+- `globset` — reached from `ignore`, `rust-embed-utils`.
+- `globwalk` — reached from `rust-i18n`, `rust-i18n-support`.
+- `glow` — reached from `wgpu-hal`.
+- `glutin_wgl_sys` — reached from `wgpu-hal`.
+- `gpu-allocator` — reached from `wgpu-hal`.
+- `gpu-descriptor` — reached from `wgpu-hal`.
+- `gpu-descriptor-types` — reached from `gpu-descriptor`.
+- `gpui-base` — the base layer of the kit's component stack, reached from `gpui-kit`.
+- `gpui-component` — the styled component library the kit's `component` feature enables, reached from `gpui-kit`.
+- `gpui-component-macros` — the derive macros behind `gpui-component`'s icon and component traits, reached from `gpui-component`.
+- `gpui-kit` — the framework and component kit the application is written on — the `gpui` 0.3.5 line, `gpui-base`, `gpui-component` and the default assets — pinned exact at the 0.6.1 release the architecture names, so the application's whole UI tree is one resolution.
+- `gpui-kit-assets` — the icon crate the kit's documentation names, carrying the default icon set `gpui_kit::assets::IconName` uses.
+- `gpui-pre` — the `gpui` framework (crate `gpui-pre`, resolved 0.3.5) the kit pins, reached from `gpui-kit`.
+- `gpui-pre-apple` — reached from `gpui-pre-macos`.
+- `gpui-pre-collections` — reached from `gpui-pre`, `gpui-pre-apple`, `gpui-pre-linux`, `gpui-pre-macos`, `gpui-pre-perf` and 3 more.
+- `gpui-pre-derive-refineable` — reached from `gpui-pre-refineable`.
+- `gpui-pre-http-client` — reached from `gpui-pre`, `gpui-pre-linux`, `gpui-pre-web`.
+- `gpui-pre-linux` — reached from `gpui-pre-platform`.
+- `gpui-pre-macos` — reached from `gpui-pre-platform`.
+- `gpui-pre-macros` — reached from `gpui-base`, `gpui-component`, `gpui-pre`.
+- `gpui-pre-media` — reached from `gpui-pre-macos`.
+- `gpui-pre-perf` — reached from `gpui-pre-util-macros`.
+- `gpui-pre-platform` — reached from `gpui-kit`.
+- `gpui-pre-refineable` — reached from `gpui-pre`.
+- `gpui-pre-reqwest` — reached from `gpui-kit-assets`.
+- `gpui-pre-scheduler` — reached from `gpui-pre`, `gpui-pre-web`.
+- `gpui-pre-shared-string` — reached from `gpui-pre`.
+- `gpui-pre-sum-tree` — reached from `gpui-base`, `gpui-component`, `gpui-pre`.
+- `gpui-pre-util` — reached from `gpui-pre`, `gpui-pre-collections`, `gpui-pre-linux`, `gpui-pre-macos`, `gpui-pre-wgpu` and 1 more.
+- `gpui-pre-util-macros` — reached from `gpui-pre`.
+- `gpui-pre-web` — reached from `gpui-kit`, `gpui-pre-platform`.
+- `gpui-pre-wgpu` — reached from `gpui-pre-linux`, `gpui-pre-web`.
+- `gpui-pre-windows` — reached from `gpui-pre-platform`.
+- `gpui-pre-zlog` — reached from `gpui-pre-ztracing`.
+- `gpui-pre-ztracing` — reached from `gpui-pre`, `gpui-pre-sum-tree`.
+- `gpui-pre-ztracing-macro` — reached from `gpui-pre-ztracing`.
+- `granit-parser` — reached from `serde-saphyr`.
+- `h2` — reached from `gpui-pre-reqwest`, `hyper`.
+- `half` — reached from `atspi`, `exr`, `js-sys`, `naga`, `tiff`.
+- `harfrust` — reached from `cosmic-text`.
+- `hash32` — reached from `heapless`.
 - `hashbrown` — reached from `cbindgen` and `toml`.
+- `heapless` — reached from `gpui-pre`, `gpui-pre-sum-tree`, `ipnet`, `zvariant`.
 - `heck` — reached from `cbindgen` and `libtest-mimic`.
+- `hermit-abi` — reached from `num_cpus`, `polling`.
+- `hex` — reached from `ahash`, `h2`, `rust-embed`, `rustls`, `security-framework` and 1 more.
+- `hexf-parse` — reached from `naga`.
+- `hkdf` — reached from `oo7`.
+- `hmac` — reached from `hkdf`, `oo7`, `pbkdf2`.
+- `html5ever` — reached from `gpui-base`, `markup5ever_rcdom`.
+- `http` — reached from `gpui-pre-http-client`, `gpui-pre-reqwest`, `h2`, `http-body`, `http-body-util` and 6 more.
+- `http-body` — reached from `gpui-pre-http-client`, `gpui-pre-reqwest`, `http-body-util`, `hyper`, `hyper-util`.
+- `http-body-util` — reached from `gpui-pre-reqwest`, `hyper`, `hyper-rustls`, `hyper-util`, `smol`.
+- `httparse` — reached from `hyper`.
 - `hybrid-array` — reached from `sha2`.
+- `hyper` — reached from `gpui-pre-reqwest`, `hyper-rustls`, `hyper-util`, `smol`.
+- `hyper-rustls` — reached from `gpui-pre-reqwest`.
+- `hyper-util` — reached from `gpui-pre-reqwest`, `hyper-rustls`.
+- `iana-time-zone` — reached from `chrono`.
+- `iana-time-zone-haiku` — reached from `iana-time-zone`.
+- `icu_collections` — reached from `icu_normalizer`, `icu_properties`.
+- `icu_locale_core` — reached from `icu_properties`, `icu_provider`, `zerotrie`.
+- `icu_normalizer` — reached from `idna_adapter`.
+- `icu_normalizer_data` — reached from `icu_normalizer`.
+- `icu_properties` — reached from `icu_normalizer`, `idna_adapter`.
+- `icu_properties_data` — reached from `icu_properties`.
+- `icu_provider` — reached from `icu_normalizer`, `icu_properties`.
+- `idna` — reached from `url`.
+- `idna_adapter` — reached from `idna`.
+- `ignore` — reached from `globwalk`.
+- `image` — reached from `exr`, `gpui-pre`, `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-windows` and 2 more.
+- `image-webp` — reached from `image`, `resvg`, `tiff`.
+- `imagesize` — reached from `usvg`.
+- `imgref` — reached from `loop9`, `ravif`.
 - `indexmap` — reached from `cbindgen` and `toml`.
+- `inotify` — reached from `async-io`, `notify`, `smol`.
+- `inotify-sys` — reached from `inotify`.
+- `inout` — reached from `cipher`.
+- `instant` — reached from `gpui-base`, `gpui-component`, `notify-types`.
 - `int-enum` — reached from `libghostty-vt`.
+- `interpolate_name` — reached from `rav1e`.
+- `inventory` — reached from `gpui-pre`.
+- `io-surface` — reached from `core-graphics2`, `core-video`.
+- `ipnet` — reached from `gpui-pre-reqwest`, `hyper-util`.
+- `is-docker` — reached from `is-wsl`.
+- `is-wsl` — reached from `open`.
 - `is_terminal_polyfill` — reached from `libtest-mimic`.
+- `itertools` — reached from `arc-swap`, `bindgen`, `derive_more-impl`, `futures-concurrency`, `gpui-component` and 11 more.
 - `itoa` — reached from `cbindgen` and `serde_json`.
+- `jni-sys` — reached from `ndk-sys`.
+- `jni-sys-macros` — reached from `jni-sys`.
 - `jobserver` — reached from `zstd`.
+- `js-sys` — reached from `chrono`, `getrandom`, `glow`, `gpui-pre-reqwest`, `gpui-pre-web` and 14 more.
+- `khronos-egl` — reached from `wgpu-hal`.
+- `khronos_api` — reached from `gl_generator`.
+- `kqueue` — reached from `notify`.
+- `kqueue-sys` — reached from `kqueue`.
+- `kurbo` — reached from `skrifa`, `svgtypes`, `usvg`.
 - `lazy_static` — reached from `portable-pty` and `tracing-subscriber`.
+- `leak` — reached from `leaky-cow`.
+- `leaky-cow` — reached from `io-surface`.
+- `lebe` — reached from `exr`.
+- `libbz2-rs-sys` — reached from `bzip2`.
 - `libc` — reached from `cbindgen`, `nix`, `portable-pty`, `sha2`, `tokio` and `zstd`.
+- `libfuzzer-sys` — reached from `rav1e`.
 - `libghostty-vt` — the terminal emulator the macOS application renders with, so the server's mirror and the test oracle run the same engine.
 - `libghostty-vt-sys` — reached from `libghostty-vt`.
+- `libloading` — reached from `ash`, `backtrace`, `clang-sys`, `dlib`, `khronos-egl` and 3 more.
+- `libm` — reached from `core_maths`, `cosmic-text`, `kurbo`, `naga`, `num-bigint-dig` and 5 more.
+- `libredox` — reached from `redox_users`.
 - `libtest-mimic` — registers every regression scenario as a nextest test from a `harness = false` binary.
+- `linebender_resource_handle` — reached from `cosmic-text`.
+- `link-section` — reached from `ctor`.
+- `linktime-proc-macro` — reached from `ctor`, `link-section`.
 - `linux-raw-sys` — reached from `cbindgen`.
+- `litemap` — reached from `icu_locale_core`, `zerotrie`.
+- `litrs` — reached from `document-features`.
+- `lock_api` — reached from `parking_lot`, `spin`.
 - `log` — reached from `cbindgen`, `portable-pty` and `tracing-subscriber`.
+- `loop9` — reached from `ravif`.
+- `lru-slab` — reached from `quinn-proto`.
+- `lsp-types` — reached from `gpui-base`, `gpui-component`.
+- `lyon` — reached from `gpui-pre`.
+- `lyon_algorithms` — reached from `lyon`.
+- `lyon_geom` — reached from `lyon_path`.
+- `lyon_path` — reached from `lyon_algorithms`, `lyon_tessellation`.
+- `lyon_tessellation` — reached from `lyon`.
+- `mac` — reached from `futf`, `html5ever`, `tendril`, `xml5ever`.
+- `mac-notification-sys` — reached from `notify-rust`.
+- `mach2` — reached from `gpui-pre-macos`.
+- `malloc_buf` — reached from `objc`.
+- `markdown` — reached from `gpui-base`, `gpui-component`.
+- `markup5ever` — reached from `html5ever`, `markup5ever_rcdom`, `xml5ever`.
+- `markup5ever_rcdom` — reached from `gpui-base`.
 - `matchers` — reached from `tracing-subscriber`.
+- `maybe-rayon` — reached from `rav1e`.
+- `md-5` — reached from `hmac`, `oo7`, `uuid`.
 - `memchr` — reached from `cbindgen`, `regex`, `serde_json` and `tracing-subscriber`.
+- `memmap2` — reached from `addr2line`, `fontdb`, `xkbcommon`.
+- `memoffset` — reached from `nix`, `objc2`, `rustix`, `uds_windows`, `wayland-sys` and 1 more.
+- `metal` — reached from `core-graphics2`, `core-video`, `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-media` and 1 more.
+- `mime` — reached from `gpui-pre-reqwest`, `mime_guess`.
+- `mime_guess` — reached from `gpui-pre-reqwest`, `rust-embed`, `rust-embed-impl`, `rust-embed-utils`.
+- `minimal-lexical` — reached from .
+- `miniz_oxide` — reached from `backtrace`, `exr`, `fdeflate`, `flate2`, `png`.
 - `mio` — reached from `tokio`.
+- `moxcms` — reached from `image`.
+- `multiversion` — reached from `encoding_rs`.
+- `multiversion-macros` — reached from `multiversion`.
+- `multiversion_no_op` — reached from `encoding_rs`.
+- `naga` — reached from `wgpu`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`.
+- `ndk-sys` — reached from `wgpu-hal`.
+- `new_debug_unreachable` — reached from `futf`, `rav1e`, `string_cache`.
 - `nix` — process groups, signals, user lookups and file locks as safe wrappers, so no crate but the FFI boundary needs `unsafe`.
+- `no_std_io2` — reached from `bitstream-io`.
+- `nohash-hasher` — reached from `serde-saphyr`.
+- `nom` — reached from `av1-grain`, `cexpr`, `rav1e`.
+- `noop_proc_macro` — reached from `rav1e`.
+- `normpath` — reached from `rust-i18n-support`.
+- `notify` — reached from `gpui-component`.
+- `notify-rust` — reached from `gpui-pre-linux`.
+- `notify-types` — reached from `notify`.
+- `ntapi` — reached from `sysinfo`.
 - `nu-ansi-term` — reached from `tracing-subscriber`.
+- `num` — reached from `num-derive`, `oo7`.
+- `num-bigint` — reached from `num`, `num-rational`, `rustls`, `zmij`.
+- `num-bigint-dig` — reached from `oo7`.
+- `num-complex` — reached from `exr`, `image`, `num`, `pulp`.
+- `num-conv` — reached from `time`.
+- `num-derive` — reached from `rav1e`.
+- `num-integer` — reached from `num`, `num-bigint`, `num-bigint-dig`, `num-iter`, `num-rational` and 1 more.
+- `num-iter` — reached from `num`, `num-bigint-dig`.
+- `num-rational` — reached from `av-scenechange`, `av1-grain`, `num`.
+- `num-traits` — reached from `av-scenechange`, `chrono`, `deranged`, `euclid`, `float-cmp` and 22 more.
+- `num_cpus` — reached from `arc-swap`, `gpui-pre`, `gpui-pre-reqwest`, `ryu`, `zmij`.
+- `objc` — reached from `cocoa`, `cocoa-foundation`, `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-media` and 6 more.
+- `objc-foundation` — reached from `screencapturekit-sys`.
+- `objc-sys` — reached from .
+- `objc2` — reached from `accesskit_macos`, `block2`, `core-graphics2`, `core-video`, `dispatch2` and 24 more.
+- `objc2-app-kit` — reached from `accesskit_macos`, `gpui-base`, `gpui-component`, `gpui-pre-macos`, `raw-window-metal`.
+- `objc2-cloud-kit` — reached from `objc2-app-kit`, `objc2-core-data`.
+- `objc2-core-data` — reached from `objc2-app-kit`.
+- `objc2-core-foundation` — reached from `objc2-app-kit`, `objc2-core-graphics`, `objc2-core-image`, `objc2-core-text`, `objc2-core-video` and 7 more.
+- `objc2-core-graphics` — reached from `objc2-app-kit`, `objc2-core-image`, `objc2-core-text`, `objc2-core-video`, `objc2-quartz-core` and 1 more.
+- `objc2-core-image` — reached from `objc2-app-kit`.
+- `objc2-core-location` — reached from `objc2-cloud-kit`, `objc2-user-notifications`.
+- `objc2-core-text` — reached from `objc2-app-kit`.
+- `objc2-core-video` — reached from `objc2-app-kit`, `objc2-core-image`, `objc2-quartz-core`.
+- `objc2-encode` — reached from `objc2`.
+- `objc2-foundation` — reached from `accesskit_macos`, `gpu-allocator`, `gpui-base`, `gpui-component`, `gpui-pre-macos` and 14 more.
+- `objc2-io-surface` — reached from `objc2-core-graphics`, `objc2-core-image`, `objc2-core-video`, `objc2-metal`.
+- `objc2-metal` — reached from `gpu-allocator`, `gpui-pre`, `objc2-core-graphics`, `objc2-core-image`, `objc2-core-video` and 2 more.
+- `objc2-quartz-core` — reached from `objc2-app-kit`, `raw-window-metal`, `wgpu-hal`.
+- `objc2-screen-capture-kit` — reached from `gpui-pre-macos`.
+- `objc2-user-notifications` — reached from `gpui-pre-macos`.
+- `objc_exception` — reached from `objc`.
+- `objc_id` — reached from `objc-foundation`, `screencapturekit-sys`.
+- `object` — reached from `addr2line`, `backtrace`.
 - `once_cell` — reached from `cbindgen`, `tracing` and `tracing-subscriber`.
 - `once_cell_polyfill` — reached from `libtest-mimic`.
+- `oo7` — reached from `gpui-pre-linux`.
+- `open` — reached from `gpui-pre-linux`.
+- `openssl-probe` — reached from `rustls-native-certs`.
+- `option-ext` — reached from `dirs-sys`.
+- `ordered-float` — reached from `rangemap`, `wgpu-hal`.
+- `ordered-stream` — reached from `zbus`.
+- `parking` — reached from `async-io`, `event-listener`, `futures-lite`, `gpui-pre`.
+- `parking_lot` — reached from `accesskit_windows`, `arc-swap`, `gpui-pre`, `gpui-pre-apple`, `gpui-pre-http-client` and 16 more.
+- `parking_lot_core` — reached from `once_cell`, `parking_lot`.
+- `paste` — reached from `gpui-component`, `image-webp`, `itertools`, `metal`, `portable-atomic` and 3 more.
+- `pastey` — reached from `av-scenechange`.
+- `pathfinder_geometry` — reached from `gpui-pre-macos`, `zed-font-kit`.
+- `pathfinder_simd` — reached from `pathfinder_geometry`, `zed-font-kit`.
+- `pbkdf2` — reached from `oo7`.
+- `percent-encoding` — reached from `form_urlencoded`, `gpui-pre-reqwest`, `hyper-util`, `url`.
+- `phf` — reached from `accesskit_atspi_common`, `markup5ever`, `raw-cpuid`, `strum`.
+- `phf_codegen` — reached from `markup5ever`.
+- `phf_generator` — reached from `phf_codegen`, `phf_macros`, `string_cache_codegen`.
+- `phf_macros` — reached from `phf`.
+- `phf_shared` — reached from `phf`, `phf_codegen`, `phf_generator`, `phf_macros`, `string_cache` and 1 more.
+- `pico-args` — reached from `codespan-reporting`, `resvg`, `rustybuzz`, `ttf-parser`, `usvg`.
+- `pin-project` — reached from `futures`, `futures-concurrency`, `gpui-pre`, `postage`, `wasm-streams`.
+- `pin-project-internal` — reached from `pin-project`.
 - `pin-project-lite` — reached from `tokio`, `tracing` and `tracing-subscriber`.
+- `piper` — reached from `blocking`.
 - `pkg-config` — reached from `zstd`.
+- `png` — reached from `gif`, `image`, `image-webp`, `libghostty-vt`, `metal` and 4 more.
+- `polling` — reached from `async-io`, `calloop`, `x11rb`.
+- `pollster` — reached from `gpui-pre`, `postage`, `web-time`.
+- `polycool` — reached from `kurbo`.
+- `portable-atomic` — reached from `ahash`, `async-channel`, `async-task`, `atomic-waker`, `bytes` and 12 more.
+- `portable-atomic-util` — reached from `async-channel`, `event-listener`, `futures-util`, `piper`, `waker-fn` and 1 more.
 - `portable-pty` — opens pseudoterminal pairs and spawns children on them, owning the fork-and-exec `unsafe`.
+- `postage` — reached from `gpui-pre`.
+- `potential_utf` — reached from `icu_collections`, `icu_locale_core`.
+- `powerfmt` — reached from `deranged`, `time`.
+- `ppv-lite86` — reached from `rand_chacha`.
+- `precomputed-hash` — reached from `string_cache`.
+- `presser` — reached from `gpu-allocator`.
+- `prettyplease` — reached from `bindgen`, `proptest-macro`, `zerocopy-derive`.
+- `proc-macro-crate` — reached from `gpui-component-macros`, `gpui-pre-macros`, `zbus_macros`, `zvariant_derive`.
 - `proc-macro2` — the token and span types under `syn`, named directly for the `span-locations` feature that gives the policy checks their line numbers.
 - `proc-macro2-diagnostics` — reached from `libghostty-vt`.
+- `profiling` — reached from `gpui-pre`, `gpui-pre-wgpu`, `rav1e`, `v_frame`, `wgpu` and 2 more.
+- `profiling-procmacros` — reached from `profiling`.
+- `proptest` — reached from `anstream`, `anstyle-parse`, `arc-swap`, `async-compression`, `const-oid` and 16 more.
+- `proptest-macro` — reached from `proptest`.
+- `pulp` — reached from `exr`.
+- `pulp-wasm-simd-flag` — reached from `pulp`.
+- `pxfm` — reached from `moxcms`.
+- `qoi` — reached from `image`.
+- `quick-error` — reached from `image-webp`, `ravif`, `rusty-fork`, `tiff`.
+- `quick-xml` — reached from `ashpd`, `wayland-scanner`, `xcb`.
+- `quinn` — reached from `gpui-pre-reqwest`.
+- `quinn-proto` — reached from `quinn`.
+- `quinn-udp` — reached from `quinn`.
 - `quote` — reached from `cbindgen`, `libghostty-vt`, `libtest-mimic`, `portable-pty`, `serde`, `serde_json`, `syn`, `tokio`, `toml`, `tracing` and `tracing-subscriber`.
 - `r-efi` — reached from `cbindgen` and `zstd`.
+- `rand` — reached from `ahash`, `async-compression`, `base62`, `base64`, `bit-set` and 77 more.
+- `rand_chacha` — reached from `num-bigint-dig`, `proptest`, `rav1e`.
+- `rand_core` — reached from `chacha20`, `crypto-common`, `getrandom`, `rand`, `rand_chacha` and 3 more.
+- `rand_pcg` — reached from `quinn-proto`, `rand`, `zerotrie`, `zerovec`.
+- `rand_xorshift` — reached from `bit-vec`, `num-bigint-dig`, `proptest`, `rayon`, `rayon-core` and 1 more.
+- `range-alloc` — reached from `wgpu-hal`.
+- `rangemap` — reached from `cosmic-text`.
+- `rav1e` — reached from `ravif`.
+- `ravif` — reached from `image`.
+- `raw-cpuid` — reached from `pulp`.
+- `raw-window-handle` — reached from `ashpd`, `gpui-base`, `gpui-component`, `gpui-pre`, `gpui-pre-linux` and 11 more.
+- `raw-window-metal` — reached from `wgpu-hal`.
+- `rayon` — reached from `atomic-waker`, `av-scenechange`, `bumpalo`, `exr`, `gif` and 12 more.
+- `rayon-core` — reached from `bumpalo`, `exr`, `rayon`.
+- `read-fonts` — reached from `harfrust`, `skrifa`.
+- `reborrow` — reached from `pulp`.
+- `redox_syscall` — reached from `libredox`, `parking_lot_core`.
+- `redox_users` — reached from `dirs-sys`.
+- `ref-cast` — reached from `ref-cast-impl`, `schemars`, `serde_json`, `syn`, `thiserror`.
+- `ref-cast-impl` — reached from `ref-cast`.
 - `regex` — the `stdout_matches` and `stderr_matches` scenario assertions.
 - `regex-automata` — reached from `regex` and `tracing-subscriber`.
 - `regex-syntax` — reached from `regex` and `tracing-subscriber`.
+- `renderdoc-sys` — reached from `wgpu-hal`.
+- `resvg` — reached from `gpui-component`, `gpui-pre`.
+- `rgb` — reached from `image`, `ravif`, `resvg`.
+- `ring` — reached from `quinn-proto`, `rustls`, `rustls-native-certs`, `rustls-webpki`.
+- `ropey` — reached from `gpui-base`, `gpui-component`.
+- `roxmltree` — reached from `fontconfig-parser`, `simplecss`, `taffy`, `usvg`.
+- `rust-embed` — reached from `gpui-kit-assets`.
+- `rust-embed-impl` — reached from `rust-embed`.
+- `rust-embed-utils` — reached from `rust-embed`, `rust-embed-impl`.
+- `rust-i18n` — reached from `gpui-component`.
+- `rust-i18n-macro` — reached from `rust-i18n`.
+- `rust-i18n-support` — reached from `rust-i18n`, `rust-i18n-macro`.
+- `rustc-demangle` — reached from `addr2line`, `backtrace`.
+- `rustc-hash` — reached from `bindgen`, `cosmic-text`, `gpui-pre-collections`, `naga`, `quinn` and 3 more.
+- `rustc_version` — reached from `derive_more`, `derive_more-impl`, `embed-resource`, `pathfinder_simd`, `rangemap`.
 - `rustix` — reached from `cbindgen`.
+- `rustls` — reached from `gpui-pre-reqwest`, `hyper-rustls`, `quinn`, `quinn-proto`, `rustls-native-certs` and 1 more.
+- `rustls-native-certs` — reached from `gpui-pre-reqwest`, `hyper-rustls`.
+- `rustls-pemfile` — reached from `gpui-pre-reqwest`.
+- `rustls-pki-types` — reached from `gpui-pre-reqwest`, `quinn-proto`, `rustls`, `rustls-native-certs`, `rustls-pemfile` and 1 more.
+- `rustls-webpki` — reached from `rustls`, `rustls-native-certs`.
+- `rustversion` — reached from `anyhow`, `arc-swap`, `async-trait`, `bitflags`, `bytemuck` and 30 more.
+- `rusty-fork` — reached from `proptest`.
+- `rustybuzz` — reached from `usvg`.
+- `ryu` — reached from `serde_urlencoded`, `sval_fmt`, `sval_json`, `zmij`.
+- `same-file` — reached from `ignore`, `walkdir`.
+- `schannel` — reached from `rustls-native-certs`.
+- `schemars` — reached from `accesskit`, `gpui-base`, `gpui-component`, `gpui-pre`, `gpui-pre-shared-string` and 5 more.
+- `schemars_derive` — reached from `schemars`.
+- `scoped-tls` — reached from `rayon-core`, `wayland-backend`.
+- `scopeguard` — reached from `accesskit_windows`, `encoding_rs`, `lock_api`.
+- `screencapturekit` — reached from `zed-scap`.
+- `screencapturekit-sys` — reached from `screencapturekit`, `zed-scap`.
+- `seahash` — reached from `ahash`, `gpui-pre`.
+- `security-framework` — reached from `rustls-native-certs`.
+- `security-framework-sys` — reached from `security-framework`.
+- `self_cell` — reached from `cosmic-text`.
+- `semver` — reached from `built`, `clap`, `gpui-pre-macos`, `nix`, `rav1e` and 2 more.
 - `serde` — derived deserialization of scenario tables, claims files and step tables.
+- `serde-saphyr` — reached from `rust-i18n-support`.
+- `serde_bytes` — reached from `linebender_resource_handle`, `oo7`, `serde-saphyr`, `serde_json`, `winreg` and 1 more.
 - `serde_core` — reached from `cbindgen`, `serde`, `serde_json` and `toml`.
 - `serde_derive` — reached from `cbindgen`, `serde`, `serde_json` and `toml`.
+- `serde_derive_internals` — reached from `schemars_derive`.
+- `serde_fmt` — reached from `value-bag-serde1`.
 - `serde_json` — JSONL goldens, NDJSON step records, `cargo metadata`, and the CLI's structured output.
+- `serde_repr` — reached from `ashpd`, `gpui-component`, `lsp-types`, `schemars`, `serde-saphyr` and 3 more.
 - `serde_spanned` — reached from `cbindgen` and `toml`.
+- `serde_urlencoded` — reached from `gpui-pre-http-client`, `gpui-pre-reqwest`.
 - `serial2` — reached from `portable-pty`.
+- `sha1_smol` — reached from `uuid`.
 - `sha2` — the SHA-256 digests that name container images, staged binaries and uploaded artifacts.
 - `sharded-slab` — reached from `tracing-subscriber`.
 - `shared_library` — reached from `portable-pty`.
 - `shell-words` — reached from `portable-pty`.
+- `shellexpand` — reached from `rust-embed-impl`.
 - `shlex` — reached from `zstd`.
 - `signal-hook-registry` — reached from `tokio`.
+- `simd-adler32` — reached from `fdeflate`, `miniz_oxide`, `zune-inflate`.
+- `simd_helpers` — reached from `rav1e`.
+- `simdutf8` — reached from `encoding_rs`.
+- `simplecss` — reached from `usvg`.
+- `siphasher` — reached from `phf_shared`, `rust-i18n-support`, `svgtypes`, `usvg`.
+- `skrifa` — reached from `cosmic-text`, `swash`.
+- `slab` — reached from `async-executor`, `async-io`, `async-signal`, `calloop`, `futures-util` and 7 more.
+- `slotmap` — reached from `fontdb`, `glow`, `gpui-pre`, `taffy`.
 - `smallvec` — reached from `tracing-subscriber`.
+- `smol` — reached from `async-task`, `gpui-base`, `gpui-component`, `gpui-pre-linux`, `portable-pty` and 2 more.
+- `smol_str` — reached from `cosmic-text`, `gpui-pre-shared-string`, `schemars`.
 - `socket2` — reached from `tokio`.
+- `spin` — reached from `flume`, `futures-util`, `gpui-pre`, `lazy_static`.
+- `spirv` — reached from `naga`.
+- `stable_deref_trait` — reached from `as-slice`, `gimli`, `heapless`, `icu_provider`, `memmap2` and 2 more.
+- `static_assertions` — reached from `accesskit_windows`, `atspi-common`, `clap_builder`, `derive_more`, `dispatch2` and 19 more.
+- `str_indices` — reached from `ropey`.
+- `strict-num` — reached from `tiny-skia-path`, `usvg`.
+- `string_cache` — reached from `markup5ever`.
+- `string_cache_codegen` — reached from `markup5ever`.
 - `strsim` — reached from `libtest-mimic`.
+- `strum` — reached from `base64`, `gpui-pre`, `gpui-pre-linux`, `gpui-pre-macos`, `naga`.
+- `strum_macros` — reached from `strum`.
+- `subtle` — reached from `hybrid-array`, `oo7`, `rustls`.
+- `sval` — reached from `indexmap`, `log`, `sval_buffer`, `sval_dynamic`, `sval_fmt` and 5 more.
+- `sval_buffer` — reached from `sval_nested`, `value-bag-sval2`.
+- `sval_dynamic` — reached from `value-bag-sval2`.
+- `sval_fmt` — reached from `value-bag-sval2`.
+- `sval_json` — reached from `value-bag-sval2`.
+- `sval_nested` — reached from `sval_serde`.
+- `sval_ref` — reached from `log`, `sval_buffer`, `sval_nested`, `value-bag-sval2`.
+- `sval_serde` — reached from `value-bag-sval2`.
+- `svg_fmt` — reached from `etagere`.
+- `svgtypes` — reached from `resvg`, `usvg`.
+- `swash` — reached from `cosmic-text`, `gpui-pre-wgpu`.
 - `syn` — parses every source file for the policy checks clippy cannot express.
+- `sync_wrapper` — reached from `gpui-pre-reqwest`, `tower`.
+- `synstructure` — reached from `yoke-derive`, `zerofrom-derive`.
+- `sys-locale` — reached from `cosmic-text`.
+- `sysinfo` — reached from `zed-scap`.
+- `system-configuration` — reached from `gpui-pre-reqwest`, `hyper-util`.
+- `system-configuration-sys` — reached from `system-configuration`.
+- `taffy` — reached from `gpui-pre`.
+- `tao-core-video-sys` — reached from `zed-scap`.
+- `tauri-winrt-notification` — reached from `notify-rust`.
 - `tempfile` — reached from `cbindgen`.
+- `tendril` — reached from `markup5ever`, `markup5ever_rcdom`.
+- `termcolor` — reached from `codespan-reporting`, `syn`.
 - `thiserror` — reached from `portable-pty`.
 - `thiserror-impl` — reached from `portable-pty`.
 - `thread_local` — reached from `tracing-subscriber`.
+- `tiff` — reached from `fax`, `image`.
+- `time` — reached from `mac-notification-sys`, `rustls`, `security-framework`, `tracing-subscriber`, `zvariant`.
+- `time-core` — reached from `time`.
+- `tiny-keccak` — reached from `const-random-macro`.
+- `tiny-skia` — reached from `cosmic-text`, `resvg`.
+- `tiny-skia-path` — reached from `tiny-skia`, `ttf-parser`, `usvg`.
+- `tinystr` — reached from `icu_locale_core`.
+- `tinyvec` — reached from `fontdb`, `quinn-proto`.
 - `tokio` — the async runtime both product ends and the test client are written on.
 - `tokio-macros` — reached from `tokio`.
+- `tokio-rustls` — reached from `gpui-pre-reqwest`, `h2`, `hyper-rustls`.
+- `tokio-socks` — reached from `gpui-pre-reqwest`.
+- `tokio-util` — reached from `async-compression`, `gpui-pre-reqwest`, `h2`, `hyper`, `tokio` and 2 more.
 - `toml` — scenarios, claims, the Makina configuration and the manifests the policy checks read.
 - `toml_datetime` — reached from `cbindgen` and `toml`.
+- `toml_edit` — reached from `proc-macro-crate`.
 - `toml_parser` — reached from `cbindgen` and `toml`.
+- `toml_write` — reached from .
 - `toml_writer` — reached from `cbindgen` and `toml`.
+- `tower` — reached from `gpui-pre-reqwest`.
+- `tower-layer` — reached from `hyper-util`, `tower`, `tower-service`.
+- `tower-service` — reached from `gpui-pre-reqwest`, `hyper-rustls`, `hyper-util`, `tower`.
 - `tracing` — the daemon's and the client engine's structured logging.
 - `tracing-attributes` — reached from `tracing` and `tracing-subscriber`.
 - `tracing-core` — reached from `tracing` and `tracing-subscriber`.
 - `tracing-log` — reached from `tracing-subscriber`.
 - `tracing-subscriber` — the log writer and the level filter behind `IZNIK_LOG`.
+- `triomphe` — reached from `rust-i18n-support`.
+- `try-lock` — reached from `event-listener`, `want`.
+- `ttf-parser` — reached from `fontdb`, `gpui-pre`, `rustybuzz`.
+- `typeid` — reached from `erased-serde`.
 - `typenum` — reached from `sha2`.
+- `uds_windows` — reached from `async-io`, `smol`, `zbus`.
+- `unarray` — reached from `proptest`.
+- `unicase` — reached from `clap_builder`, `mime_guess`, `phf_macros`, `phf_shared`.
+- `unicode-bidi` — reached from `cosmic-text`, `gpui-pre-wgpu`, `icu_properties`, `usvg`.
+- `unicode-bidi-mirroring` — reached from `rustybuzz`.
+- `unicode-ccc` — reached from `rustybuzz`.
+- `unicode-id` — reached from `markdown`.
 - `unicode-ident` — reached from `cbindgen`, `libghostty-vt`, `libtest-mimic`, `portable-pty`, `proc-macro2`, `serde`, `serde_json`, `syn`, `tokio`, `toml`, `tracing` and `tracing-subscriber`.
+- `unicode-linebreak` — reached from `cosmic-text`.
+- `unicode-properties` — reached from `gpui-pre-web`, `rustybuzz`.
+- `unicode-script` — reached from `cosmic-text`, `gpui-pre-web`, `rustybuzz`, `usvg`.
+- `unicode-segmentation` — reached from `bstr`, `convert_case`, `cosmic-text`, `gpui-base`, `gpui-pre-web` and 1 more.
+- `unicode-vo` — reached from `usvg`.
+- `unicode-width` — reached from `annotate-snippets`, `clap_builder`, `codespan-reporting`, `data-url`, `ropey`.
+- `unicode-xid` — reached from `derive_more-impl`, `litrs`, `unicode-ident`.
+- `untrusted` — reached from `ring`, `rustls-native-certs`, `rustls-webpki`.
+- `url` — reached from `gpui-pre`, `gpui-pre-http-client`, `gpui-pre-linux`, `gpui-pre-reqwest`, `quinn` and 3 more.
+- `usvg` — reached from `gpui-pre`, `resvg`.
+- `utf-8` — reached from `tendril`.
+- `utf8_iter` — reached from `icu_collections`, `icu_normalizer`, `idna`.
 - `utf8parse` — reached from `libtest-mimic`.
+- `uuid` — reached from `accesskit`, `borsh`, `core-foundation`, `foldhash`, `gpui-component` and 9 more.
+- `v_frame` — reached from `av-scenechange`, `av1-grain`, `rav1e`.
 - `valuable` — reached from `tracing` and `tracing-subscriber`.
+- `value-bag` — reached from `log`.
+- `value-bag-serde1` — reached from `value-bag`.
+- `value-bag-sval2` — reached from `value-bag`.
 - `version_check` — reached from `libghostty-vt`.
+- `vswhom` — reached from `embed-resource`.
+- `vswhom-sys` — reached from `vswhom`.
+- `wait-timeout` — reached from `rusty-fork`.
+- `waker-fn` — reached from `async-lock`, `event-listener`, `flume`, `futures-lite`, `gpui-pre`.
+- `walkdir` — reached from `ctor`, `exr`, `globwalk`, `h2`, `ignore` and 13 more.
+- `want` — reached from `hyper`.
 - `wasi` — reached from `tokio`.
+- `wasip2` — reached from .
+- `wasm-bindgen` — reached from `chrono`, `console_error_panic_hook`, `getrandom`, `glow`, `gpui-kit-assets` and 19 more.
+- `wasm-bindgen-futures` — reached from `gpui-kit-assets`, `gpui-pre-reqwest`, `gpui-pre-web`, `wasm-streams`, `web-time` and 1 more.
+- `wasm-bindgen-macro` — reached from `wasm-bindgen`.
+- `wasm-bindgen-macro-support` — reached from `wasm-bindgen-macro`.
+- `wasm-bindgen-shared` — reached from `wasm-bindgen`, `wasm-bindgen-macro-support`.
+- `wasm-streams` — reached from `gpui-pre-reqwest`.
+- `wasm_thread` — reached from `gpui-pre-scheduler`, `gpui-pre-web`.
+- `wayland-backend` — reached from `ashpd`, `calloop-wayland-source`, `gpui-pre-linux`, `wayland-client`, `wayland-protocols` and 2 more.
+- `wayland-client` — reached from `ashpd`, `calloop-wayland-source`, `gpui-pre-linux`, `khronos-egl`, `wayland-cursor` and 3 more.
+- `wayland-cursor` — reached from `gpui-pre-linux`.
+- `wayland-protocols` — reached from `ashpd`, `calloop-wayland-source`, `gpui-pre-linux`, `khronos-egl`, `wayland-protocols-plasma` and 1 more.
+- `wayland-protocols-plasma` — reached from `gpui-pre-linux`.
+- `wayland-protocols-wlr` — reached from `gpui-pre-linux`.
+- `wayland-scanner` — reached from `wayland-client`, `wayland-protocols`, `wayland-protocols-plasma`, `wayland-protocols-wlr`.
+- `wayland-sys` — reached from `wayland-backend`, `wgpu-hal`.
+- `web-sys` — reached from `glow`, `gpui-pre-reqwest`, `gpui-pre-web`, `gpui-pre-wgpu`, `gpui-pre-ztracing` and 8 more.
+- `web-time` — reached from `gpui-base`, `gpui-pre`, `gpui-pre-scheduler`, `gpui-pre-web`, `quinn` and 2 more.
+- `weezl` — reached from `gif`, `tiff`.
+- `wgpu` — reached from `gpui-pre-wgpu`.
+- `wgpu-core` — reached from `wgpu`.
+- `wgpu-core-deps-apple` — reached from `wgpu-core`.
+- `wgpu-core-deps-emscripten` — reached from `wgpu-core`.
+- `wgpu-core-deps-wasm` — reached from `wgpu-core`.
+- `wgpu-core-deps-windows-linux-android` — reached from `wgpu-core`.
+- `wgpu-hal` — reached from `wgpu`, `wgpu-core`, `wgpu-core-deps-apple`, `wgpu-core-deps-emscripten`, `wgpu-core-deps-wasm` and 1 more.
+- `wgpu-naga-bridge` — reached from `wgpu-core`, `wgpu-hal`.
+- `wgpu-types` — reached from `wgpu`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`.
+- `which` — reached from `gpui-pre-util`.
 - `winapi` — reached from `portable-pty`.
 - `winapi-i686-pc-windows-gnu` — reached from `portable-pty`.
+- `winapi-util` — reached from `ignore`, `same-file`, `termcolor`, `walkdir`.
 - `winapi-x86_64-pc-windows-gnu` — reached from `portable-pty`.
+- `windows` — reached from `accesskit_windows`, `gpu-allocator`, `gpui-component`, `gpui-pre`, `gpui-pre-windows` and 5 more.
+- `windows-capture` — reached from `zed-scap`.
+- `windows-collections` — reached from `windows`.
+- `windows-core` — reached from `accesskit_windows`, `gpui-pre-windows`, `iana-time-zone`, `wgpu-hal`, `windows` and 3 more.
+- `windows-future` — reached from `windows`, `windows-capture`.
+- `windows-implement` — reached from `windows-core`.
+- `windows-interface` — reached from `windows-core`.
 - `windows-link` — reached from `cbindgen`, `libtest-mimic`, `portable-pty`, `tokio` and `tracing-subscriber`.
+- `windows-numerics` — reached from `gpui-pre-windows`, `windows`.
+- `windows-registry` — reached from `gpui-pre-reqwest`, `gpui-pre-windows`, `hyper-util`, `tauri-winrt-notification`.
+- `windows-result` — reached from `wgpu-hal`, `windows-core`, `windows-registry`.
+- `windows-strings` — reached from `windows-collections`, `windows-core`, `windows-registry`.
 - `windows-sys` — reached from `cbindgen`, `libtest-mimic`, `portable-pty`, `tokio` and `tracing-subscriber`.
+- `windows-targets` — reached from .
+- `windows-threading` — reached from `windows-future`.
+- `windows-version` — reached from `tauri-winrt-notification`.
+- `windows_aarch64_gnullvm` — reached from `windows-targets`.
+- `windows_aarch64_msvc` — reached from `windows-targets`.
+- `windows_i686_gnu` — reached from `windows-targets`.
+- `windows_i686_gnullvm` — reached from `windows-targets`.
+- `windows_i686_msvc` — reached from `windows-targets`.
+- `windows_x86_64_gnu` — reached from `windows-targets`.
+- `windows_x86_64_gnullvm` — reached from `windows-targets`.
+- `windows_x86_64_msvc` — reached from `windows-targets`.
 - `winnow` — reached from `cbindgen` and `toml`.
 - `winreg` — reached from `portable-pty`.
+- `wio` — reached from `dwrote`.
+- `wit-bindgen` — reached from `wasip2`.
+- `writeable` — reached from `icu_locale_core`, `icu_provider`, `potential_utf`.
+- `x11` — reached from `xcb`, `zed-scap`.
+- `x11-clipboard` — reached from `gpui-pre-linux`.
+- `x11rb` — reached from `gpui-pre-linux`, `x11-clipboard`, `xkeysym`, `zed-xim`.
+- `x11rb-protocol` — reached from `x11rb`.
+- `xcb` — reached from `zed-scap`.
+- `xcursor` — reached from `wayland-cursor`, `x11rb`.
+- `xim-ctext` — reached from `xim-parser`, `zed-xim`.
+- `xim-parser` — reached from `zed-xim`.
+- `xkbcommon` — reached from `gpui-pre-linux`.
+- `xkeysym` — reached from `xkbcommon`.
+- `xml-rs` — reached from `gl_generator`.
+- `xml5ever` — reached from `markup5ever_rcdom`.
+- `xmlwriter` — reached from `ttf-parser`, `usvg`.
+- `y4m` — reached from `av-scenechange`, `rav1e`.
+- `yazi` — reached from `swash`.
+- `yeslogic-fontconfig-sys` — reached from `zed-font-kit`.
+- `yoke` — reached from `icu_collections`, `icu_provider`, `litemap`, `zerotrie`, `zerovec`.
+- `yoke-derive` — reached from `yoke`.
+- `zbus` — reached from `accesskit_unix`, `ashpd`, `atspi`, `atspi-common`, `atspi-proxies` and 2 more.
+- `zbus-lockstep` — reached from `atspi-common`, `zbus-lockstep-macros`.
+- `zbus-lockstep-macros` — reached from `atspi-common`.
+- `zbus_macros` — reached from `oo7`, `zbus`.
+- `zbus_names` — reached from `atspi-common`, `zbus`, `zbus_macros`, `zbus_xml`.
+- `zbus_xml` — reached from `atspi-common`, `zbus-lockstep`, `zbus-lockstep-macros`.
+- `zcheapstr` — reached from `zvariant`.
+- `zed-font-kit` — reached from `gpui-pre`, `gpui-pre-macos`, `gpui-pre-wgpu`.
+- `zed-scap` — reached from `gpui-pre`, `gpui-pre-linux`, `gpui-pre-windows`.
+- `zed-xim` — reached from `gpui-pre-linux`.
+- `zeno` — reached from `swash`.
+- `zerocopy` — reached from `ahash`, `bitflags`, `half`, `hybrid-array`, `ppv-lite86` and 2 more.
+- `zerocopy-derive` — reached from `zerocopy`.
+- `zerofrom` — reached from `icu_collections`, `icu_provider`, `yoke`, `zerotrie`, `zerovec`.
+- `zerofrom-derive` — reached from `zerofrom`.
+- `zeroize` — reached from `aes`, `arrayvec`, `block-buffer`, `chacha20`, `cipher` and 9 more.
+- `zeroize_derive` — reached from `zeroize`.
+- `zerotrie` — reached from `icu_properties`, `icu_provider`.
+- `zerovec` — reached from `icu_collections`, `icu_locale_core`, `icu_normalizer`, `icu_properties`, `icu_provider` and 3 more.
+- `zerovec-derive` — reached from `zerovec`.
+- `zlib-rs` — reached from `flate2`, `rustls`.
 - `zmij` — reached from `cbindgen` and `serde_json`.
 - `zstd` — streaming compression of the link, negotiated in `Hello`.
 - `zstd-safe` — reached from `zstd`.
 - `zstd-sys` — reached from `zstd`.
+- `zune-core` — reached from `image`, `zune-jpeg`.
+- `zune-inflate` — reached from `exr`.
+- `zune-jpeg` — reached from `image`, `resvg`, `tiff`.
+- `zvariant` — reached from `accesskit_atspi_common`, `atspi-common`, `oo7`, `zbus`, `zbus-lockstep` and 4 more.
+- `zvariant_derive` — reached from `zvariant`.
+- `zvariant_utils` — reached from `zbus_macros`, `zvariant`, `zvariant_derive`.
+
+

@@ -19,3 +19,5 @@ The bounded process runner, the deadline helpers, the container images, staging,
 ## Tests
 
 Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace.
+
+`Fixture::stream_command` constructs an unprivileged streaming process inside a fixture container. Its caller owns the pipes, deadline and child cleanup; fixture teardown removes any remaining container processes. This lets headless UI regression tests use the same isolated SSH credentials and daemon as scenario proofs.

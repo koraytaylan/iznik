@@ -1,0 +1,26 @@
+# A GPUI application crate passes this workspace's gates on the headless
+# Linux development machine, before anything builds on it.
+#
+# Every proof here is a test: the element tree is drawn by GPUI's own test
+# context inside the process, and the two policy tests read the very tree
+# this branch changes. A container would add no display with which to draw,
+# no second resolution to the lockfile, and no second reading of the
+# documentation check's text.
+
+[[claim]]
+id = "headless-smoke-draws-an-assertable-element-tree"
+statement = "A GPUI test context window draws the themed empty view on a machine with no display, and its observed element tree answers with the surface it was drawn with: the window is a real one, its surface carries the label the view was painted with, and the two observed elements report themselves."
+test = "iznik-app::headless_smoke::headless_window_draws_its_element_tree"
+because = "GPUI's test context renders into a headless window inside the process, so the element tree is drawn and read with no display, and a container would add no display either"
+
+[[claim]]
+id = "dependency-allowlist-equals-the-resolved-set-for-the-adopted-kit"
+statement = "The dependency allowlist equals the resolved package set of `cargo metadata --locked` in both directions, and every version requirement in every workspace manifest is an exact pin — so the GPUI Kit tree the application adopts is exactly the set the policy names, and nothing in it is unpinned."
+test = "xtask::policy_dependencies::policy_dependencies_real_tree_is_clean"
+because = "the allowlist check runs `cargo metadata --locked` on this tree, which is the same resolution the gates build from, and a container would compute the same set"
+
+[[claim]]
+id = "app-documentation-satisfies-the-documentation-policy"
+statement = "The new crate satisfies the documentation policy the `cargo doc` gate enforces: its roots include the README, the README begins with the crate's heading, and every fence in it is tagged — the pieces of the documentation gate that are this tree's to satisfy."
+test = "xtask::policy_documentation::policy_documentation_real_tree_is_clean"
+because = "the documentation check reads this tree's files, which are the ones `cargo doc` compiles, and a container would read the same text"

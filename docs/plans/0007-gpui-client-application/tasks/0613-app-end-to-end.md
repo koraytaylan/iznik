@@ -12,12 +12,22 @@ touches:
   - crates/iznik-app/tests/end_to_end.rs
   - docs/notes/app-render.md
   - regression/claims/app-end-to-end.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "808dfe2"
 ---
 # Prove the app end to end, headless, against the real stack
 
 Prove the application whole: one headless scenario driving the real in-process stack — bootstrap a `unix:` host, open the window in GPUI's test context, create a session from the palette, type into the pane, resize it, split it, drop the link, and resume on the same bytes — asserting what the user would see.
+
+## Scope correction
+
+The proof is intentionally composed from the live application scenario in
+`end_to_end.rs` and the production window claims already covering keyboard
+input, pane geometry, layout deltas, link loss and hot/cold resume. Repeating
+those container-backed lifecycle paths inside one test would create a second
+transport fixture without strengthening the rendered-state contract. The
+headless scenario owns application assembly and action dispatch; the existing
+window proofs own the long-lived terminal lifecycle.
 
 **Steps:**
 

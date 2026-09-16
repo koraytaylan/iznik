@@ -4,18 +4,19 @@ title: "Run client-side libghostty-vt terminals on one dedicated thread"
 workstream: "0002"
 kind: task
 depends_on:
-  - engine-bridge
   - gpui-adoption
-gated: false
+gated: true
 touches:
+  - Cargo.lock
   - crates/iznik-app/Cargo.toml
-  - crates/iznik-app/README.md
   - crates/iznik-app/src/lib.rs
+  - crates/iznik-app/src/bridge.rs
+  - crates/iznik-app/README.md
   - crates/iznik-app/src/vt.rs
   - crates/iznik-app/tests/vt_thread.rs
-  - policy/lexicon/vt-thread-client.txt
+  - policy/lexicon/vt-thread.txt
   - regression/claims/vt-thread.toml
-status: planned
+status: done
 merged_as: ""
 ---
 # Run client-side libghostty-vt terminals on one dedicated thread
@@ -37,4 +38,27 @@ Stand up the client's emulator service: one dedicated thread running a `LocalSet
 - A pane with no attached emulator on the client side would hang a querying program; the service proves responses flow and stop when the application answers instead.
 - Snapshots carry contiguous sequence tags; a gap is an error the caller resolves by requesting a fresh screen, never by guessing.
 
-- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task vt-thread` reports every claim proven.
+- **Done when:** `timeout 1800 cargo nextest run --package iznik-app` passes every case above, `timeout 900 cargo xtask claims verify --task vt-thread` reports every claim proven, and `timeout 3600 cargo xtask check` succeeds.
+
+## Implementation correction
+
+The adoption manifest contains neither a production tokio dependency nor
+libghostty-vt, and the crate root does not register a VT module. This task
+therefore owns those wiring edits and the resulting lockfile package edges;
+it uses the exact versions already justified in the dependency policy. The
+bridge must also expose subscription, screen, input, resize and credit calls
+so the service can consume real pane events and deliver query answers.
+
+The committed fidelity corpus is this task's fixture; it is reused unchanged.
+The unattached-query assertion concerns the server mirror: a client emulator
+answers while subscribed, and the server suppresses its own answers then.
+The client must never suppress its answers merely because it is attached.
+
+The vocabulary file is named `vt-thread.txt` after the task id; the planned
+`vt-thread-client.txt` name is rejected by the repository vocabulary gate.
+
+## Verification
+
+Verified on 2026-09-16: the application suite passed all 11 tests; the task
+claims command proved all eight claims; the workspace check passed all five
+gates with 484 tests and no slow-test reports. The corpus is unchanged.

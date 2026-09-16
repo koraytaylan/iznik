@@ -1,0 +1,50 @@
+# Emulator and channel behavior is deterministic; existing server tests prove
+# the other half of query ownership without constructing another fixture.
+
+[[claim]]
+id = "client-vt-corpus-snapshots"
+statement = "The owning thread produces contiguous sequence-tagged snapshots matching the committed fidelity corpus's oracle cells, styles, colors, cursor, dimensions, alternate screen and history."
+test = "iznik-app::vt_thread::corpus_snapshots_match_the_oracle"
+because = "the thread and oracle consume the same committed bytes; containers add no emulator or channel behavior"
+
+[[claim]]
+id = "client-vt-gap-recovery"
+statement = "A byte gap rejects further output until an authoritative screen replaces the pane, and screen bytes never earn stream credit."
+test = "iznik-app::vt_thread::gap_needs_a_fresh_screen_and_does_not_apply_bytes"
+because = "sequence validation is an in-process channel invariant independent of transport"
+
+[[claim]]
+id = "client-vt-query-answers"
+statement = "The client composes cursor, device, version, size and theme-color replies from its own emulator state."
+test = "iznik-app::vt_thread::client_answers_queries_with_its_theme_and_size"
+because = "query callbacks and composed bytes are identical in a container"
+
+[[claim]]
+id = "client-vt-server-yields-cursor-queries"
+statement = "The server answers cursor queries when unattached and suppresses its answers once a client subscribes."
+test = "iznik-server::terminal_mirror::terminal_mirror_reports_cursor_position_only_without_subscribers"
+because = "the existing mirror proof tests the exact subscription ownership gate with deterministic emulator bytes"
+
+[[claim]]
+id = "client-vt-server-yields-embedder-queries"
+statement = "The server also suppresses embedder query answers while the attached client supplies its own capabilities."
+test = "iznik-server::terminal_mirror::terminal_mirror_answers_embedder_queries_only_without_subscribers"
+because = "the existing mirror proof exercises every embedder callback and the subscription gate directly"
+
+[[claim]]
+id = "client-vt-resize-alternate-and-damage"
+statement = "Resize and alternate-screen transitions update snapshots, idle state is clean at both damage layers, and close destroys the pane."
+test = "iznik-app::vt_thread::resize_alternate_screen_and_idle_damage_follow_the_emulator"
+because = "these are emulator and owning-thread state transitions that require no display or container"
+
+[[claim]]
+id = "client-vt-host-isolation"
+statement = "Pane identities include their host, screen replay emits no historical responses or stream credit, and bridge-fed output advances only the addressed pane."
+test = "iznik-app::vt_thread::hosts_keep_independent_sequences_and_screen_replay_has_no_effects"
+because = "identity and event routing are local channel behavior independent of the transport"
+
+[[claim]]
+id = "client-vt-theme-overrides"
+statement = "Application theme changes preserve program OSC overrides until an OSC reset restores the new application default."
+test = "iznik-app::vt_thread::theme_updates_keep_the_program_color_override_until_reset"
+because = "theme setters and OSC processing execute in the same emulator on every host"

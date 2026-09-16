@@ -254,7 +254,7 @@ pub struct RemoteChannel {
     /// The writing half, shared with the liveness task.
     writer: Arc<Mutex<FrameWriter<Wire>>>,
     /// When something last arrived.
-    heard: Arc<Mutex<Instant>>,
+    heard: Instant,
     /// The liveness task, ended when this is dropped.
     liveness: JoinHandle<()>,
     /// What the remote said on its standard error, kept as it arrives.
@@ -538,7 +538,7 @@ impl RemoteChannel {
     ) -> RemoteChannel {
         let (reader, writer) = link.split();
         let writer = Arc::new(Mutex::new(writer));
-        let heard = Arc::new(Mutex::new(Instant::now()));
+        let heard = Instant::now();
         let asking = Arc::clone(&writer);
         let interval = options.ping_interval.max(LEAST_PING_INTERVAL);
         let liveness = tokio::spawn(async move {
@@ -598,6 +598,10 @@ impl RemoteChannel {
 
     /// The next frame that is not a `Pong`, or why there is none.
     ///
+    /// Cancel-safe: once a deliverable frame is consumed, no operation can
+    /// suspend before returning it. The manager races this against orders;
+    /// even an uncontended async lock here could yield and lose that frame.
+    ///
     /// This is the only thing that hears: the ping task asks, and what comes
     /// back is noticed here. A caller that stops calling it stops hearing, and
     /// will be told the link is dead when it next asks — which is right for
@@ -622,7 +626,7 @@ impl RemoteChannel {
                     waited: asked_at.elapsed(),
                 });
             }
-            let silent_since = *self.heard.lock().await;
+            let silent_since = self.heard;
             let dead_at = silent_since
                 .checked_add(self.options.pong_deadline)
                 .unwrap_or(silent_since);
@@ -649,7 +653,7 @@ impl RemoteChannel {
                 channel: frame.channel,
                 payload: frame.payload.to_vec(),
             };
-            *self.heard.lock().await = Instant::now();
+            self.heard = Instant::now();
             if received.channel == CHANNEL_CONTROL
                 && matches!(decode_to_client(&received.payload), Ok(ToClient::Pong))
             {

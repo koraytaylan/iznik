@@ -68,7 +68,10 @@ fn resolved_packages(root: &Path) -> Result<BTreeSet<String>, PolicyError> {
         .args(["metadata", "--format-version", "1", "--locked"])
         .current_dir(root)
         .env("CARGO_TARGET_DIR", target_directory());
-    let completed = process::run(command, Deadline(METADATA_DEADLINE), Output::Capture)
+    // The resolved tree's metadata is a multi-megabyte JSON document, so it is
+    // read whole: a captured tail is not JSON, and the check's whole job is to
+    // read this document.
+    let completed = process::run(command, Deadline(METADATA_DEADLINE), Output::Whole)
         .map_err(PolicyError::Process)?;
     let metadata: serde_json::Value =
         serde_json::from_slice(&completed.stdout).map_err(|error| PolicyError::Parse {

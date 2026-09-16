@@ -6,6 +6,8 @@
 //! waits inside zstd for a block to fill.
 
 use std::error::Error;
+use std::future::{Future, poll_fn};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use iznik_link::compression::{
@@ -395,4 +397,46 @@ async fn compression_small_frame_latency() {
     tokio::time::timeout(DEADLINE, case)
         .await
         .expect("the latency case finishes");
+}
+
+/// Fixed output and an idle-poll count beyond the decoder's progress guard.
+#[path = "fixtures/decode_pause.rs"]
+mod decode_pause;
+
+/// Cancelling idle reads never retries the decoder without new compressed bytes.
+///
+/// # Panics
+///
+/// When idle polling fails, following output changes, or clean shutdown fails.
+#[tokio::test]
+async fn compression_pending_read_preserves_output() {
+    let case = async {
+        let (here, there) = duplex(PIPE);
+        let mut sender = ZstdStream::new(here, Vec::new()).expect("compressed sender");
+        let mut receiver = ZstdStream::new(there, Vec::new()).expect("compressed receiver");
+        for expected in [decode_pause::BEFORE_IDLE, decode_pause::AFTER_IDLE] {
+            for _ in 0..decode_pause::IDLE_POLLS {
+                let mut scratch = [0_u8; 1];
+                let outcome = poll_fn(|context| {
+                    let mut reading = std::pin::pin!(receiver.read(&mut scratch));
+                    Poll::Ready(reading.as_mut().poll(context))
+                })
+                .await;
+                assert!(matches!(outcome, Poll::Pending), "idle read: {outcome:?}");
+            }
+            sender.write_all(expected).await.expect("send after idle");
+            let mut output = vec![0; expected.len()];
+            receiver
+                .read_exact(&mut output)
+                .await
+                .expect("read after idle");
+            assert_eq!(output, expected);
+        }
+        sender.shutdown().await.expect("finish compressed frame");
+        let mut scratch = [0_u8; 1];
+        assert_eq!(receiver.read(&mut scratch).await.expect("clean end"), 0);
+    };
+    tokio::time::timeout(DEADLINE, case)
+        .await
+        .expect("idle polling deadline");
 }

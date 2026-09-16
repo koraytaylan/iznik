@@ -28,6 +28,12 @@ pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 /// reads and a test asserts on.
 pub const CAPTURE_LIMIT_BYTES: usize = 1 << 20;
 
+/// The limit of an [`Output::Whole`] capture: no limit at all, so nothing is
+/// trimmed and no byte is dropped. It is what a caller parses a document
+/// through, and a document whose size the caller's own policy bounds — the
+/// dependency check's allowlist — is one it may hold whole.
+const WHOLE_LIMIT_BYTES: usize = usize::MAX;
+
 /// How often a running child is checked for its exit and against its
 /// deadline: ten milliseconds, coarse enough to cost nothing and fine enough
 /// that a deadline is honoured within it.
@@ -69,6 +75,11 @@ pub enum Output {
     /// tail kept and the truncation stated — for tests and for callers that
     /// parse what the child said.
     Capture,
+    /// Into memory, whole, however much arrives — for a caller that parses a
+    /// document the child wrote and would be handed a fraction of it under
+    /// [`Output::Capture`]: the dependency check's `cargo metadata` is
+    /// megabytes of JSON, and a tail of JSON is not JSON.
+    Whole,
 }
 
 /// A child that exited successfully within its deadline.
@@ -193,7 +204,7 @@ fn write_tail(formatter: &mut Formatter<'_>, stream: &str, tail: &str) -> fmt::R
 /// [`TERMINATION_GRACE`] to empty, and sent `SIGKILL` if it has not, so
 /// neither the child nor a grandchild survives the deadline. Under
 /// [`Output::Capture`] each stream is read on a thread of its own into a
-/// capped buffer.
+/// capped buffer, and under [`Output::Whole`] into one that caps nothing.
 ///
 /// # Errors
 ///
@@ -210,7 +221,13 @@ pub fn run(
     command.process_group(0);
     let (stdout_mode, stderr_mode) = match output {
         Output::Inherit => (Stdio::inherit(), Stdio::inherit()),
-        Output::Capture => (Stdio::piped(), Stdio::piped()),
+        Output::Capture | Output::Whole => (Stdio::piped(), Stdio::piped()),
+    };
+    // The limit is read only where a stream is piped back, which `Inherit`
+    // does not do.
+    let limit = match output {
+        Output::Whole => WHOLE_LIMIT_BYTES,
+        Output::Inherit | Output::Capture => CAPTURE_LIMIT_BYTES,
     };
     command.stdout(stdout_mode).stderr(stderr_mode);
     let started = Instant::now();
@@ -226,7 +243,7 @@ pub fn run(
             return Err(error);
         }
     };
-    let streams = match capture_both(&mut child) {
+    let streams = match capture_both(&mut child, limit) {
         Ok(streams) => streams,
         Err(source) => {
             end_process_group(&mut child, group, &program)?;
@@ -365,10 +382,13 @@ fn end_process_group(child: &mut Child, group: Pid, program: &str) -> Result<(),
     Ok(())
 }
 
-/// The last [`CAPTURE_LIMIT_BYTES`] of a stream, how many bytes before them
-/// were dropped, and whether the stream has reached its end.
-#[derive(Debug, Default)]
+/// The last `limit` bytes of a stream, how many bytes before them were
+/// dropped, and whether the stream has reached its end.
+#[derive(Debug)]
 struct Tail {
+    /// What the front of the buffer is trimmed back to, and
+    /// [`WHOLE_LIMIT_BYTES`] where nothing is to be dropped at all.
+    limit: usize,
     /// The bytes kept, at most [`TRIM_FACTOR`] limits between trims.
     kept: Vec<u8>,
     /// How many bytes were dropped from the front.
@@ -378,18 +398,28 @@ struct Tail {
 }
 
 impl Tail {
+    /// An empty tail that keeps the last `limit` bytes.
+    fn new(limit: usize) -> Tail {
+        Tail {
+            limit,
+            kept: Vec::new(),
+            dropped: 0,
+            finished: false,
+        }
+    }
+
     /// Appends bytes, trimming the front once the buffer exceeds
     /// [`TRIM_FACTOR`] limits.
     fn push(&mut self, bytes: &[u8]) {
         self.kept.extend_from_slice(bytes);
-        if self.kept.len() > CAPTURE_LIMIT_BYTES.saturating_mul(TRIM_FACTOR) {
+        if self.kept.len() > self.limit.saturating_mul(TRIM_FACTOR) {
             self.trim();
         }
     }
 
     /// Drops everything before the last limit of bytes.
     fn trim(&mut self) {
-        let excess = self.kept.len().saturating_sub(CAPTURE_LIMIT_BYTES);
+        let excess = self.kept.len().saturating_sub(self.limit);
         if excess == 0 {
             return;
         }
@@ -432,14 +462,23 @@ impl Streams {
     }
 }
 
-/// Starts a reader for each piped stream the child has.
+/// Starts a reader for each piped stream the child has, each keeping the last
+/// `limit` bytes.
 ///
 /// # Errors
 ///
 /// When a reader thread cannot be started.
-fn capture_both(child: &mut Child) -> io::Result<Streams> {
-    let stdout = child.stdout.take().map(capture).transpose()?;
-    let stderr = child.stderr.take().map(capture).transpose()?;
+fn capture_both(child: &mut Child, limit: usize) -> io::Result<Streams> {
+    let stdout = child
+        .stdout
+        .take()
+        .map(|reader| capture(reader, limit))
+        .transpose()?;
+    let stderr = child
+        .stderr
+        .take()
+        .map(|reader| capture(reader, limit))
+        .transpose()?;
     Ok(Streams { stdout, stderr })
 }
 
@@ -450,8 +489,11 @@ fn capture_both(child: &mut Child) -> io::Result<Streams> {
 /// # Errors
 ///
 /// When the thread cannot be started.
-fn capture<Reader: Read + Send + 'static>(mut reader: Reader) -> io::Result<Arc<Mutex<Tail>>> {
-    let tail = Arc::new(Mutex::new(Tail::default()));
+fn capture<Reader: Read + Send + 'static>(
+    mut reader: Reader,
+    limit: usize,
+) -> io::Result<Arc<Mutex<Tail>>> {
+    let tail = Arc::new(Mutex::new(Tail::new(limit)));
     let shared = Arc::clone(&tail);
     thread::Builder::new()
         .name("iznik-capture".to_owned())
@@ -493,7 +535,12 @@ fn drain(tail: Option<Arc<Mutex<Tail>>>) -> Vec<u8> {
         thread::sleep(POLL_INTERVAL);
     }
     let mut guard = tail.lock().unwrap_or_else(PoisonError::into_inner);
-    std::mem::take(&mut *guard).into_bytes()
+    // Emptied rather than consumed: a reader thread still holding this tail
+    // goes on filling it, under the same limit, and what it writes after this
+    // point belongs to nobody.
+    let limit = guard.limit;
+    let held = std::mem::replace(&mut *guard, Tail::new(limit));
+    held.into_bytes()
 }
 
 /// Captured bytes as text, with lossy replacement.

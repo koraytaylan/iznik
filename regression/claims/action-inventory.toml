@@ -1,0 +1,23 @@
+[[claim]]
+id = "action-inventory-closed"
+statement = "Every session command variant maps to one registered action, and every registered action has a non-empty explanation and unique identity."
+test = "iznik-app::inventory::inventory_covers_every_session_command"
+because = "the protocol enum and the static inventory are both in-process values, so no transport or display is needed"
+
+[[claim]]
+id = "action-inventory-explanations"
+statement = "Action inventory rows have unique identities and non-empty names and explanations."
+test = "iznik-app::inventory::inventory_rows_are_unique_and_explained"
+because = "the registry values are static application data whose consistency is independent of external state"
+
+[[claim]]
+id = "action-inventory-keybindings"
+statement = "The checked-in default keybinding asset names every registered action."
+test = "iznik-app::inventory::default_keybindings_cover_inventory"
+because = "The asset and inventory are local immutable inputs and need no container."
+
+[[claim]]
+id = "action-inventory-no-collisions"
+statement = "Every default keybinding names a registered action and no chord is duplicated."
+test = "iznik-app::inventory::default_keybindings_are_unique"
+because = "The keybinding asset is a local immutable input."

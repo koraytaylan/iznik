@@ -344,6 +344,7 @@ impl Watched {
                 pane,
                 sequence,
                 bytes,
+                ..
             } => {
                 let held = self.panes.entry((host, pane)).or_default();
                 held.took(sequence.0, &bytes);

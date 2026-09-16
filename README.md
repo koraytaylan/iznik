@@ -1,18 +1,18 @@
 # iznik
 
-A remote terminal system with a native macOS front end.
+A remote terminal system with a cross-platform GPUI front end.
 
-The macOS application connects to a host over your own SSH configuration,
+The GPUI application connects to a host over your own SSH configuration,
 installs `iznik-server` there if it is missing, and attaches. Every pane is a
-real pseudoterminal on the remote host, rendered on the Mac by a libghostty
+real pseudoterminal on the remote host, rendered by a libghostty
 surface fed the pane's raw bytes. Sessions, tabs and panes live in the
 server, so a dropped link, a closed laptop or a restarted application costs a
 reconnect and nothing else.
 
-This repository is the server, the client engine the application links, the
-wire protocol between them, the C ABI the application calls, and the harness
-that proves all of it. The macOS application lives in its own repository and is
-built against [`docs/CLIENT.md`](docs/CLIENT.md), the contract this one keeps.
+This repository is the server, the client engine, the wire protocol, the GPUI
+application, the C ABI for other front ends, and the harness that proves all of
+it. The application reads [`docs/CLIENT.md`](docs/CLIENT.md), the contract this
+one keeps.
 
 ## Status
 
@@ -51,7 +51,7 @@ executable plans under [`docs/plans/`](docs/plans/STATUS.md), run by
 ARCHITECTURE.md      the system design every plan implements
 CONTRIBUTING.md      the rules every line is held to, and the gates that hold them
 docs/plans/          the plans: scope, architecture, status and one document per task
-crates/              iznik-protocol, iznik-link, iznik-server, iznik-client, iznik-ffi,
+crates/              iznik-protocol, iznik-link, iznik-server, iznik-client, iznik-app, iznik-ffi,
                      iznik-cli, iznik-harness, iznik-testkit, iznik-regression
 xtask/               gates, policy checks, the claims registry, images, staging, distribution
 policy/              the dependency allowlist and the project's vocabulary
@@ -126,10 +126,10 @@ iznik's. The client engine does it through `HostManager::uninstall`, which
 also lets the host go and tells the application it has; `iznik uninstall
 <host>` reaches the host and removes what is on it, having no model to keep.
 
-## Building the macOS application against this repository
+## Building the application
 
-The application lives in its own repository, is written in Swift, and links
-this one through a C ABI. Everything it needs is built from here.
+The application is the `iznik-app` GPUI binary in this workspace. Other front
+ends may use the C ABI and the same [`docs/CLIENT.md`](docs/CLIENT.md) contract.
 
 Every path below is under `target/`, which is where cargo writes unless
 `CARGO_TARGET_DIR` says otherwise — and [`CONTRIBUTING.md`](CONTRIBUTING.md)

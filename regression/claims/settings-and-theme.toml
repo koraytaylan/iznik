@@ -1,0 +1,29 @@
+[[claim]]
+id = "settings-theme-conversion"
+statement = "Theme conversion preserves application foreground and background in emulator defaults."
+test = "iznik-app::settings::theme_reaches_terminal_defaults"
+because = "The conversion is pure state mapping and needs no container."
+
+[[claim]]
+id = "settings-refusal-preserves"
+statement = "Malformed keybinding updates are refused while previous settings remain unchanged."
+test = "iznik-app::settings::malformed_keybinding_is_refused"
+because = "Validation and replacement are local settings state."
+
+[[claim]]
+id = "settings-overrides-closed"
+statement = "Keybinding overrides reject unknown actions and colliding chords against the closed inventory."
+test = "iznik-app::settings::overrides_validate_against_inventory"
+because = "Inventory validation is local application state."
+
+[[claim]]
+id = "settings-watcher-applies"
+statement = "The settings watcher applies a changed file once and ignores an unchanged modification stamp."
+test = "iznik-app::settings::watcher_applies_changed_file"
+because = "File stamp handling is deterministic local state."
+
+[[claim]]
+id = "settings-live-emulator"
+statement = "A changed application theme reaches a live emulator snapshot without restarting the pane."
+test = "iznik-app::settings::theme_change_reaches_live_emulator"
+because = "The test drives the in-process VT owner directly and needs no external host."

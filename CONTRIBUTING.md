@@ -236,6 +236,15 @@ These are not gateable and they are what review is for:
   behavior is declared in `regression/claims/<task-id>.toml` and proven by a
   scenario in the container fixture. A `test` proof is allowed only where a
   container adds nothing, and it carries a one-sentence `because`.
+  Display-bound presentation measurements may instead declare a `display`
+  record and a nonempty `because`: the record is an existing Markdown file
+  under `docs/notes/`, and explains the hardware measurement still required.
+  The verifier always reports these claims as **deferred**, even on the named
+  operating system and even when the record contains measurements; a record
+  is never an automated proof. This narrow category makes the application's
+  explicitly manual display measurements visible without inventing a platform
+  or counting a document check as evidence of GPU behavior. It does not apply
+  to CPU budgets, emulator behavior, transport or other automated proofs.
 
 ## 4. Working on a task
 

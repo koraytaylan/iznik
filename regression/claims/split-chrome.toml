@@ -1,0 +1,23 @@
+[[claim]]
+id = "split-drag-preserves-weight"
+statement = "Divider movement preserves total normalized layout weight and a stationary drag is a no-op."
+test = "iznik-app::splits::divider_drag_preserves_weight"
+because = "The weight transformation is pure client geometry and needs no container."
+
+[[claim]]
+id = "split-equalize"
+statement = "Equalizing a split restores shared normalized factors."
+test = "iznik-app::splits::equalize_restores_shared_factors"
+because = "The equalization rule is pure protocol-shaped arithmetic."
+
+[[claim]]
+id = "split-drag-command"
+statement = "A changed divider produces a normalized SetLayout command and a stationary divider produces none."
+test = "iznik-app::splits::divider_drag_builds_layout_command"
+because = "The command constructor is pure and carries the protocol's stable tab identity."
+
+[[claim]]
+id = "split-keyboard-commands"
+statement = "Keyboard split and equalize operations construct protocol commands with stable pane and tab identities."
+test = "iznik-app::splits::keyboard_split_commands_use_stable_identities"
+because = "The action path can inspect these pure constructors without a live host or display."

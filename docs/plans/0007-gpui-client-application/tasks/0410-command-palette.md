@@ -14,12 +14,21 @@ touches:
   - crates/iznik-app/tests/palette.rs
   - policy/lexicon/command-palette-app.txt
   - regression/claims/command-palette.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "6f2113e"
 ---
 # Compose the command palette: fuzzy filter, explanations, dispatch
 
 Render the registry as the palette: gpui-component's command palette overlay, filtered over the action inventory, showing each entry's explanation, honoring availability, and dispatching through the actions so palette, chords and keybindings are one surface.
+
+## Scope correction
+
+Argument-free actions and selected-host lifecycle actions dispatch directly
+through the shared shell path. Actions that require a new name, destination,
+host address, or layout argument remain inventory entries for the dedicated
+form that supplies those arguments; the palette does not invent values from a
+fuzzy-search query. Host removal, upgrade, and uninstall use the selected host
+and dispatch through the manager's asynchronous operation path.
 
 **Steps:**
 

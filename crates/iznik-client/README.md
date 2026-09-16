@@ -15,6 +15,7 @@ The client engine the macOS application links: the SSH transport over the system
 | `host` | Multi-host: host identity, the per-host connection state machine, and the manager that runs one task per host. | `host-identity-and-state` (plan 0005) |
 | `host::identity` | `HostId`, the user's alias, and the global pane address `iznik://<host>/<pane>`. | `host-identity-and-state` (plan 0005) |
 | `host::manager` | The host manager: one task per host, isolation between hosts, and the resume that keeps a pane's bytes across a drop. | `connection-manager` (plan 0005) |
+| `host::manager::credit` | Delivery receipts and stream identities, admitting each current receipt once at the carrying boundary. | `stream-credit` (plan 0007) |
 | `host::manager::task` | What one host's own task does, from its first bootstrap to its last: connect, serve, lose the link, wait, connect again. | `connection-manager` (plan 0005) |
 | `host::state` | The per-host connection state machine with exponential backoff and jitter, as a pure table of transitions. | `host-identity-and-state` (plan 0005) |
 | `model` | The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs. | `client-model` (plan 0005) |
@@ -26,3 +27,21 @@ The client engine the macOS application links: the SSH transport over the system
 ## Tests
 
 Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace. `connection_manager.rs` stands whole servers up on this machine and reaches them through the `unix:` alias, with a relay in front of one of them so a link can be cut and let back: nothing else in reach can drop a connection without also taking away the server a resume needs. The same operations over real SSH, against two containers, are `end-to-end-ssh`'s scenarios. `ssh_control_master.rs` starts no process: what it holds are the argument vector, the alias forms, the control paths and the classification of `ssh`'s own words, captured under `tests/fixtures/ssh/`. Everything that touches a network is a scenario, run from the engine container. `remote_channel.rs` is the one exception and only in appearance: it opens channels over the `unix:` alias, against a real daemon and against a server written to say the wrong version or nothing at all — a socket on this machine being the same link the SSH path builds.
+
+## Output credit
+
+Each real `ManagerEvent::Bytes` carries a `CreditReceipt` for its exact
+stream incarnation and byte count. Consumers return it with
+`HostManager::credit_receipt` after consuming the delivery. Clones share a
+single return; the host task ignores receipts whose stream has since been
+replaced, disconnected or detached. A rejected submission leaves the receipt
+available for retry. Accounting advances after a successful wire write.
+
+The pane-count `credit` API remains available for callers that mean the
+current stream. Its queued order also retains that stream's identity. The
+wire protocol and C ABI are unchanged.
+
+Channel receive is cancel-safe when the manager chooses an outgoing order.
+The receive timestamp belongs directly to the channel: updating it after
+consuming a frame cannot suspend and discard the delivery. A bounded
+cooperative-budget fixture proves cancellation preserves buffered frames.

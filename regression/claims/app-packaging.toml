@@ -1,0 +1,11 @@
+[[claim]]
+id = "app-bundle-linux-layout"
+statement = "The Linux application layout contains the staged executable and versioned desktop entry."
+test = "iznik-app::bundle_layout::linux_layout_is_versioned"
+because = "The layout writer is deterministic filesystem logic and needs no platform host."
+
+[[claim]]
+id = "app-bundle-macos-layout"
+statement = "The macOS application layout contains a version-stamped executable and property list."
+test = "iznik-app::bundle_layout::macos_layout_is_versioned"
+because = "The property list writer is deterministic and can be verified on Linux."

@@ -22,7 +22,7 @@ Two things the tasks still confirm and record in module documentation with the c
 
 - `pub struct SpawnOptions { pub program: Program, pub columns: u16, pub rows: u16, pub working_directory: Option<PathBuf>, pub terminfo_directory: Option<PathBuf> }` with `pub enum Program { LoginShell, Command { path: PathBuf, arguments: Vec<String> } }`. The daemon's registry always passes `LoginShell` — the shell from the password database for the current user, with `argv[0]` prefixed by `-` so it initializes as a login shell — and that is the product rule. `Command` exists because a test that spawns the developer's login shell is a test whose prompt draws itself asynchronously: tests spawn `sh`, `cat` and scripts, one test spawns the login shell to prove the rule, and a spawn that must fail names a path that does not exist.
 - `pub fn spawn(options: &SpawnOptions) -> Result<PtyProcess, PtyError>` opens a pseudoterminal pair through `portable-pty` and spawns the program in its own session with the slave as its controlling terminal, in `working_directory` when given. The environment is inherited from the daemon with these set: `TERM=xterm-ghostty` and `TERMINFO=<terminfo_directory>` when `terminfo_directory` is given, else `TERM=xterm-256color`; `COLORTERM=truecolor`; `SHELL`; and `TERM_PROGRAM=iznik`. Named constants carry every one of those strings.
-- `pub struct PtyProcess` with `process_id() -> u32`, `resize(&self, columns, rows) -> Result<(), PtyError>`, `signal(&self, signal: Signal) -> Result<(), PtyError>` (`Signal::{Hangup, Terminate, Kill}`), and `wait(&mut self) -> Result<ExitStatus, PtyError>`; `pub enum ExitStatus { Exited(i32), Signalled(Signal) }` — a signal death is reported as the signal, never as a fake code. Dropping a `PtyProcess` whose child still runs sends `Kill`: nothing this crate spawns outlives the value that owns it.
+- `pub struct PtyProcess` with `process_id() -> u32`, `resize(&self, columns, rows) -> Result<(), PtyError>`, `signal(&self, signal: Signal) -> Result<(), PtyError>` (`Signal::{Hangup, Terminate, Kill}`), and `wait(&mut self) -> Result<ExitStatus, PtyError>`; `pub enum ExitStatus { Exited(i32), Signalled(Signal) }` — a signal death is reported as the signal, never as a fake code. Dropping a `PtyProcess` whose child still runs kills the terminal's current foreground group before the shell group and reaps the shell. Interactive job control normally gives foreground jobs a distinct group; detached jobs that leave both groups are outside terminal group signaling. A PID/completion reaper handle waits without holding the terminal owner's mutex.
 - `pub enum PtyError { Open { source }, Spawn { program, source }, WorkingDirectory { path, source }, Resize { source }, Signal { source }, Wait { source } }`.
 
 `portable-pty` owns the `fork`/`exec` unsafe; this crate stays `#![forbid(unsafe_code)]`. `spawn` blocks for the duration of a fork and exec, which is milliseconds; it is called from the command path, never from a pump.
@@ -93,3 +93,12 @@ The corpus is `iznik_testkit::corpus`, landed in plan 0001. The regression drive
 ### `server-core-documentation`
 
 The `iznik-server` README documents every module that landed; the root `ARCHITECTURE.md` §5.1 states what was confirmed about the emulator's query handling and the formatter's scope; `docs/notes/terminal-mirror.md` records the findings with the binding's version, so the next person who bumps `libghostty-vt` knows what to re-check.
+
+## Foreground cleanup correction — 2026-09-16
+
+The Plan 0007 application gate reproduced a foreground job surviving the old
+shell-group-only cleanup. Its child-authored fixture now pins the distinct
+job-control group. Pane close hangs up the foreground group first and retains
+the shell session during a configurable grace period before forcing both
+groups to end. The reaper waits through a PID/completion handle, never while
+holding the terminal owner's mutex, because EOF can precede process exit.

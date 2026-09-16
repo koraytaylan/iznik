@@ -14,3 +14,5 @@ Compression is negotiated in `Hello` and engaged from a plain link's parts once 
 ## Tests
 
 Integration tests live under `tests/`; there is no test module inside `src/`, here or anywhere in the workspace.
+
+An idle compressed reader remembers when the decoder needs new transport bytes. Cancelling and repolling a pending read does not repeat empty decoder calls; buffered plaintext still drains before another transport read. The compression suite pins this boundary before and after output and verifies clean shutdown.

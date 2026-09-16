@@ -16,8 +16,8 @@ touches:
   - crates/iznik-app/tests/inventory.rs
   - policy/lexicon/action-inventory.txt
   - regression/claims/action-inventory.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "9ea885c"
 ---
 # Build the closed action inventory with explanations and keybindings
 

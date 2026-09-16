@@ -1,0 +1,36 @@
+# Layout translation is a headless component proof; transport lifecycle remains pending.
+[[claim]]
+id = "window-weighted-layout"
+statement = "The application layout translator renders nested model splits through kit resizable panels, preserves their weight ratios when the window changes size, and applies revised model weights while reusing the supplied pane entities."
+test = "iznik-app::window_shell::window_layout_preserves_weights_across_resize_and_reuses_leaf_entities"
+because = "actual headless kit layout bounds and entity identities prove this translation; no server behavior or transport lifecycle is claimed"
+
+[[claim]]
+id = "window-model-surface-lifetime"
+statement = "The production shell consumes a model snapshot and layout delta without replacing the existing pane entity; disconnect and detach events retain native terminal contents for following contiguous bytes, while actual model removal releases the surface."
+test = "iznik-app::window_shell::window_model_updates_keep_surface_and_terminal_identity"
+because = "synthetic authoritative model and lifecycle events plus the native VT owner prove the local shell decisions; this does not claim real transport resume or channel credit behavior"
+
+[[claim]]
+id = "window-model-dimensions-and-banner"
+statement = "An authoritative pane-resize delta reaches the initialized native terminal, and the production shell renderer shows the engine's classified connection state in its visible host banner."
+test = "iznik-app::window_shell::window_applies_model_dimensions_and_renders_host_state"
+because = "headless shell rendering and native terminal snapshots prove model-to-surface routing; competing-client geometry and transport delivery remain separate container proofs"
+
+[[claim]]
+id = "window-container-hot-resume"
+statement = "The production window creates a session over the fixture's SSH transport, displays its process output, and retains both its pane entity and a client-owned history viewport through link loss and subsequent hot-resumed output."
+test = "iznik-app::regression_window::window_container_create_and_hot_resume"
+because = "This ignored GPUI regression test owns the standard two-container fixture; the headless window must run on the test host while SSH credentials and the real daemon remain in the containers."
+
+[[claim]]
+id = "window-container-cold-resume"
+statement = "After five mebibytes of disconnected output exceed the server's four-mebibyte history ring, the production window resets its client-owned history viewport from an authoritative screen and consumes following output at the new sequence baseline."
+test = "iznik-app::regression_window::window_container_cold_resume_and_next_output"
+because = "The headless GPUI test owns the real two-container fixture and controls a producer inside its host; window rendering cannot run inside the bare musl scenario container."
+
+[[claim]]
+id = "window-container-layout-and-geometry"
+statement = "Real CreatePane and SetLayout commands change the rendered production window without replacing its existing pane entity; two independently attached windows follow the latest window resize in both their reconciled model and native terminal dimensions."
+test = "iznik-app::regression_window::window_container_split_deltas_and_last_resize"
+because = "Two headless GPUI windows own independent production engines connected through SSH in the standard two-container fixture, combining actual platform resize callbacks with server delta round trips."

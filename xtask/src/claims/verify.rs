@@ -195,7 +195,9 @@ pub fn verify(
 pub fn plan(claims: &[&Claim]) -> Vec<Invocation> {
     let mut groups: BTreeMap<Option<String>, Grouping> = BTreeMap::new();
     for claim in claims {
-        let (atom, package) = proof_atom(claim);
+        let Some((atom, package)) = proof_atom(claim) else {
+            continue;
+        };
         let grouping = groups.entry(claim.profile.clone()).or_default();
         grouping.atoms.push(atom);
         grouping.packages.insert(package);
@@ -263,18 +265,19 @@ struct TestCase {
 }
 
 /// The filterset atom that runs a claim's proof, and the package it is in.
-fn proof_atom(claim: &Claim) -> (String, String) {
+fn proof_atom(claim: &Claim) -> Option<(String, String)> {
     match &claim.proof {
-        Proof::Scenario { name } => (
+        Proof::Scenario { name } => Some((
             format!("test(=scenario::{}::{})", claim.task, name),
             REGRESSION_PACKAGE.to_owned(),
-        ),
+        )),
+        Proof::Display { .. } => None,
         Proof::Test { name, .. } => {
             let (package, binary, test) = split_test(name);
-            (
+            Some((
                 format!("package({package}) & binary({binary}) & test(={test})"),
                 package,
-            )
+            ))
         }
     }
 }
@@ -383,7 +386,9 @@ fn status_of(claim: &Claim, cases: &[TestCase]) -> Status {
     if let Some(reason) = is_deferred(claim) {
         return Status::Deferred { reason };
     }
-    let (classname, name) = expected_case(claim);
+    let Some((classname, name)) = expected_case(claim) else {
+        return Status::Missing;
+    };
     match cases
         .iter()
         .find(|case| case.classname == classname && case.name == name)
@@ -397,15 +402,16 @@ fn status_of(claim: &Claim, cases: &[TestCase]) -> Status {
 }
 
 /// The `(classname, name)` a claim's proof appears under in the report.
-fn expected_case(claim: &Claim) -> (String, String) {
+fn expected_case(claim: &Claim) -> Option<(String, String)> {
     match &claim.proof {
-        Proof::Scenario { name } => (
+        Proof::Scenario { name } => Some((
             REGRESSION_BINARY.to_owned(),
             format!("scenario::{}::{}", claim.task, name),
-        ),
+        )),
+        Proof::Display { .. } => None,
         Proof::Test { name, .. } => {
             let (package, binary, test) = split_test(name);
-            (format!("{package}::{binary}"), test)
+            Some((format!("{package}::{binary}"), test))
         }
     }
 }
@@ -440,8 +446,13 @@ pub fn is_this_platform(platform: &str) -> bool {
     resolves(platform, std::env::consts::OS)
 }
 
-/// Why a claim is deferred, when its platform is not the one running.
+/// Why a claim needs a manual display measurement or a different platform.
 fn is_deferred(claim: &Claim) -> Option<String> {
+    if let Proof::Display { record, because } = &claim.proof {
+        return Some(format!(
+            "manual display measurement: {because}; record: {record}"
+        ));
+    }
     let platform = claim.platform.as_ref()?;
     if is_this_platform(platform) {
         None

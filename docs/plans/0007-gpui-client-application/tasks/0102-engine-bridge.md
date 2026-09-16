@@ -15,8 +15,8 @@ touches:
   - crates/iznik-app/tests/bridge.rs
   - policy/lexicon/engine-bridge.txt
   - regression/claims/engine-bridge.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "272123e46ec40eaddfe385361fb27806fd353725"
 ---
 # Bridge the engine: HostManager on tokio, events into GPUI entities
 

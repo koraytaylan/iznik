@@ -1,0 +1,29 @@
+[[claim]]
+id = "command-palette-inventory"
+statement = "The palette exposes exactly the actions available in the settled model."
+because = "The palette must expose exactly the actions available in the settled model."
+test = "iznik-app::palette::palette_lists_only_available_entries_and_fuzzy_filters"
+
+[[claim]]
+id = "command-palette-selection"
+statement = "Palette selection wraps and opening resets transient state."
+because = "Selection movement is local UI state and needs no container."
+test = "iznik-app::palette::palette_selection_wraps_and_open_resets_state"
+
+[[claim]]
+id = "command-palette-key-state"
+statement = "Normalized key events update the palette query, navigation, dispatch, and close states."
+test = "iznik-app::palette::palette_keys_drive_state"
+because = "The palette state machine is local UI behavior."
+
+[[claim]]
+id = "command-palette-selected-action"
+statement = "Palette selection resolves to the available inventory identity used by dispatch."
+test = "iznik-app::palette::palette_selection_resolves_inventory_identity"
+because = "Filtering and selection are pure projection state before the shell sends a command."
+
+[[claim]]
+id = "command-palette-host-dispatch"
+statement = "A selected host operation chosen through the application action path reaches the host manager and removes the temporary host from the live model."
+test = "iznik-app::end_to_end::application_shell_drives_the_in_process_stack"
+because = "the headless production shell uses the same dispatch_action path as palette selection and observes the manager's completed removal"

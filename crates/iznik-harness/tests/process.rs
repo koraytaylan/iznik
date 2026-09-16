@@ -1,8 +1,9 @@
 //! The bounded process runner: a prompt child completes with its output and
 //! elapsed time; a child past its deadline is ended with its whole process
 //! group and reported with what it said; output streams through under
-//! `Inherit` and is capped with its tail kept under `Capture`; a program that
-//! cannot start and a child that fails are each named.
+//! `Inherit`, is capped with its tail kept under `Capture`, and is held whole
+//! under `Whole`; a program that cannot start and a child that fails are each
+//! named.
 //!
 //! Children here are `sh` and coreutils, never a login shell. Every deadline
 //! is under a second; the one case that waits out the termination grace is
@@ -225,6 +226,43 @@ fn process_child_ignoring_sigterm_is_killed_after_the_grace() {
         "killed late: {waited:?}"
     );
     assert_group_gone(group).expect("the group is gone");
+}
+
+/// Under `Whole`, a flood past the cap is held in its entirety, with nothing
+/// trimmed and nothing said about dropping — which is what lets a caller
+/// parse a document larger than a capture may keep.
+///
+/// # Panics
+///
+/// When any byte is missing.
+#[test]
+fn process_whole_output_holds_a_flood_past_the_cap() {
+    let flood = CAPTURE_LIMIT_BYTES.saturating_mul(3).saturating_div(2);
+    let completed = run(
+        shell(&format!(
+            "printf first; head -c {flood} /dev/zero | tr '\\0' a; printf last"
+        )),
+        Deadline(Duration::from_secs(5)),
+        Output::Whole,
+    )
+    .expect("the flood completes");
+    assert!(
+        completed.stdout.starts_with(b"first"),
+        "the first bytes are there"
+    );
+    assert!(
+        completed.stdout.ends_with(b"last"),
+        "the last bytes are there"
+    );
+    assert_eq!(
+        completed.stdout.len(),
+        "firstlast".len().saturating_add(flood),
+        "every byte is there"
+    );
+    assert!(
+        !String::from_utf8_lossy(&completed.stdout).contains("bytes dropped"),
+        "nothing is said to have been dropped"
+    );
 }
 
 /// Under `Capture`, output beyond the cap is truncated with the tail kept and

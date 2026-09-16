@@ -1,0 +1,35 @@
+[[claim]]
+id = "delivery-stream-histories"
+statement = "Credit receipts admit exactly the committed grants across replacement, reuse, disconnect, detach, host isolation and manager replacement."
+test = "iznik-client::stream_credit::stream_credit_matches_every_committed_history"
+because = "The identity ledger is deterministic; containers add no information to its transition histories."
+
+[[claim]]
+id = "delivery-credit-wire"
+statement = "After an observed replacement, delayed old receipts send no credit; current receipt clones send their exact count once, including after rejected submission to another manager, while an independent pane retains its own credit."
+test = "iznik-client::manager_traffic::manager_traffic_returns_only_current_delivery_credit_once"
+because = "A scripted local transport fixes announcement and order boundaries while exercising the production manager and wire codec."
+
+[[claim]]
+id = "delivery-receipt-app-path"
+statement = "The bridge and native snapshot preserve delivery identity and count; accepted grid frames retain receipts after rejected engine submission and return a duplicated frame's receipt once without creating count-based credit."
+test = "iznik-app::stream_credit::stream_credit_survives_bridge_native_grid_and_retry"
+because = "Native consumption, GPUI acceptance and retry are in-process boundaries; the engine wire proof separately establishes what the returned identity admits."
+
+[[claim]]
+id = "delivery-receipt-screen-reset"
+statement = "A screen reset preserves pending delivery identities without earning credit; when the stream is replaced using identical channel numbers, only its current accepted delivery can replenish it."
+test = "iznik-app::stream_credit::stream_credit_reset_preserves_delivery_identity"
+because = "A deterministic stream replacement and headless native/grid path exercise delayed frame consumption without transport scheduling uncertainty."
+
+[[claim]]
+id = "delivery-receipt-native-validation"
+statement = "The native owner rejects a receipt with the wrong byte count before consuming output, leaving the sequence available for a valid delivery."
+test = "iznik-app::stream_credit::stream_credit_native_rejects_an_invalid_delivery"
+because = "Receipt validation precedes native state mutation and requires no server or container."
+
+[[claim]]
+id = "delivery-receipt-queued-admission"
+statement = "A receipt enqueued before an identical-number stream replacement is rejected when the queue drains through the production admission ledger; current duplicate returns admit one exact grant."
+test = "iznik-client::stream_credit::stream_credit_queued_returns_check_the_stream_at_drain"
+because = "The deterministic queue isolates admission timing; the separate framed-peer proof verifies that the manager invokes this ledger at its carrying boundary."

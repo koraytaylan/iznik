@@ -1,6 +1,7 @@
 # The iznik client contract
 
-This is what an application is built against. It is written for somebody
+This is what an application is built against. It is written for the GPUI
+application and for somebody
 holding `include/iznik.h` and a compiler, who cannot read the Rust in this
 repository and cannot ask it questions.
 

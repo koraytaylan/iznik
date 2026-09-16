@@ -113,13 +113,25 @@ fn runtime() -> Result<Runtime, Failed> {
 ///
 /// When the runtime paths cannot be made or the manager cannot be built.
 fn manager(held: &Scratch) -> Result<HostManager, Failed> {
+    manager_with_backoff(held, QUICK_INITIAL, QUICK_MAXIMUM)
+}
+
+/// Construct a manager with explicit retry timing for deadline observations.
+///
+/// # Errors
+/// Returns runtime path, artifact directory or manager initialization errors.
+fn manager_with_backoff(
+    held: &Scratch,
+    initial: Duration,
+    maximum: Duration,
+) -> Result<HostManager, Failed> {
     let artifacts = held.path.join("artifacts");
     std::fs::create_dir_all(&artifacts)?;
     let paths = ClientRuntimePaths::under(&held.path.join("runtime"))?;
     let mut options = ManagerOptions::new(artifacts, paths);
     options.backoff = BackoffPolicy {
-        initial: QUICK_INITIAL,
-        maximum: QUICK_MAXIMUM,
+        initial,
+        maximum,
         ..BackoffPolicy::default()
     };
     options.channel = ChannelOptions {
@@ -703,19 +715,16 @@ fn connection_manager_gives_up_on_a_host_that_never_answers() {
 fn connection_manager_does_not_let_four_hosts_retry_at_once() {
     let case = || -> Result<(), Failed> {
         let held = scratch("storm")?;
-        let manager = manager(&held)?;
+        // Observe scheduled waits without waiting them out. The wide jitter
+        // band lets measurement intervals prove separation despite scheduling.
+        let manager =
+            manager_with_backoff(&held, Duration::from_hours(1), Duration::from_hours(1))?;
         let events = manager.events();
-        // Four hosts that are not there: a laptop closing looks like this to
-        // every host at once.
+        let started = Instant::now();
         for index in 0..4_usize {
             manager.add_host(&alias(&held.path.join(format!("gone-{index}.sock"))));
         }
-        // One delay per host, and the first each of them scheduled. The delay
-        // and not the moment: four hosts fail at four different instants, so
-        // four different moments would hold however identical their waits
-        // were, and it is the waits that keep them apart.
-        let mut moments: std::collections::BTreeMap<HostId, Duration> =
-            std::collections::BTreeMap::new();
+        let mut moments = std::collections::BTreeMap::new();
         while moments.len() < 4 {
             let failed = await_event(&events, "a host failing", PROMPT, |event| {
                 matches!(
@@ -731,30 +740,24 @@ fn connection_manager_does_not_let_four_hosts_retry_at_once() {
                 state: HostState::Failed { retry_at, .. },
             } = failed
             {
-                let waiting = retry_at.saturating_duration_since(Instant::now());
-                let _first = moments.entry(host).or_insert(waiting);
+                // Failure occurred between submission and observation. The
+                // original scheduled wait lies inside this entire interval.
+                let minimum = retry_at.saturating_duration_since(Instant::now());
+                let maximum = retry_at.saturating_duration_since(started);
+                let _first = moments.entry(host).or_insert((minimum, maximum));
             }
         }
-        let mut apart: Vec<Duration> = moments.values().copied().collect();
+        let mut apart: Vec<_> = moments.values().copied().collect();
         apart.sort_unstable();
-        apart.dedup();
-        assert_eq!(
-            apart.len(),
-            moments.len(),
-            "four hosts that failed together wait four different lengths: {moments:?}"
-        );
-        let spread = apart
-            .last()
-            .zip(apart.first())
-            .map(|(longest, shortest)| longest.saturating_sub(*shortest))
-            .unwrap_or_default();
-        // Far beyond what measuring them costs, and well inside the band the
-        // jitter draws from: waits that differed by a microsecond would be
-        // four hosts coming back together.
-        assert!(
-            spread > JITTER_FLOOR,
-            "and the difference is a real one: {spread:?} across {moments:?}"
-        );
+        for pair in apart.windows(2) {
+            let [(.., maximum), (minimum, ..)] = pair else {
+                panic!("two observation intervals");
+            };
+            assert!(
+                minimum.saturating_sub(*maximum) > JITTER_FLOOR,
+                "original waits are separated even after observation uncertainty: {moments:?}"
+            );
+        }
         drop(manager);
         Ok(())
     };

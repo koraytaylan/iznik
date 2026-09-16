@@ -14,8 +14,8 @@ touches:
   - crates/iznik-app/tests/bars.rs
   - policy/lexicon/tab-bars.txt
   - regression/claims/tab-and-session-bars.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "d4b01da"
 ---
 # Render the two bars: tabs at the top, sessions at the bottom
 

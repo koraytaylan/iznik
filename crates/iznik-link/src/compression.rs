@@ -88,6 +88,9 @@ pub struct ZstdStream<Stream> {
     /// saying otherwise would hand a client half a screen as if it were all
     /// of it.
     ended: bool,
+    /// Whether decoding exhausted all available input and buffered plaintext.
+    /// Idle polls wait for transport bytes instead of repeating an empty decode.
+    needs_input: bool,
     /// The scratch one encode or decode step writes into, kept so that a
     /// keystroke does not allocate.
     work: Vec<u8>,
@@ -149,6 +152,7 @@ impl<Stream> ZstdStream<Stream> {
             decoder: Decoder::with_dictionary(COMPRESSION_DICTIONARY)?,
             outgoing: Vec::new(),
             sent: 0,
+            needs_input: leftover.is_empty(),
             incoming: leftover,
             decoded: 0,
             plain: Vec::new(),
@@ -247,6 +251,9 @@ impl<Stream> ZstdStream<Stream> {
     /// Whatever the decoder says, which for a corrupt stream is what makes a
     /// wrong byte a failure rather than a wrong terminal.
     fn decode(&mut self) -> io::Result<bool> {
+        if self.needs_input {
+            return Ok(false);
+        }
         let ZstdStream {
             decoder,
             incoming,
@@ -254,6 +261,7 @@ impl<Stream> ZstdStream<Stream> {
             plain,
             work,
             ended,
+            needs_input,
             ..
         } = self;
         let mut produced = false;
@@ -263,13 +271,15 @@ impl<Stream> ZstdStream<Stream> {
             *decoded = decoded.saturating_add(status.bytes_read);
             plain.extend_from_slice(work.get(..status.bytes_written).unwrap_or_default());
             *ended = status.remaining == 0;
+            *needs_input = (status.bytes_read == 0 && status.bytes_written == 0)
+                || (*ended && *decoded == incoming.len());
             if status.bytes_written > 0 {
                 produced = true;
                 break;
             }
             // Nothing read and nothing written is a decoder that has given up
             // everything it holds and wants bytes it does not have.
-            if status.bytes_read == 0 {
+            if status.bytes_read == 0 || *needs_input {
                 break;
             }
         }
@@ -401,6 +411,7 @@ impl<Stream: AsyncRead + Unpin> AsyncRead for ZstdStream<Stream> {
                 incoming,
                 reading,
                 ended,
+                needs_input,
                 ..
             } = this;
             let mut arrived = ReadBuf::new(reading);
@@ -420,6 +431,7 @@ impl<Stream: AsyncRead + Unpin> AsyncRead for ZstdStream<Stream> {
                 )));
             }
             *ended = false;
+            *needs_input = false;
             incoming.extend_from_slice(taken);
         }
     }

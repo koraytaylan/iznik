@@ -7,6 +7,7 @@
 //! The manifest is for a person and for a pipeline; the bootstrap computes
 //! digests itself and trusts nothing written beside the file.
 
+pub mod app;
 pub mod darwin;
 pub mod linux;
 pub mod shape;

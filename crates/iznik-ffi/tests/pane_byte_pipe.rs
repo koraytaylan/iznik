@@ -5,6 +5,9 @@
 //! stops consuming stops its own pane and nothing else. Every case here calls
 //! the `extern "C"` functions against a daemon on this machine.
 
+#[path = "fixtures/pane_notices.rs"]
+mod notices;
+
 use core::ffi::{c_int, c_void};
 use core::time::Duration;
 use std::ffi::CString;
@@ -19,6 +22,7 @@ use iznik::pane::{
 };
 use iznik::{
     Client, Configuration, iznik_client_free, iznik_client_new, iznik_command, iznik_host_add,
+    iznik_set_event_callback,
 };
 use iznik_protocol::command::{SessionCommand, encode_session_command};
 use iznik_testkit::stack::{Stack, StackOptions};
@@ -55,14 +59,12 @@ const FLOOD: usize = 3 * WINDOW;
 /// How many threads type at once in the atomicity case.
 const TYPISTS: usize = 100;
 
-/// What the shell is asked to run before they start typing.
-///
-/// A shell keeps only some of a burst, and not the same some twice: it re-arms
-/// its terminal before each line it reads, and what it uses throws away input
-/// that arrived unread. That is the shell's doing, not this boundary's. `cat`
-/// re-arms nothing, so what a hundred callers typed is all there to be read —
-/// twice over, once echoed by the terminal and once written back by `cat`.
-const READER: &str = "cat\n";
+/// Disable kernel echo before replacing the shell with the stable reader.
+/// The readiness marker contains real control delimiters absent from the echoed command.
+const READER: &str = "stty -echo && printf '\\036reader-ready\\037' && exec cat\n";
+
+/// Emitted only after echo is disabled, so the next probe can only return through the reader.
+const READER_READY: &[u8] = b"\x1ereader-ready\x1f";
 
 /// How many times each of them repeats its own pattern.
 ///
@@ -78,16 +80,11 @@ const WIDTH: usize = 2;
 /// would make this a case about how fast a shell gives up.
 const SILENT: char = '#';
 
-/// A line typed before they start, whose coming back twice says the reader is
-/// reading.
+/// A line typed after echo is disabled, whose return says the reader is reading.
 ///
 /// Letters, deliberately: every four-digit line whose halves match is some
 /// caller's own, so a probe of that shape would be caller ninety-nine's.
 const PROBE: &str = "ready";
-
-/// How many times a line comes back: once as the terminal echoed it, once as
-/// the reader wrote it back.
-const TWICE: usize = 2;
 
 /// What the shell says before it is given something to run.
 ///
@@ -216,6 +213,8 @@ struct Watched {
     output_before_screen: bool,
     /// How many times the pane was said to have detached.
     detachments: usize,
+    /// Engine states and refusals that explain a missing input/output result.
+    notices: Vec<String>,
 }
 
 /// The pane's own output, kept where it was handed over.
@@ -440,7 +439,13 @@ fn await_watched(
     // SAFETY: this case's own box, alive until the case ends.
     let said = unsafe { &*watched }.lock().map_or_else(
         |_broken| "a record nothing can read".to_owned(),
-        |kept| format!("{:?}", String::from_utf8_lossy(&kept.output)),
+        |kept| {
+            format!(
+                "{:?}; engine notices: {:?}",
+                String::from_utf8_lossy(&kept.output),
+                kept.notices
+            )
+        },
     );
     Err(format!("{what} never happened; the pane said {said}").into())
 }
@@ -643,20 +648,22 @@ fn pane_byte_pipe_keeps_one_call_one_message() {
         let runtime = runtime()?;
         let (stack, client, alias) = connected(&held, &runtime)?;
         let watched = attach(client, &alias, PANE)?;
+        // SAFETY: the client is live and this context outlives it and all callbacks.
+        unsafe {
+            iznik_set_event_callback(client, Some(notices::record), watched.cast::<c_void>());
+        };
+
         await_watched(watched, "a screen", PROMPT, |kept| !kept.screens.is_empty())?;
         // Something that reads without re-arming the terminal, so that what is
         // counted is what arrived rather than what a shell had got to.
         typed(client, &alias, PANE, READER)?;
-        // Not that the shell echoed the name — that the thing it named is
-        // reading: a line typed now comes back twice, once echoed and once
-        // written back by what is reading it.
+        await_watched(watched, "echo disabled", PROMPT, |kept| {
+            holds(&kept.output, READER_READY)
+        })?;
+        // Echo is off; only the reader can return this probe.
         typed(client, &alias, PANE, &format!("{SILENT}{PROBE}\n"))?;
         await_watched(watched, "the reader reading", PROMPT, |kept| {
-            kept.output
-                .windows(PROBE.len())
-                .filter(|window| *window == PROBE.as_bytes())
-                .count()
-                >= TWICE
+            typed_lines(&kept.output).iter().any(|line| line == PROBE)
         })?;
         // A hundred callers, each with a pattern of its own, typing at once.
         let reachable = Reachable(client);
@@ -688,11 +695,7 @@ fn pane_byte_pipe_keeps_one_call_one_message() {
             refused.is_empty(),
             "every caller's line was taken: {refused:?} were not"
         );
-        // Every caller heard from, rather than a count of lines: a line
-        // arrives twice, once echoed by the terminal and once written back by
-        // the reader, but a terminal given more at once than it can echo drops
-        // the echo — never the input, which is the reader's copy and is what
-        // is waited for here.
+        // Every caller must be read; kernel echo is no longer a competing producer.
         await_watched(watched, "the callers' lines", PROMPT, |kept| {
             let echoed = typed_lines(&kept.output);
             (0..TYPISTS).all(|index| echoed.contains(&pattern(index)))
@@ -717,6 +720,11 @@ fn pane_byte_pipe_keeps_one_call_one_message() {
                 .into_iter()
                 .filter(|line| line != PROBE)
                 .collect();
+            assert_eq!(
+                echoed.len(),
+                TYPISTS,
+                "the reader returns exactly one line per caller"
+            );
             let mut every: Vec<String> = echoed.clone();
             every.sort();
             every.dedup();

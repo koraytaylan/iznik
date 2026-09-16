@@ -15,8 +15,8 @@ touches:
   - crates/iznik-app/tests/splits.rs
   - policy/lexicon/split-chrome.txt
   - regression/claims/split-chrome.toml
-status: planned
-merged_as: ""
+status: done
+merged_as: "4ac1957"
 ---
 # Wire split chrome: divider drag to SetLayout, keyboard splits
 

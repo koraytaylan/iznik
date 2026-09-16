@@ -1,0 +1,11 @@
+[[claim]]
+id = "channel-cancellation-preserves-frames"
+statement = "Cancelling a channel receive with one cooperative operation remaining preserves the complete buffered pane-frame sequence; consuming a frame cannot suspend before its return."
+test = "iznik-client::channel_cancellation::channel_cancellation_preserves_every_buffered_frame"
+because = "A scripted local peer and controlled cooperative budget isolate the cancellation boundary; an SSH hop would not change the scheduler or consumed-frame ownership."
+
+[[claim]]
+id = "channel-cancellation-idle-compression"
+statement = "Repeatedly polling and cancelling an idle compressed read stays pending, preserves subsequent output before and after an idle interval, and accepts a clean compressed shutdown."
+test = "iznik-link::compression::compression_pending_read_preserves_output"
+because = "A duplex stream reproduces the raw decoder progress guard deterministically; a container cannot change whether buffered compressed input has been exhausted."

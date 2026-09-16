@@ -1,0 +1,41 @@
+[package]
+name = "iznik-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "iznik-app"
+path = "src/main.rs"
+
+[dependencies]
+# The same emulator and async runtime already pinned by the server.
+libghostty-vt = "=0.2.1"
+tokio = { version = "=1.53.1", features = ["rt", "sync"] }
+# GPUI Kit at its current release, pinned exact; `iznik-client` and
+# `iznik-protocol` are the engine the application links directly.
+gpui-kit = "=0.6.1"
+# The icon crate the kit's documentation names; icons are not bundled by the
+# kit, and `gpui_kit::assets::IconName` is the shared catalog the chrome uses.
+gpui-kit-assets = "=0.6.1"
+iznik-client = { path = "../iznik-client" }
+iznik-protocol = { path = "../iznik-protocol" }
+
+[dev-dependencies]
+# The existing two-container fixture owns lifecycle proof credentials and hosts.
+iznik-harness = { path = "../iznik-harness" }
+# GPUI's test context, headless element trees and UI test helpers, exactly as
+# the kit's own test documentation says to enable it.
+gpui-kit = { version = "=0.6.1", features = ["test-support"] }
+# The in-process stack: a daemon under a temporary runtime directory for the
+# engine's tests, which the bridge's cases stand up and drive through a `unix:`
+# alias.
+iznik-testkit = { path = "../iznik-testkit" }
+# For the runtime the bridge's cases stand a daemon up on, and for the message
+# and model encodings the mirror's cases feed it. Nothing in `src/` uses it:
+# the engine behind the bridge owns the runtime the product runs on.
+tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }

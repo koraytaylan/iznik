@@ -1,0 +1,33 @@
+# The engine behind the window.
+#
+# Four claims, and the `because` differs between them, because they are of two
+# kinds. Three are about what the window does with an event, and are proven by
+# feeding values straight into `EngineState` — a daemon would put the same
+# answer further away without making any of it more true. The fourth is about
+# the bridge's own threads doing their job, and it stands a whole server up
+# over a `unix:` alias, which is the same daemon the client's own
+# `connection-manager` cases reach one layer down.
+
+[[claim]]
+id = "app-mirror-converges-on-the-model-the-host-holds"
+statement = "A window fed a host's snapshot and its numbered deltas arrives at the very model the host holds — a thousand generated sequences, over the reconciler the engine itself applies changes through, so the mirror the chrome draws from cannot part from what the host said."
+test = "iznik-app::bridge::engine_bridge_mirror_converges_on_the_model_the_host_holds"
+because = "convergence is a property of one generated sequence applied to one value, and the generator is the same one the client's own cases walk"
+
+[[claim]]
+id = "app-refused-command-leaves-the-mirror-alone"
+statement = "A command the host refuses moves nothing in the mirror, and the refusal surfaces as a notice of its own kind naming the host, the code and this client's number for the command — never as a failure, because a host saying no is not a host that broke."
+test = "iznik-app::bridge::engine_bridge_leaves_the_mirror_alone_when_a_command_is_refused"
+because = "the answer is a value of the protocol's own type, and applying it is what the engine does with the same one"
+
+[[claim]]
+id = "app-upgrade-offer-is-state-a-dialog-can-render"
+statement = "The newer server a host returns with its connection is held as state — the version it runs and the one this build carries — and announced as an offer distinct from a failure and from a refusal, so a dialog can render it as a question rather than a person being told something broke."
+test = "iznik-app::bridge::engine_bridge_holds_the_upgrade_offer_as_state"
+because = "the offer is a value the manager hands over, and what a window does with it needs no host to ask"
+
+[[claim]]
+id = "app-carries-a-unix-host-into-the-window"
+statement = "The bridge's own threads carry a host from probing to connected, a session made by command into the mirror, a refusal into a notice, and the host back out again when it is let go — with every one of the manager's waiting calls performed off the drawing thread, all of it inside GPUI's own test context."
+test = "iznik-app::bridge::engine_bridge_carries_a_local_socket_host_into_the_window"
+because = "a `unix:` alias reaches a whole server — a daemon, a socket and real shells on real pseudoterminals — over the same channel the SSH path builds, so a container would add a network and a minute and not a fact"

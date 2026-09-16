@@ -59,6 +59,14 @@ threads-required = 'num-cpus'
 filter = 'binary(/^regression_baseline/)'
 threads-required = 'num-cpus'
 
+# The application window uses the same two-container fixture as scenarios.
+# Reserve its shell load while allowing four independent lifecycle cases.
+[[profile.default.overrides]]
+filter = 'binary(regression_window)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+test-group = 'shells'
+threads-required = 3
+
 # Test binaries that start containers, build release artifacts or measure over
 # a window are named regression_*, are ignored, and get longer deadlines.
 [[profile.default.overrides]]
@@ -137,18 +145,6 @@ test-group = 'shells'
 # The lines it does receive are whole; it is the hundredth that is late.
 [[profile.default.overrides]]
 filter = 'test(pane_byte_pipe_keeps_one_call_one_message)'
-threads-required = 'num-cpus'
-
-# One case drops a pane whose child is still running and waits for the process
-# to be gone. Nothing about that is one call: the drop signals the group, the
-# pseudoterminal closes, the mirror thread notices the end of the output, and
-# only then does the reaper wait on the child and the `/proc` entry go. That
-# chain crosses a thread and a two-worker runtime, and the case watches it
-# through a twenty-five second budget written to catch a leak. Beside five
-# hundred others it spends that budget on being scheduled, and what fails is
-# the watching rather than the reaping — the same shape as the two above.
-[[profile.default.overrides]]
-filter = 'test(pane_exits_and_leaves_nothing)'
 threads-required = 'num-cpus'
 
 # The boundary's own cases stand the same thing up from further out: a daemon,

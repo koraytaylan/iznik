@@ -1,6 +1,6 @@
 # Architecture
 
-> iznik is a remote terminal system with a native macOS front end. This
+> iznik is a remote terminal system with a cross-platform GPUI front end. This
 > document is the design every plan under `docs/plans/` implements. Where a
 > plan and this document disagree, this document is stale and the plan's
 > documentation task fixes it — the code is never allowed to be the only
@@ -8,23 +8,22 @@
 
 ## 1. What iznik is
 
-A native macOS terminal application connects to a remote host over the user's
-own SSH configuration, installs `iznik-server` there if it is missing, and
-attaches. Every pane is a real pseudoterminal on the remote host, rendered on
-the Mac by a libghostty surface fed the pane's raw bytes. Sessions, tabs and
-panes live in the server, so a dropped link, a closed laptop or a restarted
-application costs a reconnect and nothing else.
+The cross-platform GPUI terminal application connects to a remote host over
+the user's own SSH configuration, installs `iznik-server` there if it is
+missing, and attaches. Every pane is a real pseudoterminal on the remote host,
+rendered by the application through a libghostty surface fed the pane's raw
+bytes. Sessions, tabs and panes live in the server, so a dropped link, a
+closed laptop or a restarted application costs a reconnect and nothing else.
 
-This repository holds everything except the macOS application: the server,
-the client engine the application links, the wire protocol between them, the
-C ABI the application calls, and the test harness that proves all of it. The
-application is built in its own repository against
+This repository holds the server, the client engine, the wire protocol, the
+cross-platform GPUI application, the C ABI for other front ends, and the test
+harness that proves all of it. The application reads
 [`docs/CLIENT.md`](docs/CLIENT.md), the contract this one keeps.
 
 ### Non-goals
 
 - **No terminal user interface.** There is exactly one user interface and it
-  is the macOS application. Every `iznik` command prints structured text for a
+  is the GPUI application. Every `iznik` command prints structured text for a
   person or a script and never draws a screen.
 - **No layout engine on the server.** The server records how a tab is
   arranged so that a reconnecting client can restore it; it never computes a
@@ -36,9 +35,8 @@ application is built in its own repository against
 ## 2. Topology
 
 ```text
-macOS application
-  └─ iznik-ffi (C ABI)
-       └─ iznik-client ─── ssh <host> iznik-server --stdio ───┐
+iznik-app (GPUI)
+  └─ iznik-client ─── ssh <host> iznik-server --stdio ───┐
                                                               │ unix socket
                                                      iznik-server daemon
                                                        ├─ session registry
@@ -63,6 +61,7 @@ daemon knows what SSH is.
 | `iznik-link` | library | Frames over a duplex stream and streaming compression, written once for both ends and the test client. | `iznik-protocol` |
 | `iznik-server` | library + binary `iznik-server` | The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions, multiplexing, resume. | `iznik-protocol`, `iznik-link` |
 | `iznik-client` | library | The client engine: SSH transport, bootstrap, the client-side model and reducer, optimistic commands, multi-host management. | `iznik-protocol`, `iznik-link` |
+| `iznik-app` | binary `iznik-app` | The cross-platform GPUI application: terminal grid, window shell, bars and command palette. | `gpui-kit`, `iznik-client`, `iznik-protocol` |
 | `iznik-ffi` | `cdylib` + `staticlib` | The C ABI over `iznik-client`. The only crate that may contain `unsafe`. | `iznik-client`, `iznik-protocol` |
 | `iznik-cli` | binary `iznik` | Developer plumbing: `probe`, `state`, `tail`, `benchmark`, `doctor`, `uninstall`. Never a user interface. | `iznik-client`, `iznik-protocol` |
 | `iznik-harness` | library | The bounded process runner, the deadline helpers, the two-container fixture, staging, and the scenario format and runner. No emulator and no product code, so `xtask` builds in seconds. | — |
@@ -172,7 +171,13 @@ A pane is four things held together by one event stream:
   controlling terminal, the user's login shell, a working directory, and
   `TERM=xterm-ghostty` when the bootstrap installed the terminfo (else
   `xterm-256color`). Exit status is reported faithfully, signal deaths
-  included. Output is read on an async task and never blocks anything.
+  included. Forced cleanup signals the terminal's foreground process group
+  before the shell group; job control normally makes these different groups.
+  Close first hangs up the foreground job, retaining the shell session during
+  a configurable grace period so escalation can still discover an ignoring job.
+  The child wait holds no terminal-owner mutex. Jobs detached from both groups
+  are outside terminal group signaling. Output is read on an async task and
+  never blocks anything.
 - **A terminal mirror** — a `libghostty-vt` terminal fed every byte, the same
   engine the macOS application renders with. It exists so the server can
   answer "what does this pane look like right now" without replaying history:
@@ -412,6 +417,13 @@ Pane output is delivered by callback straight into the application's surface,
 and flow control is mandatory: the application returns credit as its surface
 consumes. The header is generated and golden-pinned, so an accidental ABI
 change fails a test here rather than crashing somebody else's application.
+The Rust engine additionally provides opaque delivery receipts. Each receipt
+binds the exact byte count to a stream incarnation; cloned returns can earn
+credit once. The owning host task validates against its current stream just
+before carrying the grant, so application queue delay cannot redirect old
+credit after an observed stream replacement. The pane-count compatibility
+API retains its current-stream meaning and binds queued orders the same way.
+
 The full contract is [`docs/CLIENT.md`](docs/CLIENT.md), which is what an
 application is written against; a test holds it and the header together, name
 by name and obligation by obligation.

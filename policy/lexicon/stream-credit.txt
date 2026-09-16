@@ -1,0 +1,8 @@
+delivered
+delivery
+eq
+receipt
+receipts
+replacement
+restart
+return

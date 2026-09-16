@@ -1,0 +1,29 @@
+[[claim]]
+id = "bars-follow-settled-model"
+statement = "The tab and session bars render explicit empty states and stable entries directly from the settled client model."
+test = "iznik-app::bars::bars_render_empty_states"
+because = "the headless GPUI renderer reads EngineState directly, so no transport or display is needed to prove model-driven entries"
+
+[[claim]]
+id = "bars-render-model-entries"
+statement = "A settled host model produces one host-qualified session entry and one host-qualified tab entry in the rendered bars."
+test = "iznik-app::bars::bars_render_settled_model_entries"
+because = "the headless GPUI renderer and the protocol model fixture determine the stable entry identities without external state"
+
+[[claim]]
+id = "bars-close-affordances"
+statement = "Tab and session close affordances construct the corresponding protocol commands."
+test = "iznik-app::bars::close_affordances_build_commands"
+because = "the command constructors are pure and the protocol enum is the single command path"
+
+[[claim]]
+id = "bars-switch-settled-order"
+statement = "Tab switching follows the settled model order and wraps without maintaining a second tab list."
+test = "iznik-app::bars::tab_switching_wraps_model_order"
+because = "the helper reads the reducer's model and the fixture contains the complete ordered session"
+
+[[claim]]
+id = "bars-close-reconciles"
+statement = "A tab removal delta removes the tab from the bars projection."
+test = "iznik-app::bars::tab_removal_reconciles_bars"
+because = "EngineState applies the canonical reducer delta before the bars projection reads the model"

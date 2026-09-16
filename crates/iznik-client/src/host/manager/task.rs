@@ -76,6 +76,11 @@ fn advance(
     let after = held.state().clone();
     drop(held);
     if after != before {
+        if !matches!(after, HostState::Connected { .. })
+            && let Ok(mut credit) = shared.credit.lock()
+        {
+            credit.disconnect(host);
+        }
         // Written down as well as announced. An application is told so it can
         // show it; the log is what somebody reads afterwards, when what they
         // want to know is when a host went and how long it was gone — and it
@@ -224,7 +229,7 @@ async fn connect(
                 let standing = std::mem::take(kept);
                 let mut sent = 0_usize;
                 for order in &standing {
-                    if carry(&mut channel, order.clone()).await.is_err() {
+                    if carry(&mut channel, order.clone(), shared).await.is_err() {
                         break;
                     }
                     sent = sent.saturating_add(1);
@@ -470,7 +475,7 @@ async fn pump(
             }
             Turn::Ordered(Some(order)) => {
                 let holdable = keeps(&order).then(|| order.clone());
-                if carry(&mut channel, order).await.is_err() {
+                if carry(&mut channel, order, shared).await.is_err() {
                     // Held for the next connection, under the same rule as an
                     // order that arrived while there was none: what the link
                     // died holding was taken from the application, which was
@@ -558,6 +563,21 @@ async fn heard(
             return true;
         };
         let taken = reduce_under(shared, host, &message);
+        if let Ok(mut credit) = shared.credit.lock() {
+            match &message {
+                iznik_protocol::message::ToClient::PaneChannel {
+                    pane,
+                    channel: number,
+                    ..
+                } => {
+                    credit.open(host, *pane, *number);
+                }
+                iznik_protocol::message::ToClient::PaneDetached { pane, .. } => {
+                    credit.detach(host, *pane);
+                }
+                _ => {}
+            }
+        }
         // What the host said about its model goes on as the host said it: the
         // layer above this one hands those bytes to an application that
         // decodes them with the protocol's own reader.
@@ -574,7 +594,9 @@ async fn heard(
         }
         taken
     } else {
-        carried(host, shared, &received);
+        if !carried(host, shared, &received) {
+            return false;
+        }
         Vec::new()
     };
     for effect in effects {
@@ -587,9 +609,13 @@ async fn heard(
 
 /// Moves a pane's cursor by what arrived on its channel, and passes the bytes
 /// on with the byte position they start at.
-fn carried(host: &HostId, shared: &Arc<Shared>, received: &crate::transport::channel::Received) {
+fn carried(
+    host: &HostId,
+    shared: &Arc<Shared>,
+    received: &crate::transport::channel::Received,
+) -> bool {
     let Ok(mut model) = shared.model.lock() else {
-        return;
+        return false;
     };
     // The byte these start at is the cursor *before* they are counted.
     let standing = model
@@ -601,16 +627,25 @@ fn carried(host: &HostId, shared: &Arc<Shared>, received: &crate::transport::cha
                 .and_then(|view| view.subscription(pane))
                 .map(|held| (pane, held.cursor))
         });
+    let Some((pane, sequence)) = standing else {
+        return true;
+    };
+    let Some(receipt) = u32::try_from(received.payload.len())
+        .ok()
+        .and_then(|bytes| shared.credit.lock().ok()?.receipt(host, pane, bytes))
+    else {
+        return false;
+    };
     let _nothing = arrived(&mut model, host, received.channel, received.payload.len());
     drop(model);
-    if let Some((pane, sequence)) = standing {
-        shared.publish(&ManagerEvent::Bytes {
-            host: host.clone(),
-            pane,
-            sequence,
-            bytes: received.payload.clone(),
-        });
-    }
+    shared.publish(&ManagerEvent::Bytes {
+        host: host.clone(),
+        pane,
+        sequence,
+        bytes: received.payload.clone(),
+        receipt: Some(receipt),
+    });
+    true
 }
 
 /// Announces a whole model, in the encoding the host itself uses.
@@ -756,7 +791,12 @@ fn settle(host: &HostId, shared: &Arc<Shared>, notification: &Notification) {
 /// # Errors
 ///
 /// Whatever the channel says, when the link will not take it.
-async fn carry(channel: &mut RemoteChannel, order: Order) -> Result<(), ChannelError> {
+async fn carry(
+    channel: &mut RemoteChannel,
+    order: Order,
+    shared: &Shared,
+) -> Result<(), ChannelError> {
+    let mut granted = None;
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
         Order::Unsubscribe { pane } => ToServer::Unsubscribe { pane },
@@ -772,13 +812,22 @@ async fn carry(channel: &mut RemoteChannel, order: Order) -> Result<(), ChannelE
         },
         Order::Focus { pane: Some(pane) } => ToServer::Focus { pane },
         Order::Screen { pane } => ToServer::ScreenRequest { pane },
-        Order::Credit {
-            channel: number,
-            bytes,
-        } => ToServer::Credit {
-            channel: number,
-            bytes,
-        },
+        Order::Credit { receipt } => {
+            let Some(grant) = shared
+                .credit
+                .lock()
+                .ok()
+                .and_then(|credit| credit.claim(&receipt))
+            else {
+                return Ok(());
+            };
+            let message = ToServer::Credit {
+                channel: grant.channel,
+                bytes: grant.bytes,
+            };
+            granted = Some(grant);
+            message
+        }
         Order::Command { id, command } => ToServer::Command {
             command_id: id,
             payload: encode_session_command(&command).map_err(ChannelError::Message)?,
@@ -788,5 +837,13 @@ async fn carry(channel: &mut RemoteChannel, order: Order) -> Result<(), ChannelE
         // because there is nothing for it to prefer.
         Order::Reconnect | Order::Stop | Order::Focus { pane: None } => return Ok(()),
     };
-    write(channel, &message).await
+    write(channel, &message).await?;
+    if let Some(grant) = granted {
+        let _recorded = shared.with(&grant.host, |view| {
+            if let Some(subscription) = view.subscription_mut(grant.pane) {
+                subscription.grant(u64::from(grant.bytes));
+            }
+        });
+    }
+    Ok(())
 }

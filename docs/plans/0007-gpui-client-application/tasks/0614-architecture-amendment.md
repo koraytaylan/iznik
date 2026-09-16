@@ -11,7 +11,7 @@ touches:
   - README.md
   - docs/CLIENT.md
   - policy/lexicon/architecture-amendment.txt
-status: planned
+status: done
 merged_as: ""
 ---
 # Amend the architecture: the client application is this workspace's product

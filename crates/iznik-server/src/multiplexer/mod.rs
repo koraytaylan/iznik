@@ -521,56 +521,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
     /// The refusals of [`Multiplexer::tell`].
     async fn carry_deltas(&mut self) -> Result<bool, MultiplexerError> {
         let mut sent = false;
-        loop {
-            let numbered = match self.waiting.pop_front() {
-                Some(numbered) => numbered,
-                None => match self.deltas.try_recv() {
-                    Ok(numbered) => numbered,
-                    Err(broadcast::error::TryRecvError::Lagged(_missed)) => {
-                        self.owed_snapshot = true;
-                        continue;
-                    }
-                    Err(_gone) => break,
-                },
-            };
-            if self.owed_snapshot {
-                // A snapshot is later than anything still waiting, so what was
-                // waiting is dropped rather than applied on top of it.
-                continue;
+        while let Some(numbered) = self.next_change() {
+            if !self.carry_change(numbered, &mut sent).await? {
+                break;
             }
-            if self
-                .told_through
-                .is_some_and(|told| numbered.generation <= told)
-            {
-                continue;
-            }
-            let payload = match encode_delta(&numbered.value) {
-                Ok(payload) => payload,
-                Err(refused) => {
-                    // A change this client cannot be told is a client that
-                    // needs the whole model, not one that never hears of it.
-                    tracing::warn!(
-                        generation = numbered.generation.0,
-                        ?refused,
-                        "a delta would not encode"
-                    );
-                    self.owed_snapshot = true;
-                    continue;
-                }
-            };
-            let told = self
-                .tell(&ToClient::Delta {
-                    generation: numbered.generation,
-                    payload,
-                })
-                .await;
-            if let Err(refused) = told {
-                // Dropping it here would leave the client a generation behind
-                // for ever, with nothing owed that would repair it.
-                self.waiting.push_front(numbered);
-                return Err(refused);
-            }
-            sent = true;
         }
         if self.owed_snapshot {
             self.waiting.clear();
@@ -578,6 +532,77 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             sent = true;
         }
         Ok(sent)
+    }
+
+    /// The next change to carry: what is waiting, else one off the channel.
+    /// `None` when there is nothing left, with `owed_snapshot` raised where
+    /// the channel has outrun this client.
+    fn next_change(&mut self) -> Option<Numbered<Delta>> {
+        match self.waiting.pop_front() {
+            Some(numbered) => Some(numbered),
+            None => match self.deltas.try_recv() {
+                Ok(numbered) => Some(numbered),
+                Err(broadcast::error::TryRecvError::Lagged(_missed)) => {
+                    self.owed_snapshot = true;
+                    None
+                }
+                Err(_gone) => None,
+            },
+        }
+    }
+
+    /// Tells the client one change, or decides why not to. `false` when this
+    /// change was not carried and neither is anything behind it: the client is
+    /// owed the whole model instead, which the caller sends.
+    ///
+    /// # Errors
+    ///
+    /// The refusals of [`Multiplexer::tell`].
+    async fn carry_change(
+        &mut self,
+        numbered: Numbered<Delta>,
+        sent: &mut bool,
+    ) -> Result<bool, MultiplexerError> {
+        if self.owed_snapshot {
+            // A snapshot is later than anything still waiting, so what was
+            // waiting is dropped rather than applied on top of it.
+            return Ok(false);
+        }
+        if self
+            .told_through
+            .is_some_and(|told| numbered.generation <= told)
+        {
+            // The whole model sent last generation already carries this.
+            return Ok(true);
+        }
+        let payload = match encode_delta(&numbered.value) {
+            Ok(payload) => payload,
+            Err(refused) => {
+                // A change this client cannot be told is a client that needs
+                // the whole model, not one that never hears of it.
+                tracing::warn!(
+                    generation = numbered.generation.0,
+                    ?refused,
+                    "a delta would not encode"
+                );
+                self.owed_snapshot = true;
+                return Ok(false);
+            }
+        };
+        let told = self
+            .tell(&ToClient::Delta {
+                generation: numbered.generation,
+                payload,
+            })
+            .await;
+        if let Err(refused) = told {
+            // Dropping it here would leave the client a generation behind for
+            // ever, with nothing owed that would repair it.
+            self.waiting.push_front(numbered);
+            return Err(refused);
+        }
+        *sent = true;
+        Ok(true)
     }
 
     /// Sends every shell-integration mark of every pane this client watches.

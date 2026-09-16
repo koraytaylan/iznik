@@ -1,0 +1,82 @@
+# Automated CPU, scene and owning-thread proofs, plus explicitly deferred
+# native display measurements recorded in docs/notes/app-render.md.
+
+[[claim]]
+id = "grid-renders-corpus-snapshots"
+statement = "The headless GPUI grid paints every committed corpus construct from owned cell snapshots, preserving row text and cell dimensions without parsing terminal output."
+test = "iznik-app::grid_element::grid_renders_the_corpus_from_owned_snapshots"
+because = "the renderer consumes owned deterministic cell values and uses GPUI's test window; a container adds no rendering behavior"
+
+[[claim]]
+id = "grid-reuses-unchanged-paint"
+statement = "Repeated identical snapshots reuse every cached row paint subtree, and changing one row results in exactly one additional custom-element paint."
+test = "iznik-app::grid_element::grid_reuses_idle_rows_and_repaints_only_changed_rows"
+because = "the proof counts actual GPUI custom-element paint calls in the headless test window"
+
+[[claim]]
+id = "grid-emulator-owned-history"
+statement = "Scrolling exposes the emulator's retained history at the same pane sequence, earns no stream credit, preserves the historical viewport while output arrives, and resumes following output at the bottom."
+test = "iznik-app::grid_element::grid_viewport_keeps_history_position_until_returning_to_bottom"
+because = "viewport ownership and history movement are deterministic emulator behavior independent of a display or transport"
+
+[[claim]]
+id = "grid-style-and-overlay-geometry"
+statement = "Draw lists retain per-cell color and style, wide graphemes and combining text, and align cursor and selection geometry to terminal columns."
+test = "iznik-app::grid_element::grid_maps_styles_wide_cells_cursor_and_selection"
+because = "cell-to-draw-list geometry is pure CPU work over a real emulator snapshot"
+
+[[claim]]
+id = "grid-draw-list-budget"
+statement = "A 10,000-cell scrolling emulator snapshot with alternating colors converts to row draw lists in less than the committed 20 millisecond debug-build ceiling in each of 32 samples."
+test = "iznik-app::grid_element::budget::grid_draw_list_stays_within_its_budget"
+because = "the timed CPU conversion is exactly the grid apply path and does not measure a display, network or container"
+
+[[claim]]
+id = "grid-history-input-dispatch"
+statement = "GPUI wheel and Shift navigation events emit pane-scoped history requests, retain fractional wheel motion, leave unmodified navigation keys alone, and preserve the currently displayed sequence until a new snapshot arrives."
+test = "iznik-app::grid_element::grid_dispatches_wheel_and_keyboard_history_requests"
+because = "GPUI platform event dispatch and viewport request routing are exercised directly in a headless test window"
+
+[[claim]]
+id = "grid-painted-decorations"
+statement = "The submitted GPUI scene preserves direct and palette underline colors and distinct cell-aligned single, double, dotted, dashed and overline geometry."
+test = "iznik-app::grid_element::grid_paints_decoration_colors_and_cell_geometry"
+because = "the test inspects the renderer's submitted scene quads directly; GPU presentation is outside this claim"
+
+[[claim]]
+id = "grid-painted-overlays"
+statement = "The submitted GPUI scene places selection and an explicitly colored bar cursor at their terminal cells and swaps the inverse cell background correctly."
+test = "iznik-app::grid_element::grid_paints_selection_cursor_and_inverse_background"
+because = "the proof observes actual scene colors and geometry without needing transport or display hardware"
+
+[[claim]]
+id = "grid-macos-display-timings"
+statement = "Native macOS presentation of the scrolling 10,000-cell grid has measured median and tail frame timings on recorded display hardware."
+display = "docs/notes/app-render.md"
+platform = "macos"
+because = "native GPU presentation requires a manual measurement with hardware, refresh rate and scale factor recorded; headless scene inspection cannot establish it"
+
+[[claim]]
+id = "grid-linux-display-timings"
+statement = "Native Linux presentation of the scrolling 10,000-cell grid has measured median and tail frame timings on recorded display hardware."
+display = "docs/notes/app-render.md"
+platform = "linux"
+because = "a dedicated X11 or Wayland display fixture and manual presentation measurement are required, including hardware, refresh rate and scale factor"
+
+[[claim]]
+id = "grid-display-records-remain-deferred"
+statement = "Display measurement records schedule no nextest invocation and remain deferred even on the current platform and when a captured report contains passing tests."
+test = "xtask::claims::claims_display_records_stay_deferred_on_the_running_platform"
+because = "claim planning and report interpretation are deterministic data transformations with no display or container dependency"
+
+[[claim]]
+id = "grid-display-records-require-a-reason"
+statement = "A display measurement requires a nonempty reason and cannot be combined with an automated proof category."
+test = "xtask::claims::claims_display_records_require_one_category_and_a_reason"
+because = "synthetic registry files completely exercise proof-category and reason validation"
+
+[[claim]]
+id = "grid-display-records-require-a-note"
+statement = "A display measurement record must name an existing Markdown file under docs/notes using a normal repository-relative path."
+test = "xtask::claims::claims_display_records_require_an_existing_markdown_note"
+because = "synthetic filesystem records completely exercise registry path validation"

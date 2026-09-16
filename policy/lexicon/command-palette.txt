@@ -1,0 +1,17 @@
+candidate
+characters
+dimmed
+downward
+empty
+filters
+fuzzy
+lists
+overlay
+projection
+query
+resets
+result
+results
+selection
+slot
+visible
