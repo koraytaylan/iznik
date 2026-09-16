@@ -120,6 +120,9 @@ fn usage() -> ExitCode {
 fn run() -> ExitCode {
     gpui_kit::application().run(|app| {
         gpui_kit::init(app);
+        if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
+            let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
+        }
         app.spawn(async move |app_context| open_window(app_context))
             .detach();
     });

@@ -1,6 +1,35 @@
 //! Shared application theme values for GPUI and the terminal emulator.
 
+use gpui_kit::App;
+use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+
 use crate::vt::TerminalTheme;
+
+/// The bundled Ayu Mirage theme, embedded so no external file is required.
+const AYU_MIRAGE_THEME: &str = include_str!("../assets/ayu-mirage-theme.json");
+/// The Ayu Mirage theme's name, exactly as declared in [`AYU_MIRAGE_THEME`].
+const AYU_MIRAGE_THEME_NAME: &str = "Ayu Mirage";
+
+/// Register the bundled Ayu Mirage theme and make it the application's
+/// default, replacing the kit's own light theme.
+///
+/// # Errors
+///
+/// Returns the registry's parse failure, or a message naming the theme when
+/// it somehow failed to register under its own declared name.
+pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
+    ThemeRegistry::global_mut(app)
+        .load_themes_from_str(AYU_MIRAGE_THEME)
+        .map_err(|error| error.to_string())?;
+    let theme = ThemeRegistry::global(app)
+        .themes()
+        .get(AYU_MIRAGE_THEME_NAME)
+        .cloned()
+        .ok_or_else(|| format!("{AYU_MIRAGE_THEME_NAME} did not register under its own name"))?;
+    Theme::global_mut(app).dark_theme = theme;
+    Theme::change(ThemeMode::Dark, None, app);
+    Ok(())
+}
 
 /// Default terminal font size in logical pixels.
 const DEFAULT_FONT_SIZE: f32 = 14.0;

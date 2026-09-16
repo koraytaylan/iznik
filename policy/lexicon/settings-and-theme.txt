@@ -1,4 +1,5 @@
 application
+ayu
 collision
 configured
 conversion
@@ -8,6 +9,7 @@ emulator
 family
 invalid
 malformed
+mirage
 overrides
 reload
 settings
