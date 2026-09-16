@@ -33,7 +33,7 @@ jobs:
       - name: Install the native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libunwind-dev musl-tools
+          sudo apt-get install --yes musl-tools
 
       - name: Install the pinned Zig toolchain
         uses: goto-bus-stop/setup-zig@v2
@@ -46,7 +46,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/iznik-tools"
           cat > "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc" <<'SCRIPT'
           #!/usr/bin/env bash
-          exec /usr/bin/x86_64-linux-musl-gcc -L/usr/lib/x86_64-linux-gnu "$@"
+          exec zig cc -target x86_64-linux-musl "$@"
           SCRIPT
           chmod +x "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc"
           cat > "$RUNNER_TEMP/iznik-tools/aarch64-linux-musl-gcc" <<'SCRIPT'
