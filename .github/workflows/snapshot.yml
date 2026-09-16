@@ -32,6 +32,11 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Install Linux UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfontconfig1-dev pkg-config
+
       - name: Build the Linux application
         run: cargo build --locked --release --package iznik-app
 
