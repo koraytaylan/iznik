@@ -136,4 +136,7 @@ jobs:
           else
             gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           fi
+          while IFS= read -r asset; do
+            gh release delete-asset "$SNAPSHOT_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+          done < <(gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(test("^iznik-.*\\.tar\\.gz$"))')
           gh release upload "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/snapshot/* --clobber
