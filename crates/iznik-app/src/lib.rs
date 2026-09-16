@@ -12,6 +12,7 @@ pub mod input;
 pub mod layout;
 pub mod palette;
 pub mod settings;
+pub mod settings_window;
 pub mod splits;
 pub mod surface;
 pub mod theme;

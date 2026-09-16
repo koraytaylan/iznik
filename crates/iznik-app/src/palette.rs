@@ -261,6 +261,11 @@ pub fn dispatch_action(
     window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) -> Result<bool, crate::bridge::EngineError> {
+    if action == ActionId::OpenSettings {
+        crate::settings_window::open(context);
+        palette.close();
+        return Ok(true);
+    }
     let dispatched = shell.dispatch_action(action)?;
     if dispatched {
         palette.close();

@@ -117,7 +117,7 @@ pub struct WindowShell {
     /// Terminal defaults and update cadence.
     options: ShellOptions,
     /// Validated settings retained by this shell.
-    settings: Settings,
+    pub(crate) settings: Settings,
     /// Optional watcher for the configured settings file.
     settings_watcher: Option<Watcher>,
     /// Periodic pump is cancelled when the shell drops.
@@ -300,7 +300,8 @@ impl WindowShell {
             | ActionId::RemoveHost
             | ActionId::ReconnectHost
             | ActionId::UpgradeHost
-            | ActionId::UninstallHost => None,
+            | ActionId::UninstallHost
+            | ActionId::OpenSettings => None,
         }
     }
     /// The currently selected host-qualified tab.

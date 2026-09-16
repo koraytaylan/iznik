@@ -32,6 +32,7 @@ kit's active theme, background and foreground included, through the 0.3.5
 | `layout` | Model split directions and weights rendered through kit resizable panels with caller-owned leaf entities. |
 | `splits` | Pure divider weight and equalization helpers for authoritative layouts. |
 | `settings` | Validated settings state retaining shared theme and keybinding overrides. |
+| `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
 | `theme` | Application theme mapped into terminal emulator defaults. |
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |

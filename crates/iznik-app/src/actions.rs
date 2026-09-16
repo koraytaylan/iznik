@@ -40,6 +40,8 @@ pub enum ActionId {
     UpgradeHost,
     /// Uninstall the server from a host.
     UninstallHost,
+    /// Open the settings window.
+    OpenSettings,
 }
 
 /// What an action operates on.
@@ -49,6 +51,8 @@ pub enum ActionTarget {
     SessionCommand,
     /// A host manager operation.
     HostManager,
+    /// A client-local effect with no protocol command.
+    Application,
 }
 
 /// The context an action needs before it can be offered.
@@ -87,7 +91,7 @@ pub struct ActionSpec {
 pub const INVENTORY: &[ActionSpec] = &[
     spec(
         ActionId::CreateSession,
-        "New Session",
+        "session: new",
         "Create a session on the focused host.",
         ActionTarget::SessionCommand,
         ActionContext::Host,
@@ -95,7 +99,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::RenameSession,
-        "Rename Session",
+        "session: rename",
         "Rename the selected session.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
@@ -103,7 +107,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::CloseSession,
-        "Close Session",
+        "session: close",
         "Close the selected session and its tabs.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
@@ -111,7 +115,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::CreateTab,
-        "New Tab",
+        "tab: new",
         "Create a tab in the selected session.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
@@ -119,7 +123,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::RenameTab,
-        "Rename Tab",
+        "tab: rename",
         "Rename the selected tab.",
         ActionTarget::SessionCommand,
         ActionContext::Tab,
@@ -127,7 +131,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::CloseTab,
-        "Close Tab",
+        "tab: close",
         "Close the selected tab and its panes.",
         ActionTarget::SessionCommand,
         ActionContext::Tab,
@@ -135,7 +139,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::ReorderTabs,
-        "Reorder Tabs",
+        "tab: reorder",
         "Put the session's tabs in a new order.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
@@ -143,7 +147,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::CreatePane,
-        "New Pane",
+        "pane: new",
         "Create a pane beside the selected pane.",
         ActionTarget::SessionCommand,
         ActionContext::Tab,
@@ -151,7 +155,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::ClosePane,
-        "Close Pane",
+        "pane: close",
         "Close the selected pane.",
         ActionTarget::SessionCommand,
         ActionContext::Pane,
@@ -159,7 +163,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::MovePane,
-        "Move Pane",
+        "pane: move",
         "Move the selected pane into another tab.",
         ActionTarget::SessionCommand,
         ActionContext::Pane,
@@ -167,7 +171,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::SetLayout,
-        "Set Layout",
+        "layout: set",
         "Replace a tab's pane arrangement.",
         ActionTarget::SessionCommand,
         ActionContext::Tab,
@@ -175,7 +179,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::AddHost,
-        "Add Host",
+        "host: add",
         "Begin holding and connecting a host.",
         ActionTarget::HostManager,
         ActionContext::None,
@@ -183,7 +187,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::RemoveHost,
-        "Remove Host",
+        "host: remove",
         "Stop holding a host and forget its model.",
         ActionTarget::HostManager,
         ActionContext::Host,
@@ -191,7 +195,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::ReconnectHost,
-        "Reconnect Host",
+        "host: reconnect",
         "Reconnect a failed or disconnected host.",
         ActionTarget::HostManager,
         ActionContext::Host,
@@ -199,7 +203,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::UpgradeHost,
-        "Upgrade Host",
+        "host: upgrade",
         "Replace the host server with this build.",
         ActionTarget::HostManager,
         ActionContext::Host,
@@ -207,10 +211,18 @@ pub const INVENTORY: &[ActionSpec] = &[
     ),
     spec(
         ActionId::UninstallHost,
-        "Uninstall Host",
+        "host: uninstall",
         "Remove iznik-server from a host.",
         ActionTarget::HostManager,
         ActionContext::Host,
+        None,
+    ),
+    spec(
+        ActionId::OpenSettings,
+        "iznik: settings",
+        "Open the settings window.",
+        ActionTarget::Application,
+        ActionContext::None,
         None,
     ),
 ];

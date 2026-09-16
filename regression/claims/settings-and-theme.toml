@@ -33,3 +33,9 @@ id = "settings-ayu-mirage-default"
 statement = "The bundled Ayu Mirage theme registers and becomes the application's default dark theme."
 test = "iznik-app::theme::ayu_mirage_becomes_the_default_theme"
 because = "Theme registration and selection are local kit state, no container needed."
+
+[[claim]]
+id = "settings-window-opens"
+statement = "Choosing \"iznik: settings\" from the palette opens a window rendering the settings panel over the shell's theme."
+test = "iznik-app::settings_window::settings_action_opens_a_window"
+because = "The test drives the palette and GPUI's headless window layer directly and needs no container."

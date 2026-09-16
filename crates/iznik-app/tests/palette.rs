@@ -20,9 +20,9 @@ fn palette_lists_only_available_entries_and_fuzzy_filters() {
             .filter(|specification| matches!(specification.context, ActionContext::None))
             .count()
     );
-    let filtered = results(&state, "add h");
+    let filtered = results(&state, "begin");
     assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].name, "Add Host");
+    assert_eq!(filtered[0].name, "host: add");
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn palette_selection_resolves_inventory_identity() {
     let state = EngineState::new();
     let palette = Palette {
         open: true,
-        query: "add h".to_owned(),
+        query: "begin".to_owned(),
         selected: 0,
     };
     assert_eq!(selected_action(&state, &palette), Some(ActionId::AddHost));

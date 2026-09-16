@@ -14,5 +14,6 @@
   "RemoveHost": "ctrl-shift-d",
   "ReconnectHost": "ctrl-shift-u",
   "UpgradeHost": "ctrl-shift-g",
-  "UninstallHost": "ctrl-shift-delete"
+  "UninstallHost": "ctrl-shift-delete",
+  "OpenSettings": "ctrl-shift-s"
 }
