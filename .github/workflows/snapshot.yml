@@ -34,10 +34,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
-          if ! command -v zig >/dev/null 2>&1; then
-            sudo snap install zig --classic
-          fi
-          zig version
+
+      - name: Install the pinned Zig toolchain
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Provide the cross linkers
         run: |
@@ -74,10 +75,10 @@ jobs:
       - name: Install the Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      - name: Install Zig
-        run: |
-          brew install zig
-          zig version
+      - name: Install the pinned Zig toolchain
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
