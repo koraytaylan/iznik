@@ -46,12 +46,20 @@ jobs:
           mkdir -p "$RUNNER_TEMP/iznik-tools"
           cat > "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc" <<'SCRIPT'
           #!/usr/bin/env bash
-          exec zig cc -target x86_64-linux-musl "$@"
+          arguments=()
+          for argument in "$@"; do
+            [[ "$argument" == --target=* ]] || arguments+=("$argument")
+          done
+          exec zig cc -target x86_64-linux-musl "${arguments[@]}"
           SCRIPT
           chmod +x "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc"
           cat > "$RUNNER_TEMP/iznik-tools/aarch64-linux-musl-gcc" <<'SCRIPT'
           #!/usr/bin/env bash
-          exec zig cc -target aarch64-linux-musl "$@"
+          arguments=()
+          for argument in "$@"; do
+            [[ "$argument" == --target=* ]] || arguments+=("$argument")
+          done
+          exec zig cc -target aarch64-linux-musl "${arguments[@]}"
           SCRIPT
           chmod +x "$RUNNER_TEMP/iznik-tools/aarch64-linux-musl-gcc"
           echo "$RUNNER_TEMP/iznik-tools" >> "$GITHUB_PATH"
