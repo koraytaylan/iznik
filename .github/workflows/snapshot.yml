@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   linux:
-    name: Linux distribution artifacts
+    name: Linux application bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -27,57 +27,29 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install the Rust targets
-        run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-
-      - name: Install the native build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
-
       - name: Install the pinned Zig toolchain
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.2
 
-      - name: Provide the cross linkers
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/iznik-tools"
-          cat > "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc" <<'SCRIPT'
-          #!/usr/bin/env bash
-          arguments=()
-          for argument in "$@"; do
-            [[ "$argument" == --target=* ]] || arguments+=("$argument")
-          done
-          exec zig cc -target x86_64-linux-musl "${arguments[@]}"
-          SCRIPT
-          chmod +x "$RUNNER_TEMP/iznik-tools/x86_64-linux-musl-gcc"
-          cat > "$RUNNER_TEMP/iznik-tools/aarch64-linux-musl-gcc" <<'SCRIPT'
-          #!/usr/bin/env bash
-          arguments=()
-          for argument in "$@"; do
-            [[ "$argument" == --target=* ]] || arguments+=("$argument")
-          done
-          exec zig cc -target aarch64-linux-musl "${arguments[@]}"
-          SCRIPT
-          chmod +x "$RUNNER_TEMP/iznik-tools/aarch64-linux-musl-gcc"
-          echo "$RUNNER_TEMP/iznik-tools" >> "$GITHUB_PATH"
+      - name: Build the Linux application
+        run: cargo build --locked --release --package iznik-app
 
-      - name: Build the Linux artifacts
+      - name: Bundle the Linux application
         run: |
-          cargo xtask distribution --target x86_64-unknown-linux-musl
-          cargo xtask distribution --target aarch64-unknown-linux-musl
+          cargo xtask app-bundle --target x86_64-unknown-linux-gnu \
+            --binary target/release/iznik-app --output "$RUNNER_TEMP/iznik-linux"
+          tar -czf "$RUNNER_TEMP/iznik-linux.tar.gz" -C "$RUNNER_TEMP/iznik-linux" .
 
-      - name: Upload the Linux artifacts
+      - name: Upload the Linux application
         uses: actions/upload-artifact@v4
         with:
-          name: distribution-linux
+          name: application-linux
           if-no-files-found: error
-          path: target/distribution
+          path: ${{ runner.temp }}/iznik-linux.tar.gz
 
   darwin:
-    name: Darwin distribution artifacts
+    name: macOS application bundles
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -96,17 +68,27 @@ jobs:
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
-      - name: Build the Darwin artifacts
+      - name: Build the Darwin applications
         run: |
-          cargo xtask distribution --target aarch64-apple-darwin
-          cargo xtask distribution --target x86_64-apple-darwin
+          cargo build --locked --release --package iznik-app --target aarch64-apple-darwin
+          cargo build --locked --release --package iznik-app --target x86_64-apple-darwin
+          cargo xtask app-bundle --target aarch64-apple-darwin \
+            --binary target/aarch64-apple-darwin/release/iznik-app \
+            --output "$RUNNER_TEMP/iznik-aarch64-apple-darwin"
+          cargo xtask app-bundle --target x86_64-apple-darwin \
+            --binary target/x86_64-apple-darwin/release/iznik-app \
+            --output "$RUNNER_TEMP/iznik-x86_64-apple-darwin"
+          tar -czf "$RUNNER_TEMP/iznik-aarch64-apple-darwin.tar.gz" \
+            -C "$RUNNER_TEMP/iznik-aarch64-apple-darwin" .
+          tar -czf "$RUNNER_TEMP/iznik-x86_64-apple-darwin.tar.gz" \
+            -C "$RUNNER_TEMP/iznik-x86_64-apple-darwin" .
 
-      - name: Upload the Darwin artifacts
+      - name: Upload the macOS applications
         uses: actions/upload-artifact@v4
         with:
-          name: distribution-darwin
+          name: application-darwin
           if-no-files-found: error
-          path: target/distribution
+          path: ${{ runner.temp }}/iznik-*.tar.gz
 
   publish:
     name: Replace the rolling prerelease
@@ -120,25 +102,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download the verified distribution artifacts
+      - name: Download the verified application bundles
         uses: actions/download-artifact@v4
         with:
-          path: ${{ runner.temp }}/distributions
+          path: ${{ runner.temp }}/applications
 
-      - name: Package uniquely named archives
+      - name: Stage the application bundles
         env:
-          DISTRIBUTIONS: ${{ runner.temp }}/distributions
+          APPLICATIONS: ${{ runner.temp }}/applications
           STAGING: ${{ runner.temp }}/snapshot
         run: |
           set -euo pipefail
           mkdir -p "$STAGING"
-          while IFS= read -r manifest; do
-            target=$(basename "$(dirname "$manifest")")
-            archive="iznik-${target}.tar.gz"
-            tar -czf "$STAGING/$archive" -C "$(dirname "$manifest")" \
-              iznik-server SHA256SUMS manifest.toml
-          done < <(find "$DISTRIBUTIONS" -type f -name manifest.toml -print)
-          test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.tar.gz' | wc -l)" -eq 4
+          find "$APPLICATIONS" -type f -name 'iznik-*.tar.gz' -exec cp '{}' "$STAGING/" ';'
+          test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.tar.gz' | wc -l)" -eq 3
 
       - name: Replace the trusted rolling prerelease
         env:
@@ -147,7 +124,7 @@ jobs:
           SNAPSHOT_TITLE: Iznik develop snapshot
         run: |
           set -euo pipefail
-          notes="Rolling candidate from develop commit $GITHUB_SHA. Assets are replaced after each successful build; this is not a stable release."
+          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA. Assets are replaced after each successful build; this is not a stable release."
           if gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" -f sha="$GITHUB_SHA" -F force=true
             gh release edit "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
