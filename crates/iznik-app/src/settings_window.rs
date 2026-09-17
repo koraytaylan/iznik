@@ -228,17 +228,26 @@ fn keybindings_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
     )))
 }
 
+/// Bit position of a `0xRRGGBBAA` color's red channel.
+const RED_SHIFT: u32 = 24;
+/// Bit position of a `0xRRGGBBAA` color's green channel.
+const GREEN_SHIFT: u32 = 16;
+/// Bit position of a `0xRRGGBBAA` color's blue channel.
+const BLUE_SHIFT: u32 = 8;
+/// Mask isolating one byte of a color channel.
+const CHANNEL_MASK: u32 = 0xFF;
+
 /// Convert a kit `Hsla` color into the terminal's `RgbColor` byte triple.
 fn rgb_color(color: Hsla) -> RgbColor {
-    let packed = u32::from(color.to_rgb());
+    let value = u32::from(color.to_rgb());
     RgbColor {
-        r: channel(packed, 24),
-        g: channel(packed, 16),
-        b: channel(packed, 8),
+        r: channel(value, RED_SHIFT),
+        g: channel(value, GREEN_SHIFT),
+        b: channel(value, BLUE_SHIFT),
     }
 }
 
-/// One byte of a packed `0xRRGGBBAA` color, shifted into place.
-fn channel(packed: u32, shift: u32) -> u8 {
-    u8::try_from((packed >> shift) & 0xFF).unwrap_or(u8::MAX)
+/// One byte of a `0xRRGGBBAA` color, shifted into place.
+fn channel(value: u32, shift: u32) -> u8 {
+    u8::try_from((value >> shift) & CHANNEL_MASK).unwrap_or(u8::MAX)
 }

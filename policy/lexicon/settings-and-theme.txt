@@ -1,3 +1,4 @@
+appearance
 application
 ayu
 collision
@@ -9,8 +10,11 @@ emulator
 family
 invalid
 malformed
+max
+min
 mirage
 overrides
+propagates
 reload
 settings
 stamp

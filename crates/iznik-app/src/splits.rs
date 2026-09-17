@@ -68,6 +68,24 @@ pub fn equalized_weights(weights: &[u32]) -> Vec<u32> {
     vec![MINIMUM_WEIGHT; weights.len()]
 }
 
+/// Delta between a divider's actual and weight-implied position, or `None`
+/// when the weights carry no ratio to compare a position against.
+#[must_use]
+pub fn resize_delta(first: f32, extent: f32, left_weight: u32, right_weight: u32) -> Option<f32> {
+    let weight_total = left_weight.saturating_add(right_weight);
+    if weight_total == 0 {
+        return None;
+    }
+    let Ok(left_weight) = u16::try_from(left_weight) else {
+        return None;
+    };
+    let Ok(total_weight) = u16::try_from(weight_total) else {
+        return None;
+    };
+    let expected = extent * (f32::from(left_weight) / f32::from(total_weight));
+    Some(first - expected)
+}
+
 /// Build the authoritative layout command for a changed root divider.
 #[must_use]
 pub fn drag_command(

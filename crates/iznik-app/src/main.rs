@@ -8,8 +8,7 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use gpui_kit::AppContext as _;
-use gpui_kit::WindowOptions;
-use gpui_kit::component::Root;
+use gpui_kit::component::{Root, TitleBar};
 use iznik_app::bridge::EngineBridge;
 use iznik_app::vt::{VtOptions, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
@@ -143,7 +142,7 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
         let bridge = EngineBridge::start(artifacts, runtime_paths)?;
         let thread = Rc::new(VtThread::start(VtOptions::default())?);
         let window =
-            app_context.open_window(WindowOptions::default(), |window, build_context| {
+            app_context.open_window(TitleBar::window_options(), |window, build_context| {
                 let shell = build_context.new(|context| {
                     WindowShell::new(
                         bridge,

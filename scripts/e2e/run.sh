@@ -115,7 +115,7 @@ fi
 # Prerequisites
 # -----------------------------------------------------------------------
 header "Checking prerequisites"
-for tool in podman cargo; do
+for tool in podman cargo jq; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Missing: $tool"; exit 1; }
 done
 info "all tools present"
@@ -126,18 +126,15 @@ info "all tools present"
 header "Building binaries"
 timeout 300 cargo build --package iznik-app --package iznik-server 2>&1 | tail -3
 
-APP_BINARY=""
-SERVER_BINARY=""
-for candidate_dir in \
-    "$PROJECT_ROOT/target/debug" \
-    "${CARGO_TARGET_DIR:-$HOME/.cache/iznik/target}/debug" \
-    "$HOME/.cache/cargo-target/debug"; do
-    [ -x "$candidate_dir/iznik-app" ] && APP_BINARY="$candidate_dir/iznik-app"
-    [ -x "$candidate_dir/iznik-server" ] && SERVER_BINARY="$candidate_dir/iznik-server"
-    [ -n "$APP_BINARY" ] && [ -n "$SERVER_BINARY" ] && break
-done
-[ -n "$APP_BINARY" ] || { echo "Cannot find iznik-app binary"; exit 1; }
-[ -n "$SERVER_BINARY" ] || { echo "Cannot find iznik-server binary"; exit 1; }
+# Ask cargo where it just built, rather than guessing across candidate
+# target directories: a stale binary left over at an earlier-checked
+# candidate (e.g. from a previous CARGO_TARGET_DIR) would otherwise be
+# picked over the one this build just produced, silently testing old code.
+CARGO_TARGET_DIRECTORY="$(cargo metadata --no-deps --format-version=1 | jq -r .target_directory)"
+APP_BINARY="$CARGO_TARGET_DIRECTORY/debug/iznik-app"
+SERVER_BINARY="$CARGO_TARGET_DIRECTORY/debug/iznik-server"
+[ -x "$APP_BINARY" ] || { echo "Cannot find iznik-app binary at $APP_BINARY"; exit 1; }
+[ -x "$SERVER_BINARY" ] || { echo "Cannot find iznik-server binary at $SERVER_BINARY"; exit 1; }
 info "app binary: $APP_BINARY"
 info "server binary: $SERVER_BINARY"
 

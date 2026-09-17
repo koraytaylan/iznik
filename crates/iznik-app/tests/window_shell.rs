@@ -607,6 +607,7 @@ fn window_propagates_theme_metrics_to_every_pane(context: &mut TestAppContext) {
 /// # Panics
 /// Fails if the pane's grid keeps its old font or size after the theme changes.
 fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
+    use iznik_app::grid::GridMetrics;
     use iznik_app::theme::AppTheme;
     let (handle, _directory) = open_shell(context)?;
     let theme = AppTheme {
@@ -633,6 +634,16 @@ fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
         metrics.font_size,
         px(APPLIED_FONT_SIZE),
         "the applied theme's font size reaches the pane's grid"
+    );
+    assert_ne!(
+        metrics.cell_width,
+        GridMetrics::default().cell_width,
+        "the changed font size re-measures the cell width instead of clipping to the old one"
+    );
+    assert_ne!(
+        metrics.line_height,
+        GridMetrics::default().line_height,
+        "the changed font size re-measures the line height instead of clipping to the old one"
     );
     Ok(())
 }

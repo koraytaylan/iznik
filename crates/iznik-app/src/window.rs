@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::{ActiveTheme, ElementExt};
+use gpui_kit::component::{ActiveTheme, ElementExt, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent,
     ParentElement, Render, Styled, Subscription, Task, Window, div, px,
@@ -24,7 +24,7 @@ use iznik_protocol::model::{LayoutNode, Tab};
 use crate::actions::ActionId;
 use crate::bars;
 use crate::bridge::{EngineBridge, EngineEvent};
-use crate::grid::{GridMetrics, cells};
+use crate::grid::{GridMetrics, cells, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
@@ -313,8 +313,14 @@ impl WindowShell {
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
         let terminal = terminal_theme(theme);
         self.options.theme = terminal.clone();
-        self.options.metrics.font = SharedString::from(theme.font_family.clone());
-        self.options.metrics.font_size = px(theme.font_size);
+        let font = SharedString::from(theme.font_family.clone());
+        let size = px(theme.font_size);
+        self.options.metrics.font = font.clone();
+        self.options.metrics.font_size = size;
+        (
+            self.options.metrics.cell_width,
+            self.options.metrics.line_height,
+        ) = measure_cell(context.text_system(), font, size);
         let metrics = self.options.metrics.clone();
         for key in self.panes.keys().cloned().collect::<Vec<_>>() {
             if let Err(error) = self.thread.send(VtCommand::Theme {
@@ -822,18 +828,11 @@ impl WindowShell {
             let Some(right) = children.get(1) else {
                 return;
             };
-            let weight_total = left.weight.saturating_add(right.weight);
-            if weight_total == 0 {
-                return;
-            }
-            let Ok(left_weight) = u16::try_from(left.weight) else {
+            let Some(delta) =
+                splits::resize_delta(f32::from(first), extent, left.weight, right.weight)
+            else {
                 return;
             };
-            let Ok(total_weight) = u16::try_from(weight_total) else {
-                return;
-            };
-            let expected = extent * (f32::from(left_weight) / f32::from(total_weight));
-            let delta = f32::from(first) - expected;
             if let Some(command) = splits::drag_command(selected.tab, &layout, 0, delta, extent) {
                 let alias = selected.host.0.clone();
                 let _updated = entity.update(application, |shell, context| {
@@ -917,6 +916,7 @@ impl Render for WindowShell {
             }))
             .bg(theme.background)
             .text_color(theme.foreground)
+            .child(TitleBar::new().child("iznik"))
             .children(self.banners(context))
             .child(bars.top)
             .child(

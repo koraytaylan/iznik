@@ -14,7 +14,7 @@ use std::sync::Arc;
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Render, ScrollDelta,
-    SharedString, Styled, TestSupportExt, Window, div, px,
+    SharedString, Styled, TestSupportExt, TextSystem, Window, div, font, px,
 };
 use libghostty_vt::render::{Colors, CursorVisualStyle};
 use libghostty_vt::screen::CellWide;
@@ -718,6 +718,26 @@ fn distance(left: Pixels, right: Pixels) -> Pixels {
 /// Scale cell geometry with explicit finite saturation.
 fn scale(value: Pixels, factor: f32) -> Pixels {
     finite(f32::from(value) * factor)
+}
+
+/// Measure one monospace cell's pixel geometry for a font and size, so a
+/// changed font actually changes what's painted instead of being clipped to
+/// the previous font's dimensions. Falls back to the initial cell width when
+/// the font has no "0" glyph to measure.
+pub(crate) fn measure_cell(
+    text_system: &TextSystem,
+    family: SharedString,
+    font_size: Pixels,
+) -> (Pixels, Pixels) {
+    let font_id = text_system.resolve_font(&font(family));
+    let cell_width = text_system
+        .ch_advance(font_id, font_size)
+        .unwrap_or(px(CELL_WIDTH));
+    let line_height = offset(
+        text_system.ascent(font_id, font_size),
+        text_system.descent(font_id, font_size),
+    );
+    (cell_width, line_height)
 }
 
 /// Convert positive finite surface geometry to complete cells within the protocol range.

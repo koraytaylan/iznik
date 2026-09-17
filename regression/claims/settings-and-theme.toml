@@ -42,6 +42,12 @@ because = "The test drives the palette and GPUI's headless window layer directly
 
 [[claim]]
 id = "settings-metrics-reach-pane"
-statement = "A changed theme's font family and size reach a retained pane's grid immediately, the same way its colors already do."
+statement = "A changed theme's font family and size reach a retained pane's grid immediately, re-measuring its cell width and line height from the new font instead of clipping to the old one's geometry."
 test = "iznik-app::window_shell::window_propagates_theme_metrics_to_every_pane"
 because = "The test drives a real shell and pane over the in-process engine and needs no container."
+
+[[claim]]
+id = "settings-metrics-repaint-every-row"
+statement = "A grid's `set_metrics` call repaints every retained row, not only rows whose terminal content also changed."
+test = "iznik-app::grid_element::grid_repaints_every_row_when_metrics_change"
+because = "The test drives a real grid and window layer directly and needs no container."

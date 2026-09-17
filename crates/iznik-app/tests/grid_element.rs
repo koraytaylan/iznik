@@ -835,3 +835,50 @@ fn credit_reset(context: &mut TestAppContext) -> Result<(), Failed> {
     })??;
     Ok(())
 }
+
+#[gpui_kit::test]
+fn grid_repaints_every_row_when_metrics_change(context: &mut TestAppContext) {
+    check(&metrics_repaint(context));
+}
+
+/// A `set_metrics` call, not just a content change, must invalidate every
+/// retained row so it repaints at the new font and geometry.
+///
+/// # Errors
+/// Returns terminal or window failures.
+///
+/// # Panics
+/// Fails if any row's paint count does not increase after metrics change.
+fn metrics_repaint(context: &mut TestAppContext) -> Result<(), Failed> {
+    context.update(gpui_kit::init);
+    let handle =
+        context.add_window(|_window, context| TerminalGrid::new(GridMetrics::default(), context));
+    let thread = VtThread::start(VtOptions::default())?;
+    let initial = open(&thread, Sequence(0), DAMAGE_COLUMNS, DAMAGE_ROWS)?;
+    handle.update(context, |grid, _window, context| {
+        grid.apply(initial, context)
+    })??;
+    draw(context, handle)?;
+    let before = handle.update(context, |grid, _window, application| {
+        grid.paint_counts(application)
+    })?;
+    let changed_metrics = GridMetrics {
+        font_size: px(30.0),
+        ..GridMetrics::default()
+    };
+    handle.update(context, |grid, _window, context| {
+        grid.set_metrics(&changed_metrics, context);
+    })?;
+    draw(context, handle)?;
+    let after = handle.update(context, |grid, _window, application| {
+        grid.paint_counts(application)
+    })?;
+    assert!(
+        before
+            .iter()
+            .zip(&after)
+            .all(|(earlier, later)| later > earlier),
+        "every row repaints when metrics change: before={before:?} after={after:?}"
+    );
+    Ok(())
+}
