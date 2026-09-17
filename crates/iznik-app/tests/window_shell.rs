@@ -599,14 +599,17 @@ fn window_propagates_theme_metrics_to_every_pane(context: &mut TestAppContext) {
 }
 
 /// Applying a changed theme updates a retained pane's font and size immediately,
-/// the same way it already updates the terminal's colors.
+/// the same way it already updates the terminal's colors, and also restyles
+/// the kit's own chrome text, not only terminal content.
 ///
 /// # Errors
 /// Propagates fixture, window and owner failures.
 ///
 /// # Panics
-/// Fails if the pane's grid keeps its old font or size after the theme changes.
+/// Fails if the pane's grid keeps its old font or size after the theme
+/// changes, or if the kit's own UI font and size do not follow it too.
 fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
+    use gpui_kit::component::Theme;
     use iznik_app::grid::GridMetrics;
     use iznik_app::theme::AppTheme;
     let (handle, _directory) = open_shell(context)?;
@@ -618,6 +621,29 @@ fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
     handle.update(context, |shell, _, context| {
         shell.apply_theme(&theme, context);
     })?;
+    context.update(|app| {
+        let chrome_theme = Theme::global(app);
+        assert_eq!(
+            chrome_theme.font_family,
+            SharedString::from("Custom Mono"),
+            "the applied theme's font family also reaches the kit's own UI text"
+        );
+        assert_eq!(
+            chrome_theme.font_size,
+            px(APPLIED_FONT_SIZE),
+            "the applied theme's font size also reaches the kit's own UI text"
+        );
+        assert_eq!(
+            chrome_theme.mono_font_family,
+            SharedString::from("Custom Mono"),
+            "the applied theme's font family reaches the kit's monospace UI text too"
+        );
+        assert_eq!(
+            chrome_theme.mono_font_size,
+            px(APPLIED_FONT_SIZE),
+            "the applied theme's font size reaches the kit's monospace UI text too"
+        );
+    });
     let metrics = handle
         .update(context, |shell, _, context| {
             shell

@@ -42,7 +42,7 @@ because = "The test drives the palette and GPUI's headless window layer directly
 
 [[claim]]
 id = "settings-metrics-reach-pane"
-statement = "A changed theme's font family and size reach a retained pane's grid immediately, re-measuring its cell width and line height from the new font instead of clipping to the old one's geometry."
+statement = "A changed theme's font family and size reach a retained pane's grid immediately, re-measuring its cell width and line height from the new font instead of clipping to the old one's geometry, and also restyle the kit's own general and monospace UI text, not only terminal content."
 test = "iznik-app::window_shell::window_propagates_theme_metrics_to_every_pane"
 because = "The test drives a real shell and pane over the in-process engine and needs no container."
 

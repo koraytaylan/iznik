@@ -1,7 +1,7 @@
 //! Shared application theme values for GPUI and the terminal emulator.
 
-use gpui_kit::App;
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::{App, Pixels, SharedString};
 
 use crate::vt::TerminalTheme;
 
@@ -68,4 +68,16 @@ pub fn terminal_theme(theme: &AppTheme) -> TerminalTheme {
         background: theme.background,
         ..TerminalTheme::default()
     }
+}
+
+/// Restyle the kit's own general and monospace UI text to match the
+/// terminal's configured font, so a font change is visible in the
+/// application's own chrome, not only in terminal content.
+pub fn apply_chrome_font(app: &mut App, font: SharedString, size: Pixels) {
+    let chrome_theme = Theme::global_mut(app);
+    chrome_theme.font_family = font.clone();
+    chrome_theme.font_size = size;
+    chrome_theme.mono_font_family = font;
+    chrome_theme.mono_font_size = size;
+    app.refresh_windows();
 }

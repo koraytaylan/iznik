@@ -30,7 +30,7 @@ use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
 use crate::splits;
 use crate::surface::{PaneSurface, SurfaceFailure};
-use crate::theme::{AppTheme, terminal_theme};
+use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
 
 /// A short main-thread update cadence reads owned channels without blocking drawing.
@@ -320,7 +320,8 @@ impl WindowShell {
         (
             self.options.metrics.cell_width,
             self.options.metrics.line_height,
-        ) = measure_cell(context.text_system(), font, size);
+        ) = measure_cell(context.text_system(), font.clone(), size);
+        theme::apply_chrome_font(context, font, size);
         let metrics = self.options.metrics.clone();
         for key in self.panes.keys().cloned().collect::<Vec<_>>() {
             if let Err(error) = self.thread.send(VtCommand::Theme {
