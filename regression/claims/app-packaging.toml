@@ -1,11 +1,29 @@
 [[claim]]
 id = "app-bundle-linux-layout"
-statement = "The Linux application layout contains the staged executable and versioned desktop entry."
+statement = "The Linux application layout contains the staged executable, still executable, every staged server under share/iznik/artifacts still executable and without its checksums or manifest, and a versioned desktop entry."
 test = "iznik-app::bundle_layout::linux_layout_is_versioned"
 because = "The layout writer is deterministic filesystem logic and needs no platform host."
 
 [[claim]]
 id = "app-bundle-macos-layout"
-statement = "The macOS application layout contains a version-stamped executable and property list."
+statement = "The macOS application layout contains the executable, still executable, every staged server under Contents/Resources/artifacts, and a version-stamped property list."
 test = "iznik-app::bundle_layout::macos_layout_is_versioned"
 because = "The property list writer is deterministic and can be verified on Linux."
+
+[[claim]]
+id = "app-bundle-refuses-no-servers"
+statement = "A bundle is refused when the servers directory holds no <triple>/iznik-server, so no application ships unable to install on an ssh host."
+test = "iznik-app::bundle_layout::a_bundle_without_servers_is_refused"
+because = "The refusal is deterministic filesystem logic and needs no platform host."
+
+[[claim]]
+id = "app-finds-bundled-servers"
+statement = "The running application finds its bundled servers two directories up from its executable in either platform layout, and none beside an executable that is not bundled."
+test = "iznik-app::bundle_layout::the_application_finds_its_bundled_servers"
+because = "The lookup is path logic over a written layout and needs no platform host."
+
+[[claim]]
+id = "app-launch-builds-native-server"
+statement = "`cargo app` builds this machine's own musl server unless `--target` names others, and refuses arguments it does not understand, before it runs the application."
+test = "xtask::app_launch::app_builds_the_native_server_by_default"
+because = "Choosing the servers is argument parsing; the builds are cargo's, proven by the distribution regression cases."

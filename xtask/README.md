@@ -2,7 +2,7 @@
 
 The gates, the policy checks clippy cannot express, the claims registry, the container images, staging, distribution, the C header and the soak, behind `cargo xtask`. Depends on neither the emulator nor any product crate, so it builds on a machine with nothing but a Rust toolchain.
 
-`cargo xtask <subcommand>` routes `check`, `gate`, `doctor`, `policy`, `claims`, `regression`, `distribution`, `app-bundle`, `header` and `soak` to the modules below; `--help` lists them, and each of them answers `--help` with what it takes. `tests/readme_commands.rs` asks every one of them, so a name here that no binary answers to is a failing test.
+`cargo xtask <subcommand>` routes `check`, `gate`, `doctor`, `policy`, `claims`, `regression`, `distribution`, `app-bundle`, `app`, `header` and `soak` to the modules below; `--help` lists them, and each of them answers `--help` with what it takes. `tests/readme_commands.rs` asks every one of them, so a name here that no binary answers to is a failing test.
 
 ## Modules
 
@@ -16,7 +16,8 @@ The gates, the policy checks clippy cannot express, the claims registry, the con
 | `distribution::darwin` | The two Darwin targets, the toolchain they need written out, and the refusal that names the missing SDK rather than reporting a link error from inside cargo. | `darwin-artifacts` (plan 0004) |
 | `distribution::shape` | What an artifact's own headers say: an ELF file's machine, whether it names a loader and whether it still carries a symbol table; a Mach-O file's CPU type and every library it names. | `linux-artifacts` (plan 0004) |
 | `distribution::linux` | The two musl targets built under the release profile, stripped, byte-identical across builds, with the workspace's own configured flags carried through rather than replaced. | `linux-artifacts` (plan 0004) |
-| `distribution::app` | `xtask app-bundle --target <triple> --binary <path> --output <path>`: validates a staged binary and invokes the app's headless bundle writer. | `app-packaging` (plan 0007) |
+| `distribution::app` | `xtask app-bundle --target <triple> --binary <path> --output <path> --servers <path>`: validates a staged binary and a directory of servers and invokes the app's headless bundle writer, which carries every server in the bundle. | `app-packaging` (plan 0007) |
+| `distribution::launch` | `xtask app [--target <triple>]...`, aliased `cargo app` and run by `scripts/app/run.sh`: builds the servers the application installs on ssh hosts — this machine's own musl server unless told otherwise — with cargo's progress shown, then runs the application. | `app-packaging` (plan 0007) |
 | `doctor` | `xtask doctor`: every prerequisite with a probe and an install hint, reported by name when missing. | `gate-runner` (plan 0001) |
 | `gate` | `xtask check` and `xtask gate <name>`: the five gates in order, each under its deadline, stopping at the first failure with its name. | `gate-runner` (plan 0001) |
 | `header` | `xtask header`: generating `include/iznik.h` with cbindgen, for the golden test that pins the ABI. | `static-library-and-header` (plan 0006) |

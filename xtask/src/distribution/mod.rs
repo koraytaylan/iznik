@@ -9,12 +9,16 @@
 
 pub mod app;
 pub mod darwin;
+pub mod launch;
 pub mod linux;
 pub mod shape;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
+use std::time::Duration;
+
+use iznik_harness::process::{self, Deadline, Output};
 
 use core::fmt::{self, Display, Formatter, Write as _};
 
@@ -38,6 +42,10 @@ pub const MANIFEST: &str = "manifest.toml";
 
 /// The flag the subcommand takes.
 const TARGET_FLAG: &str = "--target";
+
+/// How long asking cargo where its target directory is may take: a first run
+/// may resolve the workspace before it answers.
+const METADATA_DEADLINE: Duration = Duration::from_mins(2);
 
 /// Why an artifact could not be made.
 #[derive(Debug)]
@@ -145,6 +153,20 @@ pub fn digest_of(path: &Path) -> Result<String, DistributionError> {
 /// absent, [`DistributionError::Io`] when a file cannot be written, and
 /// [`DistributionError::Oversize`] when the result is over the ceiling.
 pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
+    build_with_output(root, target, Output::Capture)
+}
+
+/// The same, with cargo's progress captured or shown as `output` says: shown
+/// when a person is waiting on the build.
+///
+/// # Errors
+///
+/// As [`build`].
+pub fn build_with_output(
+    root: &Path,
+    target: &str,
+    output: Output,
+) -> Result<Artifact, DistributionError> {
     let directory = target_directory(root)
         .join(DISTRIBUTION_DIRECTORY)
         .join(target);
@@ -156,9 +178,9 @@ pub fn build(root: &Path, target: &str) -> Result<Artifact, DistributionError> {
     // leave it there to be taken for the answer.
     clear(&directory)?;
     let built = if linux::TARGETS.contains(&target) {
-        linux::build(root, target)?
+        linux::build(root, target, output)?
     } else if darwin::TARGETS.contains(&target) {
-        darwin::build(root, target)?
+        darwin::build(root, target, output)?
     } else {
         return Err(DistributionError::UnknownTarget {
             target: target.to_owned(),
@@ -344,11 +366,30 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
     }
 }
 
-/// Cargo's target directory: what `CARGO_TARGET_DIR` names, or `target` under
-/// the root. Artifacts go beside what built them, wherever that is.
+/// Cargo's target directory: what `CARGO_TARGET_DIR` names, else what cargo
+/// itself reports — which honours `build.target-dir` in any cargo
+/// configuration, a person's own included — else `target` under the root.
+/// Artifacts go beside what built them, wherever that is.
 #[must_use]
 pub fn target_directory(root: &Path) -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .or_else(|| reported_target_directory(root))
+        .unwrap_or_else(|| root.join("target"))
+}
+
+/// The target directory `cargo metadata` reports for the workspace.
+fn reported_target_directory(root: &Path) -> Option<PathBuf> {
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .current_dir(root)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"]);
+    let completed = process::run(command, Deadline(METADATA_DEADLINE), Output::Whole).ok()?;
+    let metadata: serde_json::Value = serde_json::from_slice(&completed.stdout).ok()?;
+    metadata
+        .get("target_directory")?
+        .as_str()
+        .map(PathBuf::from)
 }
 
 /// The workspace root: one directory above this crate's manifest.

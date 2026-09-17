@@ -31,8 +31,15 @@ const BINARY_ARGUMENT: usize = 2;
 const OUTPUT_ARGUMENT: usize = 3;
 /// Positional argument containing the product version.
 const VERSION_ARGUMENT: usize = 4;
+/// Positional argument containing the directory of servers to carry.
+const SERVERS_ARGUMENT: usize = 5;
 /// Directory names used for this process's private runtime resources.
 const ARTIFACT_DIRECTORY: &str = "iznik-app-artifacts";
+/// Names the directory of servers the application may install on a host,
+/// laid out as `<triple>/iznik-server`: the same variable the `iznik` command
+/// reads. It overrides the servers a bundle carries, which is how a build run
+/// from the workspace is given servers at all.
+const ARTIFACTS_VARIABLE: &str = "IZNIK_ARTIFACTS_DIRECTORY";
 /// Directory containing client runtime sockets and state.
 const RUNTIME_DIRECTORY: &str = "iznik-app-runtime";
 
@@ -62,7 +69,7 @@ fn help() -> ExitCode {
     let mut writing = std::io::stdout();
     if writeln!(
         writing,
-        "usage: iznik-app [--help] | --bundle <target> <binary> <output> <version>"
+        "usage: iznik-app [--help] | --bundle <target> <binary> <output> <version> <servers>"
     )
     .and_then(|()| writing.flush())
     .is_err()
@@ -92,10 +99,16 @@ fn bundle(arguments: &[OsString]) -> ExitCode {
     else {
         return usage();
     };
+    let Some(servers) = arguments
+        .get(SERVERS_ARGUMENT)
+        .map(std::path::PathBuf::from)
+    else {
+        return usage();
+    };
     let result = if target.contains("darwin") || target.contains("apple") {
-        iznik_app::bundle::write_macos(&binary, &output, version)
+        iznik_app::bundle::write_macos(&binary, &servers, &output, version)
     } else if target.contains("linux") {
-        iznik_app::bundle::write_linux(&binary, &output, version)
+        iznik_app::bundle::write_linux(&binary, &servers, &output, version)
     } else {
         return usage();
     };
@@ -135,7 +148,25 @@ fn run() -> ExitCode {
 /// platform is ready for it.
 fn open_window(app_context: &mut gpui_kit::AsyncApp) {
     let directory = std::env::temp_dir().join(format!("iznik-app-{}", std::process::id()));
-    let artifacts = directory.join(ARTIFACT_DIRECTORY);
+    // The variable, then the servers the bundle carries, then an empty
+    // directory: a build with none still reaches `unix:` sockets and hosts
+    // that already run this version.
+    let artifacts = std::env::var_os(ARTIFACTS_VARIABLE)
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|executable| iznik_app::bundle::bundled_servers(&executable))
+        })
+        .unwrap_or_else(|| directory.join(ARTIFACT_DIRECTORY));
+    if !artifacts.is_dir() {
+        let _written = writeln!(
+            std::io::stderr(),
+            "iznik-app: no iznik-server builds found, so hosts added over ssh that don't already \
+             run iznik will fail to connect. Start the app with ./scripts/app/run.sh (or \
+             `cargo app`), which builds the server first."
+        );
+    }
     let runtime_directory = directory.join(RUNTIME_DIRECTORY);
     let result = (|| -> Result<_, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&artifacts)?;

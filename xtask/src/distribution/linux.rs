@@ -52,6 +52,9 @@ const REMAPPED_CHECKOUTS: &str = "checkouts";
 /// under a home directory whose name has a space in it.
 const ENCODED_VARIABLE: &str = "CARGO_ENCODED_RUSTFLAGS";
 
+/// The variable that names cargo's target directory.
+const TARGET_DIRECTORY_VARIABLE: &str = "CARGO_TARGET_DIR";
+
 /// The variable it is preferred to, removed so that nothing of the caller's
 /// leaks into a build whose flags are meant to be exactly these.
 const FLAGS_VARIABLE: &str = "RUSTFLAGS";
@@ -59,13 +62,15 @@ const FLAGS_VARIABLE: &str = "RUSTFLAGS";
 /// What separates them in the encoded form.
 const ENCODED_SEPARATOR: char = '\u{1f}';
 
-/// Builds the binary for `target` and says where cargo put it.
+/// Builds the binary for `target` and says where cargo put it, with cargo's
+/// progress captured or shown as `output` says.
 ///
 /// # Errors
 ///
 /// [`DistributionError::Build`] when the build fails or its toolchain is
 /// absent, naming what cargo said.
-pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
+pub fn build(root: &Path, target: &str, output: Output) -> Result<PathBuf, DistributionError> {
+    let target_directory = crate::distribution::target_directory(root);
     let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     command
         .current_dir(root)
@@ -79,18 +84,22 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
         .arg(BINARY)
         .arg("--bin")
         .arg(BINARY)
+        // The directory this reads the binary back from, said rather than
+        // left for cargo to find again in a configuration.
+        .env(TARGET_DIRECTORY_VARIABLE, &target_directory)
         .env(ENCODED_VARIABLE, rustflags(root, target)?)
         // Cargo would prefer the encoded form anyway; removing this says so
         // rather than leaving a caller's value to look as though it applied.
         .env_remove(FLAGS_VARIABLE);
-    // Its output is cargo's own progress; what matters is that it succeeded.
-    process::run(command, Deadline(BUILD_DEADLINE), Output::Capture).map_err(|source| {
+    // Its output is cargo's own progress: captured for a release, where what
+    // matters is that it succeeded, and shown to a person waiting on it.
+    process::run(command, Deadline(BUILD_DEADLINE), output).map_err(|source| {
         DistributionError::Build {
             target: target.to_owned(),
             detail: source.to_string(),
         }
     })?;
-    Ok(built_at(root, target))
+    Ok(built_at(&target_directory, target))
 }
 
 /// The flags this build needs: what the workspace configures for the target,
@@ -178,10 +187,9 @@ fn configured(root: &Path, target: &str) -> Result<Vec<String>, DistributionErro
         .collect())
 }
 
-/// Where cargo puts the binary for a target under the release profile.
+/// Where cargo puts the binary for a target under the release profile, in
+/// the target directory the build was given.
 #[must_use]
-pub fn built_at(root: &Path, target: &str) -> PathBuf {
-    let base =
-        std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-    base.join(target).join(PROFILE).join(BINARY)
+pub fn built_at(target_directory: &Path, target: &str) -> PathBuf {
+    target_directory.join(target).join(PROFILE).join(BINARY)
 }

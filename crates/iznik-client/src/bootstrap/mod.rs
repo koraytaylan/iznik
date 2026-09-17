@@ -79,11 +79,22 @@ fn with_prefix(script: &str, prefix: &Path) -> String {
 }
 
 /// The refusal an unsupported machine becomes, before anything is uploaded.
-fn no_artifact(host: &str, triple: &str) -> BootstrapError {
+///
+/// It names what the build does carry, because "no server for" alone cannot
+/// tell a build packaged without servers from one missing a single machine.
+fn no_artifact(host: &str, triple: &str, carried: &[&str]) -> BootstrapError {
+    let detail = if carried.is_empty() {
+        format!("this build carries no server for {triple}: it carries no servers at all")
+    } else {
+        format!(
+            "this build carries no server for {triple}: it carries servers for {}",
+            carried.join(", ")
+        )
+    };
     BootstrapError {
         host: host.to_owned(),
         stage: Stage::Probe,
-        detail: format!("this build carries no server for {triple}"),
+        detail,
     }
 }
 
@@ -134,7 +145,7 @@ pub async fn bootstrap_watched(
         .map_err(|source| refused(&host, Stage::Probe, &source))?;
     let decision = decide(&found, artifacts, &bundled());
     if let Decision::Unsupported { triple } = &decision {
-        return Err(no_artifact(&host, triple));
+        return Err(no_artifact(&host, triple, &artifacts.triples()));
     }
     // Where the server is, is where the host said it put it. The two agree,
     // and asking is cheaper than assuming they always will.
@@ -272,7 +283,9 @@ pub async fn upgrade(
         .map_err(|source| refused(&host, Stage::Probe, &source))?;
     match decide(&found, artifacts, &bundled()) {
         Decision::UpToDate => return Ok(()),
-        Decision::Unsupported { triple } => return Err(no_artifact(&host, &triple).into()),
+        Decision::Unsupported { triple } => {
+            return Err(no_artifact(&host, &triple, &artifacts.triples()).into());
+        }
         // Nothing is there to end, and nothing is holding panes.
         Decision::Install => {}
         Decision::UpgradeAvailable { .. } => {

@@ -2,6 +2,7 @@ bundle
 bundler
 desktop
 executable
+finds
 icon
 identifier
 linux
@@ -9,6 +10,7 @@ macos
 packaging
 plist
 property
+servers
 shippable
 stamped
 svg

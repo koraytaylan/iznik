@@ -26,6 +26,8 @@
 
 use std::path::{Path, PathBuf};
 
+use iznik_harness::process::Output;
+
 use crate::distribution::{DistributionError, linux};
 
 /// The triples this builds for.
@@ -40,7 +42,7 @@ const SDK_VARIABLE: &str = "SDKROOT";
 ///
 /// [`DistributionError::Build`] naming the missing toolchain component when
 /// the SDK is not configured, and whatever cargo says otherwise.
-pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
+pub fn build(root: &Path, target: &str, output: Output) -> Result<PathBuf, DistributionError> {
     if std::env::var_os(SDK_VARIABLE).is_none() {
         return Err(DistributionError::Build {
             target: target.to_owned(),
@@ -53,5 +55,5 @@ pub fn build(root: &Path, target: &str) -> Result<PathBuf, DistributionError> {
     }
     // The same build as the Linux targets: only the toolchain differs, and
     // the manifest and checksum path is shared.
-    linux::build(root, target)
+    linux::build(root, target, output)
 }

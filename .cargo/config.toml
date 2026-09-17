@@ -1,5 +1,8 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+# Build the server the application installs on ssh hosts, then run the
+# application: `cargo app`, or `cargo app --target <triple>` for others.
+app = "run --quiet --package xtask -- app"
 
 # The musl cross-compilers supply libc and the startup objects; rustc's
 # self-contained copies must not be linked beside them.

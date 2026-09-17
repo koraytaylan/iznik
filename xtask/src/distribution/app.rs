@@ -12,6 +12,12 @@ const TARGET_FLAG: &str = "--target";
 const BINARY_FLAG: &str = "--binary";
 /// Output directory flag.
 const OUTPUT_FLAG: &str = "--output";
+/// The flag naming the directory of servers the bundle carries, laid out as
+/// `xtask distribution` lays them out: one `<triple>/iznik-server` each.
+const SERVERS_FLAG: &str = "--servers";
+/// The usage line, shared by the refusal and `--help`.
+const USAGE_LINE: &str =
+    "usage: xtask app-bundle --target <triple> --binary <path> --output <path> --servers <path>";
 /// Usage exit status.
 const USAGE_EXIT_CODE: u8 = 2;
 /// Number of items needed to read a flag and its value.
@@ -32,6 +38,18 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
     let Some(output) = value(arguments, OUTPUT_FLAG) else {
         return usage();
     };
+    let Some(servers) = value(arguments, SERVERS_FLAG) else {
+        return usage();
+    };
+    let servers_path = PathBuf::from(servers);
+    if !servers_path.is_dir() {
+        let _written = writeln!(
+            std::io::stderr(),
+            "app-bundle: servers directory does not exist: {}",
+            servers_path.display()
+        );
+        return ExitCode::FAILURE;
+    }
     let binary_path = PathBuf::from(binary);
     if !binary_path.is_file() {
         let _written = writeln!(
@@ -49,6 +67,7 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         .arg(&binary_path)
         .arg(&output)
         .arg(version)
+        .arg(&servers_path)
         .status();
     match status {
         Ok(result) if result.success() => ExitCode::SUCCESS,
@@ -68,18 +87,12 @@ fn value(arguments: &[OsString], flag: &str) -> Option<String> {
 
 /// Report app-bundle usage.
 fn usage() -> ExitCode {
-    let _written = writeln!(
-        std::io::stderr(),
-        "usage: xtask app-bundle --target <triple> --binary <path> --output <path>"
-    );
+    let _written = writeln!(std::io::stderr(), "{USAGE_LINE}");
     ExitCode::from(USAGE_EXIT_CODE)
 }
 
 /// Report app-bundle usage successfully for `--help`.
 fn usage_success() -> ExitCode {
-    let _written = writeln!(
-        std::io::stdout(),
-        "usage: xtask app-bundle --target <triple> --binary <path> --output <path>"
-    );
+    let _written = writeln!(std::io::stdout(), "{USAGE_LINE}");
     ExitCode::SUCCESS
 }

@@ -18,8 +18,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  linux:
-    name: Linux application bundle
+  # Every application bundle carries every server, because the machine a
+  # person connects to is rarely the kind they connect from: a Mac reaching
+  # Linux servers is the common case. The servers are built once, here, and
+  # downloaded by each bundling job.
+  servers-linux:
+    name: Linux servers
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -27,34 +31,49 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install the Rust targets
+        run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
       - name: Install the pinned Zig toolchain
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.2
 
-      - name: Install Linux UI dependencies
+      # .cargo/config.toml names `<arch>-linux-musl-gcc` as the linkers. Zig
+      # ships a complete musl toolchain, so these route to it: cc-rs passes a
+      # clang-style --target that zig rejects, and zig cc enables UBSan by
+      # default, whose handlers are not on the link line rustc drives.
+      - name: Provide the cross linkers
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/iznik-tools"
+          for machine in x86_64 aarch64; do
+            cat > "$RUNNER_TEMP/iznik-tools/${machine}-linux-musl-gcc" <<SCRIPT
+          #!/usr/bin/env bash
+          arguments=()
+          for argument in "\$@"; do
+            [[ "\$argument" == --target=* ]] || arguments+=("\$argument")
+          done
+          exec zig cc -target ${machine}-linux-musl -fno-sanitize=undefined "\${arguments[@]}"
+          SCRIPT
+            chmod +x "$RUNNER_TEMP/iznik-tools/${machine}-linux-musl-gcc"
+          done
+          echo "$RUNNER_TEMP/iznik-tools" >> "$GITHUB_PATH"
 
-      - name: Build the Linux application
-        run: cargo build --locked --release --package iznik-app
-
-      - name: Bundle the Linux application
+      - name: Build the Linux servers
         run: |
-          cargo xtask app-bundle --target x86_64-unknown-linux-gnu \
-            --binary target/release/iznik-app --output "$RUNNER_TEMP/iznik-linux"
-          tar -czf "$RUNNER_TEMP/iznik-linux.tar.gz" -C "$RUNNER_TEMP/iznik-linux" .
+          cargo xtask distribution --target x86_64-unknown-linux-musl
+          cargo xtask distribution --target aarch64-unknown-linux-musl
 
-      - name: Upload the Linux application
+      - name: Upload the Linux servers
         uses: actions/upload-artifact@v4
         with:
-          name: application-linux
+          name: servers-linux
           if-no-files-found: error
-          path: ${{ runner.temp }}/iznik-linux.tar.gz
+          path: target/distribution
 
-  darwin:
-    name: macOS application bundles
+  servers-darwin:
+    name: macOS servers
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -73,16 +92,102 @@ jobs:
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
+      - name: Build the macOS servers
+        run: |
+          cargo xtask distribution --target aarch64-apple-darwin
+          cargo xtask distribution --target x86_64-apple-darwin
+
+      - name: Upload the macOS servers
+        uses: actions/upload-artifact@v4
+        with:
+          name: servers-darwin
+          if-no-files-found: error
+          path: target/distribution
+
+  linux:
+    name: Linux application bundle
+    needs: [servers-linux, servers-darwin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Zig toolchain
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install Linux UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+
+      - name: Download every server
+        uses: actions/download-artifact@v4
+        with:
+          pattern: servers-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/servers
+
+      - name: Build the Linux application
+        run: cargo build --locked --release --package iznik-app
+
+      - name: Bundle the Linux application
+        run: |
+          cargo xtask app-bundle --target x86_64-unknown-linux-gnu \
+            --binary target/release/iznik-app --output "$RUNNER_TEMP/iznik-linux" \
+            --servers "$RUNNER_TEMP/servers"
+          tar -czf "$RUNNER_TEMP/iznik-linux.tar.gz" -C "$RUNNER_TEMP/iznik-linux" .
+
+      - name: Upload the Linux application
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-linux
+          if-no-files-found: error
+          path: ${{ runner.temp }}/iznik-linux.tar.gz
+
+  darwin:
+    name: macOS application bundles
+    needs: [servers-linux, servers-darwin]
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install the pinned Zig toolchain
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Point at the SDK
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+      - name: Download every server
+        uses: actions/download-artifact@v4
+        with:
+          pattern: servers-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/servers
+
       - name: Build the Darwin applications
         run: |
           cargo build --locked --release --package iznik-app --target aarch64-apple-darwin
           cargo build --locked --release --package iznik-app --target x86_64-apple-darwin
           cargo xtask app-bundle --target aarch64-apple-darwin \
             --binary target/aarch64-apple-darwin/release/iznik-app \
-            --output "$RUNNER_TEMP/iznik-aarch64-apple-darwin"
+            --output "$RUNNER_TEMP/iznik-aarch64-apple-darwin" \
+            --servers "$RUNNER_TEMP/servers"
           cargo xtask app-bundle --target x86_64-apple-darwin \
             --binary target/x86_64-apple-darwin/release/iznik-app \
-            --output "$RUNNER_TEMP/iznik-x86_64-apple-darwin"
+            --output "$RUNNER_TEMP/iznik-x86_64-apple-darwin" \
+            --servers "$RUNNER_TEMP/servers"
           tar -czf "$RUNNER_TEMP/iznik-aarch64-apple-darwin.tar.gz" \
             -C "$RUNNER_TEMP/iznik-aarch64-apple-darwin" .
           tar -czf "$RUNNER_TEMP/iznik-x86_64-apple-darwin.tar.gz" \
@@ -110,6 +215,7 @@ jobs:
       - name: Download the verified application bundles
         uses: actions/download-artifact@v4
         with:
+          pattern: application-*
           path: ${{ runner.temp }}/applications
 
       - name: Stage the application bundles

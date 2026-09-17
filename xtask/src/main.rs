@@ -21,6 +21,7 @@ const SUBCOMMANDS: &[&str] = &[
     "regression",
     "distribution",
     "app-bundle",
+    "app",
     "header",
     "soak",
 ];
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Some("regression") => regression::run(&arguments),
         Some("distribution") => distribution::run(&arguments),
         Some("app-bundle") => distribution::app::run(&arguments),
+        Some("app") => distribution::launch::run(&arguments),
         Some("header") => header::run(&arguments),
         Some("soak") => soak::run(&arguments),
         Some("--help") => help(),
