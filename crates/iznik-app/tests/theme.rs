@@ -1,8 +1,18 @@
-//! The bundled Ayu Mirage theme registers and becomes the application default.
+//! The bundled themes register and Ayu Mirage becomes the application default.
 
 use gpui_kit::TestAppContext;
-use gpui_kit::component::{ActiveTheme, ThemeMode};
+use gpui_kit::component::{ActiveTheme, ThemeMode, ThemeRegistry};
 use iznik_app::theme::apply_default_theme;
+
+/// A representative name from each bundled theme family, present only if
+/// every family actually registered, not only the default.
+const REPRESENTATIVE_THEMES: &[&str] = &[
+    "Ayu Dark",
+    "Catppuccin Mocha",
+    "Gruvbox Dark",
+    "Solarized Light",
+    "Tokyo Night",
+];
 
 /// Fixture setup and assertion failures.
 type Failed = Box<dyn std::error::Error>;
@@ -21,10 +31,12 @@ fn check(result: &Result<(), Failed>) {
     assert!(result.is_ok(), "{result:?}");
 }
 
-/// Register the bundled theme and assert it becomes the active dark theme.
+/// Register every bundled theme and assert Ayu Mirage becomes the active
+/// dark theme, and that every other bundled family also registered.
 ///
 /// # Errors
-/// Returns the registration failure, or a mismatched mode or name.
+/// Returns the registration failure, a mismatched mode or name, or a
+/// missing bundled family.
 fn applies(context: &mut TestAppContext) -> Result<(), Failed> {
     context.update(|app| -> Result<(), Failed> {
         gpui_kit::init(app);
@@ -34,6 +46,11 @@ fn applies(context: &mut TestAppContext) -> Result<(), Failed> {
         }
         if app.theme().theme_name().as_ref() != "Ayu Mirage" {
             return Err("active theme name is not Ayu Mirage".into());
+        }
+        for name in REPRESENTATIVE_THEMES {
+            if !ThemeRegistry::global(app).themes().contains_key(*name) {
+                return Err(format!("bundled theme family missing: {name}").into());
+            }
         }
         Ok(())
     })

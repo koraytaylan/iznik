@@ -106,14 +106,14 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
             .title("Appearance")
             .item(SettingItem::new(
                 "Theme",
-                SettingField::dropdown(theme_options(current), active_theme_name, {
+                SettingField::scrollable_dropdown(theme_options(current), active_theme_name, {
                     let shell = shell.clone();
                     move |name, app| select_theme(&shell, &name, app)
                 }),
             ))
             .item(SettingItem::new(
                 "Font Family",
-                SettingField::dropdown(
+                SettingField::scrollable_dropdown(
                     font_options(current),
                     {
                         let shell = shell.clone();

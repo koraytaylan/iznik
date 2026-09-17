@@ -10,7 +10,34 @@ const AYU_MIRAGE_THEME: &str = include_str!("../assets/ayu-mirage-theme.json");
 /// The Ayu Mirage theme's name, exactly as declared in [`AYU_MIRAGE_THEME`].
 const AYU_MIRAGE_THEME_NAME: &str = "Ayu Mirage";
 
-/// Register the bundled Ayu Mirage theme and make it the application's
+/// Every other bundled theme family, taken from gpui-kit's own theme
+/// collection and already in its native schema, so each registers without
+/// any conversion from a different theme format.
+const BUNDLED_THEME_FAMILIES: &[&str] = &[
+    include_str!("../assets/themes/adventure.json"),
+    include_str!("../assets/themes/alduin.json"),
+    include_str!("../assets/themes/asciinema.json"),
+    include_str!("../assets/themes/aurora.json"),
+    include_str!("../assets/themes/ayu.json"),
+    include_str!("../assets/themes/catppuccin.json"),
+    include_str!("../assets/themes/everforest.json"),
+    include_str!("../assets/themes/fahrenheit.json"),
+    include_str!("../assets/themes/flexoki.json"),
+    include_str!("../assets/themes/gruvbox.json"),
+    include_str!("../assets/themes/harper.json"),
+    include_str!("../assets/themes/hybrid.json"),
+    include_str!("../assets/themes/jellybeans.json"),
+    include_str!("../assets/themes/kibble.json"),
+    include_str!("../assets/themes/macos-classic.json"),
+    include_str!("../assets/themes/mellifluous.json"),
+    include_str!("../assets/themes/molokai.json"),
+    include_str!("../assets/themes/solarized.json"),
+    include_str!("../assets/themes/spaceduck.json"),
+    include_str!("../assets/themes/tokyonight.json"),
+    include_str!("../assets/themes/twilight.json"),
+];
+
+/// Register every bundled theme and make Ayu Mirage the application's
 /// default, replacing the kit's own light theme.
 ///
 /// # Errors
@@ -21,6 +48,11 @@ pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
     ThemeRegistry::global_mut(app)
         .load_themes_from_str(AYU_MIRAGE_THEME)
         .map_err(|error| error.to_string())?;
+    for family in BUNDLED_THEME_FAMILIES {
+        ThemeRegistry::global_mut(app)
+            .load_themes_from_str(family)
+            .map_err(|error| error.to_string())?;
+    }
     let theme = ThemeRegistry::global(app)
         .themes()
         .get(AYU_MIRAGE_THEME_NAME)
@@ -32,7 +64,7 @@ pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
 }
 
 /// Default terminal font size in logical pixels.
-const DEFAULT_FONT_SIZE: f32 = 11.0;
+const DEFAULT_FONT_SIZE: f32 = 14.0;
 use libghostty_vt::style::RgbColor;
 
 /// User-facing colors and typography shared by every surface.

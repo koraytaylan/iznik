@@ -30,7 +30,7 @@ because = "The test drives the in-process VT owner directly and needs no externa
 
 [[claim]]
 id = "settings-ayu-mirage-default"
-statement = "The bundled Ayu Mirage theme registers and becomes the application's default dark theme."
+statement = "Every bundled theme family registers, and the bundled Ayu Mirage theme becomes the application's default dark theme."
 test = "iznik-app::theme::ayu_mirage_becomes_the_default_theme"
 because = "Theme registration and selection are local kit state, no container needed."
 
