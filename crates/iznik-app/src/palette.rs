@@ -3,8 +3,8 @@
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Theme, WindowExt};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window, div,
+    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, Keystroke, ParentElement,
+    ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window, div,
 };
 use iznik_client::commands::Submission;
 use iznik_client::host::identity::HostId;
@@ -12,13 +12,18 @@ use iznik_protocol::command::SessionCommand;
 
 use crate::actions::{ActionId, ActionSpec, INVENTORY, available};
 use crate::host_ui::EngineState;
+use crate::prompt::{self, Answer, HostOperation, Prompt, Step};
 use crate::window::WindowShell;
 
-/// Shown when Add Host is chosen before its host-entry form exists.
-const ADD_HOST_NOT_WIRED_UP: &str = "Adding a host isn't wired up yet.";
+/// Appended to an action's name when the model holds nothing it can act on.
+const NOTHING_TO_ACT_ON: &str = "has nothing to act on";
+/// Shown in the query while the search is empty.
+const SEARCH_PLACEHOLDER: &str = "Type a command\u{2026}";
+/// Shown in the query while an argument is empty.
+const ANSWER_PLACEHOLDER: &str = "Type an answer\u{2026}";
 
 /// The transient state of the command palette.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Palette {
     /// Whether the overlay is visible.
     pub open: bool,
@@ -26,6 +31,10 @@ pub struct Palette {
     pub query: String,
     /// The selected result position.
     pub selected: usize,
+    /// The action waiting for its argument; while set, the query is the answer.
+    pub prompt: Option<Prompt>,
+    /// The scroll position of the result list, kept on the selected row.
+    pub scroll: ScrollHandle,
 }
 
 /// Result of handling one normalized palette key.
@@ -45,11 +54,21 @@ impl Palette {
         self.open = true;
         self.query.clear();
         self.selected = 0;
+        self.prompt = None;
     }
 
-    /// Close the palette.
+    /// Close the palette, abandoning any argument it was waiting for.
     pub fn close(&mut self) {
         self.open = false;
+        self.prompt = None;
+    }
+
+    /// Turn the open palette into the argument step of an action.
+    pub fn ask(&mut self, prompt: Prompt) {
+        self.open = true;
+        self.query.clone_from(&prompt.initial);
+        self.selected = 0;
+        self.prompt = Some(prompt);
     }
 
     /// Replace the fuzzy query and return selection to the first result.
@@ -78,6 +97,18 @@ impl Palette {
     /// Handle a normalized GPUI key and return the shell action it requests.
     #[must_use]
     pub fn key(
+        &mut self,
+        key: &str,
+        character: Option<char>,
+        result_count: usize,
+    ) -> PaletteAction {
+        let action = self.key_action(key, character, result_count);
+        self.scroll.scroll_to_item(self.selected);
+        action
+    }
+
+    /// The state change and request of one normalized key.
+    fn key_action(
         &mut self,
         key: &str,
         character: Option<char>,
@@ -136,6 +167,118 @@ pub fn selected_action(state: &EngineState, palette: &Palette) -> Option<ActionI
         .map(|specification| specification.id)
 }
 
+/// How many rows the palette lists: choices while it asks, inventory otherwise.
+#[must_use]
+pub fn result_count(state: &EngineState, palette: &Palette) -> usize {
+    palette.prompt.as_ref().map_or_else(
+        || results(state, &palette.query).len(),
+        |prompt| prompt::choices(prompt, &palette.query).len(),
+    )
+}
+
+/// One listed palette row: its element id, its text and what choosing it does.
+struct Row {
+    /// Stable element id.
+    id: String,
+    /// The name shown.
+    text: String,
+    /// The explanation shown below the name, for an inventory row.
+    explanation: Option<&'static str>,
+    /// The default chord shown at the row's end, when there is one.
+    chord: Option<&'static str>,
+    /// The inventory action to run, or `None` to answer the open prompt.
+    action: Option<ActionId>,
+}
+
+/// The rows the palette lists in its current mode.
+fn rows(state: &EngineState, palette: &Palette) -> Vec<Row> {
+    if let Some(prompt) = &palette.prompt {
+        return prompt::choices(prompt, &palette.query)
+            .into_iter()
+            .enumerate()
+            .map(|(index, choice)| Row {
+                id: format!("prompt-choice-{index}"),
+                text: choice.label.clone(),
+                explanation: None,
+                chord: None,
+                action: None,
+            })
+            .collect();
+    }
+    results(state, &palette.query)
+        .into_iter()
+        .map(|specification| Row {
+            id: format!("palette-{:?}", specification.id),
+            text: specification.name.to_owned(),
+            explanation: Some(specification.explanation),
+            chord: specification.keybinding,
+            action: Some(specification.id),
+        })
+        .collect()
+}
+
+/// One listed row: its name and explanation, its chord, highlighted while
+/// selected, and choosing it on a click.
+fn row_element(
+    theme: &Theme,
+    index: usize,
+    row: Row,
+    is_selected: bool,
+    shell: Option<&WeakEntity<WindowShell>>,
+) -> AnyElement {
+    let row_background = if is_selected {
+        theme.list_active
+    } else {
+        theme.popover
+    };
+    let mut label = div().flex().flex_col().flex_1().min_w_0().child(row.text);
+    if let Some(explanation) = row.explanation {
+        label = label.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(explanation),
+        );
+    }
+    let mut element = div()
+        .id(row.id)
+        .test_support()
+        .flex()
+        .items_center()
+        .gap_3()
+        .mx_1()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(row_background)
+        .text_color(theme.popover_foreground)
+        .hover(|style| style.bg(theme.list_hover))
+        .child(label);
+    if let Some(chord) = row.chord {
+        element = element.child(
+            div()
+                .flex_shrink_0()
+                .px_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(chord),
+        );
+    }
+    if let Some(target) = shell.cloned() {
+        let action = row.action;
+        element = element.on_click(move |_event, window, application| {
+            let _ignored = target.update(application, |window_shell, context| {
+                window_shell.palette_mut().selected = index;
+                window_shell.choose(action, window, context);
+            });
+        });
+    }
+    element.into_any_element()
+}
+
 /// Render the dimmed, centered palette overlay from the inventory projection.
 #[must_use]
 pub fn render(
@@ -148,8 +291,13 @@ pub fn render(
     if !palette.open {
         return closed.into_any_element();
     }
+    let placeholder = if palette.prompt.is_some() {
+        ANSWER_PLACEHOLDER
+    } else {
+        SEARCH_PLACEHOLDER
+    };
     let query_text = if palette.query.is_empty() {
-        "Type a command\u{2026}".to_owned()
+        placeholder.to_owned()
     } else {
         palette.query.clone()
     };
@@ -163,62 +311,70 @@ pub fn render(
         .test_support()
         .flex()
         .flex_col()
-        .w_96()
-        .max_h_96()
+        .w_128()
+        .max_h_128()
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
         .bg(theme.popover)
         .text_color(theme.popover_foreground)
-        .shadow_lg()
-        .child(
+        .shadow_lg();
+    if let Some(prompt) = &palette.prompt {
+        panel = panel.child(
             div()
-                .id("command-palette-query")
+                .id("command-palette-question")
                 .test_support()
                 .px_2()
-                .py_1()
-                .border_b_1()
-                .border_color(theme.border)
-                .text_color(query_color)
-                .child(query_text),
+                .pt_1()
+                .text_color(theme.muted_foreground)
+                .child(prompt.question.clone()),
         );
-    for (index, specification) in results(state, &palette.query).into_iter().enumerate() {
-        let keybinding = specification.keybinding.unwrap_or("");
-        let action = specification.id;
-        let row_background = if index == palette.selected {
-            theme.list_active
-        } else {
-            theme.popover
-        };
-        let mut row = div()
-            .id(format!("palette-{:?}", specification.id))
+    }
+    panel = panel.child(
+        div()
+            .id("command-palette-query")
             .test_support()
-            .mx_1()
-            .my_1()
             .px_2()
             .py_1()
-            .rounded_md()
-            .bg(row_background)
-            .text_color(theme.popover_foreground)
-            .hover(|style| style.bg(theme.list_hover))
-            .child(format!(
-                "{} — {} {}",
-                specification.name, specification.explanation, keybinding
-            ));
-        if let Some(target) = shell.cloned() {
-            row = row.on_click(move |_event, window, application| {
-                let _ignored = target.update(application, |window_shell, context| {
-                    window_shell.palette_mut().selected = index;
-                    let mut palette_state = std::mem::take(window_shell.palette_mut());
-                    let _dispatched =
-                        dispatch_action(window_shell, &mut palette_state, action, window, context);
-                    *window_shell.palette_mut() = palette_state;
-                    context.notify();
-                });
-            });
-        }
-        panel = panel.child(row);
+            .border_b_1()
+            .border_color(theme.border)
+            .text_color(query_color)
+            .child(query_text),
+    );
+    let mut list = div()
+        .id("command-palette-rows")
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .py_1()
+        .overflow_y_scroll()
+        .track_scroll(&palette.scroll);
+    let rows = rows(state, palette);
+    if rows.is_empty() {
+        let empty = if palette.prompt.is_some() {
+            "Nothing matches"
+        } else {
+            "No command matches"
+        };
+        list = list.child(
+            div()
+                .px_3()
+                .py_2()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(empty),
+        );
     }
+    for (index, row) in rows.into_iter().enumerate() {
+        list = list.child(row_element(
+            theme,
+            index,
+            row,
+            index == palette.selected,
+            shell,
+        ));
+    }
+    let panel = panel.child(list);
     closed
         .absolute()
         .inset_0()
@@ -250,6 +406,9 @@ pub fn dispatch(
 
 /// Dispatch one inventory action and close the palette when the bridge accepts it.
 ///
+/// An action that needs an argument turns the palette into its prompt
+/// instead; an action with nothing to act on says so in a notification.
+///
 /// # Errors
 ///
 /// Returns the bridge error when the selected host is stopped or refuses the
@@ -266,13 +425,72 @@ pub fn dispatch_action(
         palette.close();
         return Ok(true);
     }
+    match prompt::begin(action, shell.hosts().state(), shell.selected()) {
+        Some(Step::Ask(prompt)) => {
+            palette.ask(prompt);
+            return Ok(true);
+        }
+        Some(Step::Perform(answer)) => {
+            perform(shell, answer)?;
+            palette.close();
+            return Ok(true);
+        }
+        None => {}
+    }
     let dispatched = shell.dispatch_action(action)?;
     if dispatched {
         palette.close();
-    } else if action == ActionId::AddHost {
-        window.push_notification(Notification::error(ADD_HOST_NOT_WIRED_UP), context);
+    } else if let Some(specification) = INVENTORY
+        .iter()
+        .find(|specification| specification.id == action)
+    {
+        let message = format!("\u{201C}{}\u{201D} {NOTHING_TO_ACT_ON}", specification.name);
+        window.push_notification(Notification::error(message), context);
     }
     Ok(dispatched)
+}
+
+/// Send the operation the open prompt's answer asks for, closing the palette
+/// when the bridge accepts it.
+///
+/// Returns `false` without sending anything while the answer is an empty
+/// name or matches no choice.
+///
+/// # Errors
+///
+/// Returns the bridge error when the host is stopped or refuses the command.
+pub fn submit_prompt(
+    shell: &mut WindowShell,
+    palette: &mut Palette,
+) -> Result<bool, crate::bridge::EngineError> {
+    let Some(answer) = palette
+        .prompt
+        .as_ref()
+        .and_then(|prompt| prompt::answer(prompt, &palette.query, palette.selected))
+    else {
+        return Ok(false);
+    };
+    perform(shell, answer)?;
+    palette.close();
+    Ok(true)
+}
+
+/// Perform the operation an answer asks for through the shell's engine.
+///
+/// # Errors
+///
+/// Returns the bridge error when the host is stopped or refuses the operation.
+pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bridge::EngineError> {
+    match answer {
+        Answer::AddHost(alias) => shell.add_host(&alias),
+        Answer::Host { operation, host } => match operation {
+            HostOperation::Remove => shell.hosts_mut().remove_host(&host.0),
+            HostOperation::Reconnect => shell.hosts_mut().reconnect(&host.0),
+            HostOperation::Upgrade => shell.hosts_mut().upgrade(&host.0, false),
+            HostOperation::Uninstall => shell.hosts_mut().uninstall(&host.0),
+        },
+        Answer::Command { host, command } => shell.dispatch_command(&host.0, command).map(|_| ()),
+    }
 }
 
 impl WindowShell {
@@ -302,21 +520,75 @@ impl WindowShell {
     ) -> PaletteAction {
         let action = self.palette.key(key, character, result_count);
         if matches!(action, PaletteAction::Dispatch) {
-            let selected_action = selected_action(self.hosts().state(), &self.palette);
-            if let Some(selected_action) = selected_action {
-                let mut palette_state = std::mem::take(&mut self.palette);
-                match dispatch_action(self, &mut palette_state, selected_action, window, context) {
-                    Ok(true | false) => self.palette = palette_state,
-                    Err(error) => {
-                        self.palette = palette_state;
-                        self.failure(&HostId("palette".to_owned()), error.to_string(), context);
-                    }
-                }
-            }
+            let selected_action = if self.palette.prompt.is_some() {
+                None
+            } else {
+                selected_action(self.hosts().state(), &self.palette)
+            };
+            self.choose(selected_action, window, context);
         }
         context.notify();
         action
     }
+    /// Run an inventory action, or answer the open prompt when `action` is
+    /// `None`, reporting a refusal as a failure notice.
+    pub fn choose(
+        &mut self,
+        action: Option<ActionId>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
+        let mut palette_state = std::mem::take(&mut self.palette);
+        let result = match action {
+            Some(action) => dispatch_action(self, &mut palette_state, action, window, context),
+            None => submit_prompt(self, &mut palette_state),
+        };
+        self.palette = palette_state;
+        if let Err(error) = result {
+            self.failure(&HostId("palette".to_owned()), error.to_string(), context);
+        }
+        context.notify();
+    }
+    /// Run the action bound to a keystroke through the palette's own path: an
+    /// argument-free action is sent at once, one that needs an argument opens
+    /// the palette at its prompt. Returns whether a binding matched.
+    pub fn chord(
+        &mut self,
+        keystroke: &Keystroke,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some(action) = bound_action(&self.settings.keybindings, keystroke) else {
+            return false;
+        };
+        self.palette.open();
+        self.choose(Some(action), window, context);
+        if self.palette.prompt.is_none() {
+            self.palette.close();
+        }
+        true
+    }
+}
+
+/// The available inventory action a keystroke is bound to: a settings
+/// override by action name wins over the inventory's default chord.
+fn bound_action(
+    overrides: &std::collections::BTreeMap<String, String>,
+    keystroke: &Keystroke,
+) -> Option<ActionId> {
+    INVENTORY
+        .iter()
+        .find(|specification| {
+            overrides
+                .get(&format!("{:?}", specification.id))
+                .map(String::as_str)
+                .or(specification.keybinding)
+                .and_then(|chord| Keystroke::parse(chord).ok())
+                .is_some_and(|bound| {
+                    bound.modifiers == keystroke.modifiers && bound.key == keystroke.key
+                })
+        })
+        .map(|specification| specification.id)
 }
 
 /// Route one keyboard event into the palette: opening it on `ctrl-shift-p`
@@ -342,7 +614,7 @@ pub fn route_key(
         .key_char
         .as_deref()
         .and_then(|text| text.chars().next());
-    let result_count = results(shell.hosts().state(), &shell.palette().query).len();
+    let result_count = result_count(shell.hosts().state(), shell.palette());
     let _action = shell.palette_key(
         &event.keystroke.key,
         character,
@@ -354,7 +626,7 @@ pub fn route_key(
 }
 
 /// Whether the characters of a query occur in order in a candidate string.
-fn fuzzy_match(candidate: &str, query: &str) -> bool {
+pub(crate) fn fuzzy_match(candidate: &str, query: &str) -> bool {
     let mut candidate_characters = candidate.chars();
     query.chars().all(|query_character| {
         candidate_characters.any(|candidate_character| candidate_character == query_character)

@@ -40,11 +40,23 @@ fn typing_filters_and_backspace_restores_the_palette(context: &mut TestAppContex
     check(&types_and_deletes(context));
 }
 
-/// Choosing Add Host before its host-entry form exists surfaces a failure
-/// notice instead of silently doing nothing.
+/// Choosing Add Host turns the palette into its alias prompt instead of
+/// sending anything.
 #[gpui_kit::test]
-fn add_host_without_a_form_shows_a_failure_notice(context: &mut TestAppContext) {
-    check(&add_host_notice(context));
+fn add_host_asks_for_its_alias(context: &mut TestAppContext) {
+    check(&add_host_prompt(context));
+}
+
+/// A default chord for an argument action opens the palette at its prompt.
+#[gpui_kit::test]
+fn a_chord_opens_its_prompt(context: &mut TestAppContext) {
+    check(&chord_prompt(context));
+}
+
+/// A default chord whose action has nothing to act on says so in a notification.
+#[gpui_kit::test]
+fn a_chord_with_nothing_to_act_on_shows_a_notice(context: &mut TestAppContext) {
+    check(&chord_notice(context));
 }
 
 /// Assemble the bridge and terminal owner a headless shell needs, without
@@ -179,16 +191,16 @@ fn types_and_deletes(context: &mut TestAppContext) -> Result<(), Failed> {
     Ok(())
 }
 
-/// Select Add Host with Enter and assert a toast notification appears.
+/// Open a shell inside the kit's root, which hosts the notification layer.
 ///
 /// # Errors
-/// Returns setup or assertion failures.
-///
-/// # Panics
-/// Panics when the notification does not appear.
-fn add_host_notice(context: &mut TestAppContext) -> Result<(), Failed> {
+/// Returns setup failures.
+fn open_in_root<'context>(
+    context: &'context mut TestAppContext,
+    label: &str,
+) -> Result<(&'context mut gpui_kit::VisualTestContext, PathBuf), Failed> {
     context.update(gpui_kit::init);
-    let directory = temporary_directory("add-host")?;
+    let directory = temporary_directory(label)?;
     let (bridge, thread) = owners(&directory)?;
     let (_view, context) = context.add_window_view(|window, context| {
         let shell = context.new(|context| {
@@ -205,16 +217,79 @@ fn add_host_notice(context: &mut TestAppContext) -> Result<(), Failed> {
         });
         gpui_kit::component::Root::new(shell, window, context)
     });
+    Ok((context, directory))
+}
+
+/// Select Add Host with Enter and assert its prompt appears and nothing is sent.
+///
+/// # Errors
+/// Returns setup or assertion failures.
+///
+/// # Panics
+/// Panics when the prompt does not replace the inventory or a notice appears.
+fn add_host_prompt(context: &mut TestAppContext) -> Result<(), Failed> {
+    let (context, directory) = open_in_root(context, "add-host")?;
     context.simulate_keystrokes("ctrl-shift-p");
+    context.simulate_keystrokes("enter");
     context.update(|window, _application| {
+        window.find("command-palette-question").visible();
+        assert!(
+            window.try_find("palette-AddHost").is_none(),
+            "the prompt replaces the inventory rows"
+        );
         assert!(
             window.try_find("notification").is_none(),
-            "no toast before Add Host is chosen"
+            "asking for an argument is not a failure"
         );
     });
     context.simulate_keystrokes("enter");
     context.update(|window, _application| {
+        window.find("command-palette-question").visible();
+    });
+    context.simulate_keystrokes("escape");
+    context.update(|window, _application| {
+        assert!(
+            window.try_find("command-palette-question").is_none(),
+            "escape abandons the prompt"
+        );
+    });
+    let _removed = std::fs::remove_dir_all(directory);
+    Ok(())
+}
+
+/// Press the Add Host chord with the palette closed and assert its prompt opens.
+///
+/// # Errors
+/// Returns setup or assertion failures.
+///
+/// # Panics
+/// Panics when the chord does not open the prompt.
+fn chord_prompt(context: &mut TestAppContext) -> Result<(), Failed> {
+    let (context, directory) = open_in_root(context, "chord-prompt")?;
+    context.simulate_keystrokes("ctrl-shift-h");
+    context.update(|window, _application| {
+        window.find("command-palette-question").visible();
+    });
+    let _removed = std::fs::remove_dir_all(directory);
+    Ok(())
+}
+
+/// Press the New Session chord with no host and assert a notice, with the palette closed.
+///
+/// # Errors
+/// Returns setup or assertion failures.
+///
+/// # Panics
+/// Panics when no notice appears or the palette is left open.
+fn chord_notice(context: &mut TestAppContext) -> Result<(), Failed> {
+    let (context, directory) = open_in_root(context, "chord-notice")?;
+    context.simulate_keystrokes("ctrl-shift-n");
+    context.update(|window, _application| {
         window.find("notification").visible();
+        assert!(
+            window.try_find("command-palette-query").is_none(),
+            "a chord that sent nothing leaves the palette closed"
+        );
     });
     let _removed = std::fs::remove_dir_all(directory);
     Ok(())

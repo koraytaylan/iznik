@@ -49,6 +49,8 @@ fn malformed_keybinding_is_refused() {
 /// Panics when the stable settings format is not reversible.
 fn settings_round_trip() {
     let mut settings = Settings::default();
+    settings.theme.line_height = 1.5;
+    settings.theme.tabs_in_title_bar = true;
     settings
         .keybindings
         .insert("CreateSession".to_owned(), "ctrl-n".to_owned());

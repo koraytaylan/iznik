@@ -57,3 +57,15 @@ id = "settings-chrome-font-matches-at-startup"
 statement = "A freshly constructed shell applies its own settings font to the kit's chrome immediately at construction, so the settings window shows the same size the app is actually drawn with from the start, instead of the kit's unrelated built-in default until the first edit."
 test = "iznik-app::window_shell::window_starts_with_its_own_settings_font_not_the_chrome_default"
 because = "The test drives a real shell construction directly and needs no container."
+
+[[claim]]
+id = "terminal-font-is-monospace"
+statement = "The terminal draws with the requested font family when it is installed, and otherwise — the generic monospace name included — with an installed common monospace family."
+test = "iznik-app::theme::the_terminal_font_is_an_installed_monospace_family"
+because = "resolution is pure over the installed family names"
+
+[[claim]]
+id = "tabs-in-title-bar"
+statement = "With tabs in the title bar turned on, the selected session's tabs are drawn inside the window's title bar and no separate tab bar is drawn."
+test = "iznik-app::window_shell::tabs_move_into_the_title_bar_when_asked"
+because = "layout is the headless production shell's own rendering"

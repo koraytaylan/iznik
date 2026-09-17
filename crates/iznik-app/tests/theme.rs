@@ -2,7 +2,7 @@
 
 use gpui_kit::TestAppContext;
 use gpui_kit::component::{ActiveTheme, ThemeMode, ThemeRegistry};
-use iznik_app::theme::apply_default_theme;
+use iznik_app::theme::{GENERIC_MONOSPACE, apply_default_theme, terminal_font};
 
 /// A representative name from each bundled theme family, present only if
 /// every family actually registered, not only the default.
@@ -54,4 +54,33 @@ fn applies(context: &mut TestAppContext) -> Result<(), Failed> {
         }
         Ok(())
     })
+}
+
+#[test]
+/// The terminal draws with the requested family when it is installed, and
+/// otherwise — the generic name included — with an installed common
+/// monospace family.
+///
+/// # Panics
+///
+/// Panics when a resolved family differs.
+fn the_terminal_font_is_an_installed_monospace_family() {
+    let installed = [
+        "Ubuntu Sans".to_owned(),
+        "DejaVu Sans Mono".to_owned(),
+        "Source Code Pro".to_owned(),
+    ];
+    assert_eq!(
+        terminal_font(GENERIC_MONOSPACE, &installed),
+        "Source Code Pro"
+    );
+    assert_eq!(
+        terminal_font("DejaVu Sans Mono", &installed),
+        "DejaVu Sans Mono"
+    );
+    assert_eq!(
+        terminal_font("Not Installed", &installed),
+        "Source Code Pro"
+    );
+    assert_eq!(terminal_font(GENERIC_MONOSPACE, &[]), GENERIC_MONOSPACE);
 }

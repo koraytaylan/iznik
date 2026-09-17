@@ -36,6 +36,7 @@ fn palette_selection_wraps_and_open_resets_state() {
         open: true,
         query: "old".to_owned(),
         selected: 2,
+        ..Palette::default()
     };
     palette.move_selection(true, 3);
     assert_eq!(palette.selected, 0);
@@ -97,6 +98,7 @@ fn palette_selection_resolves_inventory_identity() {
         open: true,
         query: "begin".to_owned(),
         selected: 0,
+        ..Palette::default()
     };
     assert_eq!(selected_action(&state, &palette), Some(ActionId::AddHost));
 }

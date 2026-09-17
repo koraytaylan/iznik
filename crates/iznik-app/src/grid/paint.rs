@@ -37,7 +37,7 @@ const RED_SHIFT: u32 = 16;
 const GREEN_SHIFT: u32 = 8;
 
 /// Convert the emulator's resolved RGB without losing a channel or alpha.
-pub(super) fn color(value: RgbColor) -> Hsla {
+pub(crate) fn color(value: RgbColor) -> Hsla {
     rgb((u32::from(value.r) << RED_SHIFT)
         | (u32::from(value.g) << GREEN_SHIFT)
         | u32::from(value.b))

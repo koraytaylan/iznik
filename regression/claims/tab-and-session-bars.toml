@@ -1,6 +1,6 @@
 [[claim]]
 id = "bars-follow-settled-model"
-statement = "The tab and session bars render explicit empty states and stable entries directly from the settled client model."
+statement = "With no host held the session bar says so and the tab bar offers no new tab, rendered directly from the settled client model."
 test = "iznik-app::bars::bars_render_empty_states"
 because = "the headless GPUI renderer reads EngineState directly, so no transport or display is needed to prove model-driven entries"
 
@@ -27,3 +27,27 @@ id = "bars-close-reconciles"
 statement = "A tab removal delta removes the tab from the bars projection."
 test = "iznik-app::bars::tab_removal_reconciles_bars"
 because = "EngineState applies the canonical reducer delta before the bars projection reads the model"
+
+[[claim]]
+id = "tab-drop-order"
+statement = "A tab dropped onto another takes that tab's place — after it when moved right, before it when moved left — and a drop onto itself or an unknown tab changes nothing."
+test = "iznik-app::tab_actions::a_dropped_tab_takes_the_place_it_was_dropped_on"
+because = "the order is pure over the session's tab list"
+
+[[claim]]
+id = "tab-menu-moves"
+statement = "A tab's Move Left and Move Right change places with the tab beside it and are unavailable at either end."
+test = "iznik-app::tab_actions::moves_change_places_and_stop_at_either_end"
+because = "the order is pure over the session's tab list"
+
+[[claim]]
+id = "tab-menu-closes"
+statement = "Close Other Tabs closes every other tab of the session, and Close Tabs to the Right closes the tabs after it."
+test = "iznik-app::tab_actions::close_entries_close_the_right_tabs"
+because = "which tabs close is pure over the session's tab list"
+
+[[claim]]
+id = "tab-bar-live-drag-and-menu"
+statement = "Dragging a tab onto another reorders the session's tabs on a live host, and choosing Close Other Tabs from a tab's menu leaves only that tab."
+test = "iznik-app::end_to_end::tab_bar_drag_and_menu_drive_the_in_process_stack"
+because = "the headless production shell drives native pointer dispatch against the in-process daemon stack; the menu is rendered without the kit's context-menu wrapper, whose reference cycle the test app's leak check reports"

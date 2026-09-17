@@ -1,9 +1,13 @@
 //! Pure split interaction helpers used by the window chrome.
 
+use std::rc::Rc;
+
 use gpui_kit::{AnyElement, IntoElement};
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{PaneId, TabId};
 use iznik_protocol::model::{LayoutNode, SplitDirection, Weighted};
+
+use crate::window::{TabKey, WindowShell};
 
 /// The smallest positive factor accepted by the normalized layout.
 const MINIMUM_WEIGHT: u32 = 1;
@@ -199,4 +203,45 @@ pub fn render_interactive(
     on_resize: crate::layout::ResizeCallback,
 ) -> AnyElement {
     crate::layout::render_layout_with_resize(layout, revision, pane, on_resize).into_any_element()
+}
+
+/// Build the callback that turns a native root-divider resize into a command.
+pub(crate) fn resize_callback(
+    selected: &TabKey,
+    layout: &LayoutNode,
+    entity: &gpui_kit::WeakEntity<WindowShell>,
+) -> crate::layout::ResizeCallback {
+    let selected = selected.clone();
+    let layout = layout.clone();
+    let entity = entity.clone();
+    Rc::new(move |state, _window, application| {
+        let sizes = state.read(application).sizes().clone();
+        let Some(first) = sizes.first().copied() else {
+            return;
+        };
+        let Some(second) = sizes.get(1).copied() else {
+            return;
+        };
+        let extent = f32::from(first) + f32::from(second);
+        let LayoutNode::Split { children, .. } = &layout else {
+            return;
+        };
+        let Some(left) = children.first() else {
+            return;
+        };
+        let Some(right) = children.get(1) else {
+            return;
+        };
+        let Some(delta) = resize_delta(f32::from(first), extent, left.weight, right.weight) else {
+            return;
+        };
+        if let Some(command) = drag_command(selected.tab, &layout, 0, delta, extent) {
+            let alias = selected.host.0.clone();
+            let _updated = entity.update(application, |shell, context| {
+                if let Err(error) = shell.dispatch_command(&alias, command) {
+                    shell.failure(&selected.host, error.to_string(), context);
+                }
+            });
+        }
+    })
 }

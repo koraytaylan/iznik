@@ -65,6 +65,31 @@ pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
 
 /// Default terminal font size in logical pixels.
 const DEFAULT_FONT_SIZE: f32 = 14.0;
+/// Default row height as a multiple of the font size: the conventional
+/// comfortable spacing (CSS's `normal` for most fonts, Windows Terminal's
+/// default), which keeps descenders clear of the row below.
+const DEFAULT_LINE_HEIGHT: f32 = 1.2;
+/// The family name that means "the system's monospace font" rather than any
+/// one font.
+pub const GENERIC_MONOSPACE: &str = "monospace";
+/// Monospace families tried, in order, when the generic family is asked for
+/// or the requested family is not installed: common programming fonts first,
+/// then each platform's own.
+const MONOSPACE_FAMILIES: &[&str] = &[
+    "JetBrains Mono",
+    "Fira Code",
+    "Cascadia Code",
+    "Source Code Pro",
+    "SF Mono",
+    "Menlo",
+    "Consolas",
+    "Ubuntu Sans Mono",
+    "Ubuntu Mono",
+    "DejaVu Sans Mono",
+    "Noto Sans Mono",
+    "Liberation Mono",
+    "Courier New",
+];
 use libghostty_vt::style::RgbColor;
 
 /// User-facing colors and typography shared by every surface.
@@ -78,6 +103,11 @@ pub struct AppTheme {
     pub font_family: String,
     /// Font size in logical pixels.
     pub font_size: f32,
+    /// Row height as a multiple of the font size.
+    pub line_height: f32,
+    /// Whether the selected session's tabs are drawn in the window's title
+    /// bar rather than in a bar of their own.
+    pub tabs_in_title_bar: bool,
 }
 
 impl Default for AppTheme {
@@ -86,10 +116,32 @@ impl Default for AppTheme {
         Self {
             foreground: terminal.foreground,
             background: terminal.background,
-            font_family: "monospace".to_owned(),
+            font_family: GENERIC_MONOSPACE.to_owned(),
             font_size: DEFAULT_FONT_SIZE,
+            line_height: DEFAULT_LINE_HEIGHT,
+            tabs_in_title_bar: false,
         }
     }
+}
+
+/// The family the terminal draws with: the requested one when it is
+/// installed, otherwise the first installed common monospace family, and the
+/// request itself when none is — the text system's own fallback is then all
+/// there is.
+///
+/// A terminal places every glyph on a column grid, so a proportional font
+/// draws uneven text; the generic name is not one the text system resolves to
+/// a monospace face by itself.
+#[must_use]
+pub fn terminal_font(requested: &str, installed: &[String]) -> String {
+    let is_installed = |family: &str| installed.iter().any(|name| name == family);
+    if requested != GENERIC_MONOSPACE && is_installed(requested) {
+        return requested.to_owned();
+    }
+    MONOSPACE_FAMILIES
+        .iter()
+        .find(|family| is_installed(family))
+        .map_or_else(|| requested.to_owned(), |family| (*family).to_owned())
 }
 
 /// Convert the application theme into the emulator's source of truth.

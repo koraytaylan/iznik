@@ -20,6 +20,15 @@ use crate::window::WindowShell;
 const MIN_FONT_SIZE: f32 = 8.0;
 /// Upper bound a font size is clamped to.
 const MAX_FONT_SIZE: f32 = 32.0;
+/// Tightest row height offered, as a multiple of the font size.
+const MIN_LINE_HEIGHT: f32 = 1.0;
+/// Loosest row height offered.
+const MAX_LINE_HEIGHT: f32 = 2.0;
+/// How far one step of the row height field moves it.
+const LINE_HEIGHT_STEP: f64 = 0.1;
+/// Steps per unit of row height, so the field shows `1.2` rather than the
+/// `1.2000000476837158` a 32-bit value widens to.
+const LINE_HEIGHT_STEPS_PER_UNIT: f64 = 10.0;
 
 /// Initial width of the settings window.
 const WINDOW_WIDTH: f32 = 900.0;
@@ -94,8 +103,7 @@ fn edit_theme(shell: &WeakEntity<WindowShell>, app: &mut App, edit: impl FnOnce(
     shell.update(app, |shell, context| {
         let mut theme = shell.settings.theme.clone();
         edit(&mut theme);
-        shell.settings.theme = theme.clone();
-        shell.apply_theme(&theme, context);
+        shell.set_theme(theme, context);
     });
 }
 
@@ -148,8 +156,60 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
                         }
                     },
                 ),
-            )),
+            ))
+            .item(line_height_item(shell))
+            .item(tabs_in_title_bar_item(shell)),
     )
+}
+
+/// The row height setting: a multiple of the font size.
+fn line_height_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
+    SettingItem::new(
+        "Line Height",
+        SettingField::number_input(
+            NumberFieldOptions {
+                min: f64::from(MIN_LINE_HEIGHT),
+                max: f64::from(MAX_LINE_HEIGHT),
+                step: LINE_HEIGHT_STEP,
+            },
+            {
+                let shell = shell.clone();
+                move |app| {
+                    (f64::from(theme_of(&shell, app).line_height) * LINE_HEIGHT_STEPS_PER_UNIT)
+                        .round()
+                        / LINE_HEIGHT_STEPS_PER_UNIT
+                }
+            },
+            {
+                let shell = shell.clone();
+                move |value, app| {
+                    if let Ok(line_height) = value.to_string().parse::<f32>() {
+                        let clamped = line_height.clamp(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT);
+                        edit_theme(&shell, app, |theme| theme.line_height = clamped);
+                    }
+                }
+            },
+        ),
+    )
+    .description("Row height as a multiple of the font size.")
+}
+
+/// The setting that draws the tabs in the window's title bar.
+fn tabs_in_title_bar_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
+    SettingItem::new(
+        "Tabs in Title Bar",
+        SettingField::switch(
+            {
+                let shell = shell.clone();
+                move |app| theme_of(&shell, app).tabs_in_title_bar
+            },
+            {
+                let shell = shell.clone();
+                move |value, app| edit_theme(&shell, app, |theme| theme.tabs_in_title_bar = value)
+            },
+        ),
+    )
+    .description("Show the session's tabs in the window's title bar instead of a bar of their own.")
 }
 
 /// Every registered theme's name, sorted for the dropdown's option list.

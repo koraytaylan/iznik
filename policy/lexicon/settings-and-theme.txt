@@ -18,6 +18,7 @@ fahrenheit
 families
 family
 flexoki
+generic
 gruvbox
 harper
 hybrid
@@ -30,6 +31,7 @@ mellifluous
 min
 mirage
 molokai
+monospace
 overrides
 propagates
 reload
@@ -37,6 +39,7 @@ representative
 settings
 solarized
 spaceduck
+spacing
 stamp
 theme
 themes

@@ -137,7 +137,7 @@ impl Render for BarsFixture {
     }
 }
 
-/// Empty state is explicit in both strips.
+/// With no host held the session strip says so and the tab strip offers nothing.
 #[gpui_kit::test]
 fn bars_render_empty_states(context: &mut TestAppContext) {
     let result = empty_states(context);
@@ -170,11 +170,9 @@ fn empty_states(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::
     });
     draw(context, handle)?;
     context.update_window(handle.into(), |_, window, _| {
-        window
-            .find("tab-bar-empty")
-            .visible()
-            .then_some(())
-            .ok_or("tab empty state is missing")?;
+        if window.try_find("tab-new").is_some() {
+            return Err("an empty tab bar offers no new tab".into());
+        }
         window
             .find("session-bar-empty")
             .visible()

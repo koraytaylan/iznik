@@ -44,5 +44,42 @@ because = "GPUI's own default quits when the last window closes, which never fir
 [[claim]]
 id = "window-notification-layer"
 statement = "The production window renders the kit's notification layer over its own chrome, so a pushed toast becomes visible without a separate host component."
-test = "iznik-app::palette_shortcut::add_host_without_a_form_shows_a_failure_notice"
+test = "iznik-app::palette_shortcut::a_chord_with_nothing_to_act_on_shows_a_notice"
 because = "the notification layer is local rendering wiring over the kit's Root, no container needed"
+
+[[claim]]
+id = "window-focused-pane-chords"
+statement = "The visible pane takes keyboard focus, application chords such as ctrl-shift-p reach the shell before a focused terminal consumes them, and ctrl-w is left to the terminal."
+test = "iznik-app::window_shell::a_focused_pane_still_lets_chords_reach_the_shell"
+because = "key dispatch order and focus are the headless GPUI window's own behavior over a real terminal surface, no container needed"
+
+[[claim]]
+id = "window-stage-follows-host"
+statement = "With no tab visible the body welcomes when no host is held, describes a host being reached or unreachable with its remedies, and offers a session on a connected empty host, preferring the host added last."
+test = "iznik-app::flow::the_stage_follows_the_host_a_person_is_working_with"
+because = "the stage is a pure projection over the engine state"
+
+[[claim]]
+id = "window-host-banners-read-plainly"
+statement = "A host's state reads as a headline naming it with the manager's detail and a tone, and banners appear for every unconnected host except the one the stage describes."
+test = "iznik-app::flow::host_states_read_with_the_host_name_and_banners_do_not_repeat_the_stage"
+because = "the reading and the banner set are pure over the engine state"
+
+[[claim]]
+id = "window-follows-created-tabs-and-panes"
+statement = "A tab or pane created from the window is recognised when the model first holds it and not before."
+test = "iznik-app::flow::created_tabs_and_panes_are_found_once_present"
+because = "expectation resolution is pure over successive model states"
+
+[[claim]]
+id = "window-added-host-starts-once-ready"
+statement = "A host added from the window becomes ready for its first session only once it is connected and its model has arrived."
+test = "iznik-app::flow::an_added_host_starts_once_connected_with_its_model"
+because = "readiness is pure over the engine state"
+
+[[claim]]
+id = "window-welcome-stage-renders"
+statement = "The empty window renders the welcome stage with its Add Host button."
+test = "iznik-app::flow::the_empty_window_offers_add_host"
+because = "the headless GPUI window renders the production shell with no host"
+

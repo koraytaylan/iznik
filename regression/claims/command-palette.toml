@@ -53,7 +53,91 @@ test = "iznik-app::palette_shortcut::typing_filters_and_backspace_restores_the_p
 because = "typing and backspace both route through the shell's own key handling, no container needed"
 
 [[claim]]
-id = "command-palette-add-host-notice"
-statement = "Choosing Add Host before its host-entry form exists shows a failure notice instead of silently doing nothing."
-test = "iznik-app::palette_shortcut::add_host_without_a_form_shows_a_failure_notice"
-because = "the notice path is the shell's own local failure banner, no container needed"
+id = "command-palette-add-host-prompt"
+statement = "Choosing Add Host turns the palette into its alias prompt, sends nothing for a blank alias, and escape abandons it."
+test = "iznik-app::palette_shortcut::add_host_asks_for_its_alias"
+because = "the prompt is the shell's own palette state over its focus handle, no container needed"
+
+[[claim]]
+id = "command-palette-chord-prompt"
+statement = "A default chord for an argument action opens the palette at that action's prompt."
+test = "iznik-app::palette_shortcut::a_chord_opens_its_prompt"
+because = "chords route through the shell's own key handling into the palette path, no container needed"
+
+[[claim]]
+id = "command-palette-chord-notice"
+statement = "A default chord whose action has nothing to act on shows a notification and leaves the palette closed."
+test = "iznik-app::palette_shortcut::a_chord_with_nothing_to_act_on_shows_a_notice"
+because = "the notice is the kit's notification layer inside the shell's window, no container needed"
+
+[[claim]]
+id = "command-palette-argument-actions"
+statement = "Exactly the actions that need a name, alias, destination or arrangement open a prompt."
+test = "iznik-app::prompt::only_argument_actions_open_a_prompt"
+because = "which actions ask is a pure projection over the model mirror"
+
+[[claim]]
+id = "command-palette-rename-answers"
+statement = "Rename prompts start from the current name and send the trimmed new name; a blank name sends nothing."
+test = "iznik-app::prompt::renames_start_from_the_current_name"
+because = "building a rename command from an answer is pure over the model mirror"
+
+[[claim]]
+id = "command-palette-reorder-choices"
+statement = "Reordering offers every other position of the selected tab, each as the session's whole tab order."
+test = "iznik-app::prompt::reorder_offers_every_other_position_as_a_whole_order"
+because = "the offered orders are pure over the model mirror"
+
+[[claim]]
+id = "command-palette-move-choices"
+statement = "Moving a pane offers every other tab on its host and places the pane beside that tab's last pane."
+test = "iznik-app::prompt::move_pane_offers_every_other_tab"
+because = "the offered destinations are pure over the model mirror"
+
+[[claim]]
+id = "command-palette-layout-choices"
+statement = "Setting a layout offers even side-by-side and stacked arrangements of the tab's panes in reading order, and none for a single pane."
+test = "iznik-app::prompt::set_layout_offers_even_arrangements"
+because = "the offered arrangements are pure over the model mirror"
+
+[[claim]]
+id = "command-palette-choice-filter"
+statement = "A choice answer selects within the fuzzy-filtered choices, and an answer matching nothing sends nothing."
+test = "iznik-app::prompt::choice_answers_index_the_filtered_choices"
+because = "filtering and selection are local palette state"
+
+[[claim]]
+id = "command-palette-alias-answer"
+statement = "Add Host sends the trimmed alias and refuses a blank one."
+test = "iznik-app::prompt::add_host_answers_with_the_trimmed_alias"
+because = "building the host operation from an answer is pure"
+
+[[claim]]
+id = "command-palette-prompts-live"
+statement = "A host added through the palette prompt gets exactly one session, selected; a created tab is selected; and session and tab renames, tab reorder, layout and pane move answered through the prompt all land on a live host."
+test = "iznik-app::end_to_end::palette_prompts_drive_the_in_process_stack"
+because = "the headless production shell drives the same prompt path against the in-process daemon stack, as the host-dispatch claim does"
+
+[[claim]]
+id = "command-palette-host-operation-single"
+statement = "A host operation that applies to exactly one held host is performed on that host without asking, and one that applies to none is not offered."
+test = "iznik-app::prompt::a_host_operation_with_one_host_is_performed_at_once"
+because = "which hosts an operation applies to is a pure projection over the engine state"
+
+[[claim]]
+id = "command-palette-host-operation-choice"
+statement = "A host operation that applies to several hosts asks which, listing the selected tab's host first."
+test = "iznik-app::prompt::a_host_operation_with_many_hosts_asks_which"
+because = "the host choice is a pure projection over the engine state and the selection"
+
+[[claim]]
+id = "command-palette-uninstall-confirms"
+statement = "Uninstalling iznik-server always asks for confirmation naming that every session on the host ends, even with one host."
+test = "iznik-app::prompt::uninstall_asks_even_for_one_host"
+because = "the confirmation step is pure prompt construction"
+
+[[claim]]
+id = "command-palette-numbered-names"
+statement = "New sessions and tabs take their base name, or the base followed by the first free number."
+test = "iznik-app::prompt::numbered_names_pass_taken_ones"
+because = "naming is a pure function of the names already present"

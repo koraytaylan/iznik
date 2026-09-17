@@ -15,6 +15,42 @@ reports, not a build that fails. `EmptyView` paints its surface from the
 kit's active theme, background and foreground included, through the 0.3.5
 `gpui` line that `gpui-kit` 0.6.1 pins exact.
 
+## Servers it can install
+
+Reaching an ssh host that has no `iznik-server` of its own means installing
+one, and the application installs only what it carries. A bundle carries
+every server, one `<triple>/iznik-server` per triple: under
+`share/iznik/artifacts` beside `bin/` on Linux, and under
+`Contents/Resources/artifacts` in a macOS bundle. The application finds them
+two directories up from its own executable. `cargo xtask app-bundle` takes
+them with `--servers <directory>`, as `cargo xtask distribution --target
+<triple>` lays them out under the target directory's `distribution`, and refuses a directory
+that holds none.
+
+To run the application from the workspace, use the script or the alias it
+runs:
+
+```sh
+./scripts/app/run.sh      # checks the toolchain, then runs `cargo app`
+cargo app                 # builds the server, then `cargo run --package iznik-app`
+```
+
+`cargo app` builds the server for this machine's architecture with
+`cargo xtask distribution` — about a second when nothing changed, with cargo's
+progress on the terminal — into the target directory's `distribution`, where
+the application looks. `--target <triple>` builds others. The application
+itself never builds anything; a plain `cargo run --package iznik-app` uses
+whatever servers are already there.
+
+`IZNIK_ARTIFACTS_DIRECTORY` — the variable the `iznik` command reads too —
+names a directory of servers instead. With no server found, the application
+says so on standard error at start: a `unix:` socket still connects, and an
+ssh host without a server fails naming the machine it needed and the servers
+the build does carry. A server rebuilt without a version change is not
+reinstalled on a host that already has that version, because the bootstrap
+compares versions, not bytes; `host: uninstall` takes it off so the next
+connection installs the new one.
+
 ## Modules
 
 | Module | Holds |
@@ -23,6 +59,8 @@ kit's active theme, background and foreground included, through the 0.3.5
 | `bars` | Model-driven tab and session bars rendered above the pane area. |
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |
+| `follow` | What the window follows after a person asks: the added host's first session, the created tab's selection and the visible pane's keyboard focus. |
+| `prompt` | The palette's argument step: names, host aliases, destinations and arrangements an action needs before it is sent. |
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
@@ -30,9 +68,12 @@ kit's active theme, background and foreground included, through the 0.3.5
 | `grid` | Custom GPUI row painting from owned snapshots, cached row damage, selection geometry, and viewport requests to the VT owner. |
 | `window` | Model-driven pane lifetime, shared owner polling, focus/geometry submission, and kit host-state banners; transport lifecycle proofs and startup integration remain pending. |
 | `layout` | Model split directions and weights rendered through kit resizable panels with caller-owned leaf entities. |
+| `stage` | The body shown while no tab is visible: welcome, a host being reached or unreachable, or a connected host with no session. |
+| `status` | How a host's connection reads: headline, detail, tone and remedies, shared by the stage, the banners and the session bar. |
 | `splits` | Pure divider weight and equalization helpers for authoritative layouts. |
 | `settings` | Validated settings state retaining shared theme and keybinding overrides. |
 | `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
+| `tab_actions` | A tab's right-click menu and drag-to-reorder: the orders a move or a drop produces and the tabs its close entries close. |
 | `theme` | Application theme mapped into terminal emulator defaults. |
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |

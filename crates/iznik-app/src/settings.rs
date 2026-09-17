@@ -109,7 +109,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -117,7 +117,9 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme.background.g,
         settings.theme.background.b,
         settings.theme.font_family,
-        settings.theme.font_size
+        settings.theme.font_size,
+        settings.theme.line_height,
+        settings.theme.tabs_in_title_bar
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "keybinding.{action}={chord}");
@@ -140,6 +142,16 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             "foreground" => settings.theme.foreground = color(field, value)?,
             "background" => settings.theme.background = color(field, value)?,
             "font_family" => value.clone_into(&mut settings.theme.font_family),
+            "tabs_in_title_bar" => {
+                settings.theme.tabs_in_title_bar = value
+                    .parse()
+                    .map_err(|_parse_error| error(field, "not true or false"))?;
+            }
+            "line_height" => {
+                settings.theme.line_height = value
+                    .parse()
+                    .map_err(|_parse_error| error(field, "not a number"))?;
+            }
             "font_size" => {
                 settings.theme.font_size = value
                     .parse()
@@ -187,5 +199,13 @@ fn error(field: &str, message: &str) -> SettingsError {
     SettingsError {
         field: field.to_owned(),
         message: message.to_owned(),
+    }
+}
+
+impl crate::window::WindowShell {
+    /// The settings the shell is running with.
+    #[must_use]
+    pub fn settings(&self) -> &Settings {
+        &self.settings
     }
 }

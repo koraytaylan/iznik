@@ -5,6 +5,7 @@ mod ime;
 mod interaction;
 mod keyboard;
 mod paint;
+pub(crate) use paint::color as terminal_color;
 
 use iznik_client::host::manager::credit::CreditReceipt;
 use std::collections::{BTreeMap, VecDeque};
@@ -720,24 +721,31 @@ fn scale(value: Pixels, factor: f32) -> Pixels {
     finite(f32::from(value) * factor)
 }
 
-/// Measure one monospace cell's pixel geometry for a font and size, so a
-/// changed font actually changes what's painted instead of being clipped to
-/// the previous font's dimensions. Falls back to the initial cell width when
-/// the font has no "0" glyph to measure.
+/// Measure one monospace cell's pixel geometry for a font, size and line
+/// spacing, so a changed font actually changes what's painted instead of being
+/// clipped to the previous font's dimensions. Falls back to the initial cell
+/// width when the font has no "0" glyph to measure.
+///
+/// A row is `line_spacing` times the font size, rounded to whole pixels so
+/// rows never blur, and never shorter than the font's own ascent and descent,
+/// which is what glyphs need to not overlap. GPUI centres each line's glyphs
+/// in the row, so the spacing is shared above and below.
 pub(crate) fn measure_cell(
     text_system: &TextSystem,
     family: SharedString,
     font_size: Pixels,
+    line_spacing: f32,
 ) -> (Pixels, Pixels) {
     let font_id = text_system.resolve_font(&font(family));
     let cell_width = text_system
         .ch_advance(font_id, font_size)
         .unwrap_or(px(CELL_WIDTH));
-    let line_height = offset(
+    let glyph_height = offset(
         text_system.ascent(font_id, font_size),
         text_system.descent(font_id, font_size),
     );
-    (cell_width, line_height)
+    let spaced = scale(font_size, line_spacing).round();
+    (cell_width, spaced.max(glyph_height.ceil()))
 }
 
 /// Convert positive finite surface geometry to complete cells within the protocol range.

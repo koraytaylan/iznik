@@ -5,16 +5,14 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme, ElementExt, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, SharedString, Size, StatefulInteractiveElement,
-    Styled, Subscription, Task, TestSupportExt, Window, div, px,
+    KeyDownEvent, ParentElement, Pixels, Render, SharedString, Size, Styled, Subscription, Task,
+    TestSupportExt, Window, div, px,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
-use iznik_client::host::state::HostState;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{SessionId, TabId};
 use iznik_protocol::model::{LayoutNode, Tab};
@@ -22,14 +20,15 @@ use iznik_protocol::model::{LayoutNode, Tab};
 use crate::actions::ActionId;
 use crate::bars;
 use crate::bridge::{EngineBridge, EngineEvent};
+use crate::follow::{self, Following};
 use crate::grid::{GridMetrics, cells, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
-use crate::splits;
 use crate::surface::{PaneSurface, SurfaceFailure};
 use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
+use crate::{splits, stage, status};
 
 /// A short main-thread update cadence reads owned channels without blocking drawing.
 const UPDATE_INTERVAL: Duration = Duration::from_millis(16);
@@ -39,10 +38,14 @@ const MAXIMUM_EVENTS_PER_UPDATE: usize = 256;
 const DEFAULT_COLUMNS: u16 = 80;
 /// Default height used when the palette creates a new pane or session.
 const DEFAULT_ROWS: u16 = 24;
+/// Space between a terminal's text and its pane's edges, in logical pixels:
+/// the common inset terminals leave so text does not run into the frame.
+const TERMINAL_PADDING: f32 = 8.0;
 /// Default session name used by the argument-free palette action.
 const DEFAULT_SESSION_NAME: &str = "session";
-/// Default tab name used by the argument-free palette action.
-const DEFAULT_TAB_NAME: &str = "tab";
+/// Default tab name used by the argument-free palette action, matching the
+/// name the host gives a session's first tab.
+const DEFAULT_TAB_NAME: &str = "shell";
 
 /// Window options whose timing can be shortened or disabled by a headless caller.
 #[derive(Clone, Debug)]
@@ -127,6 +130,8 @@ pub struct WindowShell {
     /// Baseline window focus, held until a pane claims it, so shortcuts such
     /// as opening the palette work before any session exists.
     focus_handle: FocusHandle,
+    /// What the window is following on a person's behalf.
+    pub(crate) following: Following,
 }
 
 impl Focusable for WindowShell {
@@ -176,6 +181,7 @@ impl WindowShell {
             last_failure: None,
             palette: Palette::default(),
             focus_handle,
+            following: Following::default(),
         };
         let initial_theme = shell.settings.theme.clone();
         shell.apply_theme(&initial_theme, context);
@@ -202,7 +208,7 @@ impl WindowShell {
     ) -> Result<iznik_client::commands::Submission, crate::bridge::EngineError> {
         self.hosts.command(alias, command)
     }
-    /// Dispatch an inventory action using the current model selection.
+    /// Dispatch an inventory action to the host a new session would go to.
     ///
     /// # Errors
     ///
@@ -212,64 +218,81 @@ impl WindowShell {
         &mut self,
         action: ActionId,
     ) -> Result<bool, crate::bridge::EngineError> {
-        let selected = self.selected.clone();
-        let host = selected.as_ref().map(|key| key.host.0.clone()).or_else(|| {
-            self.hosts
-                .state()
-                .hosts()
-                .next()
-                .map(|(host, _)| host.0.clone())
-        });
-        let Some(host) = host else {
+        let Some(host) = self.target_host() else {
             return Ok(false);
         };
+        self.dispatch_action_on(action, &host)
+    }
+    /// Dispatch an inventory action, sending a new session to `host` and
+    /// everything built from the selection to the selection's host, and
+    /// following what it creates.
+    ///
+    /// # Errors
+    ///
+    /// Returns the bridge error when the host is stopped or refuses the command.
+    pub fn dispatch_action_on(
+        &mut self,
+        action: ActionId,
+        host: &HostId,
+    ) -> Result<bool, crate::bridge::EngineError> {
+        let selected = self.selected.clone();
         match action {
-            ActionId::RemoveHost => {
-                self.hosts.remove_host(&host)?;
-                return Ok(true);
-            }
-            ActionId::ReconnectHost => {
-                self.hosts.reconnect(&host)?;
-                return Ok(true);
-            }
-            ActionId::UpgradeHost => {
-                self.hosts.upgrade(&host, false)?;
-                return Ok(true);
-            }
-            ActionId::UninstallHost => {
-                self.hosts.uninstall(&host)?;
-                return Ok(true);
-            }
-            ActionId::AddHost => return Ok(false),
+            ActionId::RemoveHost => return self.hosts.remove_host(&host.0).map(|()| true),
+            ActionId::ReconnectHost => return self.hosts.reconnect(&host.0).map(|()| true),
+            ActionId::UpgradeHost => return self.hosts.upgrade(&host.0, false).map(|()| true),
+            ActionId::UninstallHost => return self.hosts.uninstall(&host.0).map(|()| true),
             _ => {}
         }
-        let Some(command) = self.command_for_action(action, selected.as_ref()) else {
+        let destination = match &selected {
+            Some(key) if action != ActionId::CreateSession => key.host.clone(),
+            _ => host.clone(),
+        };
+        let Some(command) = self.command_for_action(action, selected.as_ref(), &destination) else {
             return Ok(false);
         };
-        self.dispatch_command(&host, command).map(|_| true)
+        let expected = follow::expectation(action, self.hosts.state(), &destination);
+        self.dispatch_command(&destination.0, command)?;
+        if expected.is_some() {
+            self.following.expected = expected;
+        }
+        Ok(true)
     }
     /// Translate an argument-free action into a command using current state.
     fn command_for_action(
         &self,
         action: ActionId,
         selected: Option<&TabKey>,
+        host: &HostId,
     ) -> Option<SessionCommand> {
+        let sessions = self
+            .hosts
+            .state()
+            .model()
+            .host(host)
+            .map(|view| view.model.sessions.as_slice())
+            .unwrap_or_default();
         match action {
             ActionId::CreateSession => Some(SessionCommand::CreateSession {
-                name: DEFAULT_SESSION_NAME.to_owned(),
+                name: crate::prompt::numbered_name(
+                    DEFAULT_SESSION_NAME,
+                    sessions.iter().map(|session| session.name.as_str()),
+                ),
                 columns: DEFAULT_COLUMNS,
                 rows: DEFAULT_ROWS,
                 working_directory: None,
             }),
             ActionId::CloseTab => selected.map(|key| bars::close_tab(key.tab)),
             ActionId::CloseSession => selected.map(|key| bars::close_session(key.session)),
-            ActionId::SetLayout => Some(SessionCommand::SetLayout {
-                tab: selected?.tab,
-                layout: self.layout.clone()?,
-            }),
             ActionId::CreateTab => Some(SessionCommand::CreateTab {
                 session: selected?.session,
-                name: DEFAULT_TAB_NAME.to_owned(),
+                name: crate::prompt::numbered_name(
+                    DEFAULT_TAB_NAME,
+                    sessions
+                        .iter()
+                        .filter(|session| Some(session.id) == selected.map(|key| key.session))
+                        .flat_map(|session| &session.tabs)
+                        .map(|tab| tab.name.as_str()),
+                ),
                 columns: DEFAULT_COLUMNS,
                 rows: DEFAULT_ROWS,
                 working_directory: None,
@@ -294,6 +317,7 @@ impl WindowShell {
                 pane: self.hosts.state().model().host(&selected?.host)?.focus?,
             }),
             ActionId::RenameSession
+            | ActionId::SetLayout
             | ActionId::RenameTab
             | ActionId::ReorderTabs
             | ActionId::MovePane
@@ -310,18 +334,36 @@ impl WindowShell {
     pub fn selected(&self) -> Option<&TabKey> {
         self.selected.as_ref()
     }
+    /// Replace the selection without laying it out; the reconcile that
+    /// follows does that.
+    pub(crate) fn set_selected(&mut self, key: TabKey) {
+        self.selected = Some(key);
+    }
+    /// The panes of the visible layout, in reading order.
+    pub(crate) fn visible_panes(&self) -> Vec<iznik_protocol::identity::PaneId> {
+        self.layout
+            .as_ref()
+            .map(LayoutNode::leaves)
+            .unwrap_or_default()
+    }
+    /// Replace the shell's appearance settings and apply them everywhere.
+    pub fn set_theme(&mut self, theme: AppTheme, context: &mut Context<'_, Self>) {
+        self.apply_theme(&theme, context);
+        self.settings.theme = theme;
+    }
     /// Apply application theme defaults to the shell and every retained emulator.
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
         let terminal = terminal_theme(theme);
         self.options.theme = terminal.clone();
-        let font = SharedString::from(theme.font_family.clone());
+        let installed = context.text_system().all_font_names();
+        let font = SharedString::from(theme::terminal_font(&theme.font_family, &installed));
         let size = px(theme.font_size);
         self.options.metrics.font = font.clone();
         self.options.metrics.font_size = size;
         (
             self.options.metrics.cell_width,
             self.options.metrics.line_height,
-        ) = measure_cell(context.text_system(), font.clone(), size);
+        ) = measure_cell(context.text_system(), font.clone(), size, theme.line_height);
         theme::apply_chrome_font(context, font, size);
         let metrics = self.options.metrics.clone();
         for key in self.panes.keys().cloned().collect::<Vec<_>>() {
@@ -439,10 +481,6 @@ impl WindowShell {
             "tab" => {
                 let _selected =
                     self.select_next_tab(!event.keystroke.modifiers.shift, window, context);
-                true
-            }
-            "w" => {
-                let _submission = self.close_selected_tab();
                 true
             }
             _ => false,
@@ -581,6 +619,7 @@ impl WindowShell {
     }
     /// Keep live entities through tree changes; only model removal destroys an emulator.
     fn reconcile(&mut self, window: &mut Window, context: &mut Context<'_, Self>) {
+        self.follow_model(context);
         if self
             .selected
             .as_ref()
@@ -622,6 +661,7 @@ impl WindowShell {
         }
         self.attach_visible(&wanted, context);
         self.remove_missing(context);
+        self.follow_focus(window, context);
     }
     /// Build one cached surface and retain its focus/failure observers.
     fn create_pane(
@@ -802,60 +842,15 @@ impl WindowShell {
     }
 }
 impl gpui_kit::EventEmitter<Notice> for WindowShell {}
-impl WindowShell {
-    /// Build the callback that turns a native root-divider resize into a command.
-    fn resize_callback(
-        selected: &TabKey,
-        layout: &LayoutNode,
-        entity: &gpui_kit::WeakEntity<Self>,
-    ) -> crate::layout::ResizeCallback {
-        let selected = selected.clone();
-        let layout = layout.clone();
-        let entity = entity.clone();
-        Rc::new(move |state, _window, application| {
-            let sizes = state.read(application).sizes().clone();
-            let Some(first) = sizes.first().copied() else {
-                return;
-            };
-            let Some(second) = sizes.get(1).copied() else {
-                return;
-            };
-            let extent = f32::from(first) + f32::from(second);
-            let LayoutNode::Split { children, .. } = &layout else {
-                return;
-            };
-            let Some(left) = children.first() else {
-                return;
-            };
-            let Some(right) = children.get(1) else {
-                return;
-            };
-            let Some(delta) =
-                splits::resize_delta(f32::from(first), extent, left.weight, right.weight)
-            else {
-                return;
-            };
-            if let Some(command) = splits::drag_command(selected.tab, &layout, 0, delta, extent) {
-                let alias = selected.host.0.clone();
-                let _updated = entity.update(application, |shell, context| {
-                    if let Err(error) = shell.dispatch_command(&alias, command) {
-                        shell.failure(&selected.host, error.to_string(), context);
-                    }
-                });
-            }
-        })
-    }
-}
 impl Render for WindowShell {
     fn render(
         &mut self,
         root_window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let theme = context.theme();
         let entity = context.entity().downgrade();
-        let body = match (&self.selected, &self.layout) {
-            (Some(selected), Some(layout)) => splits::render_interactive(
+        let body = if let (Some(selected), Some(layout)) = (&self.selected, &self.layout) {
+            splits::render_interactive(
                 layout,
                 self.revision,
                 |pane| {
@@ -867,39 +862,54 @@ impl Render for WindowShell {
                         return div().into_any_element();
                     };
                     let entity = entity.clone();
+                    // The padding is outside the measured box, so the columns
+                    // and rows sent to the host are the ones that fit inside it.
                     div()
                         .size_full()
                         .overflow_hidden()
-                        .child(held.surface.clone())
-                        .on_prepaint(move |bounds, window, application| {
-                            let entity = entity.clone();
-                            let key = key.clone();
-                            window.defer(application, move |_, application| {
-                                let _updated =
-                                    entity.update(application, |shell, update_context| {
-                                        shell.measured(&key, bounds.size, update_context);
+                        .p(px(TERMINAL_PADDING))
+                        .child(
+                            div()
+                                .size_full()
+                                .overflow_hidden()
+                                .child(held.surface.clone())
+                                .on_prepaint(move |bounds, window, application| {
+                                    let entity = entity.clone();
+                                    let key = key.clone();
+                                    window.defer(application, move |_, application| {
+                                        let _updated =
+                                            entity.update(application, |shell, update_context| {
+                                                shell.measured(&key, bounds.size, update_context);
+                                            });
                                     });
-                            });
-                        })
+                                }),
+                        )
                         .into_any_element()
                 },
-                Self::resize_callback(selected, layout, &entity),
-            ),
-            _ => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(theme.muted_foreground)
-                .child("No sessions")
-                .into_any_element(),
+                splits::resize_callback(selected, layout, &entity),
+            )
+        } else {
+            let stage = stage::stage(self.hosts.state(), self.following.preferred.as_ref());
+            let theme = context.theme().clone();
+            stage::render(&theme, &stage, context)
         };
-        let bars = bars::render(
+        let theme = context.theme();
+        let placement = if self.settings.theme.tabs_in_title_bar {
+            bars::TabPlacement::TitleBar
+        } else {
+            bars::TabPlacement::Bar
+        };
+        let bars = bars::render_placed(
             theme,
             self.hosts.state(),
             self.selected.as_ref(),
             Some(&entity),
+            placement,
         );
+        let (title, tab_bar) = match placement {
+            bars::TabPlacement::TitleBar => (bars.top, None),
+            bars::TabPlacement::Bar => ("iznik".into_any_element(), Some(bars.top)),
+        };
         let palette_overlay =
             palette::render(theme, self.hosts.state(), &self.palette, Some(&entity));
         div()
@@ -910,17 +920,19 @@ impl Render for WindowShell {
             .size_full()
             .flex()
             .flex_col()
-            .on_key_down(context.listener(|shell, event, window, context| {
-                let routed = palette::route_key(shell, event, window, context);
-                if routed || shell.bar_key(event, window, context) {
+            .capture_key_down(context.listener(|shell, event, window, context| {
+                if palette::route_key(shell, event, window, context)
+                    || shell.chord(&event.keystroke, window, context)
+                    || shell.bar_key(event, window, context)
+                {
                     context.stop_propagation();
                 }
             }))
             .bg(theme.background)
             .text_color(theme.foreground)
-            .child(TitleBar::new().child("iznik"))
+            .child(TitleBar::new().child(title))
             .children(self.banners(context))
-            .child(bars.top)
+            .children(tab_bar)
             .child(
                 div()
                     .id("pane-area")
@@ -928,6 +940,7 @@ impl Render for WindowShell {
                     .flex_1()
                     .min_h_0()
                     .w_full()
+                    .bg(crate::grid::terminal_color(self.options.theme.background))
                     .child(body),
             )
             .child(bars.bottom)
@@ -939,39 +952,24 @@ impl Render for WindowShell {
     }
 }
 impl WindowShell {
-    /// Kit alerts show classified engine states; reconnect uses the existing engine operation.
+    /// A readable strip for every held host that is not connected and that
+    /// the stage is not already describing, then the latest local failure.
     fn banners(&self, context: &mut Context<'_, Self>) -> Vec<gpui_kit::AnyElement> {
+        let staged = self
+            .selected
+            .is_none()
+            .then(|| stage::stage(self.hosts.state(), self.following.preferred.as_ref()));
+        let troubled: Vec<_> =
+            status::troubled(self.hosts.state(), staged.as_ref().and_then(stage::host))
+                .into_iter()
+                .map(|(host, summary)| (host.clone(), summary))
+                .collect();
         let mut banners = Vec::new();
-        for (host, report) in self.hosts.state().hosts() {
-            if matches!(report.connection, HostState::Connected { .. }) {
-                continue;
+        if !troubled.is_empty() {
+            let theme = context.theme().clone();
+            for (host, summary) in &troubled {
+                banners.push(status::banner(&theme, host, summary, context));
             }
-            let host = host.clone();
-            let message = format!("{host}: {}", report.connection);
-            let label = message.clone();
-            let banner_id = SharedString::from(format!("host-banner-{}", host.0));
-            let alert = if matches!(report.connection, HostState::Failed { .. }) {
-                Alert::error(SharedString::from(format!("host-{}", host.0)), message)
-            } else {
-                Alert::info(SharedString::from(format!("host-{}", host.0)), message)
-            };
-            let reconnect = Button::new(SharedString::from(format!("reconnect-{}", host.0)))
-                .label("Reconnect")
-                .on_click(context.listener(move |shell, _, _, context| {
-                    if let Err(error) = shell.hosts.bridge().reconnect(&host.0) {
-                        shell.failure(&host, error.to_string(), context);
-                    }
-                }));
-            banners.push(
-                div()
-                    .id(banner_id)
-                    .test_support()
-                    .aria_label(label)
-                    .flex()
-                    .child(alert.banner())
-                    .child(reconnect)
-                    .into_any_element(),
-            );
         }
         if let Some(failure) = &self.last_failure {
             banners.push(

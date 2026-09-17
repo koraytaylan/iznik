@@ -583,7 +583,7 @@ fn dimensions_and_banner(context: &mut TestAppContext) -> Result<(), Failed> {
         );
         assert_eq!(
             window.find("host-banner-fixture").label(),
-            Some("fixture: connecting"),
+            Some("fixture: Connecting to fixture\u{2026}"),
             "banner uses the engine's classified state"
         );
     })?;
@@ -708,4 +708,118 @@ fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
         "the changed font size re-measures the line height instead of clipping to the old one"
     );
     Ok(())
+}
+
+/// The visible pane takes keyboard focus, application chords reach the shell
+/// before the terminal consumes them, and ctrl-w is left to the terminal.
+#[gpui_kit::test]
+fn a_focused_pane_still_lets_chords_reach_the_shell(context: &mut TestAppContext) {
+    check(&focused_chords(context));
+}
+
+/// Open a shell whose pane has a terminal frame, then press chords.
+///
+/// # Errors
+/// Propagates fixture and window failures.
+///
+/// # Panics
+/// Fails when the pane is not focused, the palette does not open from inside
+/// it, or ctrl-w is claimed by the shell.
+fn focused_chords(context: &mut TestAppContext) -> Result<(), Failed> {
+    use gpui_kit::{Focusable, KeyDownEvent, Keystroke};
+    let (handle, _directory) = open_shell(context)?;
+    context.update_window(handle.into(), |_, window, application| {
+        window.draw(application).clear(application);
+    })?;
+    let focused = handle.update(context, |shell, window, application| {
+        shell.surface(&pane_key()).is_some_and(|surface| {
+            surface
+                .read(application)
+                .focus_handle(application)
+                .is_focused(window)
+        })
+    })?;
+    assert!(focused, "the only visible pane takes keyboard focus");
+    context.simulate_keystrokes(handle.into(), "ctrl-shift-p");
+    let open = handle.update(context, |shell, _, _| shell.palette().open)?;
+    assert!(
+        open,
+        "ctrl-shift-p opens the palette from inside a terminal"
+    );
+    context.simulate_keystrokes(handle.into(), "escape");
+    let claimed = handle.update(context, |shell, window, application| {
+        let keystroke = Keystroke::parse("ctrl-w").map_err(|error| error.to_string())?;
+        Ok::<bool, String>(shell.bar_key(
+            &KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: false,
+            },
+            window,
+            application,
+        ))
+    })??;
+    assert!(!claimed, "ctrl-w belongs to the terminal, not the tab bar");
+    Ok(())
+}
+
+/// With the setting on, the selected session's tabs sit in the title bar and
+/// no bar of their own is drawn; with it off, they are below it.
+#[gpui_kit::test]
+fn tabs_move_into_the_title_bar_when_asked(context: &mut TestAppContext) {
+    check(&title_bar_tabs(context));
+}
+
+/// Render the shell with the setting off and on and compare where the tab is.
+///
+/// # Errors
+/// Propagates fixture and window failures.
+///
+/// # Panics
+/// Fails when the tab is not higher with the setting on, or a bar remains.
+fn title_bar_tabs(context: &mut TestAppContext) -> Result<(), Failed> {
+    let (handle, _directory) = open_shell(context)?;
+    let chip = format!("tab-{}-1", pane_key().host.0);
+    let below = tab_top(context, handle, &chip)?;
+    handle.update(context, |shell, _, application| {
+        let mut theme = shell.settings().theme.clone();
+        theme.tabs_in_title_bar = true;
+        shell.set_theme(theme, application);
+    })?;
+    let inside = tab_top(context, handle, &chip)?;
+    assert!(
+        inside < below,
+        "the tab moved up into the title bar ({inside:?} is not above {below:?})"
+    );
+    context.update_window(handle.into(), |_, window, _| {
+        let strip = window.find("tab-bar").bounds();
+        assert!(
+            strip.origin.y < below,
+            "the strip is the title bar's, not a bar under it"
+        );
+    })?;
+    Ok(())
+}
+
+/// Draw the shell and read the top edge of one tab chip.
+///
+/// # Errors
+/// Returns a closed-window failure.
+fn tab_top(
+    context: &mut TestAppContext,
+    handle: WindowHandle<iznik_app::window::WindowShell>,
+    chip: &str,
+) -> Result<Pixels, Failed> {
+    for _pass in 0..SETTLE_PASSES {
+        context.update_window(handle.into(), |_, window, application| {
+            window.draw(application).clear(application);
+        })?;
+    }
+    Ok(context.update_window(handle.into(), |_, window, _| {
+        window
+            .find(SharedString::from(chip.to_owned()))
+            .bounds()
+            .origin
+            .y
+    })?)
 }
