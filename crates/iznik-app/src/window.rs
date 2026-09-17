@@ -8,11 +8,9 @@ use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme, ElementExt, TitleBar};
 use gpui_kit::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, KeyDownEvent,
-    ParentElement, Render, Styled, Subscription, Task, Window, div, px,
-};
-use gpui_kit::{
-    InteractiveElement, Pixels, SharedString, Size, StatefulInteractiveElement, TestSupportExt,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, Render, SharedString, Size, StatefulInteractiveElement,
+    Styled, Subscription, Task, TestSupportExt, Window, div, px,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
@@ -164,7 +162,7 @@ impl WindowShell {
         let settings_watcher = options.settings_path.clone().map(Watcher::new);
         let focus_handle = context.focus_handle();
         window.focus(&focus_handle, context);
-        Self {
+        let mut shell = Self {
             hosts: HostUi::new(bridge),
             thread,
             panes: BTreeMap::new(),
@@ -178,7 +176,10 @@ impl WindowShell {
             last_failure: None,
             palette: Palette::default(),
             focus_handle,
-        }
+        };
+        let initial_theme = shell.settings.theme.clone();
+        shell.apply_theme(&initial_theme, context);
+        shell
     }
     /// The shared host interface used by tabs, sessions and application actions.
     #[must_use]

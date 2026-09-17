@@ -594,6 +594,42 @@ fn dimensions_and_banner(context: &mut TestAppContext) -> Result<(), Failed> {
 const APPLIED_FONT_SIZE: f32 = 22.0;
 
 #[gpui_kit::test]
+fn window_starts_with_its_own_settings_font_not_the_chrome_default(context: &mut TestAppContext) {
+    check(&starts_with_its_own_font(context));
+}
+
+/// A freshly constructed shell's own settings font reaches the kit's chrome
+/// immediately, so the settings window opened right after startup shows the
+/// same size it is actually drawn with, instead of the kit's unrelated
+/// built-in default until the first edit applies a theme.
+///
+/// # Errors
+/// Propagates fixture and window failures.
+///
+/// # Panics
+/// Fails if the kit's chrome keeps its own built-in font past construction.
+fn starts_with_its_own_font(context: &mut TestAppContext) -> Result<(), Failed> {
+    use gpui_kit::component::Theme;
+    use iznik_app::theme::AppTheme;
+    let (_handle, _directory) = open_shell(context)?;
+    let expected = AppTheme::default();
+    context.update(|app| {
+        let chrome_theme = Theme::global(app);
+        assert_eq!(
+            chrome_theme.font_family,
+            SharedString::from(expected.font_family),
+            "the shell's own default font family reaches the kit's chrome at construction"
+        );
+        assert_eq!(
+            chrome_theme.font_size,
+            px(expected.font_size),
+            "the shell's own default font size reaches the kit's chrome at construction"
+        );
+    });
+    Ok(())
+}
+
+#[gpui_kit::test]
 fn window_propagates_theme_metrics_to_every_pane(context: &mut TestAppContext) {
     check(&metrics_reach_pane(context));
 }

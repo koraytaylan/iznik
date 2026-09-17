@@ -51,3 +51,9 @@ id = "settings-metrics-repaint-every-row"
 statement = "A grid's `set_metrics` call repaints every retained row, not only rows whose terminal content also changed."
 test = "iznik-app::grid_element::grid_repaints_every_row_when_metrics_change"
 because = "The test drives a real grid and window layer directly and needs no container."
+
+[[claim]]
+id = "settings-chrome-font-matches-at-startup"
+statement = "A freshly constructed shell applies its own settings font to the kit's chrome immediately at construction, so the settings window shows the same size the app is actually drawn with from the start, instead of the kit's unrelated built-in default until the first edit."
+test = "iznik-app::window_shell::window_starts_with_its_own_settings_font_not_the_chrome_default"
+because = "The test drives a real shell construction directly and needs no container."
