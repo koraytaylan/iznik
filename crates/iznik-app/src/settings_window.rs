@@ -1,13 +1,14 @@
 //! The settings window: a second OS window listing application settings.
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::setting::Settings as SettingsPanel;
-use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem, SettingPage};
+use gpui_kit::component::setting::{
+    NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage,
+};
 use gpui_kit::component::{Root, Theme, ThemeRegistry, TitleBar};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, Hsla, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Subscription, TestSupportExt, WeakEntity, Window, WindowBounds,
-    WindowOptions, div, px, size,
+    App, AppContext as _, Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Styled, TestSupportExt, WeakEntity, Window, WindowBounds, WindowOptions, div, px,
+    size,
 };
 use libghostty_vt::style::RgbColor;
 
@@ -127,10 +128,25 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
             ))
             .item(SettingItem::new(
                 "Font Size",
-                SettingField::render({
-                    let shell = shell.clone();
-                    move |_options, window, app| font_size_field(&shell, window, app)
-                }),
+                SettingField::number_input(
+                    NumberFieldOptions {
+                        min: f64::from(MIN_FONT_SIZE),
+                        max: f64::from(MAX_FONT_SIZE),
+                        step: 1.0,
+                    },
+                    {
+                        let shell = shell.clone();
+                        move |app| f64::from(theme_of(&shell, app).font_size)
+                    },
+                    {
+                        let shell = shell.clone();
+                        move |value, app| {
+                            if let Ok(font_size) = value.to_string().parse::<f32>() {
+                                edit_theme(&shell, app, |theme| theme.font_size = font_size);
+                            }
+                        }
+                    },
+                ),
             )),
     )
 }
@@ -173,77 +189,6 @@ fn select_theme(shell: &WeakEntity<WindowShell>, name: &SharedString, app: &mut 
         theme.foreground = rgb_color(colors.foreground);
         theme.background = rgb_color(colors.background);
     });
-}
-
-/// A font-size input's persisted state: its text field and the subscription
-/// that applies and clamps its value.
-struct FontSizeField {
-    /// The text field the user types into.
-    input: Entity<InputState>,
-    /// Kept alive so the field keeps reacting to input events.
-    _subscription: Subscription,
-}
-
-/// A font-size input that applies live as typed and, once the user finishes
-/// editing, clamps the value to `MIN_FONT_SIZE..=MAX_FONT_SIZE` and normalizes
-/// the displayed text. Clamping on every keystroke instead would overwrite a
-/// number still being typed (an in-progress "14" reads as "1", clamps to the
-/// minimum, and erases what was typed), so bounds apply live to the theme but
-/// only rewrite the field's own text on blur or Enter.
-fn font_size_field(shell: &WeakEntity<WindowShell>, window: &mut Window, app: &mut App) -> Input {
-    let initial = theme_of(shell, app).font_size;
-    let state = window.use_keyed_state(SharedString::from("appearance-font-size"), app, {
-        let shell = shell.clone();
-        move |setup_window, setup_cx| {
-            let field_input = setup_cx.new(|input_cx| {
-                InputState::new(setup_window, input_cx).default_value(initial.to_string())
-            });
-            let subscription = setup_cx.subscribe_in(&field_input, setup_window, {
-                let shell = shell.clone();
-                move |_state: &mut FontSizeField,
-                      event_input,
-                      event: &InputEvent,
-                      event_window,
-                      event_cx| {
-                    apply_font_size_event(&shell, event_input, event, event_window, event_cx);
-                }
-            });
-            FontSizeField {
-                input: field_input,
-                _subscription: subscription,
-            }
-        }
-    });
-    Input::new(&state.read(app).input)
-}
-
-/// Apply a font-size field's event: live on every change, clamped and
-/// normalized once the user finishes editing.
-fn apply_font_size_event(
-    shell: &WeakEntity<WindowShell>,
-    input: &Entity<InputState>,
-    event: &InputEvent,
-    window: &mut Window,
-    app: &mut App,
-) {
-    match event {
-        InputEvent::Change => {
-            if let Ok(font_size) = input.read(app).value().parse::<f32>() {
-                let clamped = font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
-                edit_theme(shell, app, |theme| theme.font_size = clamped);
-            }
-        }
-        InputEvent::Blur | InputEvent::PressEnter { .. } => {
-            if let Ok(font_size) = input.read(app).value().parse::<f32>() {
-                let clamped = font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
-                edit_theme(shell, app, |theme| theme.font_size = clamped);
-                input.update(app, |input, cx| {
-                    input.set_value(SharedString::from(clamped.to_string()), window, cx);
-                });
-            }
-        }
-        InputEvent::Focus => {}
-    }
 }
 
 /// The Keybindings page: the closed inventory's current chords, read-only for now.

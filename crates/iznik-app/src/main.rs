@@ -118,14 +118,16 @@ fn usage() -> ExitCode {
 /// Starts the application: one window, the kit's layers initialized, and a
 /// window the platform refuses reported with the reason it carried.
 fn run() -> ExitCode {
-    gpui_kit::application().run(|app| {
-        gpui_kit::init(app);
-        if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
-            let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
-        }
-        app.spawn(async move |app_context| open_window(app_context))
-            .detach();
-    });
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(|app| {
+            gpui_kit::init(app);
+            if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
+                let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
+            }
+            app.spawn(async move |app_context| open_window(app_context))
+                .detach();
+        });
     ExitCode::SUCCESS
 }
 
