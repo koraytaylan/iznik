@@ -10,6 +10,7 @@ pub mod grid;
 pub mod host_ui;
 pub mod input;
 pub mod layout;
+pub mod lifecycle;
 pub mod palette;
 pub mod settings;
 pub mod settings_window;

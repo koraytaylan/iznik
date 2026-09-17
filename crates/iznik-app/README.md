@@ -38,6 +38,7 @@ kit's active theme, background and foreground included, through the 0.3.5
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |
 | `vt` | One `LocalSet` thread owning client emulators, sequence-checked pane feeds, theme-aware query answers, and owned cell snapshots with damage and credit. |
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
+| `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
 
 ## The engine bridge
 

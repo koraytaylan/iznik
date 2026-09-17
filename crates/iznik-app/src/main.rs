@@ -10,6 +10,7 @@ use std::rc::Rc;
 use gpui_kit::AppContext as _;
 use gpui_kit::component::{Root, TitleBar};
 use iznik_app::bridge::EngineBridge;
+use iznik_app::lifecycle::on_window_closed;
 use iznik_app::vt::{VtOptions, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
 use iznik_client::transport::ClientRuntimePaths;
@@ -154,6 +155,10 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
                 });
                 build_context.new(|root_context| Root::new(shell, window, root_context))
             })?;
+        let main_window = window.window_id();
+        app_context.update(|app| {
+            on_window_closed(app, main_window, |app| app.quit()).detach();
+        });
         Ok(window)
     })();
     if let Err(refusal) = result {

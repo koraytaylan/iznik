@@ -36,6 +36,12 @@ test = "iznik-app::regression_window::window_container_split_deltas_and_last_res
 because = "Two headless GPUI windows own independent production engines connected through SSH in the standard two-container fixture, combining actual platform resize callbacks with server delta round trips."
 
 [[claim]]
+id = "window-close-quits-only-for-the-main-window"
+statement = "A registered window-closed callback fires only for the window it names, not for any other window that closes, so the application can quit specifically when its main window closes rather than only when the last window closes."
+test = "iznik-app::lifecycle::only_the_named_window_closing_calls_the_callback"
+because = "GPUI's own default quits when the last window closes, which never fires while a secondary window like settings stays open; this proves the additional main-window-specific behavior the binary layers on top."
+
+[[claim]]
 id = "window-notification-layer"
 statement = "The production window renders the kit's notification layer over its own chrome, so a pushed toast becomes visible without a separate host component."
 test = "iznik-app::palette_shortcut::add_host_without_a_form_shows_a_failure_notice"

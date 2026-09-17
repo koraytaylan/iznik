@@ -9,7 +9,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GOLDEN_DIR="$SCRIPT_DIR/goldens"
 CAPTURE_DIR=""
 CAGE_PID=""
@@ -43,7 +42,7 @@ for arg in "$@"; do
 done
 
 header "Prerequisites"
-for tool in cage grim wtype python3 cargo; do
+for tool in cage grim wtype python3 cargo jq; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Missing: $tool"; exit 1; }
 done
 python3 -c "from PIL import Image" 2>/dev/null || { echo "Missing: Pillow"; exit 1; }
@@ -51,11 +50,13 @@ info "ok"
 
 header "Building iznik-app"
 timeout 300 cargo build --package iznik-app 2>&1 | tail -3
-APP=""
-for dir in "$PROJECT_ROOT/target/debug" "${CARGO_TARGET_DIR:-$HOME/.cache/iznik/target}/debug" "$HOME/.cache/cargo-target/debug"; do
-    [ -x "$dir/iznik-app" ] && APP="$dir/iznik-app" && break
-done
-[ -n "$APP" ] || { echo "Cannot find binary"; exit 1; }
+# Ask cargo where it just built, rather than guessing across candidate target
+# directories: a stale binary left over at an earlier-checked candidate would
+# otherwise be picked over the one this build just produced, silently testing
+# old code.
+CARGO_TARGET_DIRECTORY="$(cargo metadata --no-deps --format-version=1 | jq -r .target_directory)"
+APP="$CARGO_TARGET_DIRECTORY/debug/iznik-app"
+[ -x "$APP" ] || { echo "Cannot find binary at $APP"; exit 1; }
 info "binary: $APP"
 
 header "Starting headless cage"
