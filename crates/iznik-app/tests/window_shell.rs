@@ -589,3 +589,50 @@ fn dimensions_and_banner(context: &mut TestAppContext) -> Result<(), Failed> {
     })?;
     Ok(())
 }
+
+/// Font size applied by `apply_theme`, distinct from the theme default.
+const APPLIED_FONT_SIZE: f32 = 22.0;
+
+#[gpui_kit::test]
+fn window_propagates_theme_metrics_to_every_pane(context: &mut TestAppContext) {
+    check(&metrics_reach_pane(context));
+}
+
+/// Applying a changed theme updates a retained pane's font and size immediately,
+/// the same way it already updates the terminal's colors.
+///
+/// # Errors
+/// Propagates fixture, window and owner failures.
+///
+/// # Panics
+/// Fails if the pane's grid keeps its old font or size after the theme changes.
+fn metrics_reach_pane(context: &mut TestAppContext) -> Result<(), Failed> {
+    use iznik_app::theme::AppTheme;
+    let (handle, _directory) = open_shell(context)?;
+    let theme = AppTheme {
+        font_family: "Custom Mono".to_owned(),
+        font_size: APPLIED_FONT_SIZE,
+        ..AppTheme::default()
+    };
+    handle.update(context, |shell, _, context| {
+        shell.apply_theme(&theme, context);
+    })?;
+    let metrics = handle
+        .update(context, |shell, _, context| {
+            shell
+                .surface(&pane_key())
+                .map(|surface| surface.read(context).grid().read(context).metrics().clone())
+        })?
+        .ok_or("pane surface exists")?;
+    assert_eq!(
+        metrics.font,
+        SharedString::from("Custom Mono"),
+        "the applied theme's font family reaches the pane's grid"
+    );
+    assert_eq!(
+        metrics.font_size,
+        px(APPLIED_FONT_SIZE),
+        "the applied theme's font size reaches the pane's grid"
+    );
+    Ok(())
+}

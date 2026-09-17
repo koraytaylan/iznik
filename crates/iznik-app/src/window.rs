@@ -24,7 +24,7 @@ use iznik_protocol::model::{LayoutNode, Tab};
 use crate::actions::ActionId;
 use crate::bars;
 use crate::bridge::{EngineBridge, EngineEvent};
-use crate::grid::GridMetrics;
+use crate::grid::{GridMetrics, cells};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
@@ -313,13 +313,20 @@ impl WindowShell {
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
         let terminal = terminal_theme(theme);
         self.options.theme = terminal.clone();
-        let keys: Vec<_> = self.panes.keys().cloned().collect();
-        for key in keys {
+        self.options.metrics.font = SharedString::from(theme.font_family.clone());
+        self.options.metrics.font_size = px(theme.font_size);
+        let metrics = self.options.metrics.clone();
+        for key in self.panes.keys().cloned().collect::<Vec<_>>() {
             if let Err(error) = self.thread.send(VtCommand::Theme {
                 key: key.clone(),
                 theme: Box::new(terminal.clone()),
             }) {
                 self.failure(&key.host, error.to_string(), context);
+            }
+            if let Some(surface) = self.panes.get(&key).map(|held| held.surface.clone()) {
+                surface.update(context, |surface, context| {
+                    surface.set_metrics(&metrics, context);
+                });
             }
         }
         context.notify();
@@ -987,14 +994,4 @@ impl WindowShell {
         }
         banners
     }
-}
-/// Convert positive finite surface geometry to complete cells within the protocol range.
-fn cells(extent: Pixels, cell: Pixels) -> Option<u16> {
-    let extent = f32::from(extent);
-    let cell = f32::from(cell);
-    if !extent.is_finite() || !cell.is_finite() || extent <= 0.0 || cell <= 0.0 {
-        return None;
-    }
-    let count = extent.div_euclid(cell).clamp(1.0, f32::from(u16::MAX));
-    u16::try_from(usize::from(px(count))).ok()
 }

@@ -67,6 +67,11 @@ impl RowView {
             error: Rc::new(RefCell::new(None)),
         }
     }
+
+    /// Replace this row's font and cell geometry for its next paint.
+    pub(super) fn set_metrics(&mut self, metrics: &GridMetrics) {
+        self.metrics = metrics.clone();
+    }
 }
 
 impl Render for RowView {

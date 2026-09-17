@@ -383,6 +383,18 @@ impl TerminalGrid {
         }
     }
 
+    /// Replace font and cell geometry, notifying every retained row so it
+    /// repaints at the new size instead of waiting for its content to change.
+    pub fn set_metrics(&mut self, metrics: &GridMetrics, context: &mut Context<'_, Self>) {
+        self.metrics = metrics.clone();
+        for row in &self.rows {
+            row.update(context, |row, context| {
+                row.set_metrics(metrics);
+                context.notify();
+            });
+        }
+    }
+
     /// Apply a snapshot and notify only rows whose visible drawing changed.
     /// Returns the changed-row count and queues credit only for newly accepted bytes.
     /// The window flushes that credit through the engine after successful consumption.
@@ -547,6 +559,12 @@ impl TerminalGrid {
         self.snapshot.as_ref()
     }
 
+    /// Font and cell geometry this grid currently paints with.
+    #[must_use]
+    pub fn metrics(&self) -> &GridMetrics {
+        &self.metrics
+    }
+
     /// Paint calls, per row, for diagnostics and cache verification.
     #[must_use]
     pub fn paint_counts(&self, context: &App) -> Vec<u64> {
@@ -700,4 +718,15 @@ fn distance(left: Pixels, right: Pixels) -> Pixels {
 /// Scale cell geometry with explicit finite saturation.
 fn scale(value: Pixels, factor: f32) -> Pixels {
     finite(f32::from(value) * factor)
+}
+
+/// Convert positive finite surface geometry to complete cells within the protocol range.
+pub(crate) fn cells(extent: Pixels, cell: Pixels) -> Option<u16> {
+    let extent = f32::from(extent);
+    let cell = f32::from(cell);
+    if !extent.is_finite() || !cell.is_finite() || extent <= 0.0 || cell <= 0.0 {
+        return None;
+    }
+    let count = extent.div_euclid(cell).clamp(1.0, f32::from(u16::MAX));
+    u16::try_from(usize::from(px(count))).ok()
 }

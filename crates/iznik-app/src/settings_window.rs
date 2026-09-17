@@ -113,7 +113,8 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
             ))
             .item(SettingItem::new(
                 "Font Family",
-                SettingField::input(
+                SettingField::dropdown(
+                    font_options(current),
                     {
                         let shell = shell.clone();
                         move |app| SharedString::from(theme_of(&shell, app).font_family)
@@ -157,6 +158,18 @@ fn theme_options(app: &App) -> Vec<(SharedString, SharedString)> {
         .sorted_themes()
         .into_iter()
         .map(|config| (config.name.clone(), config.name.clone()))
+        .collect()
+}
+
+/// Every font family the platform text system knows, for the dropdown's option list.
+fn font_options(app: &App) -> Vec<(SharedString, SharedString)> {
+    app.text_system()
+        .all_font_names()
+        .into_iter()
+        .map(|name| {
+            let name = SharedString::from(name);
+            (name.clone(), name)
+        })
         .collect()
 }
 

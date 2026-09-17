@@ -104,6 +104,13 @@ impl PaneSurface {
         &self.grid
     }
 
+    /// Apply changed font and cell geometry to the retained grid.
+    pub fn set_metrics(&mut self, metrics: &GridMetrics, context: &mut Context<'_, Self>) {
+        self.grid.update(context, |grid, context| {
+            grid.set_metrics(metrics, context);
+        });
+    }
+
     /// Consume a VT reply, forwarding process input before handling surface results.
     /// Snapshot credit is returned only after the grid accepts the frame.
     ///

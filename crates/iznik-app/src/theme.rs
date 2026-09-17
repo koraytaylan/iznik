@@ -32,7 +32,7 @@ pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
 }
 
 /// Default terminal font size in logical pixels.
-const DEFAULT_FONT_SIZE: f32 = 14.0;
+const DEFAULT_FONT_SIZE: f32 = 11.0;
 use libghostty_vt::style::RgbColor;
 
 /// User-facing colors and typography shared by every surface.

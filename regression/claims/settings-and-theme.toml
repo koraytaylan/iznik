@@ -39,3 +39,9 @@ id = "settings-window-opens"
 statement = "Choosing \"iznik: settings\" from the palette opens a window with its own title bar and close button, rendering the Appearance settings panel, with a theme selector and a bounded font-size number input, over the shell's live theme."
 test = "iznik-app::settings_window::settings_action_opens_a_window"
 because = "The test drives the palette and GPUI's headless window layer directly and needs no container."
+
+[[claim]]
+id = "settings-metrics-reach-pane"
+statement = "A changed theme's font family and size reach a retained pane's grid immediately, the same way its colors already do."
+test = "iznik-app::window_shell::window_propagates_theme_metrics_to_every_pane"
+because = "The test drives a real shell and pane over the in-process engine and needs no container."
