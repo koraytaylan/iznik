@@ -37,14 +37,47 @@ const LOG_NAME: &str = "client.log";
 /// Owner-only, because a control socket is an open connection to a host.
 const OWNER_ONLY: u32 = 0o700;
 
-/// How many hexadecimal characters of an alias's digest name its control
-/// socket.
+/// How many bytes of a unix socket path the platform allows, on the one that
+/// allows the least: macOS, where `sockaddr_un.sun_path` is 104 bytes
+/// including its terminator.
+const SOCKET_PATH_LIMIT: usize = 104;
+
+/// The byte that ends the path inside that array, which is part of the 104.
+const SOCKET_PATH_TERMINATOR: usize = 1;
+
+/// How many bytes `ssh` itself reserves when it binds: it listens on
+/// `<ControlPath>.<sixteen random characters>` and renames that into place, so
+/// a configured path must leave room for a `.` and sixteen bytes or the bind
+/// fails with "too long for Unix domain socket" whatever the platform allows.
 ///
-/// A unix socket path is limited to 104 bytes on macOS, which the alias
-/// itself can exceed and a `ProxyJump` chain routinely does; sixteen
-/// characters of `SHA-256` is short enough to fit under any runtime directory
-/// and long enough that two aliases will not collide.
+/// OpenSSH's `mux.c` makes this suffix sixteen characters and one separator.
+const CONTROL_TEMPORARY_BYTES: usize = 1 + 16;
+
+/// The most bytes a configured control path may take, on the platform that
+/// allows the least: the array, less its terminator, less what `ssh` reserves
+/// for the bind it renames into place.
+pub const MAXIMUM_CONTROL_PATH_BYTES: usize =
+    SOCKET_PATH_LIMIT - SOCKET_PATH_TERMINATOR - CONTROL_TEMPORARY_BYTES;
+
+/// How many hexadecimal characters of an alias's digest name its control
+/// socket, which is the most that will fit: an alias itself can exceed a
+/// socket path and a `ProxyJump` chain routinely does, and a digest never can.
 const CONTROL_NAME_LENGTH: usize = 16;
+
+/// The fewest characters a control name may be shortened to when its
+/// directory is deep enough that the full digest would not fit: eight
+/// hexadecimal characters of `SHA-256`, thirty-two bits.
+///
+/// It is a floor rather than something to go below because two aliases that
+/// shared a control path would share an open connection to a host, and the
+/// second of them would run its command on the first's host. A directory with
+/// no room at all gets this much anyway and cannot bind: `ssh` says the path
+/// is too long and names it, which is the failure a person should see, and it
+/// is not one whose answer is a name short enough to collide.
+pub const MINIMUM_CONTROL_NAME_LENGTH: usize = 8;
+
+/// The byte a path joins its components with, on the machines this runs on.
+const PATH_SEPARATOR: usize = 1;
 
 /// Where the client keeps what belongs to this machine rather than to a host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,12 +176,32 @@ impl ClientRuntimePaths {
         ClientRuntimePaths::under(&base())
     }
 
-    /// Where the control socket for `alias` belongs: a short digest of the
-    /// alias, not the alias itself, because a socket path has a length limit
-    /// that an alias does not.
+    /// Where the control socket for `alias` belongs: a digest of the alias, not
+    /// the alias itself, because a socket path has a length limit that an alias
+    /// does not.
+    ///
+    /// The digest is only as long as the directory leaves room for, so the path
+    /// is under the platform's limit whatever base it was resolved under.
     #[must_use]
     pub fn control_path(&self, alias: &str) -> PathBuf {
-        self.control_directory.join(control_name(alias))
+        self.control_directory
+            .join(control_name(alias, self.control_room()))
+    }
+
+    /// How many bytes a control name under this directory may take: the most a
+    /// configured control path may be, less the directory and the byte that
+    /// joins the name to it.
+    ///
+    /// Saturating rather than refusing: a directory with no room is a control
+    /// socket that cannot be bound, and what says so is `ssh` refusing that
+    /// path by name, not arithmetic that would have panicked first.
+    fn control_room(&self) -> usize {
+        let taken = self
+            .control_directory
+            .as_os_str()
+            .len()
+            .saturating_add(PATH_SEPARATOR);
+        MAXIMUM_CONTROL_PATH_BYTES.saturating_sub(taken)
     }
 }
 
@@ -192,12 +245,19 @@ fn base() -> PathBuf {
     temporary.join(format!("{DIRECTORY_NAME}-{}", Uid::current().as_raw()))
 }
 
-/// The file name a control socket for `alias` takes.
+/// The file name a control socket for `alias` takes: at most the sixteen
+/// characters of the alias's digest it fits in, and no fewer than eight.
+///
+/// The room shrinks with the directory the name is going into, so that a
+/// machine whose temporary directory is long still binds a socket shorter than
+/// the platform's limit. A directory so deep that even eight characters do not
+/// fit gets those eight anyway: `ssh` then refuses it by name, which is a
+/// legible failure, where arithmetic here would be a panic.
 #[must_use]
-pub fn control_name(alias: &str) -> String {
+pub fn control_name(alias: &str, room: usize) -> String {
     use sha2::Digest as _;
     let digest = sha2::Sha256::digest(alias.as_bytes());
-    digest
+    let name: String = digest
         .iter()
         .fold(String::new(), |mut held, byte| {
             use core::fmt::Write as _;
@@ -206,8 +266,9 @@ pub fn control_name(alias: &str) -> String {
             held
         })
         .chars()
-        .take(CONTROL_NAME_LENGTH)
-        .collect()
+        .take(room.clamp(MINIMUM_CONTROL_NAME_LENGTH, CONTROL_NAME_LENGTH))
+        .collect();
+    name
 }
 
 /// How a host is reached.

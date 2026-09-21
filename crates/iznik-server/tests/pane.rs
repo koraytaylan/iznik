@@ -669,6 +669,13 @@ async fn pane_counts_a_prompt_that_was_not_heard() {
 /// A child can close every terminal descriptor and keep running; its waiter must
 /// not retain the process mutex needed by close escalation.
 ///
+/// The child is a program that closes its own descriptors and sleeps, not a
+/// shell that closes them and `exec`s one: on macOS the terminal keeps the
+/// master open for a shell child however its descriptors are closed, while a
+/// program that closes them itself ends the read on both platforms — an end of
+/// file on one, the error a terminal gives for a closed slave on the other.
+/// Both are the end of the output this case is about.
+///
 /// # Panics
 /// Fails when EOF prevents close from signaling and reaping the still-live child.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -680,10 +687,10 @@ async fn pane_close_remains_available_after_output_ends() {
     let thread = MirrorThread::start().expect("mirror thread");
     let mut options = shell_options(COLUMNS, ROWS);
     options.program = Program::Command {
-        path: "sh".into(),
+        path: "perl".into(),
         arguments: vec![
-            "-c".into(),
-            "trap '' HUP; exec 0<&- 1>&- 2>&-; exec sleep 1000".into(),
+            "-e".into(),
+            "$SIG{HUP} = 'IGNORE'; close STDIN; close STDOUT; close STDERR; sleep 1000;".into(),
         ],
     };
     let pane = Arc::new(

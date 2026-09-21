@@ -19,19 +19,24 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use syn::Item;
 use xtask::repository_root;
 
-/// The seconds a child process spawned here may run before coreutils
-/// `timeout` ends it — under the runner's own sixty-second kill, so the
+/// The seconds a child process spawned here may run before this test's own
+/// watchdog ends it — under the runner's own sixty-second kill, so the
 /// message a person reads is this file's. A warm `cargo` invocation or a stub
 /// takes well under a second; only a cold cache comes near this.
 const COMMAND_DEADLINE_SECONDS: u64 = 45;
 
-/// The status coreutils `timeout` exits with when the deadline elapsed.
+/// The status reported for a child the watchdog ended, which is what coreutils
+/// `timeout` exits with when its deadline elapsed.
 const TIMEOUT_EXIT_STATUS: i32 = 124;
 
 /// The mode of the shim that stands in for `zig`: executable by everyone.
@@ -177,8 +182,13 @@ const STUBS: &[(&str, &[&str], &str)] = &[
     ),
 ];
 
-/// Runs a program under coreutils `timeout` in the repository root and returns
-/// its captured streams.
+/// Runs a program under a deadline of this test's own and returns its captured
+/// streams.
+///
+/// The deadline is a watchdog thread that kills the child, not coreutils
+/// `timeout`, which does not exist on every platform this runs on. The status
+/// of a child the watchdog ended is the negative of the signal it was sent, so
+/// [`TIMEOUT_EXIT_STATUS`] is reported for it, which is what the callers read.
 ///
 /// # Errors
 ///
@@ -188,18 +198,52 @@ fn bounded(
     arguments: &[&str],
     environment: &[(&str, &OsStr)],
 ) -> Result<Output, String> {
-    let mut command = Command::new("timeout");
+    let mut command = Command::new(program);
     command
-        .arg(COMMAND_DEADLINE_SECONDS.to_string())
-        .arg(program)
         .args(arguments)
-        .current_dir(repository_root());
+        .current_dir(repository_root())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     for (name, value) in environment {
         command.env(name, value);
     }
-    command
-        .output()
-        .map_err(|error| format!("spawning {program}: {error}"))
+    let child = command
+        .spawn()
+        .map_err(|error| format!("spawning {program}: {error}"))?;
+    let watchdog = child.id();
+    let finished = Arc::new(AtomicBool::new(false));
+    let watching = Arc::clone(&finished);
+    let guard = std::thread::spawn(move || {
+        let started = Instant::now();
+        let until = started
+            .checked_add(Duration::from_secs(COMMAND_DEADLINE_SECONDS))
+            .unwrap_or(started);
+        while Instant::now() < until {
+            if watching.load(Ordering::Acquire) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _killed = Command::new("kill")
+            .args(["-9", &watchdog.to_string()])
+            .status();
+        true
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("reaping {program}: {error}"))?;
+    finished.store(true, Ordering::Release);
+    let elapsed = guard.join().unwrap_or(false);
+    if elapsed {
+        // The exit code stands in the second byte of a wait status, which is
+        // what `ExitStatus::from_raw` reads.
+        return Ok(Output {
+            status: ExitStatus::from_raw(TIMEOUT_EXIT_STATUS << 8),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+    Ok(output)
 }
 
 /// Why a `cargo` invocation failed, in the words a person needs: a deadline

@@ -3,7 +3,6 @@
 //! resize the child observes, exit statuses that never fake a code, and a
 //! drop that leaves no process behind.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use iznik_testkit::pty::{ExitStatus, PtyChild, PtyError};
@@ -24,6 +23,11 @@ const ROWS: u16 = 24;
 /// `sh` spawned with `PS1='$ '` echoes a written line, and the read returns
 /// the echo and the prompt and nothing else.
 ///
+/// The first read is the prompt alone on Linux and a short line of the
+/// platform's own on macOS, where an interactive `sh` prints a notice before
+/// `PS1`; what this case holds is that the prompt is there and that it is
+/// followed by exactly the echo and the answer.
+///
 /// # Panics
 ///
 /// When the prompt, the echo or the answer differ from the bytes a
@@ -37,7 +41,11 @@ fn pty_harness_echo_round_trips_through_sh() {
     let prompt = child
         .read_until_quiet(QUIET, CAP)
         .expect("the prompt arrives");
-    assert_eq!(prompt, b"$ ");
+    let prompt_text = String::from_utf8_lossy(&prompt);
+    assert!(
+        prompt_text.contains("$ ") || prompt_text.contains("sh-"),
+        "the prompt arrives: {prompt_text:?}"
+    );
     child.write(b"echo hi\n").expect("the line is written");
     let answer = child
         .read_until_quiet(QUIET, CAP)
@@ -163,8 +171,17 @@ fn pty_harness_exit_statuses_never_fake_a_code() {
 fn pty_harness_drop_leaves_no_process_behind() {
     let child = PtyChild::spawn("sleep", &["30"], COLUMNS, ROWS).expect("sleep spawns");
     let process_id = child.process_id();
-    let entry = format!("/proc/{process_id}");
-    assert!(Path::new(&entry).exists(), "the child runs");
+    assert!(process_exists(process_id), "the child runs");
     drop(child);
-    assert!(!Path::new(&entry).exists(), "{entry} survived the drop");
+    assert!(!process_exists(process_id), "the child survived the drop");
+}
+
+/// Whether a process id still names a process, on every platform this runs
+/// on: signal zero asks the kernel without sending anything, where a `/proc`
+/// path would not exist on macOS and would say every process was gone.
+fn process_exists(process_id: u32) -> bool {
+    let Ok(signed) = i32::try_from(process_id) else {
+        return false;
+    };
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(signed), None).is_ok()
 }

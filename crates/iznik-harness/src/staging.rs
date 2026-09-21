@@ -1,7 +1,7 @@
 //! Staging the three static musl binaries the containers run, keyed by
 //! content hash, a no-op when nothing changed: `iznik-server`,
 //! `iznik-regression` and `iznik`, built under the `regression` profile for
-//! `x86_64-unknown-linux-musl`, laid out as `bin/` and
+//! this machine's architecture, laid out as `bin/` and
 //! `distribution/<target>/iznik-server` under a directory named by the hash
 //! of the three. `IZNIK_STAGED`, when set, names a directory used instead
 //! of building, so whatever stages once can hand the result to many.
@@ -23,8 +23,17 @@ pub const STAGING_DEADLINE: Duration = Duration::from_mins(15);
 /// The variable that names a staged directory to use instead of building.
 pub const STAGED_VARIABLE: &str = "IZNIK_STAGED";
 
-/// The target the containers run.
-pub const TARGET: &str = "x86_64-unknown-linux-musl";
+/// The target the containers run: this machine's own architecture, as a musl
+/// triple.
+///
+/// The fixture pulls the container image for the machine it runs on, so the
+/// binaries that run inside it must be built for that same machine — an
+/// architecture chosen by hand would put the emulated case back for whoever
+/// has the other one.
+#[must_use]
+pub fn target() -> String {
+    format!("{}-unknown-linux-musl", std::env::consts::ARCH)
+}
 
 /// The profile the binaries are built under.
 pub const PROFILE: &str = "regression";
@@ -143,9 +152,10 @@ fn io_error(path: &Path, source: io::Error) -> StagingError {
 ///
 /// [`StagingError::Build`] when cargo fails or exceeds the deadline.
 fn build(options: &StagingOptions, deadline: Deadline) -> Result<(), StagingError> {
+    let target = target();
     let mut command = Command::new(&options.cargo);
     command
-        .args(["build", "--profile", PROFILE, "--target", TARGET])
+        .args(["build", "--profile", PROFILE, "--target", &target])
         .current_dir(repository_root())
         .env(TARGET_DIRECTORY_VARIABLE, &options.target_directory);
     for (package, _binary) in BUILT {
@@ -165,7 +175,7 @@ fn build(options: &StagingOptions, deadline: Deadline) -> Result<(), StagingErro
 /// [`StagingError::Missing`] when one is not there, [`StagingError::Io`]
 /// when one cannot be read.
 fn built_binaries(options: &StagingOptions) -> Result<Vec<(PathBuf, Vec<u8>)>, StagingError> {
-    let built = options.target_directory.join(TARGET).join(PROFILE);
+    let built = options.target_directory.join(target()).join(PROFILE);
     BUILT
         .iter()
         .map(|(_package, binary)| {
@@ -204,7 +214,7 @@ fn expected_layout(staged: &Path) -> Vec<PathBuf> {
     paths.push(
         staged
             .join(DISTRIBUTION_DIRECTORY)
-            .join(TARGET)
+            .join(target())
             .join(DISTRIBUTED_BINARY),
     );
     paths
@@ -252,7 +262,7 @@ pub fn stage_with(options: &StagingOptions, deadline: Deadline) -> Result<PathBu
                 path,
                 &partial
                     .join(DISTRIBUTION_DIRECTORY)
-                    .join(TARGET)
+                    .join(target())
                     .join(DISTRIBUTED_BINARY),
             )?;
         }

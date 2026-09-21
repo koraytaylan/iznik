@@ -9,10 +9,13 @@
 //! first removes whatever a dead owner left behind.
 
 use std::fmt::{self, Display, Formatter, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+use nix::sys::signal::kill;
+use nix::unistd::Pid;
 
 use crate::deadline::{DeadlineError, wait_until};
 use crate::images::{IMAGE_BUILD_DEADLINE, ImagesError, PROGRAM, ensure_images};
@@ -262,11 +265,16 @@ fn text(completed: &Completed) -> String {
 }
 
 /// Whether a process id still names a process.
+///
+/// Signal zero asks the kernel without sending anything, and answers the same
+/// way on every platform this runs on. Reading `/proc` would not: it does not
+/// exist on macOS, where every owner would then look dead and the reaper
+/// would remove a live run's containers.
 fn owner_alive(owner: &str) -> bool {
-    owner
-        .trim()
-        .parse::<u32>()
-        .is_ok_and(|id| Path::new("/proc").join(id.to_string()).exists())
+    let Ok(id) = owner.trim().parse::<i32>() else {
+        return false;
+    };
+    kill(Pid::from_raw(id), None).is_ok()
 }
 
 /// The owner label's value in a rendered label set. Podman renders a

@@ -18,7 +18,7 @@ use iznik_harness::fixture::{
 };
 use iznik_harness::images::{IMAGE_BUILD_DEADLINE, PROGRAM, ensure_images};
 use iznik_harness::process::{self, Completed, Deadline, Output, ProcessError};
-use iznik_harness::staging::{STAGING_DEADLINE, StagingOptions, stage, stage_with};
+use iznik_harness::staging::{STAGING_DEADLINE, StagingOptions, stage, stage_with, target};
 
 /// How long one command in a container may take.
 const COMMAND: Duration = Duration::from_secs(10);
@@ -469,14 +469,15 @@ fn regression_fixture_staging_builds_nothing_the_second_time_and_honours_the_ove
         elapsed < RESTAGE_BOUND,
         "the second staging took {elapsed:?}"
     );
-    for relative in [
-        "bin/iznik-server",
-        "bin/iznik-regression",
-        "bin/iznik",
-        "distribution/x86_64-unknown-linux-musl/iznik-server",
-    ] {
+    let mut wanted = vec![
+        "bin/iznik-server".to_owned(),
+        "bin/iznik-regression".to_owned(),
+        "bin/iznik".to_owned(),
+        format!("distribution/{}/iznik-server", target()),
+    ];
+    for relative in wanted.drain(..) {
         assert!(
-            second.join(relative).is_file(),
+            second.join(&relative).is_file(),
             "{relative} is missing from the staged directory"
         );
     }

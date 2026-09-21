@@ -10,9 +10,10 @@
 //! the child that ignores `SIGTERM`, and the grace is a product constant.
 
 use std::env;
-use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use iznik_harness::deadline::wait_until;
@@ -51,8 +52,8 @@ const STREAMING_PAUSE_SECONDS: &str = "0.3";
 /// minus scheduling jitter.
 const STREAMING_MINIMUM_GAP: Duration = Duration::from_millis(200);
 
-/// The seconds coreutils `timeout` gives the streaming helper process.
-const STREAMING_HELPER_DEADLINE_SECONDS: &str = "10";
+/// The time the streaming helper process gets before this test kills it.
+const STREAMING_HELPER_DEADLINE: Duration = Duration::from_secs(10);
 
 /// A shell command line as a `Command`.
 fn shell(script: &str) -> Command {
@@ -61,35 +62,36 @@ fn shell(script: &str) -> Command {
     command
 }
 
-/// The process ids of the live members of the process group `group`, from
-/// `/proc`; a zombie is not a survivor.
+/// The process ids of the live members of the process group `group`, asked of
+/// `ps`; a zombie is not a survivor.
+///
+/// `ps` rather than `/proc`: the fields are the same on every platform this
+/// runs on, where a `/proc` listing exists only on Linux.
 ///
 /// # Errors
 ///
-/// When `/proc` cannot be listed.
+/// When `ps` cannot be run or does not answer.
 fn process_group_members(group: u32) -> Result<Vec<u32>, String> {
-    let entries = fs::read_dir("/proc").map_err(|error| format!("listing /proc: {error}"))?;
+    let output = Command::new("ps")
+        .args(["-A", "-o", "pid=,pgid=,stat="])
+        .output()
+        .map_err(|error| format!("running ps: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ps failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
     let mut members = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("listing /proc: {error}"))?;
-        let Some(process_id) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
+    for line in listing.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(process_id) = fields.next().and_then(|field| field.parse::<u32>().ok()) else {
             continue;
         };
-        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
-            continue;
-        };
-        // After the parenthesised command name: the state, the parent's id,
-        // then the process group.
-        let after_name = stat.rsplit(')').next().unwrap_or_default();
-        let mut fields = after_name.split_whitespace();
-        let state = fields.next().unwrap_or_default();
-        let _parent = fields.next();
         let group_of = fields.next().and_then(|field| field.parse::<u32>().ok());
-        if group_of == Some(group) && state != ZOMBIE_STATE {
+        let state = fields.next().unwrap_or_default();
+        if group_of == Some(group) && !state.starts_with(ZOMBIE_STATE) {
             members.push(process_id);
         }
     }
@@ -404,6 +406,9 @@ fn process_streaming_helper() {
 /// is the pause the child made — not zero, which is what buffering to the
 /// end would show.
 ///
+/// The helper is bounded by a watchdog of this test's own rather than by
+/// coreutils `timeout`, which does not exist on every platform this runs on.
+///
 /// # Panics
 ///
 /// When the helper cannot be run, a line is missing, or the lines arrive
@@ -411,14 +416,27 @@ fn process_streaming_helper() {
 #[test]
 fn process_inherit_streams_output_as_it_happens() {
     let this_binary = env::current_exe().expect("this test binary");
-    let mut helper = Command::new("timeout")
-        .arg(STREAMING_HELPER_DEADLINE_SECONDS)
-        .arg(this_binary)
+    let mut helper = Command::new(this_binary)
         .args(["process_streaming_helper", "--exact", "--nocapture"])
         .env(STREAMING_HELPER_VARIABLE, "1")
         .stdout(Stdio::piped())
         .spawn()
         .expect("the helper starts");
+    let watchdog = helper.id();
+    let bounded = Arc::new(AtomicBool::new(false));
+    let watching = Arc::clone(&bounded);
+    let guard = std::thread::spawn(move || {
+        let until = Instant::now() + STREAMING_HELPER_DEADLINE;
+        while Instant::now() < until {
+            if watching.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _killed = Command::new("kill")
+            .args(["-9", &watchdog.to_string()])
+            .status();
+    });
     let stdout = helper.stdout.take().expect("the helper's stdout");
     let started = Instant::now();
     let mut first = None;
@@ -431,7 +449,9 @@ fn process_inherit_streams_output_as_it_happens() {
             _ => {}
         }
     }
+    bounded.store(true, Ordering::Release);
     let status = helper.wait().expect("the helper exits");
+    guard.join().expect("the watchdog ends");
     assert!(status.success(), "the helper passed: {status}");
     let first = first.expect("the first line arrived");
     let second = second.expect("the second line arrived");

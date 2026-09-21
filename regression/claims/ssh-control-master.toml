@@ -23,7 +23,7 @@ because = "reading a prefix and naming a path are the same on any machine"
 
 [[claim]]
 id = "transport-names-a-control-socket-that-fits"
-statement = "Two aliases are given two control paths, each under the hundred and four bytes a unix socket path allows even when the alias is a written-out jump chain, and one alias is given the same path every time or no master is ever reused."
+statement = "Two aliases are given two control paths, each under the eighty-six bytes a unix socket path leaves for `ssh` on macOS after it reserves its own temporary bind, even when the alias is a written-out jump chain or the runtime directory is as deep as that limit allows, and one alias is given the same path every time or no master is ever reused."
 test = "iznik-client::ssh_control_master::ssh_names_a_control_socket_that_fits"
 because = "the limit is the platform's and the digest is arithmetic; a container would compute the same paths"
 

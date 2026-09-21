@@ -15,12 +15,22 @@ use iznik_client::transport::ssh::{
     CONNECT_TIMEOUT, CONTROL_PERSIST, SERVER_ALIVE_COUNT_MAXIMUM, SERVER_ALIVE_INTERVAL, SshError,
     SshOptions, classify,
 };
-use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
+use iznik_client::transport::{
+    ClientRuntimePaths, LOCAL_PREFIX, MINIMUM_CONTROL_NAME_LENGTH, Transport,
+};
 
-/// The longest a unix socket path may be, on the platform that allows the
-/// least: macOS, where `sockaddr_un.sun_path` is 104 bytes including its
-/// terminator. A control path longer than this is one `ssh` cannot bind.
-const SOCKET_PATH_LIMIT: usize = 104;
+/// The longest a configured control path may be, on the platform that allows
+/// the least: macOS, where `sockaddr_un.sun_path` is 104 bytes including its
+/// terminator — and where `ssh` itself binds `<ControlPath>.<sixteen random
+/// characters>` before renaming it into place, which is the seventeen bytes a
+/// path of exactly 104 would lose to.
+const CONTROL_PATH_LIMIT: usize = 86;
+
+/// The deepest a runtime directory can be and still leave a control name room:
+/// the limit, less the `control` component, the two separators around it, and
+/// the shortest name.
+const DEEPEST_RUNTIME: usize =
+    CONTROL_PATH_LIMIT - "control".len() - 2 - MINIMUM_CONTROL_NAME_LENGTH;
 
 /// Every option a person may already have written in their own configuration.
 /// None may be given with `-o`.
@@ -170,13 +180,32 @@ fn ssh_reads_the_one_alias_form_it_owns() {
     case().unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A scratch directory under `/tmp` rather than under the machine's temporary
+/// directory.
+///
+/// This case measures the length of a path under the runtime directory, and on
+/// macOS the temporary directory is already deep enough to be the thing being
+/// measured; a base this test chose keeps the measurement about the name.
+///
+/// # Errors
+///
+/// When the directory cannot be made.
+fn control_scratch(case: &str) -> Result<Scratch, Failed> {
+    let path = PathBuf::from("/tmp").join(format!("iznik-c-{case}-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path)?;
+    Ok(Scratch { path })
+}
+
 /// # Panics
 ///
-/// When two aliases share a control path, or one is too long to bind.
+/// When two aliases share a control path, or one is too long to bind — under a
+/// short runtime directory, where the full digest fits, and under the deepest
+/// one that leaves a name room at all, where only the shortest does.
 #[test]
 fn ssh_names_a_control_socket_that_fits() {
     let case = || -> Result<(), Failed> {
-        let held = scratch("control")?;
+        let held = control_scratch("fits")?;
         let paths = ClientRuntimePaths::under(&held.path)?;
         // The second is as long as an alias gets: a jump chain written out.
         let aliases = [
@@ -188,8 +217,8 @@ fn ssh_names_a_control_socket_that_fits() {
         for alias in aliases {
             let path = paths.control_path(alias);
             assert!(
-                path.as_os_str().len() < SOCKET_PATH_LIMIT,
-                "a control path must fit in {SOCKET_PATH_LIMIT} bytes: {} is {}",
+                path.as_os_str().len() <= CONTROL_PATH_LIMIT,
+                "a control path must fit in {CONTROL_PATH_LIMIT} bytes: {} is {}",
                 path.display(),
                 path.as_os_str().len()
             );
@@ -200,6 +229,37 @@ fn ssh_names_a_control_socket_that_fits() {
             paths.control_path(aliases[0]),
             paths.control_path(aliases[0]),
             "and be the same one every time, or a master is never reused"
+        );
+        // A runtime directory as deep as the platform allows leaves room for
+        // the shortest name only, and that is what it gets: still inside the
+        // limit, still its own, and shorter than the full digest a shallower
+        // directory earns — which is what a long `$TMPDIR` on macOS does.
+        let deep = PathBuf::from("/tmp").join("d".repeat(DEEPEST_RUNTIME - "/tmp/".len()));
+        let deep_paths = ClientRuntimePaths::under(&deep)?;
+        let mut deep_seen: Vec<PathBuf> = Vec::new();
+        for alias in aliases {
+            let path = deep_paths.control_path(alias);
+            assert!(
+                path.as_os_str().len() <= CONTROL_PATH_LIMIT,
+                "a deep directory still fits: {} is {}",
+                path.display(),
+                path.as_os_str().len()
+            );
+            assert!(
+                !deep_seen.contains(&path),
+                "and is still its own: {}",
+                path.display()
+            );
+            deep_seen.push(path);
+        }
+        let short_name = paths.control_path(aliases[0]);
+        let deep_name = deep_paths.control_path(aliases[0]);
+        assert!(
+            deep_name.file_name().map(std::ffi::OsStr::len)
+                < short_name.file_name().map(std::ffi::OsStr::len),
+            "a deeper directory takes a shorter name: {} against {}",
+            deep_name.display(),
+            short_name.display()
         );
         Ok(())
     };

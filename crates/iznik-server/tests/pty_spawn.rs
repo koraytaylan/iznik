@@ -221,26 +221,37 @@ fn pty_spawn_the_login_shell_initializes_as_one() {
 
 /// The child is its own session leader on the pseudoterminal's device.
 ///
+/// The rule is read from what both platforms agree on: a session leader's
+/// process group is its own id — `pgid` equals `pid` — and its `stat` carries
+/// the `s` flag. macOS's `sess` keyword is a kernel pointer, not a session id,
+/// and its `ps` has no `sid` at all, so neither can be asked.
+///
 /// # Panics
 ///
-/// When the session id is not the child's, or the terminal is not a `pts`.
+/// When the child is not its own session leader, or the terminal is not one.
 #[test]
 fn pty_spawn_the_child_leads_its_own_session_on_the_terminal() {
-    let session = Session::start(&sh("ps -o sid= -o tty= -p $$")).expect("sh starts");
+    let session =
+        Session::start(&sh("ps -o pid= -o pgid= -o tty= -o stat= -p $$")).expect("sh starts");
     let output = session.reader.read_until_quiet();
-    let mut fields = output.split_whitespace();
-    let session_id: u32 = fields
-        .next()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| panic!("no session id in {output:?}"));
-    let terminal = fields.next().unwrap_or_default();
+    let fields: Vec<&str> = output.split_whitespace().collect();
+    let [process, group, terminal, state, ..] = fields.as_slice() else {
+        panic!("expected pid, pgid, tty and stat in {output:?}");
+    };
+    let process_id = session.process.process_id();
     assert_eq!(
-        session_id,
-        session.process.process_id(),
-        "the child leads its session"
+        *process,
+        process_id.to_string(),
+        "the child is the process it was spawned as"
     );
+    assert_eq!(
+        *group,
+        process_id.to_string(),
+        "the child leads its own process group"
+    );
+    assert!(state.contains('s'), "and its session: {state:?}");
     assert!(
-        terminal.contains("pts"),
+        terminal.contains("pts") || terminal.contains("tty"),
         "the terminal is a pseudoterminal: {terminal:?}"
     );
 }
@@ -276,16 +287,25 @@ fn pty_spawn_the_environment_is_the_panes() {
 /// The child starts in the working directory when it exists; a missing one
 /// fails, naming the path and spawning nothing.
 ///
+/// The directory is compared canonically: on macOS `/tmp` is a symlink to
+/// `/private/tmp`, and what a child reports for the working directory it was
+/// given is the resolved path, which is the same directory.
+///
 /// # Panics
 ///
 /// When the directory is not honored, or the failure is not `WorkingDirectory`.
 #[test]
 fn pty_spawn_the_working_directory_is_honored_or_named() {
-    let mut options = sh("printf 'Z%sZ\\n' \"$(pwd)\"");
+    let mut options = sh("printf 'Z%sZ\\n' \"$(pwd -P)\"");
     options.working_directory = Some(PathBuf::from("/tmp"));
     let session = Session::start(&options).expect("sh starts");
     let output = session.reader.read_until_quiet();
-    assert_eq!(marked(&output), Some("/tmp"));
+    let wanted = std::fs::canonicalize("/tmp").expect("the directory exists");
+    assert_eq!(
+        marked(&output).map(PathBuf::from),
+        Some(wanted),
+        "the child starts where it was told"
+    );
 
     let mut missing = sh("true");
     missing.working_directory = Some(PathBuf::from("/no/such/directory"));

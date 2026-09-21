@@ -20,7 +20,6 @@ alias = "host0"
 
 [steps.probe.expect]
 system = "Linux"
-machine = "x86_64"
 server = false
 terminfo = false
 tic = true
@@ -29,4 +28,4 @@ prefix = "/home/iznik/.local/share/iznik"
 [[expect]]
 step = "a-fresh-host-says-what-it-is"
 exit = 0
-stdout_contains = "Linux on x86_64"
+stdout_contains = "Linux on"

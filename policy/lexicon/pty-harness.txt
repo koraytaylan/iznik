@@ -7,6 +7,7 @@ clock
 coded
 constant
 cpu
+described
 echo
 escaped
 exited
@@ -14,6 +15,7 @@ fake
 floor
 grows
 growth
+hours
 hung
 initial
 leaves
@@ -23,15 +25,18 @@ naming
 nanoseconds
 negative
 observed
+padded
 page
 pages
 pixel
 proc
+ps
 quiet
 resident
 resized
 sh
 signalled
+signed
 silence
 silent
 spent

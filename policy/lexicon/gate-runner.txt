@@ -3,6 +3,8 @@ absent
 after
 answers
 anything
+arm
+arms
 assert
 at
 await
@@ -85,6 +87,7 @@ limit
 lines
 lint
 listed
+listing
 log
 logged
 matches
@@ -160,6 +163,7 @@ try
 variable
 wait
 waited
+watchdog
 when
 word
 words

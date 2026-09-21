@@ -309,10 +309,22 @@ impl PtyChild {
             .map_err(|source| PtyError::Wait { source })?;
         self.reaped = true;
         Ok(match status.signal() {
-            Some(name) => ExitStatus::Signalled(name.to_owned()),
+            Some(name) => ExitStatus::Signalled(signal_name(name)),
             None => ExitStatus::Exited(status.exit_code()),
         })
     }
+}
+
+/// A signal's description with the platform's own decoration removed: macOS's
+/// `strsignal` appends the number — `Terminated: 15` — where Linux prints the
+/// name alone, and what this enum promises is the name.
+fn signal_name(described: &str) -> String {
+    described
+        .split(':')
+        .next()
+        .unwrap_or(described)
+        .trim()
+        .to_owned()
 }
 
 impl Drop for PtyChild {

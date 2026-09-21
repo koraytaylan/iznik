@@ -54,7 +54,7 @@ because = "what is proven is a count of what the probe asked for, and counting i
 
 [[claim]]
 id = "probe-reads-a-fresh-host"
-statement = "From the engine container, a host as its image leaves it probes as Linux on x86-64 with no server installed, `tic` available, the terminal's terminfo absent, and the data home as its prefix."
+statement = "From the engine container, a host as its image leaves it probes as Linux with no server installed, `tic` available, the terminal's terminfo absent, and the data home as its prefix."
 scenario = "fresh-host"
 
 [[claim]]

@@ -1,9 +1,8 @@
 //! Shared foreground job identity, failure cleanup and bounded process census.
 
-use std::path::Path;
 use std::time::Duration;
 
-use nix::sys::signal::{Signal, killpg};
+use nix::sys::signal::{Signal, kill, killpg};
 use nix::unistd::{Pid, getpgid, getsid};
 
 /// Longer than any test deadline; only owner cleanup should end the fixture.
@@ -39,9 +38,13 @@ pub(crate) fn command() -> String {
     )
 }
 
-/// Whether the kernel still exposes this process, including an unreaped zombie.
+/// Whether the kernel still exposes this process, including an unreaped
+/// zombie: signal zero asks without sending anything, where a `/proc` path
+/// would not exist on macOS and would say every process was gone.
 pub(crate) fn process_exists(process: u32) -> bool {
-    Path::new(&format!("/proc/{process}")).exists()
+    i32::try_from(process)
+        .map(Pid::from_raw)
+        .is_ok_and(|id| kill(id, None).is_ok())
 }
 
 /// Wait for actual removal rather than merely observing that a signal was sent.

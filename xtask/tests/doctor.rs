@@ -56,25 +56,97 @@ impl Shims {
     /// Writes a shim for every probed tool, the `cargo` one answering both of
     /// the doctor's `cargo` probes.
     ///
+    /// One dispatcher script and a link per tool, rather than a script per
+    /// tool: macOS charges a first execution of a newly written file hundreds
+    /// of milliseconds, and a run with seven of them against a twenty-second
+    /// deadline is a run measuring the platform. A link to a script that has
+    /// already been executed costs nothing.
+    ///
     /// # Errors
     ///
-    /// When a file cannot be written.
+    /// When a file cannot be written or linked.
     fn new(name: &str) -> Result<Shims, String> {
         let channel = pinned_channel(&repository_root()).map_err(|error| error.to_string())?;
         let directory = env::temp_dir().join(format!("iznik-doctor-{name}-{}", std::process::id()));
         fs::create_dir_all(&directory)
             .map_err(|error| format!("creating {}: {error}", directory.display()))?;
         let shims = Shims { directory };
-        shims.write(
-            "cargo",
-            &format!(
-                "#!/bin/sh\ncase \"$1\" in\n  --version) echo \"cargo {channel} (shim)\";;\n  nextest) echo \"cargo-nextest (shim)\";;\n  *) exit 9;;\nesac\n"
-            ),
-        )?;
-        for (tool, output) in TOOL_SHIMS {
-            shims.write(tool, &format!("#!/bin/sh\necho '{output}'\n"))?;
+        let tool = |output: &str| format!("    echo '{output}';;");
+        let mut arms = vec![
+            "  cargo)".to_owned(),
+            "    case \"$1\" in".to_owned(),
+            format!("      --version) echo \"cargo {channel} (shim)\";;"),
+            "      nextest) echo \"cargo-nextest (shim)\";;".to_owned(),
+            "      *) exit 9;;".to_owned(),
+            "    esac;;".to_owned(),
+        ];
+        for (tool_name, output) in TOOL_SHIMS {
+            arms.push(format!("  {tool_name})"));
+            arms.push(tool(output));
         }
+        shims.dispatch(&arms)?;
         Ok(shims)
+    }
+
+    /// Writes the dispatcher and links every tool name to it, then runs it
+    /// once so the platform has executed the script before the cases do.
+    ///
+    /// # Errors
+    ///
+    /// When a file cannot be written, linked or run.
+    fn dispatch(&self, arms: &[String]) -> Result<(), String> {
+        let dispatcher = self.directory.join("dispatcher");
+        let mut script = String::from("#!/bin/sh\ncase \"${0##*/}\" in\n");
+        for arm in arms {
+            script.push_str(arm);
+            script.push('\n');
+        }
+        script.push_str("esac\n");
+        fs::write(&dispatcher, script)
+            .map_err(|error| format!("writing {}: {error}", dispatcher.display()))?;
+        fs::set_permissions(&dispatcher, fs::Permissions::from_mode(EXECUTABLE_MODE))
+            .map_err(|error| format!("chmod {}: {error}", dispatcher.display()))?;
+        for (tool_name, _output) in TOOL_SHIMS {
+            self.link(tool_name, &dispatcher)?;
+        }
+        self.link("cargo", &dispatcher)?;
+        // One execution, through a link, so the first-run cost macOS charges
+        // for a new file is paid here rather than inside a case's deadline.
+        let ran = Command::new(self.directory.join("cargo"))
+            .arg("--version")
+            .output()
+            .map_err(|error| format!("warming the dispatcher: {error}"))?;
+        if !ran.status.success() {
+            return Err(format!(
+                "the dispatcher did not answer: {}",
+                String::from_utf8_lossy(&ran.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Links a tool name to the dispatcher, replacing whatever was there.
+    ///
+    /// # Errors
+    ///
+    /// When the link cannot be made.
+    fn link(&self, tool: &str, dispatcher: &std::path::Path) -> Result<(), String> {
+        let path = self.directory.join(tool);
+        let _gone = fs::remove_file(&path);
+        std::os::unix::fs::symlink(dispatcher, &path)
+            .map_err(|error| format!("linking {}: {error}", path.display()))
+    }
+
+    /// Replaces one shim with a script that answers differently — the
+    /// platform's first-execution cost is paid once, for one file.
+    ///
+    /// # Errors
+    ///
+    /// When the link cannot be removed or the file written.
+    fn replace(&self, tool: &str, script: &str) -> Result<(), String> {
+        let path = self.directory.join(tool);
+        let _gone = fs::remove_file(&path);
+        self.write(tool, script)
     }
 
     /// Writes one executable shim.
@@ -204,7 +276,7 @@ fn doctor_reports_a_tool_absent_from_the_path_with_its_install_hint() {
 fn doctor_reports_a_tool_that_answers_wrongly() {
     let shims = Shims::new("wrong").expect("the shims");
     shims
-        .write("podman", "#!/bin/sh\necho cni\n")
+        .replace("podman", "#!/bin/sh\necho cni\n")
         .expect("a podman on another backend");
     let (status, stderr) = failure(run_doctor(&shims, &[])).expect("a failure");
     assert_eq!(status, Some(1), "the failure status");

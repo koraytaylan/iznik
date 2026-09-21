@@ -68,9 +68,15 @@ impl Shims {
     /// logs each gate it is asked to run and fails the one named by
     /// [`FAILING_GATE_VARIABLE`], and one shim per other tool.
     ///
+    /// One dispatcher script and a link per tool, rather than a script per
+    /// tool: macOS charges a first execution of a newly written file hundreds
+    /// of milliseconds, and a run with six of them against a twenty-second
+    /// deadline is a run measuring the platform. A link to a script that has
+    /// already been executed costs nothing.
+    ///
     /// # Errors
     ///
-    /// When a file cannot be written.
+    /// When a file cannot be written or linked.
     fn new(name: &str) -> Result<Shims, String> {
         let channel = pinned_channel(&repository_root()).map_err(|error| error.to_string())?;
         let directory =
@@ -78,39 +84,78 @@ impl Shims {
         fs::create_dir_all(&directory)
             .map_err(|error| format!("creating {}: {error}", directory.display()))?;
         let log = directory.join("gates.log");
-        let cargo = format!(
-            "#!/bin/sh\n\
-             case \"$1\" in\n\
-               --version) echo \"cargo {channel} (shim)\"; exit 0;;\n\
-               nextest) if [ \"$2\" = --version ]; then echo \"cargo-nextest (shim)\"; exit 0; fi; gate=test;;\n\
-               fmt) gate=format;;\n\
-               clippy) gate=lint;;\n\
-               doc) gate=documentation;;\n\
-               xtask) gate=claims;;\n\
-               *) echo \"unexpected cargo $*\" >&2; exit 9;;\n\
-             esac\n\
-             echo \"$gate${{RUSTDOCFLAGS:+ RUSTDOCFLAGS=$RUSTDOCFLAGS}}\" >> \"${SHIM_LOG_VARIABLE}\"\n\
-             [ \"${FAILING_GATE_VARIABLE}\" = \"$gate\" ] && exit 1\n\
-             exit 0\n"
-        );
-        let shims = Shims { directory, log };
-        shims.write(PROGRAM, &cargo)?;
+        let mut arms = vec![
+            "  cargo)".to_owned(),
+            "    case \"$1\" in".to_owned(),
+            format!("      --version) echo \"cargo {channel} (shim)\"; exit 0;;"),
+            "      nextest) if [ \"$2\" = --version ]; then echo \"cargo-nextest (shim)\"; exit 0; fi; gate=test;;"
+                .to_owned(),
+            "      fmt) gate=format;;".to_owned(),
+            "      clippy) gate=lint;;".to_owned(),
+            "      doc) gate=documentation;;".to_owned(),
+            "      xtask) gate=claims;;".to_owned(),
+            "      *) echo \"unexpected cargo $*\" >&2; exit 9;;".to_owned(),
+            "    esac".to_owned(),
+            format!("    echo \"$gate${{RUSTDOCFLAGS:+ RUSTDOCFLAGS=$RUSTDOCFLAGS}}\" >> \"${SHIM_LOG_VARIABLE}\""),
+            format!("    [ \"${FAILING_GATE_VARIABLE}\" = \"$gate\" ] && exit 1"),
+            "    exit 0;;".to_owned(),
+        ];
         for (tool, output) in TOOL_SHIMS {
-            shims.write(tool, &format!("#!/bin/sh\necho '{output}'\n"))?;
+            arms.push(format!("  {tool})"));
+            arms.push(format!("    echo '{output}';;"));
         }
+        let shims = Shims { directory, log };
+        shims.dispatch(&arms)?;
         Ok(shims)
     }
 
-    /// Writes one executable shim.
+    /// Writes the dispatcher and links every tool name to it, then runs it
+    /// once so the platform has executed the script before the cases do.
     ///
     /// # Errors
     ///
-    /// When the file cannot be written or made executable.
-    fn write(&self, tool: &str, script: &str) -> Result<(), String> {
+    /// When a file cannot be written, linked or run.
+    fn dispatch(&self, arms: &[String]) -> Result<(), String> {
+        let dispatcher = self.directory.join("dispatcher");
+        let mut script = String::from("#!/bin/sh\ncase \"${0##*/}\" in\n");
+        for arm in arms {
+            script.push_str(arm);
+            script.push('\n');
+        }
+        script.push_str("esac\n");
+        fs::write(&dispatcher, script)
+            .map_err(|error| format!("writing {}: {error}", dispatcher.display()))?;
+        fs::set_permissions(&dispatcher, fs::Permissions::from_mode(EXECUTABLE_MODE))
+            .map_err(|error| format!("chmod {}: {error}", dispatcher.display()))?;
+        for (tool, _output) in TOOL_SHIMS {
+            self.link(tool, &dispatcher)?;
+        }
+        self.link(PROGRAM, &dispatcher)?;
+        // One execution, through a link, so the first-run cost macOS charges
+        // for a new file is paid here rather than inside a case's deadline.
+        let ran = Command::new(self.directory.join(PROGRAM))
+            .arg("--version")
+            .output()
+            .map_err(|error| format!("warming the dispatcher: {error}"))?;
+        if !ran.status.success() {
+            return Err(format!(
+                "the dispatcher did not answer: {}",
+                String::from_utf8_lossy(&ran.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Links a tool name to the dispatcher, replacing whatever was there.
+    ///
+    /// # Errors
+    ///
+    /// When the link cannot be made.
+    fn link(&self, tool: &str, dispatcher: &std::path::Path) -> Result<(), String> {
         let path = self.directory.join(tool);
-        fs::write(&path, script).map_err(|error| format!("writing {}: {error}", path.display()))?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(EXECUTABLE_MODE))
-            .map_err(|error| format!("chmod {}: {error}", path.display()))
+        let _gone = fs::remove_file(&path);
+        std::os::unix::fs::symlink(dispatcher, &path)
+            .map_err(|error| format!("linking {}: {error}", path.display()))
     }
 
     /// Removes one shim, so the tool is absent from the `PATH`.

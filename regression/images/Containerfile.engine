@@ -1,9 +1,11 @@
 # The engine: as bare as a machine somebody just installed. An ssh client
 # with ssh-agent and ssh-add deleted after installation, no sshd, no ~/.ssh,
 # no toolchain, no source, no iznik binary; everything runs as uid 1000. The
-# base is pinned by digest. The package index is fetched and used in one
-# layer, because a cached index outlives the packages it names.
-FROM docker.io/library/debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143
+# base is pinned by the digest of its multi-architecture index, so the engine
+# pulls the image for the machine it runs on rather than emulating another
+# one. The package index is fetched and used in one layer, because a cached
+# index outlives the packages it names.
+FROM docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
