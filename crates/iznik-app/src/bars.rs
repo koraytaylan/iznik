@@ -1,7 +1,6 @@
 //! Model-driven session and tab bars for the application window.
 
 use gpui_kit::component::Theme;
-use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::{
     AnyElement, AppContext as _, InteractiveElement, IntoElement, MouseButton, ParentElement,
     StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, div,
@@ -16,7 +15,7 @@ use crate::actions::ActionId;
 use crate::host_ui::EngineState;
 use crate::status;
 use crate::tab_actions::{self, DragPreview, DraggedTab};
-use crate::window::{TabKey, WindowShell};
+use crate::window::{SessionKey, TabKey, WindowShell};
 
 /// Where the tab strip is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +89,12 @@ pub fn render_placed(
         let Some(view) = state.model().host(host) else {
             continue;
         };
+        let session_order: Vec<SessionId> = view
+            .model
+            .sessions
+            .iter()
+            .map(|session| session.id)
+            .collect();
         for session in &view.model.sessions {
             let is_selected =
                 selected.is_some_and(|key| key.host == *host && key.session == session.id);
@@ -101,6 +106,7 @@ pub fn render_placed(
                 state,
                 host,
                 session,
+                &session_order,
                 is_selected,
             ));
             if !show_tabs {
@@ -267,6 +273,7 @@ fn session_entry(
     state: &EngineState,
     host: &HostId,
     session: &Session,
+    order: &[SessionId],
     is_selected: bool,
 ) -> AnyElement {
     let (background, foreground) = if is_selected {
@@ -301,11 +308,31 @@ fn session_entry(
             });
         });
     }
+    if let Some(target) = shell.cloned() {
+        let menu_key = SessionKey {
+            host: host.clone(),
+            session: session.id,
+        };
+        let menu_order = order.to_vec();
+        entry = entry.on_mouse_down(MouseButton::Right, move |event, window, application| {
+            application.stop_propagation();
+            let _ignored = target.update(application, |window_shell, context| {
+                window_shell.open_session_menu(
+                    menu_key.clone(),
+                    menu_order.clone(),
+                    event.position,
+                    window,
+                    context,
+                );
+            });
+        });
+    }
     entry.into_any_element()
 }
 
 /// The tab of a session holding the host's focused pane, or its first tab.
-fn focused_tab(state: &EngineState, host: &HostId, session: &Session) -> Option<TabId> {
+#[must_use]
+pub fn focused_tab(state: &EngineState, host: &HostId, session: &Session) -> Option<TabId> {
     let focus = state.model().host(host).and_then(|view| view.focus);
     session
         .tabs
@@ -375,6 +402,21 @@ fn tab_entry(
     let Some(target) = shell.cloned() else {
         return entry.into_any_element();
     };
+    let clicked_key = key.clone();
+    let clicked_order = order.to_vec();
+    let menu_target = target.clone();
+    entry = entry.on_mouse_down(MouseButton::Right, move |event, window, application| {
+        application.stop_propagation();
+        let _ignored = menu_target.update(application, |window_shell, context| {
+            window_shell.open_tab_menu(
+                clicked_key.clone(),
+                clicked_order.clone(),
+                event.position,
+                window,
+                context,
+            );
+        });
+    });
     let dragged = DraggedTab {
         key: key.clone(),
         name: tab.name.clone(),
@@ -410,9 +452,7 @@ fn tab_entry(
                 tab_actions::drop_onto(window_shell, dragged, &drop_key, &drop_order, context);
             });
         });
-    entry
-        .context_menu(tab_actions::menu(target, key, order.to_vec()))
-        .into_any_element()
+    entry.into_any_element()
 }
 
 /// Render the tab close affordance and route it through the shell bridge.

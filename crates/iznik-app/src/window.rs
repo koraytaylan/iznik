@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::alert::Alert;
-use gpui_kit::component::{ActiveTheme, ElementExt, TitleBar};
+use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, Render, SharedString, Size, Styled, Subscription, Task,
@@ -15,7 +14,7 @@ use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{SessionId, TabId};
-use iznik_protocol::model::{LayoutNode, Tab};
+use iznik_protocol::model::{LayoutNode, Session, Tab};
 
 use crate::actions::ActionId;
 use crate::bars;
@@ -25,10 +24,11 @@ use crate::grid::{GridMetrics, cells, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
+use crate::splits;
+use crate::status;
 use crate::surface::{PaneSurface, SurfaceFailure};
 use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
-use crate::{splits, stage, status};
 
 /// A short main-thread update cadence reads owned channels without blocking drawing.
 const UPDATE_INTERVAL: Duration = Duration::from_millis(16);
@@ -40,7 +40,7 @@ const DEFAULT_COLUMNS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 /// Space between a terminal's text and its pane's edges, in logical pixels:
 /// the common inset terminals leave so text does not run into the frame.
-const TERMINAL_PADDING: f32 = 8.0;
+pub(crate) const TERMINAL_PADDING: f32 = 8.0;
 /// Default session name used by the argument-free palette action.
 const DEFAULT_SESSION_NAME: &str = "session";
 /// Default tab name used by the argument-free palette action, matching the
@@ -60,6 +60,13 @@ pub struct ShellOptions {
     pub theme: TerminalTheme,
     /// Optional settings file polled during updates.
     pub settings_path: Option<PathBuf>,
+    /// Where the person's ssh configuration is read and written.
+    ///
+    /// The product's binary resolves the person's own from `$HOME` and hands
+    /// it in; a test hands in a scratch path. The shell itself never reaches
+    /// for `$HOME`, so a shell a case builds touches no file this machine
+    /// holds, and one given no path reads and writes nothing.
+    pub ssh_config_path: Option<PathBuf>,
 }
 
 impl Default for ShellOptions {
@@ -70,6 +77,7 @@ impl Default for ShellOptions {
             metrics: GridMetrics::default(),
             theme: TerminalTheme::default(),
             settings_path: None,
+            ssh_config_path: None,
         }
     }
 }
@@ -85,11 +93,20 @@ pub struct TabKey {
     pub tab: TabId,
 }
 
+/// Stable identity of a selected session across hosts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionKey {
+    /// Host alias that owns the session.
+    pub host: HostId,
+    /// The selected session.
+    pub session: SessionId,
+}
+
 /// One persistent pane view and the window subscriptions attached to it.
 #[derive(Debug)]
-struct HeldPane {
+pub(crate) struct HeldPane {
     /// Retained while the pane exists, including transport loss and layout changes.
-    surface: Entity<PaneSurface>,
+    pub(crate) surface: Entity<PaneSurface>,
     /// Whether this window has successfully requested a subscription.
     subscribed: bool,
     /// Last measured cell geometry successfully submitted to the engine.
@@ -108,15 +125,15 @@ pub struct WindowShell {
     /// One shared terminal owner for all panes shown by the window.
     thread: Rc<VtThread>,
     /// Stable pane entities, keyed by host as well as pane number.
-    panes: BTreeMap<PaneKey, HeldPane>,
+    pub(crate) panes: BTreeMap<PaneKey, HeldPane>,
     /// The tab whose layout is currently visible.
-    selected: Option<TabKey>,
+    pub(crate) selected: Option<TabKey>,
     /// Latest authoritative tree for that tab.
-    layout: Option<LayoutNode>,
+    pub(crate) layout: Option<LayoutNode>,
     /// Changes only when the selected tree changes, resetting kit divider state.
-    revision: u64,
+    pub(crate) revision: u64,
     /// Terminal defaults and update cadence.
-    options: ShellOptions,
+    pub(crate) options: ShellOptions,
     /// Validated settings retained by this shell.
     pub(crate) settings: Settings,
     /// Optional watcher for the configured settings file.
@@ -124,14 +141,23 @@ pub struct WindowShell {
     /// Periodic pump is cancelled when the shell drops.
     _update_task: Option<Task<()>>,
     /// Latest local routing failure, dismissible without discarding host state.
-    last_failure: Option<Notice>,
+    pub(crate) last_failure: Option<Notice>,
     /// Transient command palette state rendered over the shell.
     pub(crate) palette: Palette,
+    /// The menu a right click opened, while it is open.
+    pub(crate) menu: Option<crate::tab_actions::OpenMenu>,
+    /// Where the person's ssh configuration is read and written, so a test
+    /// points it at its own file instead of the developer's own.
+    pub(crate) ssh_config_path: Option<PathBuf>,
     /// Baseline window focus, held until a pane claims it, so shortcuts such
     /// as opening the palette work before any session exists.
     focus_handle: FocusHandle,
     /// What the window is following on a person's behalf.
     pub(crate) following: Following,
+    /// The hosts this window has already told a person are offering a server
+    /// upgrade, so the toast is raised once per host rather than on every
+    /// state the engine says.
+    pub(crate) upgrade_notices: BTreeSet<HostId>,
 }
 
 impl Focusable for WindowShell {
@@ -166,6 +192,7 @@ impl WindowShell {
         });
         let settings_watcher = options.settings_path.clone().map(Watcher::new);
         let focus_handle = context.focus_handle();
+        let ssh_config_path = options.ssh_config_path.clone();
         window.focus(&focus_handle, context);
         let mut shell = Self {
             hosts: HostUi::new(bridge),
@@ -180,8 +207,11 @@ impl WindowShell {
             _update_task: update_task,
             last_failure: None,
             palette: Palette::default(),
+            menu: None,
+            ssh_config_path,
             focus_handle,
             following: Following::default(),
+            upgrade_notices: BTreeSet::new(),
         };
         let initial_theme = shell.settings.theme.clone();
         shell.apply_theme(&initial_theme, context);
@@ -239,7 +269,7 @@ impl WindowShell {
         match action {
             ActionId::RemoveHost => return self.hosts.remove_host(&host.0).map(|()| true),
             ActionId::ReconnectHost => return self.hosts.reconnect(&host.0).map(|()| true),
-            ActionId::UpgradeHost => return self.hosts.upgrade(&host.0, false).map(|()| true),
+            ActionId::UpgradeHost => return self.hosts.upgrade(&host.0, true).map(|()| true),
             ActionId::UninstallHost => return self.hosts.uninstall(&host.0).map(|()| true),
             _ => {}
         }
@@ -317,6 +347,7 @@ impl WindowShell {
                 pane: self.hosts.state().model().host(&selected?.host)?.focus?,
             }),
             ActionId::RenameSession
+            | ActionId::ReorderSessions
             | ActionId::SetLayout
             | ActionId::RenameTab
             | ActionId::ReorderTabs
@@ -425,6 +456,7 @@ impl WindowShell {
     pub fn surface(&self, key: &PaneKey) -> Option<&Entity<PaneSurface>> {
         self.panes.get(key).map(|held| &held.surface)
     }
+
     /// Select an existing tab; a stale action leaves the current selection untouched.
     pub fn select(
         &mut self,
@@ -438,6 +470,29 @@ impl WindowShell {
         self.selected = Some(key);
         self.reconcile(window, context);
         true
+    }
+    /// Select a session's tab holding the host's focused pane, so the model
+    /// selection names the session a session menu acts on. Leaves the
+    /// selection untouched when the session or its tab is gone.
+    pub fn select_session(
+        &mut self,
+        key: &SessionKey,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some(session) = self.session(key) else {
+            return false;
+        };
+        let Some(tab) =
+            bars::focused_tab(self.hosts.state(), &key.host, session).map(|tab| TabKey {
+                host: key.host.clone(),
+                session: key.session,
+                tab,
+            })
+        else {
+            return false;
+        };
+        self.select(tab, window, context)
     }
     /// Select the adjacent tab from the model and reconcile its visible panes.
     pub fn select_next_tab(
@@ -583,8 +638,15 @@ impl WindowShell {
             }
         }
         self.hosts.absorb_event(event);
+        self.notify_upgrades_on_offer(window, context);
         self.reconcile(window, context);
         context.notify();
+    }
+
+    /// Tell a person, once per host, when a connected server is offering an
+    /// upgrade — because otherwise the only sign is a disabled menu entry.
+    fn notify_upgrades_on_offer(&mut self, window: &mut Window, context: &mut Context<'_, Self>) {
+        status::notify_upgrades_on_offer(self, window, context);
     }
     /// Find a tab only in the engine's reconciled model.
     fn tab(&self, key: &TabKey) -> Option<&Tab> {
@@ -599,6 +661,17 @@ impl WindowShell {
             .tabs
             .iter()
             .find(|tab| tab.id == key.tab)
+    }
+    /// Find a session only in the engine's reconciled model.
+    fn session(&self, key: &SessionKey) -> Option<&Session> {
+        self.hosts
+            .state()
+            .model()
+            .host(&key.host)?
+            .model
+            .sessions
+            .iter()
+            .find(|session| session.id == key.session)
     }
     /// Choose the first existing tab when the previous selection disappeared.
     fn first_tab(&self) -> Option<TabKey> {
@@ -800,7 +873,12 @@ impl WindowShell {
         }
     }
     /// Submit changed visible geometry once; a remote resize does not cause a size fight.
-    fn measured(&mut self, key: &PaneKey, size: Size<Pixels>, context: &mut Context<'_, Self>) {
+    pub(crate) fn measured(
+        &mut self,
+        key: &PaneKey,
+        size: Size<Pixels>,
+        context: &mut Context<'_, Self>,
+    ) {
         let Some(columns) = cells(size.width, self.options.metrics.cell_width) else {
             return;
         };
@@ -849,50 +927,7 @@ impl Render for WindowShell {
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let entity = context.entity().downgrade();
-        let body = if let (Some(selected), Some(layout)) = (&self.selected, &self.layout) {
-            splits::render_interactive(
-                layout,
-                self.revision,
-                |pane| {
-                    let key = PaneKey {
-                        host: selected.host.clone(),
-                        pane,
-                    };
-                    let Some(held) = self.panes.get(&key) else {
-                        return div().into_any_element();
-                    };
-                    let entity = entity.clone();
-                    // The padding is outside the measured box, so the columns
-                    // and rows sent to the host are the ones that fit inside it.
-                    div()
-                        .size_full()
-                        .overflow_hidden()
-                        .p(px(TERMINAL_PADDING))
-                        .child(
-                            div()
-                                .size_full()
-                                .overflow_hidden()
-                                .child(held.surface.clone())
-                                .on_prepaint(move |bounds, window, application| {
-                                    let entity = entity.clone();
-                                    let key = key.clone();
-                                    window.defer(application, move |_, application| {
-                                        let _updated =
-                                            entity.update(application, |shell, update_context| {
-                                                shell.measured(&key, bounds.size, update_context);
-                                            });
-                                    });
-                                }),
-                        )
-                        .into_any_element()
-                },
-                splits::resize_callback(selected, layout, &entity),
-            )
-        } else {
-            let stage = stage::stage(self.hosts.state(), self.following.preferred.as_ref());
-            let theme = context.theme().clone();
-            stage::render(&theme, &stage, context)
-        };
+        let body = self.body(&entity, context);
         let theme = context.theme();
         let placement = if self.settings.theme.tabs_in_title_bar {
             bars::TabPlacement::TitleBar
@@ -912,86 +947,47 @@ impl Render for WindowShell {
         };
         let palette_overlay =
             palette::render(theme, self.hosts.state(), &self.palette, Some(&entity));
-        div()
-            .id("window-shell")
-            .test_support()
-            .track_focus(&self.focus_handle)
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .capture_key_down(context.listener(|shell, event, window, context| {
-                if palette::route_key(shell, event, window, context)
-                    || shell.chord(&event.keystroke, window, context)
-                    || shell.bar_key(event, window, context)
-                {
-                    context.stop_propagation();
-                }
-            }))
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .child(TitleBar::new().child(title))
-            .children(self.banners(context))
-            .children(tab_bar)
-            .child(
-                div()
-                    .id("pane-area")
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .bg(crate::grid::terminal_color(self.options.theme.background))
-                    .child(body),
-            )
-            .child(bars.bottom)
-            .child(palette_overlay)
-            .children(gpui_kit::component::Root::render_notification_layer(
-                root_window,
-                context,
-            ))
-    }
-}
-impl WindowShell {
-    /// A readable strip for every held host that is not connected and that
-    /// the stage is not already describing, then the latest local failure.
-    fn banners(&self, context: &mut Context<'_, Self>) -> Vec<gpui_kit::AnyElement> {
-        let staged = self
-            .selected
-            .is_none()
-            .then(|| stage::stage(self.hosts.state(), self.following.preferred.as_ref()));
-        let troubled: Vec<_> =
-            status::troubled(self.hosts.state(), staged.as_ref().and_then(stage::host))
-                .into_iter()
-                .map(|(host, summary)| (host.clone(), summary))
-                .collect();
-        let mut banners = Vec::new();
-        if !troubled.is_empty() {
-            let theme = context.theme().clone();
-            for (host, summary) in &troubled {
-                banners.push(status::banner(&theme, host, summary, context));
-            }
-        }
-        if let Some(failure) = &self.last_failure {
-            banners.push(
-                div()
-                    .id("surface-failure")
-                    .test_support()
-                    .child(
-                        Alert::error(
-                            "surface-failure-alert",
-                            format!("{}: {}", failure.host, failure.detail),
-                        )
-                        .banner()
-                        .on_close(context.listener(
-                            |shell, _, _, context| {
-                                shell.last_failure = None;
-                                context.notify();
-                            },
-                        )),
-                    )
-                    .into_any_element(),
-            );
-        }
-        banners
+        let menu_overlay = self.menu.as_ref().map(crate::tab_actions::render_open);
+        crate::menu::attach(
+            div()
+                .id("window-shell")
+                .test_support()
+                .track_focus(&self.focus_handle)
+                .relative()
+                .size_full()
+                .flex()
+                .flex_col()
+                .capture_key_down(context.listener(|shell, event, window, context| {
+                    if palette::route_key(shell, event, window, context)
+                        || shell.chord(&event.keystroke, window, context)
+                        || shell.bar_key(event, window, context)
+                    {
+                        context.stop_propagation();
+                    }
+                }))
+                .bg(theme.background)
+                .text_color(theme.foreground)
+                .child(TitleBar::new().child(title))
+                .children(self.banners(context))
+                .children(tab_bar)
+                .child(
+                    div()
+                        .id("pane-area")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .bg(crate::chrome::painted_pane_color(&self.options.theme))
+                        .child(body),
+                )
+                .child(bars.bottom)
+                .child(palette_overlay)
+                .children(menu_overlay)
+                .children(gpui_kit::component::Root::render_notification_layer(
+                    root_window,
+                    context,
+                )),
+            context,
+        )
     }
 }

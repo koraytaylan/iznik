@@ -25,9 +25,10 @@ use iznik_app::host_ui::{EngineState, HostReport, HostUi, Notice, NoticeKind};
 use iznik_client::bootstrap::probe::InstalledServer;
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::{ManagerEvent, ManagerOptions};
-use iznik_client::host::state::{BackoffPolicy, HostState, UpgradeOffer};
+use iznik_client::host::state::{BackoffPolicy, HostState, UpgradeOffer, UpgradeReason};
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{
     CommandOutcome, RejectionCode, SessionCommand, encode_command_outcome,
 };
@@ -333,9 +334,11 @@ fn engine_bridge_holds_the_upgrade_offer_as_state() {
             host: host.clone(),
             state: HostState::Connected {
                 server_version: INSTALLED.to_owned(),
+                capabilities: Capabilities::REORDER_SESSIONS,
                 upgrade: Some(UpgradeOffer {
                     installed: installed(INSTALLED),
                     bundled: installed(BUNDLED),
+                    reason: UpgradeReason::Version,
                 }),
             },
         }));
@@ -377,6 +380,7 @@ fn engine_bridge_holds_the_upgrade_offer_as_state() {
             host: host.clone(),
             state: HostState::Connected {
                 server_version: BUNDLED.to_owned(),
+                capabilities: Capabilities::REORDER_SESSIONS,
                 upgrade: None,
             },
         }));

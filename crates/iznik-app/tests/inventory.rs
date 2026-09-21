@@ -27,6 +27,9 @@ fn inventory_covers_every_session_command() {
         SessionCommand::CloseSession {
             session: SessionId(1),
         },
+        SessionCommand::ReorderSessions {
+            order: vec![SessionId(1)],
+        },
         SessionCommand::CreateTab {
             session: SessionId(1),
             name: "tab".to_owned(),

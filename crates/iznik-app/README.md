@@ -35,12 +35,16 @@ runs:
 cargo app                 # builds the server, then `cargo run --package iznik-app`
 ```
 
-`cargo app` builds the server for this machine's architecture with
-`cargo xtask distribution` — about a second when nothing changed, with cargo's
-progress on the terminal — into the target directory's `distribution`, where
-the application looks. `--target <triple>` builds others. The application
-itself never builds anything; a plain `cargo run --package iznik-app` uses
-whatever servers are already there.
+`cargo app` builds a server for **both** Linux architectures — `x86_64` and
+aarch64 — with `cargo xtask distribution`, about a second each when nothing
+changed, with cargo's progress on the terminal, into the target directory's
+`distribution` where the application looks. Both, because a host is whatever
+it is — an `arm64` laptop talking to an `x86_64` workstation is ordinary — and a
+server built for the wrong architecture is one the application will refuse to
+install, leaving the host on whatever older build it already had. `--target
+<triple>` narrows the build to the servers named. The application itself never
+builds anything; a plain `cargo run --package iznik-app` uses whatever servers
+are already there.
 
 `IZNIK_ARTIFACTS_DIRECTORY` — the variable the `iznik` command reads too —
 names a directory of servers instead. With no server found, the application
@@ -51,11 +55,65 @@ reinstalled on a host that already has that version, because the bootstrap
 compares versions, not bytes; `host: uninstall` takes it off so the next
 connection installs the new one.
 
+## Adding a host
+
+With nothing held, the window's body lists the hosts the person's
+`~/.ssh/config` already names and the names `~/.ssh/known_hosts` remembers —
+the second list being what a laptop whose configuration is nothing but
+`Host *` still has — one button each, so the first thing the application asks
+for is a host to connect to and not a name to type. Bare addresses, hashed
+names and bracketed ports are left out: they are not names a person recognizes
+in a list. The names are read by `ssh_config`'s own parsers; choosing one
+hands it to `ssh` exactly as before, because iznik never interprets a
+configuration to route a connection, only reads which names exist so a person
+can pick one.
+
+A name the configuration does not define is added through Add Host: its
+address is asked for and appended as a `Host <alias>` block with
+`HostName <address>` — never overwriting anything, refusing a duplicate and a
+name that is not one host — and then held like any other. A `unix:<path>`
+socket is offered as itself and writes nothing, because there is nothing for
+`ssh` to resolve.
+
+The tab strip's and the session strip's right-click menus are opened from the
+shell's own state rather than through the kit's `ContextMenu` wrapper: in a
+window that repaints on a timer, that wrapper's element state resets on the
+next layout pass and the menu vanishes. `tab_actions::OpenMenu` owns the built
+`PopupMenu`, the subject it is about — a tab or a session — and its dismiss
+subscription; the shell renders it anchored where the click landed and drops
+it when the menu dismisses itself. Both bars offer the same shape: a tab's
+menu a new tab, rename, moves and the three close entries, and a session's a
+new session, rename, moves and the same three close entries, the moves of a
+session needing the `ReorderSessions` command the wire carries alongside
+`ReorderTabs`.
+
+## A host older than the app
+
+A host is reached with whatever server it has, and an older one is connected
+to as it is rather than replaced: the daemon *is* the sessions, so replacing
+it ends every one of them. What this build can do with such a host is decided
+by the capabilities the server advertises in its greeting — but only when that
+server is this build's own version. Two servers that both say "protocol 1" may
+have given one bit number two different jobs, so another version's
+advertisement is dropped and its feature-gated commands are unavailable; a
+server that is missing `REORDER_SESSIONS` (or is of another version) has the
+moves disabled, and a warning toast says which features are unavailable.
+Connecting such a host also puts an upgrade on offer — for the version, or for
+the missing feature when the version is this one — and `host: upgrade` in the
+palette, or the session menu, then asks with the plain warning that every
+session on the host ends before it replaces the server. A same-version
+replacement is forced, because it is the only path that closes a capability
+gap; the daemon's own guard still refuses an unforced upgrade while it holds
+panes. A command the connected server cannot decode is refused before it is
+sent, and a tag a server does not know is answered with `UnknownCommand`
+rather than ending the connection.
+
 ## Modules
 
 | Module | Holds |
 |---|---|
 | `bridge` | The engine as the window sees it: a `HostManager` on the tokio runtime it owns, one channel carrying every `ManagerEvent` to the window's thread, and the operations whose calls wait on a host's own task performed off it. |
+| `chrome` | The window's body and banners: the visible tab's pane grid, the stage that describes the next step, and the strips that say what is wrong. |
 | `bars` | Model-driven tab and session bars rendered above the pane area. |
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |
@@ -73,13 +131,15 @@ connection installs the new one.
 | `splits` | Pure divider weight and equalization helpers for authoritative layouts. |
 | `settings` | Validated settings state retaining shared theme and keybinding overrides. |
 | `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
-| `tab_actions` | A tab's right-click menu and drag-to-reorder: the orders a move or a drop produces and the tabs its close entries close. |
+| `ssh_config` | The person's own ssh configuration: the concrete aliases it defines, and the `Host`/`HostName` block this application appends when Add Host asks. |
+| `tab_actions` | The bar's right-click menus and drag-to-reorder: the same menu shape for a tab and a session, the orders a move or a drop produces for tabs and for sessions, the entries its close affordances close, and the open menu the shell renders and dismisses. |
 | `theme` | Application theme mapped into terminal emulator defaults. |
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |
 | `vt` | One `LocalSet` thread owning client emulators, sequence-checked pane feeds, theme-aware query answers, and owned cell snapshots with damage and credit. |
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
+| `menu` | The application's main menu: the named menus the system menu bar shows while an iznik window is frontmost, and the handlers that run each item. |
 
 ## The engine bridge
 
@@ -98,6 +158,14 @@ Called from the thread that draws frames, that is a window that has stopped
 drawing for as long as the slowest host somebody named takes. Those three are
 therefore asked for and answered at once, and what they did arrives as
 `EngineEvent::Finished`.
+
+An upgrade is an order to the host's *own task*, not a handle taken out of the
+manager: the task stops its channel, runs the replacement and reconnects,
+while the host stays held and its order queue stays open. That is what keeps a
+still-drawing window from being told `workstation is not held` for the seconds
+an upgrade takes — the sizes and subscriptions it asks for meanwhile wait on
+the queue and are carried once the new link is up, and the state it reads says
+the server is being upgraded.
 
 `EngineState` is the whole of what a window knows, as a value with no engine
 in it and no thread behind it: a case can feed it a snapshot and a thousand

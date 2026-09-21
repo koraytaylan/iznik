@@ -28,7 +28,7 @@ fn linux_layout_is_versioned() -> std::io::Result<()> {
     let servers = distribution(&root)?;
     let output = root.join("linux");
     executable(&binary)?;
-    write_linux(&binary, &servers, &output, "0.1.0")?;
+    write_linux(&binary, &servers, &output, env!("CARGO_PKG_VERSION"))?;
     assert_eq!(fs::read(output.join("bin/iznik"))?, b"binary");
     assert_ne!(
         fs::metadata(output.join("bin/iznik"))?.permissions().mode() & EXECUTE_BITS,
@@ -36,7 +36,7 @@ fn linux_layout_is_versioned() -> std::io::Result<()> {
         "the application stays executable"
     );
     let desktop = fs::read_to_string(output.join("iznik.desktop"))?;
-    assert!(desktop.contains("Version=0.1.0"));
+    assert!(desktop.contains(&format!("Version={}", env!("CARGO_PKG_VERSION"))));
     carried(&output.join("share/iznik/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())
@@ -58,7 +58,7 @@ fn macos_layout_is_versioned() -> std::io::Result<()> {
     let servers = distribution(&root)?;
     let output = root.join("iznik.app");
     executable(&binary)?;
-    write_macos(&binary, &servers, &output, "0.1.0")?;
+    write_macos(&binary, &servers, &output, env!("CARGO_PKG_VERSION"))?;
     assert_eq!(fs::read(output.join("Contents/MacOS/iznik"))?, b"binary");
     assert_ne!(
         fs::metadata(output.join("Contents/MacOS/iznik"))?
@@ -70,7 +70,7 @@ fn macos_layout_is_versioned() -> std::io::Result<()> {
     );
     let plist = fs::read_to_string(output.join("Contents/Info.plist"))?;
     assert!(plist.contains("org.iznik.client"));
-    assert!(plist.contains("0.1.0"));
+    assert!(plist.contains(env!("CARGO_PKG_VERSION")));
     carried(&output.join("Contents/Resources/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())
@@ -92,7 +92,12 @@ fn a_bundle_without_servers_is_refused() -> std::io::Result<()> {
     let servers = root.join("servers");
     fs::create_dir_all(servers.join("x86_64-unknown-linux-musl"))?;
     fs::write(&binary, b"binary")?;
-    let refused = write_linux(&binary, &servers, &root.join("linux"), "0.1.0");
+    let refused = write_linux(
+        &binary,
+        &servers,
+        &root.join("linux"),
+        env!("CARGO_PKG_VERSION"),
+    );
     assert_eq!(
         refused.map_err(|error| error.kind()),
         Err(std::io::ErrorKind::NotFound)
@@ -118,8 +123,18 @@ fn the_application_finds_its_bundled_servers() -> std::io::Result<()> {
     let binary = root.join("source");
     let servers = distribution(&root)?;
     fs::write(&binary, b"binary")?;
-    write_linux(&binary, &servers, &root.join("linux"), "0.1.0")?;
-    write_macos(&binary, &servers, &root.join("iznik.app"), "0.1.0")?;
+    write_linux(
+        &binary,
+        &servers,
+        &root.join("linux"),
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    write_macos(
+        &binary,
+        &servers,
+        &root.join("iznik.app"),
+        env!("CARGO_PKG_VERSION"),
+    )?;
     assert_eq!(
         bundled_servers(&root.join("linux/bin/iznik")),
         Some(root.join("linux/share/iznik/artifacts"))

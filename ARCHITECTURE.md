@@ -138,7 +138,21 @@ Server to client:
 Capabilities are a bit set exchanged in `Hello`; unknown bits are preserved,
 not dropped, so a newer peer round-trips its own advertisement intact. The
 protocol version is a value the handshake refuses on mismatch; the codec never
-guesses across versions.
+guesses across versions. A command added after the protocol had one — like
+`ReorderSessions` — is gated by a capability rather than by the version, so a
+client sends it only to a server that advertised it can decode it. A
+capability bit is only interpreted from a server of *this build's own version*:
+two peers that both say "protocol 1" may have given one bit number two
+different jobs, so another version's advertisement is dropped and its
+feature-gated commands are unavailable — which costs nothing, because a host of
+another version is offered an upgrade on that ground alone. A remote's server is
+upgraded on its own and only on purpose, since replacing it ends the sessions it
+holds, so an older host keeps working with the commands it knows and the window
+simply does not offer the ones it does not. A `Command` whose tag a server does
+not know is answered with `RejectionCode::UnknownCommand` and the connection
+stays open: an unknown command is a request the server cannot serve, not a peer
+speaking garbage, and ending the link over it would take every pane on it with
+it.
 
 ### 4.3 Sequence numbers and resume
 
@@ -245,13 +259,13 @@ the next snapshot — is tested by fuzzing in `iznik-protocol`.
 
 ### 5.3 Session commands
 
-`CreateSession`, `RenameSession`, `CloseSession`, `CreateTab`, `RenameTab`,
-`CloseTab`, `ReorderTabs`, `CreatePane { tab, placement, columns, rows,
-working_directory }`, `ClosePane`, `MovePane`, `SetLayout { tab, layout }`.
-Every command names stable identity, is validated against the model's
-invariants before anything is spawned, and is answered exactly once. A pane
-always runs the user's login shell; when its child exits the pane is removed
-and the delta carries the exit status.
+`CreateSession`, `RenameSession`, `CloseSession`, `ReorderSessions { order }`,
+`CreateTab`, `RenameTab`, `CloseTab`, `ReorderTabs { session, order }`,
+`CreatePane { tab, placement, columns, rows, working_directory }`, `ClosePane`,
+`MovePane`, `SetLayout { tab, layout }`. Every command names stable identity,
+is validated against the model's invariants before anything is spawned, and is
+answered exactly once. A pane always runs the user's login shell; when its
+child exits the pane is removed and the delta carries the exit status.
 
 ### 5.4 Multiplexing and scheduling
 
@@ -313,7 +327,17 @@ The daemon *is* the sessions: replacing its binary ends them. The client
 therefore never upgrades a server silently. A protocol-version mismatch is
 reported; a newer bundled server is offered as an upgrade the application
 must ask for explicitly, and a daemon with live panes refuses it with the
-count. Hot upgrade by descriptor passing is deferred, not forgotten.
+count. What a host's server can *do* is read from the capabilities it
+advertises in its greeting rather than from its version, because a same-version
+server built before a command existed is otherwise indistinguishable from one
+that has it: a missing feature disables the matching entries in the window,
+raises a warning, and puts a forced upgrade on offer — forced because only
+somebody asking closes a gap the version cannot express. An upgrade always
+warns that every session on the host ends. Hot upgrade by descriptor passing
+is deferred, not forgotten: the PTY masters, the history rings and the mirrors
+are what a session is, and preserving them across a replacement needs an
+`--adopt` entry point, `SCM_RIGHTS` transfer and a rollback, which is its own
+plan.
 
 ### 5.6 Compression
 
@@ -369,7 +393,11 @@ Because the daemon *is* the sessions, it is never replaced quietly: a host
 running another version is connected to as it is and the offer rides back with
 the connection. An upgrade refuses while the daemon holds panes and says how
 many; forced, it stops the daemon, installs, and refuses to call itself done
-unless the version that answers afterwards is the one this build carries.
+unless the version that answers afterwards is the one this build carries. It is
+an order to the host's own task rather than a handle taken out of the manager:
+the task stops its channel, runs the replacement and reconnects while the host
+stays held, so the sizes and subscriptions a still-drawing window sends
+meanwhile are queued rather than refused as an unknown host.
 Uninstalling removes the binary, the terminfo, the runtime directory and the
 prefix where iznik made it — and never a prefix it was only lent, which
 `XDG_RUNTIME_DIR` may be. [The README](README.md) says what all of that is, by

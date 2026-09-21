@@ -1,0 +1,104 @@
+# Reading the person's ssh configuration and writing one block into it.
+#
+# What a configuration's text means is a pure function over that text, so the
+# concrete patterns, the case-free matching and the refusals are `test`
+# proofs: they are a table of what a person might have written, and a machine
+# has one configuration at a time. What the flow adds is a shell pointed at a
+# real scratch file: the palette reads it, writes a block and holds a local
+# host, which a test does without a display or a container.
+
+[[claim]]
+id = "ssh-config-reads-plain-hosts"
+statement = "A configuration's plain host patterns are read in order, with duplicate aliases collapsed, and wildcard, negation and question patterns are not hosts a person can connect to."
+test = "iznik-app::ssh_config::parsed_aliases_keeps_plain_hosts_in_order"
+because = "what a configuration says is a pure function over its text, and every pattern shape is one written input"
+
+[[claim]]
+id = "ssh-config-reads-a-file"
+statement = "An absent configuration defines no aliases; a written one is read back; and `defines` matches an alias without regard to case."
+test = "iznik-app::ssh_config::aliases_reads_a_file_and_an_absent_one_is_empty"
+because = "the file read is the same wherever the file is, so a scratch directory is the whole environment"
+
+[[claim]]
+id = "ssh-config-reads-known-hosts"
+statement = "The hosts ssh's own record remembers are read in order with duplicates collapsed, and hashed names, bracketed ports, bare addresses and comment lines are left out because none is a name a person recognizes in a list."
+test = "iznik-app::ssh_config::parsed_known_hosts_keeps_the_names_a_person_typed"
+because = "what a recorded file says is a pure function over its text, and every shape of line is a written input"
+
+[[claim]]
+id = "ssh-config-merges-the-record"
+statement = "The configuration's own hosts lead and every name the record remembers that the configuration does not is added after them, so a configuration that is nothing but `Host *` still offers the machines its person has reached."
+test = "iznik-app::ssh_config::known_hosts_puts_the_record_after_the_configuration"
+because = "the merge is a pure function of two written files, and both are scratch files"
+
+[[claim]]
+id = "ssh-config-appends-a-block"
+statement = "Appending writes `Host <alias>` with its indented `HostName <address>` after whatever was there, leaving every earlier byte exactly where it was."
+test = "iznik-app::ssh_config::appends_a_block_after_what_was_there"
+because = "the bytes written are a pure function of the bytes read and the block"
+
+[[claim]]
+id = "ssh-config-creates-what-is-missing"
+statement = "Appending to a file that is not there creates it, and its directory with it, so a person with no ssh configuration gets one."
+test = "iznik-app::ssh_config::appends_and_makes_the_file_and_its_directory"
+because = "which directories a write creates is a filesystem fact a scratch directory proves"
+
+[[claim]]
+id = "ssh-config-refuses-a-duplicate"
+statement = "An alias the configuration already defines is refused by name, and the file is left untouched."
+test = "iznik-app::ssh_config::refuses_an_alias_already_defined"
+because = "the refusal and the unchanged bytes are together the whole claim"
+
+[[claim]]
+id = "ssh-config-refuses-what-cannot-be-written"
+statement = "An alias that cannot stand as the first word of a host block — empty, holding space, a pattern, or a comment marker — and an address that cannot stand on its line are refused naming what is wrong, with nothing written."
+test = "iznik-app::ssh_config::refuses_an_alias_or_address_that_cannot_be_written"
+because = "every refused shape is a written input, and nothing written is a byte comparison"
+
+[[claim]]
+id = "welcome-offers-configured-aliases"
+statement = "With nothing held, the window's body is the welcome stage built with the ssh configuration's own aliases, so a person chooses a host instead of typing one, and a configuration naming none shows no list."
+test = "iznik-app::flow::the_welcome_stage_lists_the_configured_hosts"
+because = "the stage is a value over the configuration's aliases, and the rendered welcome is a headless element tree"
+
+[[claim]]
+id = "welcome-configuration-names-none"
+statement = "A shell whose ssh configuration names no host renders the welcome without a configured-host list, and still offers the button that adds one."
+test = "iznik-app::flow::the_empty_window_offers_add_host"
+because = "the rendered welcome is a headless element tree read directly from the shell's state"
+
+[[claim]]
+id = "add-host-offers-configured-aliases"
+statement = "Add Host's prompt lists the concrete aliases the ssh configuration defines, and choosing one answers with that alias."
+test = "iznik-app::add_host::add_host_offers_the_configured_aliases"
+because = "the prompt's rows are a pure function of the aliases handed to it"
+
+[[claim]]
+id = "add-host-offers-to-write-a-new-name"
+statement = "A name the configuration does not define is offered as a row that says it will be written, and its answer carries the alias on to the address question."
+test = "iznik-app::add_host::a_name_the_configuration_does_not_hold_offers_to_write_it"
+because = "the row and the answer are pure functions of the answer typed"
+
+[[claim]]
+id = "add-host-offers-a-socket-as-itself"
+statement = "A `unix:` answer is one row that says the socket itself, and is added without naming the configuration, because a socket needs nothing written for it."
+test = "iznik-app::add_host::a_socket_answer_is_offered_as_itself"
+because = "the row and the answer are pure functions of the answer typed"
+
+[[claim]]
+id = "add-host-asks-for-the-address"
+statement = "The address question answers with the alias and the address together, and an empty address sends nothing."
+test = "iznik-app::add_host::the_address_question_answers_with_the_alias_and_address"
+because = "the pair a prompt produces is a pure function of its answer"
+
+[[claim]]
+id = "add-host-flow-reads-and-writes"
+statement = "A shell pointed at a scratch ssh configuration discovers its aliases, writes a new block when asked, adds a local socket through the palette's own path without touching the file, and holds the added host."
+test = "iznik-app::add_host::the_add_host_flow_reads_and_writes_the_configuration"
+because = "the whole flow is the shell, the palette, a scratch file and the in-process daemon stack, with no display and no container"
+
+[[claim]]
+id = "tab-menu-survives-repaints"
+statement = "A tab's right click opens its menu in the shell's window, and the menu is still rendered after the window's own timed repaints — where the kit's context-menu wrapper, which resets its state on every layout pass, dropped it."
+test = "iznik-app::tab_menu::a_tab_right_click_opens_a_menu_that_survives_repaints"
+because = "a headless window draws the same frames a real one draws; no display is needed to prove which frames keep the menu"

@@ -40,8 +40,6 @@ const ARTIFACT_DIRECTORY: &str = "iznik-app-artifacts";
 /// reads. It overrides the servers a bundle carries, which is how a build run
 /// from the workspace is given servers at all.
 const ARTIFACTS_VARIABLE: &str = "IZNIK_ARTIFACTS_DIRECTORY";
-/// Directory containing client runtime sockets and state.
-const RUNTIME_DIRECTORY: &str = "iznik-app-runtime";
 
 /// Opens one window and runs until the application is asked to stop, or
 /// answers `--help` on standard output. A machine with no display is
@@ -135,6 +133,7 @@ fn run() -> ExitCode {
         .with_assets(gpui_kit::assets::Assets)
         .run(|app| {
             gpui_kit::init(app);
+            iznik_app::menu::install(app);
             if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
                 let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
             }
@@ -167,27 +166,32 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
              `cargo app`), which builds the server first."
         );
     }
-    let runtime_directory = directory.join(RUNTIME_DIRECTORY);
     let result = (|| -> Result<_, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&artifacts)?;
-        let runtime_paths = ClientRuntimePaths::under(&runtime_directory)?;
+        let runtime_paths = ClientRuntimePaths::resolve()?;
         let bridge = EngineBridge::start(artifacts, runtime_paths)?;
         let thread = Rc::new(VtThread::start(VtOptions::default())?);
+        // The person's own ssh configuration, resolved here and not by the
+        // shell, so the shell a case builds reads no file this machine holds.
+        let ssh_config_path = iznik_app::ssh_config::default_path();
+        let options = ShellOptions {
+            ssh_config_path,
+            ..ShellOptions::default()
+        };
         let window =
             app_context.open_window(TitleBar::window_options(), |window, build_context| {
                 let shell = build_context.new(|context| {
-                    WindowShell::new(
-                        bridge,
-                        Rc::clone(&thread),
-                        ShellOptions::default(),
-                        window,
-                        context,
-                    )
+                    WindowShell::new(bridge, Rc::clone(&thread), options, window, context)
                 });
                 build_context.new(|root_context| Root::new(shell, window, root_context))
             })?;
         let main_window = window.window_id();
         app_context.update(|app| {
+            // Bring the window to the foreground at launch. GPUI opens a
+            // window without activating the application, so an app launched
+            // from the terminal (and not clicked in the Dock) stays behind
+            // the terminal while its window is up.
+            app.activate(true);
             on_window_closed(app, main_window, |app| app.quit()).detach();
         });
         Ok(window)

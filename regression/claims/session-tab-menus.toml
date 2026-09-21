@@ -1,0 +1,50 @@
+# A session's right-click menu, opened from the shell's own state like a tab's.
+#
+# The menu is opened, drawn and dismissed from the shell rather than through
+# the kit's `ContextMenu` wrapper, whose element state cannot survive the
+# window's timed repaint. What a headless window draws is the same frame a
+# real one draws, so which frames keep the menu is a `test` proof; closing a
+# live session through the menu is an end-to-end proof over the in-process
+# daemon stack.
+
+[[claim]]
+id = "session-menu-survives-repaints"
+statement = "A session's right click opens its menu in the shell's window, and the menu is still rendered after the window's own timed repaints."
+test = "iznik-app::session_menu::a_session_right_click_opens_a_menu_that_survives_repaints"
+because = "a headless window draws the same frames a real one draws, so no display is needed to prove the menu survives the window's repaints"
+
+[[claim]]
+id = "session-menu-close-session"
+statement = "Choosing Close Session from a session's own right-click menu closes the session on the live in-process host."
+test = "iznik-app::end_to_end::session_bar_menu_drives_the_in_process_stack"
+because = "the headless production shell drives native pointer dispatch against the in-process daemon stack, and the host's own model is what shows the session gone"
+
+[[claim]]
+id = "session-menu-move-session"
+statement = "Choosing Move Left from a session's own right-click menu moves it before the session beside it on the live in-process host, through a ReorderSessions command carrying the host's whole session order."
+test = "iznik-app::end_to_end::session_bar_menu_reorders_sessions_on_the_live_host"
+because = "the headless production shell drives native pointer dispatch and the new session-order command against the in-process daemon stack, and the host's own model is what shows the order changed"
+
+[[claim]]
+id = "session-menu-move-needs-a-capable-server"
+statement = "A host whose connected server did not advertise it can reorder sessions is never offered the reorder: the prompt does not open, so no command is built for it, and the move entries are disabled rather than sent to a server that would end the connection on them."
+test = "iznik-app::prompt::reorder_sessions_is_not_offered_to_a_server_that_cannot_decode_it"
+because = "whether an offered action has a model to act on is a pure projection over the engine state, and the connection's advertised capabilities are part of that state"
+
+[[claim]]
+id = "capability-gap-offers-an-upgrade"
+statement = "A host whose connected server is missing a feature carries an upgrade offer even at an unchanged version, `Upgrade Host` is then available for it, an upgrade always asks with the warning that every session on the host ends, and connecting such a host raises a warning toast naming what is unavailable."
+test = "iznik-app::prompt::a_capability_gap_offers_an_upgrade_and_the_action"
+because = "the connection's advertised capabilities, the offer it carries and the inventory's availability are all pure projections over the engine state"
+
+[[claim]]
+id = "an-upgrade-offer-raises-a-toast"
+statement = "A connected host whose server is offering an upgrade raises one warning toast in a window whose root is the kit's — for a version difference and for a missing feature alike — so the sign is not only a disabled menu entry."
+test = "iznik-app::capability_notice::a_capability_gap_raises_a_warning_toast"
+because = "the toast is a rendered element in a headless window, and the kit's notification layer is exercised without a display"
+
+[[claim]]
+id = "another-version-raises-a-toast"
+statement = "A connected server of another version — the case a stale local build is — raises the same warning toast, keyed off the upgrade offer rather than a guess at what is missing."
+test = "iznik-app::capability_notice::another_version_raises_a_warning_toast"
+because = "the toast is a rendered element in a headless window, and the kit's notification layer is exercised without a display"

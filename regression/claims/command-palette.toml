@@ -89,6 +89,12 @@ test = "iznik-app::prompt::reorder_offers_every_other_position_as_a_whole_order"
 because = "the offered orders are pure over the model mirror"
 
 [[claim]]
+id = "command-palette-session-reorder-choices"
+statement = "Reordering sessions offers every other position of the selected session, each as the host's whole session order, and a host holding one session offers none."
+test = "iznik-app::prompt::reorder_sessions_offers_every_other_position_as_a_whole_order"
+because = "the offered orders are pure over the model mirror"
+
+[[claim]]
 id = "command-palette-move-choices"
 statement = "Moving a pane offers every other tab on its host and places the pane beside that tab's last pane."
 test = "iznik-app::prompt::move_pane_offers_every_other_tab"

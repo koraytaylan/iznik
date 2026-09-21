@@ -14,6 +14,8 @@ pub enum ActionId {
     RenameSession,
     /// Close a session.
     CloseSession,
+    /// Reorder sessions.
+    ReorderSessions,
     /// Create a tab.
     CreateTab,
     /// Rename a tab.
@@ -111,6 +113,14 @@ pub const INVENTORY: &[ActionSpec] = &[
         "Close the selected session and its tabs.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
+        None,
+    ),
+    spec(
+        ActionId::ReorderSessions,
+        "session: reorder",
+        "Put the host's sessions in a new order.",
+        ActionTarget::SessionCommand,
+        ActionContext::Host,
         None,
     ),
     spec(
@@ -268,6 +278,13 @@ pub fn available(specification: &ActionSpec, state: &EngineState) -> bool {
             )
         });
     }
+    if specification.id == ActionId::ReorderSessions {
+        // Offered only where a connected server can answer it: sending the
+        // command to a server that predates it ends the connection.
+        return state
+            .hosts()
+            .any(|(host, _report)| state.reorders_sessions(host));
+    }
     match specification.context {
         ActionContext::None => true,
         ActionContext::Host => state.hosts().next().is_some(),
@@ -299,6 +316,7 @@ pub fn action_for_command(command: &SessionCommand) -> ActionId {
         SessionCommand::CreateSession { .. } => ActionId::CreateSession,
         SessionCommand::RenameSession { .. } => ActionId::RenameSession,
         SessionCommand::CloseSession { .. } => ActionId::CloseSession,
+        SessionCommand::ReorderSessions { .. } => ActionId::ReorderSessions,
         SessionCommand::CreateTab { .. } => ActionId::CreateTab,
         SessionCommand::RenameTab { .. } => ActionId::RenameTab,
         SessionCommand::CloseTab { .. } => ActionId::CloseTab,

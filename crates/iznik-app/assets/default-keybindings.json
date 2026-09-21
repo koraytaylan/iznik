@@ -5,6 +5,7 @@
   "CreatePane": "ctrl-shift-enter",
   "RenameSession": "ctrl-shift-e",
   "CloseSession": "ctrl-shift-q",
+  "ReorderSessions": "ctrl-shift-y",
   "RenameTab": "ctrl-shift-r",
   "ReorderTabs": "ctrl-shift-o",
   "ClosePane": "ctrl-shift-x",

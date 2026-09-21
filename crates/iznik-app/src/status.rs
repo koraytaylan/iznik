@@ -4,12 +4,12 @@
 //! The stage, the host strips above the panes and the session bar all say the
 //! same thing about a host, so they all read it from here.
 
-use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{Sizable, h_flex};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::{Sizable, Theme, WindowExt as _, h_flex};
 use gpui_kit::{
     AnyElement, Context, Hsla, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, TestSupportExt, div,
+    StatefulInteractiveElement, Styled, TestSupportExt, Window, div,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::state::HostState;
@@ -100,6 +100,12 @@ pub fn summary(host: &HostId, state: &HostState) -> Summary {
             Some("Starting iznik-server".to_owned()),
             vec![Remedy::Cancel],
         ),
+        HostState::Upgrading => (
+            Tone::Warning,
+            format!("Upgrading {alias}\u{2019}s server\u{2026}"),
+            Some("Replacing iznik-server; the sessions it held end".to_owned()),
+            Vec::new(),
+        ),
         HostState::Connected { server_version, .. } => (
             Tone::Good,
             format!("Connected to {alias}"),
@@ -139,6 +145,7 @@ pub fn word(state: &HostState) -> &'static str {
         HostState::Disconnected => "disconnected",
         HostState::Probing | HostState::Connecting => "connecting",
         HostState::Bootstrapping { .. } => "setting up",
+        HostState::Upgrading => "upgrading",
         HostState::Connected { .. } => "connected",
         HostState::Reconnecting { .. } => "reconnecting",
         HostState::Failed { .. } => "unreachable",
@@ -255,4 +262,72 @@ pub fn banner(
         .child(text)
         .children(remedies(host, summary, context))
         .into_any_element()
+}
+
+/// Raise one toast per host whose connected server is offering an upgrade,
+/// saying why and that upgrading the host — which ends its sessions — is what
+/// fixes it.
+///
+/// Keyed off the offer, not a guess: the offer is the one thing that already
+/// knows whether the difference is a version or a missing feature, and it is
+/// what the palette's `host: upgrade` acts on, so the toast and the action can
+/// never disagree. A host of another version is offered an upgrade on the
+/// version alone, and its capabilities are not believed; a host of this
+/// version missing a feature is offered one for the gap. Either way the person
+/// is told, because otherwise the only sign is a disabled menu entry.
+///
+/// Once per host while it stays on offer: the engine says a host's state on
+/// every event, and a toast on each would be a toast a person cannot read. A
+/// host that has been upgraded, or removed, is forgotten, so a host that comes
+/// back on offer is told about again. The kit's own `push_notification` panics
+/// unless the window's root view is its `Root`, and a headless fixture that
+/// puts the shell directly at the root is a legitimate window, so the toast is
+/// shown when there is somewhere to put it and skipped when there is not.
+pub fn notify_upgrades_on_offer(
+    shell: &mut WindowShell,
+    window: &mut Window,
+    context: &mut Context<'_, WindowShell>,
+) {
+    let offering: Vec<(HostId, String)> = shell
+        .hosts()
+        .state()
+        .hosts()
+        .filter(|(host, _report)| !shell.upgrade_notices.contains(*host))
+        .filter_map(|(host, report)| {
+            let offer = report.upgrade.as_ref()?;
+            Some((
+                host.clone(),
+                format!(
+                    "{}. This ends every session on the host; `host: upgrade` in the command \
+                     palette, or the host's menu, is how to do it.",
+                    offer.summary(host)
+                ),
+            ))
+        })
+        .collect();
+    for (host, message) in offering {
+        let has_root = window
+            .root::<gpui_kit::component::Root>()
+            .flatten()
+            .is_some();
+        if has_root {
+            window.push_notification(Notification::warning(message), context);
+        }
+        let _noted = shell.upgrade_notices.insert(host);
+    }
+    // A host no longer on offer — upgraded, or gone — is forgotten, so a host
+    // that comes back on offer is told about again.
+    let still_offering: Vec<HostId> = shell
+        .upgrade_notices
+        .iter()
+        .filter(|host| {
+            shell
+                .hosts()
+                .state()
+                .host(host)
+                .is_some_and(|report| report.upgrade.is_some())
+        })
+        .cloned()
+        .collect();
+    shell.upgrade_notices = still_offering.into_iter().collect();
 }

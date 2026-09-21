@@ -15,6 +15,7 @@ use iznik_client::host::state::HostState;
 use iznik_protocol::identity::{PaneId, TabId};
 
 use crate::actions::ActionId;
+use crate::bridge::EngineError;
 use crate::host_ui::EngineState;
 use crate::status::Remedy;
 use crate::vt::PaneKey;
@@ -157,7 +158,7 @@ impl WindowShell {
     /// # Errors
     ///
     /// Returns the bridge error when the engine has ended.
-    pub fn add_host(&mut self, alias: &str) -> Result<(), crate::bridge::EngineError> {
+    pub fn add_host(&mut self, alias: &str) -> Result<(), EngineError> {
         self.hosts_mut().add_host(alias)?;
         let host = HostId(alias.to_owned());
         self.following.preferred = Some(host.clone());

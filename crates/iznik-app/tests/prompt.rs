@@ -8,9 +8,11 @@ use iznik_app::prompt::{
     Answer, HostOperation, Prompt, Step, answer, begin, choices, numbered_name,
 };
 use iznik_app::window::TabKey;
+use iznik_client::bootstrap::probe::InstalledServer;
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
-use iznik_client::host::state::HostState;
+use iznik_client::host::state::{HostState, UpgradeOffer, UpgradeReason};
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{Placement, SessionCommand};
 use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
 use iznik_protocol::message::ToClient;
@@ -150,7 +152,8 @@ fn failed() -> HostState {
 /// A connected state with no upgrade on offer.
 fn connected() -> HostState {
     HostState::Connected {
-        server_version: "0.1.0".to_owned(),
+        server_version: "0.0.0".to_owned(),
+        capabilities: Capabilities::REORDER_SESSIONS,
         upgrade: None,
     }
 }
@@ -278,6 +281,114 @@ fn reorder_offers_every_other_position_as_a_whole_order() {
             order: vec![TabId(10), TabId(12), TabId(11)],
         }
     );
+}
+
+#[test]
+/// Reordering sessions offers every other position of the selected session as
+/// a whole order of the host's sessions.
+///
+/// # Panics
+///
+/// Panics when the offered positions or orders differ.
+fn reorder_sessions_offers_every_other_position_as_a_whole_order() {
+    let mut state = EngineState::new();
+    let model = HostModel {
+        generation: Generation(1),
+        sessions: vec![session(1, "work"), session(2, "play"), session(3, "logs")],
+    };
+    state.apply(
+        &host(),
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload: encode_host_model(&model).expect("model encodes"),
+        },
+    );
+    // Only a server that advertised it can reorder sessions offers it.
+    moved(&mut state, &[("build", connected())]);
+    let key = TabKey {
+        host: host(),
+        session: SessionId(2),
+        tab: TabId(10),
+    };
+    let prompt = asked(begin(ActionId::ReorderSessions, &state, Some(&key))).expect("prompt opens");
+    let labels: Vec<_> = choices(&prompt, "")
+        .iter()
+        .map(|choice| choice.label.clone())
+        .collect();
+    assert_eq!(
+        labels,
+        ["before \u{201C}work\u{201D}", "after \u{201C}logs\u{201D}"]
+    );
+    assert_eq!(
+        command(&prompt, "", 0).expect("answer sends a command"),
+        SessionCommand::ReorderSessions {
+            order: vec![SessionId(2), SessionId(1), SessionId(3)],
+        }
+    );
+    assert_eq!(
+        command(&prompt, "", 1).expect("answer sends a command"),
+        SessionCommand::ReorderSessions {
+            order: vec![SessionId(1), SessionId(3), SessionId(2)],
+        }
+    );
+}
+
+#[test]
+/// A host holding one session has no other position to offer.
+///
+/// # Panics
+///
+/// Panics when a single-session host opens a reorder prompt.
+fn reorder_sessions_needs_somewhere_to_move() {
+    assert!(begin(ActionId::ReorderSessions, &state().expect("fixture"), None).is_none());
+}
+
+#[test]
+/// A connected server that did not advertise it can reorder sessions is never
+/// asked to: the prompt does not open, so no command is built for it.
+///
+/// # Panics
+///
+/// Panics when a host whose server cannot decode the command offers it.
+fn reorder_sessions_is_not_offered_to_a_server_that_cannot_decode_it() {
+    let mut state = EngineState::new();
+    let model = HostModel {
+        generation: Generation(1),
+        sessions: vec![session(1, "work"), session(2, "play")],
+    };
+    state.apply(
+        &host(),
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload: encode_host_model(&model).expect("model encodes"),
+        },
+    );
+    // A server of a build that predates `ReorderSessions` advertises neither
+    // compression nor resume nor the reorder; the connection carries what it
+    // said and nothing more.
+    state.absorb(EngineEvent::Said(ManagerEvent::Moved {
+        host: host(),
+        state: HostState::Connected {
+            server_version: "0.0.0".to_owned(),
+            capabilities: Capabilities::ZSTD,
+            upgrade: None,
+        },
+    }));
+    assert!(begin(ActionId::ReorderSessions, &state, None).is_none());
+}
+
+/// One session holding one tab and one pane, named as given.
+fn session(id: u64, name: &str) -> Session {
+    Session {
+        id: SessionId(id),
+        name: name.to_owned(),
+        tabs: vec![Tab {
+            id: TabId(10),
+            name: "shell".to_owned(),
+            panes: vec![pane(100)],
+            layout: LayoutNode::Leaf(PaneId(100)),
+        }],
+    }
 }
 
 #[test]
@@ -415,6 +526,163 @@ fn uninstall_asks_even_for_one_host() {
     let prompt = asked(begin(ActionId::UninstallHost, &state, None)).expect("uninstall asks");
     assert!(prompt.question.contains("ends every session"));
     assert_eq!(choices(&prompt, "").len(), 1);
+}
+
+#[test]
+/// Upgrading asks even for one host, and the question says every session on
+/// it ends — the daemon *is* the sessions, so that is never assumed.
+///
+/// # Panics
+///
+/// Panics when an upgrade performs without asking or does not warn.
+fn upgrade_asks_even_for_one_host_and_warns() {
+    let mut state = EngineState::new();
+    let installed = InstalledServer {
+        crate_version: "0.0.0".to_owned(),
+        protocol_version: 1,
+    };
+    moved(
+        &mut state,
+        &[(
+            "devbox",
+            HostState::Connected {
+                server_version: "0.0.0".to_owned(),
+                capabilities: Capabilities::REORDER_SESSIONS,
+                upgrade: Some(UpgradeOffer {
+                    installed: installed.clone(),
+                    bundled: InstalledServer {
+                        crate_version: "0.2.0".to_owned(),
+                        protocol_version: 2,
+                    },
+                    reason: UpgradeReason::Version,
+                }),
+            },
+        )],
+    );
+    let prompt = asked(begin(ActionId::UpgradeHost, &state, None)).expect("upgrade asks");
+    assert!(
+        prompt.question.contains("ends every session"),
+        "the question warns what an upgrade costs: {}",
+        prompt.question
+    );
+    assert_eq!(choices(&prompt, "").len(), 1);
+}
+
+#[test]
+/// A host whose connected server is missing a feature carries an upgrade
+/// offer, and `Upgrade Host` is then offered for it — even at an unchanged
+/// version.
+///
+/// # Panics
+///
+/// Panics when a same-version server missing the reorder raises no offer, or
+/// the action is unavailable while it is.
+fn a_capability_gap_offers_an_upgrade_and_the_action() {
+    let mut state = EngineState::new();
+    // A same-version server that advertised no capabilities: the version
+    // cannot distinguish it, so the gap is what the offer is made of.
+    moved(
+        &mut state,
+        &[(
+            "devbox",
+            HostState::Connected {
+                server_version: "0.0.0".to_owned(),
+                capabilities: Capabilities::from_bits(0),
+                upgrade: Some(UpgradeOffer {
+                    installed: InstalledServer {
+                        crate_version: "0.0.0".to_owned(),
+                        protocol_version: 1,
+                    },
+                    bundled: InstalledServer {
+                        crate_version: "0.0.0".to_owned(),
+                        protocol_version: 1,
+                    },
+                    reason: UpgradeReason::Capabilities,
+                }),
+            },
+        )],
+    );
+    let host = HostId("devbox".to_owned());
+    assert!(
+        state.missing_capabilities_for(&host),
+        "a server with no features is missing them"
+    );
+    assert_eq!(
+        upgrade_action_available(&state),
+        Some(true),
+        "the upgrade action is offered for the gap"
+    );
+
+    // And a server of another version — the case a stale local build is —
+    // offers it just the same, so the palette entry is reachable either way.
+    let mut versioned = EngineState::new();
+    moved(
+        &mut versioned,
+        &[(
+            "devbox",
+            HostState::Connected {
+                server_version: "0.0.1".to_owned(),
+                capabilities: Capabilities::from_bits(0),
+                upgrade: Some(UpgradeOffer {
+                    installed: InstalledServer {
+                        crate_version: "0.0.1".to_owned(),
+                        protocol_version: 1,
+                    },
+                    bundled: InstalledServer {
+                        crate_version: "0.0.0".to_owned(),
+                        protocol_version: 1,
+                    },
+                    reason: UpgradeReason::Version,
+                }),
+            },
+        )],
+    );
+    assert_eq!(
+        upgrade_action_available(&versioned),
+        Some(true),
+        "the upgrade action is offered for a version difference too"
+    );
+}
+
+/// Whether the palette lists `host: upgrade` for a state, or `None` when the
+/// inventory holds no such row.
+fn upgrade_action_available(state: &EngineState) -> Option<bool> {
+    iznik_app::actions::INVENTORY
+        .iter()
+        .find(|spec| spec.id == ActionId::UpgradeHost)
+        .map(|spec| iznik_app::actions::available(spec, state))
+}
+
+#[test]
+/// An offer for a capability gap and one for a version differ in what they
+/// say, so a person can tell why they are being asked.
+///
+/// # Panics
+///
+/// Panics when the two reasons read the same.
+fn an_upgrades_reason_is_said() {
+    let installed = InstalledServer {
+        crate_version: "0.0.0".to_owned(),
+        protocol_version: 1,
+    };
+    let bundled = InstalledServer {
+        crate_version: "0.2.0".to_owned(),
+        protocol_version: 2,
+    };
+    let host = HostId("devbox".to_owned());
+    let version = UpgradeOffer {
+        installed: installed.clone(),
+        bundled: bundled.clone(),
+        reason: UpgradeReason::Version,
+    };
+    let gap = UpgradeOffer {
+        installed,
+        bundled,
+        reason: UpgradeReason::Capabilities,
+    };
+    assert!(version.summary(&host).contains("0.2.0"));
+    assert!(gap.summary(&host).contains("missing features"));
+    assert_ne!(version.summary(&host), gap.summary(&host));
 }
 
 #[test]

@@ -59,6 +59,12 @@ test = "iznik-app::window_shell::window_starts_with_its_own_settings_font_not_th
 because = "The test drives a real shell construction directly and needs no container."
 
 [[claim]]
+id = "failure-banner-is-readable"
+statement = "The application's own theme has a danger foreground legible on the alert's danger-built background — at least the 4.5:1 a person reads by — where the kit's error alert paints its message in the danger *background* token, which in Ayu Mirage is a contrast ratio of 1.1 and cannot be read at all."
+test = "iznik-app::theme::the_failure_banner_colour_is_readable"
+because = "the two colours and their contrast are arithmetic over the registered theme; no display is needed"
+
+[[claim]]
 id = "terminal-font-is-monospace"
 statement = "The terminal draws with the requested font family when it is installed, and otherwise — the generic monospace name included — with an installed common monospace family."
 test = "iznik-app::theme::the_terminal_font_is_an_installed_monospace_family"

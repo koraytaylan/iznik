@@ -147,6 +147,12 @@ impl TerminalGrid {
             );
         }
     }
+
+    /// Send text to the process through the native paste encoder, which frames
+    /// it and strips the control bytes that would escape a bracketed payload.
+    pub fn paste_text(&self, text: String, context: &mut Context<'_, Self>) {
+        self.emit_input(TerminalInput::Paste(text), context);
+    }
 }
 
 /// Capture only an owned drag outside the surface; hovered motion uses the div listener.

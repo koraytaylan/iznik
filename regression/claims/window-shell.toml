@@ -83,3 +83,9 @@ statement = "The empty window renders the welcome stage with its Add Host button
 test = "iznik-app::flow::the_empty_window_offers_add_host"
 because = "the headless GPUI window renders the production shell with no host"
 
+[[claim]]
+id = "window-installs-its-own-main-menu"
+statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
+test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"
+because = "the installed menu bar is local application state the platform reports back, and the focused grid's emitted paste request is the same encoder route proven headlessly; no container or display changes either"
+

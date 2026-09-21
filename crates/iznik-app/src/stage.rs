@@ -1,18 +1,19 @@
 //! What the window's body shows while no tab is visible: the one next step a
 //! person has, for the host they are working with.
 //!
-//! With nothing held, that is adding a host. While a host is being reached it
-//! is watching that happen, with a way to stop it. When it could not be
-//! reached it is the reason, and retrying or removing it. When it is reached
-//! and holds no session it is starting one. There is never a blank body that
-//! leaves a person guessing which command comes next.
+//! With nothing held, that is choosing a host — the concrete aliases the ssh
+//! configuration already names, one click each, and a button for one it does
+//! not name yet. While a host is being reached it is watching that happen,
+//! with a way to stop it. When it could not be reached it is the reason, and
+//! retrying or removing it. When it is reached and holds no session it is
+//! starting one. There is never a blank body that leaves a person guessing
+//! which command comes next.
 
-use gpui_kit::component::Theme;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{Sizable, Theme, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, TestSupportExt,
-    div,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement as _, Styled, TestSupportExt, div,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::state::HostState;
@@ -25,8 +26,13 @@ use crate::window::WindowShell;
 /// The one thing the body offers while no tab is visible.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
-    /// No host is held: add one.
-    Welcome,
+    /// No host is held: choose one, from the ssh configuration's own aliases
+    /// or by adding one it does not name.
+    Welcome {
+        /// The concrete aliases the ssh configuration defines, in the order it
+        /// defines them, offered as one-click choices.
+        configured: Vec<String>,
+    },
     /// A host is held and is not connected: watch it, retry it or remove it.
     Host {
         /// The host being described.
@@ -43,13 +49,19 @@ pub enum Stage {
 
 /// The stage for the current state, describing the preferred host when it is
 /// still held and the first held host otherwise.
+///
+/// `configured` is the ssh configuration's own aliases: with nothing held they
+/// are what the welcome offers, and they are read from the shell so the body
+/// never has to reach for the file itself.
 #[must_use]
-pub fn stage(state: &EngineState, preferred: Option<&HostId>) -> Stage {
+pub fn stage(state: &EngineState, preferred: Option<&HostId>, configured: &[String]) -> Stage {
     let chosen = preferred
         .and_then(|host| state.host(host).map(|report| (host, report)))
         .or_else(|| state.hosts().next());
     let Some((host, report)) = chosen else {
-        return Stage::Welcome;
+        return Stage::Welcome {
+            configured: configured.to_vec(),
+        };
     };
     if matches!(report.connection, HostState::Connected { .. }) {
         Stage::Empty { host: host.clone() }
@@ -65,7 +77,7 @@ pub fn stage(state: &EngineState, preferred: Option<&HostId>) -> Stage {
 #[must_use]
 pub fn host(stage: &Stage) -> Option<&HostId> {
     match stage {
-        Stage::Welcome => None,
+        Stage::Welcome { .. } => None,
         Stage::Host { host, .. } | Stage::Empty { host } => Some(host),
     }
 }
@@ -147,6 +159,48 @@ fn paragraph(theme: &Theme, text: String) -> AnyElement {
         .into_any_element()
 }
 
+/// One host the ssh configuration names, as a button that adds and connects
+/// it at once.
+fn configured_button(alias: &str, context: &mut Context<'_, WindowShell>) -> AnyElement {
+    let target = alias.to_owned();
+    let about = HostId(alias.to_owned());
+    Button::new(gpui_kit::SharedString::from(format!("stage-host-{alias}")))
+        .label(alias.to_owned())
+        .outline()
+        .large()
+        .on_click(context.listener(move |shell, _, _, context| {
+            if let Err(error) = shell.add_host(&target) {
+                shell.failure(&about, error.to_string(), context);
+            }
+        }))
+        .into_any_element()
+}
+
+/// The hosts the ssh configuration names, as a bounded list of one-click
+/// choices; no configuration names none.
+fn configured_list(
+    configured: &[String],
+    context: &mut Context<'_, WindowShell>,
+) -> Option<AnyElement> {
+    if configured.is_empty() {
+        return None;
+    }
+    Some(
+        v_flex()
+            .id("stage-configured")
+            .gap_2()
+            .max_h_128()
+            .overflow_y_scroll()
+            .test_support()
+            .children(
+                configured
+                    .iter()
+                    .map(|alias| configured_button(alias, context)),
+            )
+            .into_any_element(),
+    )
+}
+
 /// Draw a stage.
 pub fn render(theme: &Theme, stage: &Stage, context: &mut Context<'_, WindowShell>) -> AnyElement {
     let palette_hint = paragraph(
@@ -154,29 +208,37 @@ pub fn render(theme: &Theme, stage: &Stage, context: &mut Context<'_, WindowShel
         "Every command is in the palette: ctrl-shift-p.".to_owned(),
     );
     match stage {
-        Stage::Welcome => card(
-            theme,
-            "stage-welcome",
-            "Connect to a host".to_owned(),
-            vec![
-                paragraph(
-                    theme,
-                    "iznik keeps your terminals running on a host, so they survive a closed \
-                     window or a dropped network. Add one by the ssh alias from your ssh \
-                     configuration, or a local server by unix:/path/to/socket."
-                        .to_owned(),
-                ),
+        Stage::Welcome { configured } => {
+            let mut body = vec![paragraph(
+                theme,
+                "iznik keeps your terminals running on a host, so they survive a closed \
+                 window or a dropped network. Choose a host your ssh configuration names, \
+                 add one it does not, or connect a local server by unix:/path/to/socket."
+                    .to_owned(),
+            )];
+            // The button is "another" only when the list above it already
+            // offered one, so the words match what is on the screen.
+            let label = if configured.is_empty() {
+                "Add a host"
+            } else {
+                "Add another host"
+            };
+            if let Some(list) = configured_list(configured, context) {
+                body.push(list);
+            }
+            body.push(
                 h_flex()
                     .child(action_button(
                         "stage-add-host",
-                        "Add host",
+                        label,
                         ActionId::AddHost,
                         context,
                     ))
                     .into_any_element(),
-                palette_hint,
-            ],
-        ),
+            );
+            body.push(palette_hint);
+            card(theme, "stage-welcome", "Connect to a host".to_owned(), body)
+        }
         Stage::Host { host, summary } => {
             let mut body = Vec::new();
             if let Some(detail) = &summary.detail {

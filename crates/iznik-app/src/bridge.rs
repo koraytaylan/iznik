@@ -132,6 +132,8 @@ pub enum EngineEvent {
 pub enum EngineError {
     /// The manager would not be built.
     Manager(ManagerError),
+    /// The person's ssh configuration could not be read or written.
+    Configuration(crate::ssh_config::SshConfigError),
     /// A thread the engine runs on could not be started.
     Thread {
         /// What the operating system said.
@@ -145,6 +147,7 @@ impl core::fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             EngineError::Manager(source) => write!(formatter, "{source}"),
+            EngineError::Configuration(source) => write!(formatter, "{source}"),
             EngineError::Thread { source } => {
                 write!(formatter, "a thread the engine runs on: {source}")
             }
@@ -157,6 +160,7 @@ impl core::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             EngineError::Manager(source) => Some(source),
+            EngineError::Configuration(source) => Some(source),
             EngineError::Thread { source } => Some(source),
             EngineError::Stopped => None,
         }

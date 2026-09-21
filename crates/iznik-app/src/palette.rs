@@ -176,6 +176,16 @@ pub fn result_count(state: &EngineState, palette: &Palette) -> usize {
     )
 }
 
+/// The empty list's words: what to type while a prompt takes an answer it did
+/// not list, or that nothing matched.
+#[must_use]
+pub fn empty_hint(palette: &Palette) -> &'static str {
+    palette
+        .prompt
+        .as_ref()
+        .map_or("No command matches", |prompt| prompt::empty_hint(prompt))
+}
+
 /// One listed palette row: its element id, its text and what choosing it does.
 struct Row {
     /// Stable element id.
@@ -191,6 +201,10 @@ struct Row {
 }
 
 /// The rows the palette lists in its current mode.
+///
+/// An Add Host prompt lists the ssh configuration's aliases and one row for
+/// an answer that names none of them, so the palette is a chooser and a text
+/// field at once.
 fn rows(state: &EngineState, palette: &Palette) -> Vec<Row> {
     if let Some(prompt) = &palette.prompt {
         return prompt::choices(prompt, &palette.query)
@@ -198,7 +212,7 @@ fn rows(state: &EngineState, palette: &Palette) -> Vec<Row> {
             .enumerate()
             .map(|(index, choice)| Row {
                 id: format!("prompt-choice-{index}"),
-                text: choice.label.clone(),
+                text: choice.label,
                 explanation: None,
                 chord: None,
                 action: None,
@@ -351,18 +365,13 @@ pub fn render(
         .track_scroll(&palette.scroll);
     let rows = rows(state, palette);
     if rows.is_empty() {
-        let empty = if palette.prompt.is_some() {
-            "Nothing matches"
-        } else {
-            "No command matches"
-        };
         list = list.child(
             div()
                 .px_3()
                 .py_2()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(empty),
+                .child(empty_hint(palette)),
         );
     }
     for (index, row) in rows.into_iter().enumerate() {
@@ -425,7 +434,12 @@ pub fn dispatch_action(
         palette.close();
         return Ok(true);
     }
-    match prompt::begin(action, shell.hosts().state(), shell.selected()) {
+    match prompt::begin_with(
+        action,
+        shell.hosts().state(),
+        shell.selected(),
+        &shell.ssh_alias(),
+    ) {
         Some(Step::Ask(prompt)) => {
             palette.ask(prompt);
             return Ok(true);
@@ -453,6 +467,10 @@ pub fn dispatch_action(
 /// Send the operation the open prompt's answer asks for, closing the palette
 /// when the bridge accepts it.
 ///
+/// An alias the ssh configuration does not define asks its follow-up question
+/// for the address instead of sending anything; the palette stays open at that
+/// question.
+///
 /// Returns `false` without sending anything while the answer is an empty
 /// name or matches no choice.
 ///
@@ -470,23 +488,39 @@ pub fn submit_prompt(
     else {
         return Ok(false);
     };
-    perform(shell, answer)?;
-    palette.close();
-    Ok(true)
+    match answer {
+        Answer::AddHost(alias) if !shell.ssh_defines(&alias) => {
+            palette.ask(prompt::host_address_prompt(alias));
+            Ok(true)
+        }
+        answer => {
+            perform(shell, answer)?;
+            palette.close();
+            Ok(true)
+        }
+    }
 }
 
 /// Perform the operation an answer asks for through the shell's engine.
 ///
 /// # Errors
 ///
-/// Returns the bridge error when the host is stopped or refuses the operation.
+/// Returns the bridge error when the host is stopped or refuses the operation,
+/// and [`crate::ssh_config::SshConfigError`]'s words when the ssh
+/// configuration cannot be written.
 pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bridge::EngineError> {
     match answer {
         Answer::AddHost(alias) => shell.add_host(&alias),
+        Answer::AddHostWithAddress { alias, address } => {
+            shell.add_host_with_address(&alias, &address)
+        }
         Answer::Host { operation, host } => match operation {
             HostOperation::Remove => shell.hosts_mut().remove_host(&host.0),
             HostOperation::Reconnect => shell.hosts_mut().reconnect(&host.0),
-            HostOperation::Upgrade => shell.hosts_mut().upgrade(&host.0, false),
+            // Forced, because a same-version server missing a capability is
+            // exactly the case this exists for and nothing else will replace
+            // it; the prompt has already said every session on the host ends.
+            HostOperation::Upgrade => shell.hosts_mut().upgrade(&host.0, true),
             HostOperation::Uninstall => shell.hosts_mut().uninstall(&host.0),
         },
         Answer::Command { host, command } => shell.dispatch_command(&host.0, command).map(|_| ()),

@@ -48,6 +48,6 @@ because = "which tabs close is pure over the session's tab list"
 
 [[claim]]
 id = "tab-bar-live-drag-and-menu"
-statement = "Dragging a tab onto another reorders the session's tabs on a live host, and choosing Close Other Tabs from a tab's menu leaves only that tab."
+statement = "Dragging a tab onto another reorders the session's tabs on a live host, and choosing Close Other Tabs from a tab's own right-click menu — opened in the shell's window, not the kit's wrapper — leaves only that tab."
 test = "iznik-app::end_to_end::tab_bar_drag_and_menu_drive_the_in_process_stack"
-because = "the headless production shell drives native pointer dispatch against the in-process daemon stack; the menu is rendered without the kit's context-menu wrapper, whose reference cycle the test app's leak check reports"
+because = "the headless production shell drives native pointer dispatch against the in-process daemon stack, and the kit's context-menu wrapper is proven separately to be the one whose element state cannot survive a repaint"

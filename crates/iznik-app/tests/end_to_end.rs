@@ -5,8 +5,6 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::Root;
-use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, TestAppContext,
@@ -17,7 +15,6 @@ use iznik_app::bars;
 use iznik_app::bridge::EngineBridge;
 use iznik_app::host_ui::EngineState;
 use iznik_app::palette::Palette;
-use iznik_app::tab_actions;
 use iznik_app::vt::{VtOptions, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
 use iznik_client::host::identity::HostId;
@@ -34,6 +31,10 @@ use iznik_testkit::stack::{Stack, StackOptions};
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// The index of "Close Other Tabs" in a tab's menu, separators included.
 const CLOSE_OTHERS_ITEM: u64 = 7;
+/// The index of "Close Session" in a session's menu, separators included.
+const CLOSE_SESSION_ITEM: u64 = 6;
+/// The index of "Move Left" in a session's menu, separators included.
+const MOVE_LEFT_ITEM: u64 = 3;
 /// Maximum time allowed for a local host and command delta to arrive.
 const LIVE_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -429,31 +430,13 @@ fn tab_bar(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error
     wait_for(context, handle, |shell| {
         tab_order(shell, &alias) == [third, first, second]
     })?;
-    // The menu is opened as the tab's right click opens it, but without the
-    // kit's context-menu wrapper: gpui-component 0.6.1's wrapper keeps each
-    // opened menu alive through a reference cycle, which the test app's leak
-    // check reports.
-    let shell_reference = handle.update(context, |_, _, application| {
-        application.entity().downgrade()
+    // The tab's own right click opens its menu in the shell's window.
+    context.update_window(handle.into(), |_, window, application| {
+        window.render_frame(application);
+        window.right_click(chip(second), application);
+        window.render_frame(application);
     })?;
-    let key = iznik_app::window::TabKey {
-        host: alias.clone(),
-        session: handle
-            .update(context, |shell, _, _| {
-                shell.selected().map(|key| key.session)
-            })?
-            .ok_or("no selected session")?,
-        tab: second,
-    };
-    let menu_window = context.add_window(|window, application| {
-        let menu = PopupMenu::build(
-            window,
-            application,
-            tab_actions::menu(shell_reference, key, vec![third, first, second]),
-        );
-        Root::new(menu, window, application)
-    });
-    context.update_window(menu_window.into(), |_, window, application| {
+    context.update_window(handle.into(), |_, window, application| {
         window.render_frame(application);
         window
             .within("popup-menu")
@@ -462,13 +445,129 @@ fn tab_bar(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error
     wait_for(context, handle, |shell| {
         tab_order(shell, &alias) == [second]
     })?;
-    context.update_window(menu_window.into(), |_, window, _application| {
-        window.remove_window();
-    })?;
-    context.run_until_parked();
     let _removed = std::fs::remove_dir_all(directory);
     drop(stack);
     Ok(())
+}
+
+/// A session's right-click menu closes the session on the live host.
+#[gpui_kit::test]
+fn session_bar_menu_drives_the_in_process_stack(context: &mut TestAppContext) {
+    check(&session_bar(context));
+}
+
+/// Right-click the live host's only session and close it from its menu.
+///
+/// # Errors
+/// Returns setup, engine, window, or deadline errors.
+fn session_bar(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    let (stack, directory, handle, alias) = three_tabs(context)?;
+    let session = handle
+        .update(context, |shell, _, _| {
+            shell
+                .hosts()
+                .state()
+                .model()
+                .host(&alias)
+                .and_then(|host| host.model.sessions.first().map(|session| session.id))
+        })?
+        .ok_or("the live host holds no session")?;
+    let chip = format!("session-{}-{}", alias.0, session.0);
+    // The session's own right click opens its menu in the shell's window.
+    context.update_window(handle.into(), |_, window, application| {
+        window.render_frame(application);
+        window.right_click(chip.clone(), application);
+        window.render_frame(application);
+    })?;
+    context.update_window(handle.into(), |_, window, application| {
+        window.render_frame(application);
+        window.within("session-menu").click(
+            gpui_kit::ElementId::Integer(CLOSE_SESSION_ITEM),
+            application,
+        );
+    })?;
+    wait_for(context, handle, |shell| {
+        shell
+            .hosts()
+            .state()
+            .model()
+            .host(&alias)
+            .is_some_and(|host| host.model.sessions.is_empty())
+    })?;
+    let _removed = std::fs::remove_dir_all(directory);
+    drop(stack);
+    Ok(())
+}
+
+/// "Move Left" reorders the live host's sessions through the session menu.
+#[gpui_kit::test]
+fn session_bar_menu_reorders_sessions_on_the_live_host(context: &mut TestAppContext) {
+    check(&session_reorder(context));
+}
+
+/// Right-click the second session and move it before the first.
+///
+/// # Errors
+/// Returns setup, engine, window, or deadline errors.
+fn session_reorder(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    let (stack, directory, handle, alias) = two_sessions(context)?;
+    let order = handle.update(context, |shell, _, _| session_order(shell, &alias))?;
+    let [first, second] = order.as_slice() else {
+        return Err("two sessions expected".into());
+    };
+    let (first, second) = (*first, *second);
+    let chip = format!("session-{}-{}", alias.0, second.0);
+    // The second session's own right click opens its menu in the shell's
+    // window; "Move Left" is the fourth item, separators included.
+    context.update_window(handle.into(), |_, window, application| {
+        window.render_frame(application);
+        window.right_click(chip.clone(), application);
+        window.render_frame(application);
+    })?;
+    context.update_window(handle.into(), |_, window, application| {
+        window.render_frame(application);
+        window
+            .within("session-menu")
+            .click(gpui_kit::ElementId::Integer(MOVE_LEFT_ITEM), application);
+    })?;
+    wait_for(context, handle, |shell| {
+        session_order(shell, &alias) == [second, first]
+    })?;
+    let _removed = std::fs::remove_dir_all(directory);
+    drop(stack);
+    Ok(())
+}
+
+/// The live host's session order in its model.
+fn session_order(shell: &WindowShell, alias: &HostId) -> Vec<SessionId> {
+    shell
+        .hosts()
+        .state()
+        .model()
+        .host(alias)
+        .map(|host| {
+            host.model
+                .sessions
+                .iter()
+                .map(|session| session.id)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Start a live host holding two sessions.
+///
+/// # Errors
+/// Returns setup, engine, window, or deadline errors.
+fn two_sessions(context: &mut TestAppContext) -> Result<LiveTabs, Box<dyn std::error::Error>> {
+    let (stack, directory, handle, alias) = three_tabs(context)?;
+    handle.update(context, |shell, _, _| {
+        shell.dispatch_action_on(ActionId::CreateSession, &alias)
+    })??;
+    wait_for(context, handle, |shell| {
+        session_order(shell, &alias).len() == 2
+    })?;
+    Ok((stack, directory, handle, alias))
 }
 
 /// Drive shell updates until a live-stack predicate becomes true.

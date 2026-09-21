@@ -152,6 +152,33 @@ impl EngineState {
         self.hosts.get(host)?.upgrade.as_ref()
     }
 
+    /// Whether a connected host's server advertised it can reorder sessions.
+    ///
+    /// False for a host nothing has been said about and for one that is not
+    /// connected, which is what a surface needs: a server of a build that
+    /// predates `ReorderSessions` refuses the command as garbage, so the
+    /// entries that would send it are offered only to a host whose connection
+    /// carried the capability.
+    #[must_use]
+    pub fn reorders_sessions(&self, host: &HostId) -> bool {
+        self.hosts
+            .get(host)
+            .is_some_and(|report| report.connection.reorders_sessions())
+    }
+
+    /// Whether a held host's connected server is still missing capabilities
+    /// this build knows.
+    ///
+    /// False for a host nothing is known about and for one whose server has
+    /// every bit, so it is exactly the condition a once-per-host notice is
+    /// kept against.
+    #[must_use]
+    pub fn missing_capabilities_for(&self, host: &HostId) -> bool {
+        self.hosts
+            .get(host)
+            .is_some_and(|report| report.connection.missing_capabilities().bits() != 0)
+    }
+
     /// Everything said since the last call, in the order it was said, leaving
     /// nothing behind.
     ///
@@ -168,7 +195,7 @@ impl EngineState {
     /// read.
     pub fn absorb(&mut self, event: EngineEvent) {
         match event {
-            EngineEvent::Said(ManagerEvent::Moved { host, state }) => self.moved(host, &state),
+            EngineEvent::Said(ManagerEvent::Moved { host, state }) => self.moved(&host, &state),
             EngineEvent::Said(ManagerEvent::Snapshot {
                 host,
                 generation,
@@ -229,7 +256,7 @@ impl EngineState {
     }
 
     /// One host moved, and this is where it went.
-    fn moved(&mut self, host: HostId, state: &HostState) {
+    fn moved(&mut self, host: &HostId, state: &HostState) {
         let offer = match state {
             HostState::Connected { upgrade, .. } => upgrade.clone(),
             _otherwise => None,
@@ -251,7 +278,11 @@ impl EngineState {
         };
         self.notice(host.clone(), kind, state.to_string());
         if let Some(offered) = offer {
-            self.notice(host, NoticeKind::Offer, offered_summary(&offered));
+            self.notice(
+                host.clone(),
+                NoticeKind::Offer,
+                offered_summary(host, &offered),
+            );
         }
     }
 
@@ -478,10 +509,13 @@ fn answered(command: CommandId, outcome: &CommandOutcome) -> String {
     }
 }
 
-/// One sentence saying which server is on offer and which the host is running.
-fn offered_summary(offer: &UpgradeOffer) -> String {
+/// One sentence saying which server is on offer, which the host is running,
+/// and why the offer is being made.
+fn offered_summary(host: &HostId, offer: &UpgradeOffer) -> String {
     format!(
-        "the host runs iznik {}, this build carries iznik {}",
-        offer.installed.crate_version, offer.bundled.crate_version
+        "{}: the host runs iznik {}, this build carries iznik {}",
+        offer.summary(host),
+        offer.installed.crate_version,
+        offer.bundled.crate_version
     )
 }

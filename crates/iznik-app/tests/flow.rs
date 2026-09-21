@@ -20,9 +20,11 @@ use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_client::host::state::HostState;
 use iznik_client::transport::ClientRuntimePaths;
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
 use iznik_protocol::message::ToClient;
 use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, Tab, encode_host_model};
+use iznik_testkit::stack::{Stack, StackOptions};
 
 /// Fixture failures.
 type Failed = Box<dyn std::error::Error>;
@@ -35,7 +37,8 @@ fn host(alias: &str) -> HostId {
 /// A connected state with no upgrade on offer.
 fn connected() -> HostState {
     HostState::Connected {
-        server_version: "0.1.0".to_owned(),
+        server_version: "0.0.0".to_owned(),
+        capabilities: Capabilities::REORDER_SESSIONS,
         upgrade: None,
     }
 }
@@ -108,12 +111,19 @@ fn snapshot(state: &mut EngineState, alias: &str, model: &HostModel) -> Result<(
 /// Panics when a stage differs.
 fn the_stage_follows_the_host_a_person_is_working_with() {
     let mut state = EngineState::new();
-    assert_eq!(stage(&state, None), Stage::Welcome);
+    let configured = ["builder".to_owned(), "devbox".to_owned()];
+    assert_eq!(
+        stage(&state, None, &configured),
+        Stage::Welcome {
+            configured: configured.to_vec()
+        },
+        "the welcome carries the ssh configuration's own hosts"
+    );
     moved(&mut state, "devbox", HostState::Probing);
     let Stage::Host {
         host: about,
         summary: reading,
-    } = stage(&state, Some(&host("devbox")))
+    } = stage(&state, Some(&host("devbox")), &configured)
     else {
         panic!("a host being reached is described");
     };
@@ -125,20 +135,20 @@ fn the_stage_follows_the_host_a_person_is_working_with() {
     let Stage::Host {
         summary: unreachable,
         ..
-    } = stage(&state, Some(&host("devbox")))
+    } = stage(&state, Some(&host("devbox")), &configured)
     else {
         panic!("the preferred failed host is described");
     };
     assert_eq!(unreachable.headline, "Couldn\u{2019}t connect to devbox");
     assert_eq!(unreachable.remedies, [Remedy::Retry, Remedy::Remove]);
     assert_eq!(
-        stage(&state, Some(&host("alpha"))),
+        stage(&state, Some(&host("alpha")), &configured),
         Stage::Empty {
             host: host("alpha")
         }
     );
     assert_eq!(
-        stage(&state, Some(&host("forgotten"))),
+        stage(&state, Some(&host("forgotten")), &configured),
         Stage::Empty {
             host: host("alpha")
         },
@@ -249,10 +259,18 @@ fn an_added_host_starts_once_connected_with_its_model() {
     assert_eq!(ready_to_start(&state, &starting), [&host("devbox")]);
 }
 
-/// With no host the window's body is the welcome stage with its Add Host button.
+/// With no host the window's body is the welcome stage with its Add Host
+/// button and no configured-host list when the ssh configuration has none.
 #[gpui_kit::test]
 fn the_empty_window_offers_add_host(context: &mut TestAppContext) {
     check(&welcome(context));
+}
+
+/// The welcome stage lists the ssh configuration's own hosts, and clicking
+/// one adds it.
+#[gpui_kit::test]
+fn the_welcome_stage_lists_the_configured_hosts(context: &mut TestAppContext) {
+    check(&configured(context));
 }
 
 /// Convert fixture failures into a named assertion outside the GPUI macro.
@@ -299,7 +317,102 @@ fn welcome(context: &mut TestAppContext) -> Result<(), Failed> {
     context.update(|window, _application| {
         window.find("stage-welcome").visible();
         window.find("stage-add-host").visible();
+        assert!(
+            window.try_find("stage-configured").is_none(),
+            "a configuration naming no host shows no list"
+        );
     });
     let _removed = std::fs::remove_dir_all(directory);
+    Ok(())
+}
+
+/// Open a headless shell over a scratch ssh configuration naming the
+/// in-process daemon's own local alias, click it, and see it held and
+/// connected.
+///
+/// The configuration names a `unix:<path>` alias rather than an SSH host so
+/// the click connects to the fixture's own daemon: the rule is that no test
+/// reaches a host that is not the fixture, and a name out of a written
+/// configuration is not one to resolve.
+///
+/// # Errors
+///
+/// Returns setup or deadline failures.
+///
+/// # Panics
+///
+/// Panics when the welcome does not list the configured host, or clicking it
+/// does not hold and connect it.
+fn configured(context: &mut TestAppContext) -> Result<(), Failed> {
+    context.update(gpui_kit::init);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let stack = runtime.block_on(Stack::start(StackOptions::default()))?;
+    let directory: PathBuf =
+        std::env::temp_dir().join(format!("iznik-app-configured-{}", std::process::id()));
+    std::fs::remove_dir_all(&directory).ok();
+    std::fs::create_dir_all(directory.join("artifacts"))?;
+    let alias = format!("unix:{}", stack.socket().display());
+    let ssh_config = directory.join("config");
+    std::fs::write(&ssh_config, format!("Host {alias}\n"))?;
+    let bridge = EngineBridge::start(
+        directory.join("artifacts"),
+        ClientRuntimePaths::under(&directory.join("runtime"))?,
+    )?;
+    let thread = Rc::new(VtThread::start(VtOptions::default())?);
+    let (view, context) = context.add_window_view(|window, context| {
+        WindowShell::new(
+            bridge,
+            thread,
+            ShellOptions {
+                update_interval: None,
+                ssh_config_path: Some(ssh_config.clone()),
+                ..ShellOptions::default()
+            },
+            window,
+            context,
+        )
+    });
+    context.update(|window, application| {
+        window.draw(application).clear(application);
+        window.find("stage-configured").visible();
+        window
+            .find(gpui_kit::ElementId::Name(
+                format!("stage-host-{alias}").into(),
+            ))
+            .visible();
+        window.click(
+            gpui_kit::ElementId::Name(format!("stage-host-{alias}").into()),
+            application,
+        );
+    });
+    // The click asks the engine to hold the host; what the window shows is
+    // its state once the engine has said so, which this fixture drains by
+    // hand because it has no update pump.
+    let wanted = HostId(alias);
+    let Some(deadline) = std::time::Instant::now().checked_add(std::time::Duration::from_secs(10))
+    else {
+        return Err("deadline could not be represented".into());
+    };
+    loop {
+        let connected = view.update_in(context, |shell, window, application| {
+            shell.update(window, application);
+            shell
+                .hosts()
+                .state()
+                .host(&wanted)
+                .is_some_and(|report| matches!(report.connection, HostState::Connected { .. }))
+        });
+        if connected {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("the clicked host never connected".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _removed = std::fs::remove_dir_all(directory);
+    drop(stack);
     Ok(())
 }

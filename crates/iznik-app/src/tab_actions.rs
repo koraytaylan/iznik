@@ -1,31 +1,59 @@
-//! What can be done to one tab from the tab bar: its right-click menu, and
-//! dragging it to another place among its session's tabs.
+//! What can be done to one bar entry from its right-click menu: both a tab and
+//! a session get a new entry, a rename, a move left or right and the three
+//! close entries, and a tab can be dragged to another place among its
+//! session's tabs.
 //!
-//! Every order change is a whole `ReorderTabs` order computed here, so the
-//! menu's moves and a drop agree on what a new order is.
+//! Every order change is a whole order computed here — a `ReorderTabs` order
+//! for a tab, a `ReorderSessions` order for a session — so a menu's moves and
+//! a drop agree on what a new order is.
+//!
+//! The menu is built and drawn here, and *opened* from the shell's own state
+//! rather than through the kit's `ContextMenu` wrapper: that wrapper keeps its
+//! open menu in element state it resets on every layout pass, so in a window
+//! that repaints on a timer — this one polls its engine every sixteen
+//! milliseconds — the menu vanishes on the next frame and its entity is never
+//! released. The shell holds one open menu, renders it anchored where the
+//! right click landed, and dismisses it on a press anywhere else or on Escape.
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{
-    App, Context, Hsla, IntoElement, ParentElement, Render, Styled, WeakEntity, Window, div,
+    Anchor, AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement, Pixels, Point, Render, Styled, Subscription, TestSupportExt as _, WeakEntity,
+    Window, anchored, deferred, div, px,
 };
 use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::TabId;
+use iznik_protocol::identity::{SessionId, TabId};
 
 use crate::actions::ActionId;
-use crate::window::{TabKey, WindowShell};
+use crate::window::{SessionKey, TabKey, WindowShell};
+
+/// The distance kept between an open tab menu and the window's edges.
+const MENU_MARGIN: Pixels = px(8.);
+/// The deferred paint priority of the open menu: above the bars, the grid and
+/// the palette's own surface.
+const MENU_LAYER: usize = 200;
 
 /// The order with `moving` placed where `onto` is: after it when moving
 /// right, before it when moving left. `None` when nothing would change or
-/// either tab is not in the order.
+/// either identity is not in the order. Shared by tabs and by sessions, whose
+/// reorder rules are the same.
 #[must_use]
-pub fn dropped_order(order: &[TabId], moving: TabId, onto: TabId) -> Option<Vec<TabId>> {
-    let from = order.iter().position(|tab| *tab == moving)?;
-    let to = order.iter().position(|tab| *tab == onto)?;
+pub fn dropped_order<Item: Copy + PartialEq>(
+    order: &[Item],
+    moving: Item,
+    onto: Item,
+) -> Option<Vec<Item>> {
+    let from = order.iter().position(|held| *held == moving)?;
+    let to = order.iter().position(|held| *held == onto)?;
     if from == to {
         return None;
     }
-    let mut reordered: Vec<TabId> = order.iter().copied().filter(|tab| *tab != moving).collect();
-    let target = reordered.iter().position(|tab| *tab == onto)?;
+    let mut reordered: Vec<Item> = order
+        .iter()
+        .copied()
+        .filter(|held| *held != moving)
+        .collect();
+    let target = reordered.iter().position(|held| *held == onto)?;
     let insert_at = if from < to {
         target.checked_add(1)?
     } else {
@@ -37,8 +65,12 @@ pub fn dropped_order(order: &[TabId], moving: TabId, onto: TabId) -> Option<Vec<
 
 /// The order with `moving` one place left or right; `None` at that edge.
 #[must_use]
-pub fn shifted_order(order: &[TabId], moving: TabId, rightward: bool) -> Option<Vec<TabId>> {
-    let from = order.iter().position(|tab| *tab == moving)?;
+pub fn shifted_order<Item: Copy + PartialEq>(
+    order: &[Item],
+    moving: Item,
+    rightward: bool,
+) -> Option<Vec<Item>> {
+    let from = order.iter().position(|held| *held == moving)?;
     let beside = if rightward {
         order.get(from.checked_add(1)?)
     } else {
@@ -47,21 +79,21 @@ pub fn shifted_order(order: &[TabId], moving: TabId, rightward: bool) -> Option<
     dropped_order(order, moving, *beside)
 }
 
-/// The tabs "Close Other Tabs" closes.
+/// The identities "Close Others" closes.
 #[must_use]
-pub fn others(order: &[TabId], keep: TabId) -> Vec<TabId> {
-    order.iter().copied().filter(|tab| *tab != keep).collect()
+pub fn others<Item: Copy + PartialEq>(order: &[Item], keep: Item) -> Vec<Item> {
+    order.iter().copied().filter(|held| *held != keep).collect()
 }
 
-/// The tabs "Close Tabs to the Right" closes.
+/// The identities "Close to the Right" closes.
 #[must_use]
-pub fn to_the_right(order: &[TabId], of: TabId) -> Vec<TabId> {
+pub fn to_the_right<Item: Copy + PartialEq>(order: &[Item], of: Item) -> Vec<Item> {
     order
         .iter()
-        .position(|tab| *tab == of)
+        .position(|held| *held == of)
         .and_then(|index| index.checked_add(1))
         .and_then(|start| order.get(start..))
-        .map(<[TabId]>::to_vec)
+        .map(<[Item]>::to_vec)
         .unwrap_or_default()
 }
 
@@ -139,6 +171,35 @@ fn close(
     }
 }
 
+/// Reorder the host's sessions, reporting a refusal on the shell.
+fn reorder_sessions(
+    shell: &mut WindowShell,
+    key: &SessionKey,
+    order: Vec<SessionId>,
+    context: &mut Context<'_, WindowShell>,
+) {
+    let command = SessionCommand::ReorderSessions { order };
+    if let Err(error) = shell.dispatch_command(&key.host.0, command) {
+        shell.failure(&key.host, error.to_string(), context);
+    }
+}
+
+/// Close sessions of one host, reporting a refusal on the shell.
+fn close_sessions(
+    shell: &mut WindowShell,
+    key: &SessionKey,
+    sessions: &[SessionId],
+    context: &mut Context<'_, WindowShell>,
+) {
+    for session in sessions {
+        let command = SessionCommand::CloseSession { session: *session };
+        if let Err(error) = shell.dispatch_command(&key.host.0, command) {
+            shell.failure(&key.host, error.to_string(), context);
+            return;
+        }
+    }
+}
+
 /// Move a dropped tab to where it was dropped, when both are tabs of the same
 /// session on the same host.
 pub fn drop_onto(
@@ -174,8 +235,265 @@ fn item(
     )
 }
 
+/// The bar entry a right-click menu is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Subject {
+    /// A tab of one session.
+    Tab,
+    /// A whole session.
+    Session,
+}
+
+impl Subject {
+    /// One word for the entry the menu belongs to, used in the element id a
+    /// case finds it by.
+    fn word(self) -> &'static str {
+        match self {
+            Subject::Tab => "tab",
+            Subject::Session => "session",
+        }
+    }
+}
+
+/// One open bar menu: which entry it is about, where it was opened, and the
+/// menu entity drawn, held so its entity lives exactly as long as this is
+/// open.
+#[derive(Debug)]
+pub struct OpenMenu {
+    /// The entry it is about, for the element id a case finds it by.
+    subject: Subject,
+    /// Where the right click landed, in window coordinates.
+    pub position: Point<Pixels>,
+    /// The built menu.
+    pub menu: Entity<PopupMenu>,
+    /// Ends when the menu dismisses, which is what closes this.
+    _ended: Subscription,
+}
+
+impl OpenMenu {
+    /// Hold a menu entity opened at `position`, closing it through the shell
+    /// when it dismisses itself.
+    pub fn opened(
+        subject: Subject,
+        position: Point<Pixels>,
+        menu: Entity<PopupMenu>,
+        window: &mut Window,
+        context: &mut Context<'_, WindowShell>,
+    ) -> OpenMenu {
+        let ended = context.subscribe_in(
+            &menu,
+            window,
+            |shell: &mut WindowShell, _menu, _event: &gpui_kit::DismissEvent, _window, context| {
+                shell.close_menu(context);
+            },
+        );
+        OpenMenu {
+            subject,
+            position,
+            menu,
+            _ended: ended,
+        }
+    }
+}
+
+impl WindowShell {
+    /// Open the right-click menu of one tab where the click landed, replacing
+    /// whatever menu was open.
+    pub fn open_tab_menu(
+        &mut self,
+        key: TabKey,
+        order: Vec<TabId>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
+        let entity = context.entity().downgrade();
+        let menu = PopupMenu::build(window, context, tab_menu(entity, key, order));
+        self.menu = Some(OpenMenu::opened(
+            Subject::Tab,
+            position,
+            menu,
+            window,
+            context,
+        ));
+        context.notify();
+    }
+
+    /// Open the right-click menu of one session where the click landed,
+    /// replacing whatever menu was open.
+    pub fn open_session_menu(
+        &mut self,
+        key: SessionKey,
+        order: Vec<SessionId>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
+        let entity = context.entity().downgrade();
+        let reorderable = self.hosts().state().reorders_sessions(&key.host);
+        let menu = PopupMenu::build(
+            window,
+            context,
+            session_menu(entity, key, order, reorderable),
+        );
+        self.menu = Some(OpenMenu::opened(
+            Subject::Session,
+            position,
+            menu,
+            window,
+            context,
+        ));
+        context.notify();
+    }
+
+    /// Close the open menu, if one is open.
+    pub fn close_menu(&mut self, context: &mut Context<'_, Self>) {
+        if self.menu.take().is_some() {
+            context.notify();
+        }
+    }
+
+    /// Rename the session holding a right-clicked entry by opening the
+    /// palette at the rename prompt for that session.
+    fn prompt_session_name(
+        &mut self,
+        key: &SessionKey,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
+        self.select_session(key, window, context);
+        self.palette_mut().open();
+        self.choose(Some(ActionId::RenameSession), window, context);
+    }
+}
+
+/// Render the open menu over the window, anchored where it was opened.
+#[must_use]
+pub fn render_open(open: &OpenMenu) -> AnyElement {
+    deferred(
+        anchored()
+            .position(open.position)
+            .anchor(Anchor::TopLeft)
+            .snap_to_window_with_margin(MENU_MARGIN)
+            .child(
+                div()
+                    .id(format!("{}-menu", open.subject.word()))
+                    .test_support()
+                    .occlude()
+                    .child(open.menu.clone()),
+            ),
+    )
+    .with_priority(MENU_LAYER)
+    .into_any_element()
+}
+
+/// The right-click menu of one session: new, rename, move, and close, the
+/// same entries a tab's menu offers.
+///
+/// `reorderable` is whether the connected server advertised it can reorder
+/// sessions. A server of a build that predates `ReorderSessions` refuses the
+/// command as garbage and ends the connection on it, so the moves are offered
+/// enabled only to a server that can answer them — and disabled, rather than
+/// hidden, so the entry and its reason stay visible.
+pub fn session_menu(
+    shell: WeakEntity<WindowShell>,
+    key: SessionKey,
+    order: Vec<SessionId>,
+    reorderable: bool,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<'_, PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _menu_window, _menu_context| {
+        let left = shifted_order(&order, key.session, false);
+        let right = shifted_order(&order, key.session, true);
+        let others = others(&order, key.session);
+        let rightward = to_the_right(&order, key.session);
+        let (new_key, rename_key, left_key, right_key, close_key, others_key, right_close_key) = (
+            key.clone(),
+            key.clone(),
+            key.clone(),
+            key.clone(),
+            key.clone(),
+            key.clone(),
+            key.clone(),
+        );
+        menu.item(item(
+            "New Session",
+            true,
+            &shell,
+            move |shell, window, context| {
+                shell.select_session(&new_key, window, context);
+                if let Err(error) = shell.dispatch_action_on(ActionId::CreateSession, &new_key.host)
+                {
+                    shell.failure(&new_key.host, error.to_string(), context);
+                }
+            },
+        ))
+        .item(item(
+            "Rename Session\u{2026}",
+            true,
+            &shell,
+            move |shell, window, context| {
+                shell.prompt_session_name(&rename_key, window, context);
+            },
+        ))
+        .separator()
+        .item(item(
+            if reorderable {
+                "Move Left"
+            } else {
+                "Move Left (needs a newer server)"
+            },
+            reorderable && left.is_some(),
+            &shell,
+            move |shell, _window, context| {
+                if let Some(new_order) = left.clone() {
+                    reorder_sessions(shell, &left_key, new_order, context);
+                }
+            },
+        ))
+        .item(item(
+            if reorderable {
+                "Move Right"
+            } else {
+                "Move Right (needs a newer server)"
+            },
+            reorderable && right.is_some(),
+            &shell,
+            move |shell, _window, context| {
+                if let Some(new_order) = right.clone() {
+                    reorder_sessions(shell, &right_key, new_order, context);
+                }
+            },
+        ))
+        .separator()
+        .item(item(
+            "Close Session",
+            true,
+            &shell,
+            move |shell, _window, context| {
+                close_sessions(shell, &close_key, &[close_key.session], context);
+            },
+        ))
+        .item(item(
+            "Close Other Sessions",
+            !others.is_empty(),
+            &shell,
+            move |shell, _window, context| {
+                close_sessions(shell, &others_key, &others, context);
+            },
+        ))
+        .item(item(
+            "Close Sessions to the Right",
+            !rightward.is_empty(),
+            &shell,
+            move |shell, _window, context| {
+                close_sessions(shell, &right_close_key, &rightward, context);
+            },
+        ))
+    }
+}
+
 /// The right-click menu of one tab: new, rename, move, and close.
-pub fn menu(
+pub fn tab_menu(
     shell: WeakEntity<WindowShell>,
     key: TabKey,
     order: Vec<TabId>,

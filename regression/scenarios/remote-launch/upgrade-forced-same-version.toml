@@ -1,0 +1,85 @@
+name = "upgrade-forced-same-version"
+claims = ["launch-replaces-a-same-version-server-when-forced"]
+driver = "engine"
+budget_seconds = 180
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The case a capability gap leaves: a server of *this build's own version* that
+# is nevertheless older — one built before a command existed. The version probe
+# cannot tell the two apart, so the decision is "up to date" and only somebody
+# saying "force" replaces it. The shim answers this build's version and runs
+# the real server, so before the upgrade the host is genuinely up to date by
+# the probe's own reckoning.
+[[steps]]
+id = "install-the-real-server"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "install-a-same-version-shim"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && v=$($p/iznik-server.real --version | awk '{print $2}') && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server %s protocol 1\\\\n\" \"$v\"; exit 0; fi\\nexec /home/iznik/.local/share/iznik/bin/iznik-server.real \"$@\"\\n' \"$v\" > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+# With the shim in place the probe finds this build's version, so a plain
+# bootstrap decides there is nothing to do.
+[[steps]]
+id = "a-plain-bootstrap-leaves-it-alone"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "up to date"
+
+# Forced, the same-version shim is replaced anyway: this is the only path that
+# closes a capability gap, because the version cannot express it.
+[[steps]]
+id = "a-forced-upgrade-replaces-it"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+force = true
+
+# And the shim is gone: a shell script begins `#!`, the artifact begins with
+# ELF's own four bytes.
+[[steps]]
+id = "and-the-shim-is-gone"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'head -c 4 $HOME/.local/share/iznik/bin/iznik-server | od -An -c | tr -s \" \"'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-the-real-server"
+exit = 0
+
+[[expect]]
+step = "install-a-same-version-shim"
+exit = 0
+
+[[expect]]
+step = "a-plain-bootstrap-leaves-it-alone"
+exit = 0
+stdout_contains = "up to date"
+
+[[expect]]
+step = "a-forced-upgrade-replaces-it"
+exit = 0
+stdout_contains = "upgraded"
+
+[[expect]]
+step = "and-the-shim-is-gone"
+exit = 0
+stdout_contains = "177 E L F"

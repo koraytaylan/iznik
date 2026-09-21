@@ -662,6 +662,18 @@ impl Render for TerminalGrid {
             .on_key_up(context.listener(|grid, event, _event_window, context| {
                 grid.key_up(event, context);
             }))
+            .on_action(
+                context.listener(|grid, _: &crate::menu::Copy, _action_window, context| {
+                    grid.copy_selection(context);
+                }),
+            )
+            .on_action(
+                context.listener(|grid, _: &crate::menu::Paste, _action_window, context| {
+                    if let Some(text) = context.read_from_clipboard().and_then(|item| item.text()) {
+                        grid.paste_text(text, context);
+                    }
+                }),
+            )
             .children(
                 self.rows
                     .iter()

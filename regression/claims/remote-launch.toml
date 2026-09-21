@@ -96,6 +96,11 @@ statement = "The same host, asked with force, has its daemon stopped and the art
 scenario = "upgrade-forced"
 
 [[claim]]
+id = "launch-replaces-a-same-version-server-when-forced"
+statement = "A server on the host answering this build's own version is left alone by a plain bootstrap, and a forced upgrade replaces it anyway — the one path that closes a capability gap, because the version cannot say that the running server predates a command; afterwards the file at that name is an ELF binary rather than the shell script the shim was."
+scenario = "upgrade-forced-same-version"
+
+[[claim]]
 id = "launch-takes-itself-off-again"
 statement = "Uninstalling stops the daemon and leaves the host as it was: no prefix, no runtime directory, and no `iznik-server` process."
 scenario = "uninstall"
