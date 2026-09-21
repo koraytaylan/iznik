@@ -505,6 +505,35 @@ fn session_bar_menu_reorders_sessions_on_the_live_host(context: &mut TestAppCont
     check(&session_reorder(context));
 }
 
+/// Sessions dragged onto one another reorder on the live host.
+#[gpui_kit::test]
+fn session_bar_drag_reorders_sessions_on_the_live_host(context: &mut TestAppContext) {
+    check(&session_drag(context));
+}
+
+/// Drag the second session's chip onto the first's.
+///
+/// # Errors
+/// Returns setup, engine, window, or deadline errors.
+fn session_drag(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    let (stack, directory, handle, alias) = two_sessions(context)?;
+    let order = handle.update(context, |shell, _, _| session_order(shell, &alias))?;
+    let [first, second] = order.as_slice() else {
+        return Err("two sessions expected".into());
+    };
+    let (first, second) = (*first, *second);
+    let chip = |session: SessionId| format!("session-{}-{}", alias.0, session.0);
+    context.update_window(handle.into(), |_, window, application| {
+        window.drag_to(chip(second), chip(first), application);
+    })?;
+    wait_for(context, handle, |shell| {
+        session_order(shell, &alias) == [second, first]
+    })?;
+    let _removed = std::fs::remove_dir_all(directory);
+    drop(stack);
+    Ok(())
+}
+
 /// Right-click the second session and move it before the first.
 ///
 /// # Errors

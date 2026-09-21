@@ -14,7 +14,7 @@ use iznik_protocol::model::{Session, Tab};
 use crate::actions::ActionId;
 use crate::host_ui::EngineState;
 use crate::status;
-use crate::tab_actions::{self, DragPreview, DraggedTab};
+use crate::tab_actions::{self, DragPreview, DraggedEntry};
 use crate::window::{SessionKey, TabKey, WindowShell};
 
 /// Where the tab strip is drawn.
@@ -266,7 +266,8 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
 }
 
 /// Render one session chip: its name, highlighted while selected, choosing
-/// it on a click, with its close affordance.
+/// it on a click, with its close affordance; a right click opens its menu, and
+/// it can be dragged onto another session of its host to move it there.
 fn session_entry(
     theme: &Theme,
     shell: Option<&WeakEntity<WindowShell>>,
@@ -285,11 +286,14 @@ fn session_entry(
         .id(format!("session-{}-{}", host.0, session.id.0))
         .test_support()
         .flex()
+        .flex_shrink_0()
         .items_center()
         .gap_2()
         .px_2()
         .py_1()
         .rounded_md()
+        .border_1()
+        .border_color(background)
         .bg(background)
         .text_color(foreground)
         .hover(|style| style.bg(theme.tab_active))
@@ -308,25 +312,66 @@ fn session_entry(
             });
         });
     }
-    if let Some(target) = shell.cloned() {
-        let menu_key = SessionKey {
+    let Some(target) = shell.cloned() else {
+        return entry.into_any_element();
+    };
+    let menu_key = SessionKey {
+        host: host.clone(),
+        session: session.id,
+    };
+    let menu_order = order.to_vec();
+    let menu_target = target.clone();
+    entry = entry.on_mouse_down(MouseButton::Right, move |event, window, application| {
+        application.stop_propagation();
+        let _ignored = menu_target.update(application, |window_shell, context| {
+            window_shell.open_session_menu(
+                menu_key.clone(),
+                menu_order.clone(),
+                event.position,
+                window,
+                context,
+            );
+        });
+    });
+    let dragged = DraggedEntry::session(
+        SessionKey {
             host: host.clone(),
             session: session.id,
-        };
-        let menu_order = order.to_vec();
-        entry = entry.on_mouse_down(MouseButton::Right, move |event, window, application| {
-            application.stop_propagation();
-            let _ignored = target.update(application, |window_shell, context| {
-                window_shell.open_session_menu(
-                    menu_key.clone(),
-                    menu_order.clone(),
-                    event.position,
-                    window,
+        },
+        session.name.clone(),
+    );
+    let (preview_background, preview_foreground, preview_border) =
+        (theme.tab_active, theme.tab_active_foreground, theme.border);
+    let drop_target = target.clone();
+    let drop_key = SessionKey {
+        host: host.clone(),
+        session: session.id,
+    };
+    let drop_order = order.to_vec();
+    let accent = theme.accent;
+    entry = entry
+        .on_drag(dragged, move |dragged, _offset, _window, application| {
+            application.new(|_context| DragPreview {
+                name: dragged.name().to_owned(),
+                background: preview_background,
+                foreground: preview_foreground,
+                border: preview_border,
+            })
+        })
+        .drag_over::<DraggedEntry>(move |style, _dragged, _window, _application| {
+            style.border_color(accent)
+        })
+        .on_drop(move |dragged: &DraggedEntry, _window, application| {
+            let _ignored = drop_target.update(application, |window_shell, context| {
+                tab_actions::drop_session_onto(
+                    window_shell,
+                    dragged,
+                    &drop_key,
+                    &drop_order,
                     context,
                 );
             });
         });
-    }
     entry.into_any_element()
 }
 
@@ -417,10 +462,7 @@ fn tab_entry(
             );
         });
     });
-    let dragged = DraggedTab {
-        key: key.clone(),
-        name: tab.name.clone(),
-    };
+    let dragged = DraggedEntry::tab(key.clone(), tab.name.clone());
     let (preview_background, preview_foreground, preview_border) =
         (theme.tab_active, theme.tab_active_foreground, theme.border);
     let drop_target = target.clone();
@@ -438,16 +480,16 @@ fn tab_entry(
         })
         .on_drag(dragged, move |dragged, _offset, _window, application| {
             application.new(|_context| DragPreview {
-                name: dragged.name.clone(),
+                name: dragged.name().to_owned(),
                 background: preview_background,
                 foreground: preview_foreground,
                 border: preview_border,
             })
         })
-        .drag_over::<DraggedTab>(move |style, _dragged, _window, _application| {
+        .drag_over::<DraggedEntry>(move |style, _dragged, _window, _application| {
             style.border_color(accent)
         })
-        .on_drop(move |dragged: &DraggedTab, _window, application| {
+        .on_drop(move |dragged: &DraggedEntry, _window, application| {
             let _ignored = drop_target.update(application, |window_shell, context| {
                 tab_actions::drop_onto(window_shell, dragged, &drop_key, &drop_order, context);
             });

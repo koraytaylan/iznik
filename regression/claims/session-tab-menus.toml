@@ -32,6 +32,12 @@ test = "iznik-app::prompt::reorder_sessions_is_not_offered_to_a_server_that_cann
 because = "whether an offered action has a model to act on is a pure projection over the engine state, and the connection's advertised capabilities are part of that state"
 
 [[claim]]
+id = "session-bar-live-drag"
+statement = "Dragging a session chip onto another reorders the host's sessions on a live host through a ReorderSessions command carrying the whole session order."
+test = "iznik-app::end_to_end::session_bar_drag_reorders_sessions_on_the_live_host"
+because = "the headless production shell drives native pointer dispatch against the in-process daemon stack, and the host's own model is what shows the order changed"
+
+[[claim]]
 id = "capability-gap-offers-an-upgrade"
 statement = "A host whose connected server is missing a feature carries an upgrade offer even at an unchanged version, `Upgrade Host` is then available for it, an upgrade always asks with the warning that every session on the host ends, and connecting such a host raises a warning toast naming what is unavailable."
 test = "iznik-app::prompt::a_capability_gap_offers_an_upgrade_and_the_action"

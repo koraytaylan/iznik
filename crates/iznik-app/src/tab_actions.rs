@@ -1,7 +1,8 @@
 //! What can be done to one bar entry from its right-click menu: both a tab and
 //! a session get a new entry, a rename, a move left or right and the three
-//! close entries, and a tab can be dragged to another place among its
-//! session's tabs.
+//! close entries, and either can be dragged onto another entry of its own
+//! strip — a tab among its session's tabs, a session among its host's
+//! sessions.
 //!
 //! Every order change is a whole order computed here — a `ReorderTabs` order
 //! for a tab, a `ReorderSessions` order for a session — so a menu's moves and
@@ -97,19 +98,55 @@ pub fn to_the_right<Item: Copy + PartialEq>(order: &[Item], of: Item) -> Vec<Ite
         .unwrap_or_default()
 }
 
-/// A tab being dragged, carried to whatever it is dropped on.
+/// A bar entry being dragged, carried to whatever it is dropped on.
+///
+/// One payload covers both strips: a tab drags among its session's tabs, a
+/// session drags among its host's sessions, and each is dropped only on an
+/// entry of the same strip.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DraggedTab {
-    /// Which tab.
-    pub key: TabKey,
-    /// Its name, for the preview under the pointer.
-    pub name: String,
+pub enum DraggedEntry {
+    /// A tab, dragged among its session's tabs.
+    Tab {
+        /// Which tab.
+        key: TabKey,
+        /// Its name, for the preview under the pointer.
+        name: String,
+    },
+    /// A session, dragged among its host's sessions.
+    Session {
+        /// Which session.
+        key: SessionKey,
+        /// Its name, for the preview under the pointer.
+        name: String,
+    },
 }
 
-/// The chip that follows the pointer while a tab is dragged.
+impl DraggedEntry {
+    /// The name shown on the chip that follows the pointer.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            DraggedEntry::Tab { name, .. } | DraggedEntry::Session { name, .. } => name,
+        }
+    }
+
+    /// The payload for dragging one tab.
+    #[must_use]
+    pub fn tab(key: TabKey, name: String) -> DraggedEntry {
+        DraggedEntry::Tab { key, name }
+    }
+
+    /// The payload for dragging one session.
+    #[must_use]
+    pub fn session(key: SessionKey, name: String) -> DraggedEntry {
+        DraggedEntry::Session { key, name }
+    }
+}
+
+/// The chip that follows the pointer while a bar entry is dragged.
 #[derive(Debug)]
 pub struct DragPreview {
-    /// The tab's name.
+    /// The dragged entry's name.
     pub name: String,
     /// The chip's colour.
     pub background: Hsla,
@@ -201,19 +238,46 @@ fn close_sessions(
 }
 
 /// Move a dropped tab to where it was dropped, when both are tabs of the same
-/// session on the same host.
+/// session on the same host. A dropped session is ignored here; it is handled
+/// by [`drop_session_onto`].
 pub fn drop_onto(
     shell: &mut WindowShell,
-    dragged: &DraggedTab,
+    dragged: &DraggedEntry,
     onto: &TabKey,
     order: &[TabId],
     context: &mut Context<'_, WindowShell>,
 ) {
-    if dragged.key.host != onto.host || dragged.key.session != onto.session {
+    let DraggedEntry::Tab { key, .. } = dragged else {
+        return;
+    };
+    if key.host != onto.host || key.session != onto.session {
         return;
     }
-    if let Some(reordered) = dropped_order(order, dragged.key.tab, onto.tab) {
+    if let Some(reordered) = dropped_order(order, key.tab, onto.tab) {
         reorder(shell, onto, reordered, context);
+    }
+}
+
+/// Move a dropped session to where it was dropped, when both are sessions of
+/// the same host and that host's server advertised it can reorder sessions. A
+/// dropped tab is ignored here; it is handled by [`drop_onto`]. A server that
+/// cannot decode `ReorderSessions` ends the connection on it, so a drop on
+/// such a host is ignored rather than sent.
+pub fn drop_session_onto(
+    shell: &mut WindowShell,
+    dragged: &DraggedEntry,
+    onto: &SessionKey,
+    order: &[SessionId],
+    context: &mut Context<'_, WindowShell>,
+) {
+    let DraggedEntry::Session { key, .. } = dragged else {
+        return;
+    };
+    if key.host != onto.host || !shell.hosts().state().reorders_sessions(&onto.host) {
+        return;
+    }
+    if let Some(reordered) = dropped_order(order, key.session, onto.session) {
+        reorder_sessions(shell, onto, reordered, context);
     }
 }
 
