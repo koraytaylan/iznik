@@ -190,9 +190,11 @@ A creating command ends with a size and a working directory, written as
 | `ClosePane` | `command_tag::CLOSE_PANE` | 8 | `id` pane |
 | `MovePane` | `command_tag::MOVE_PANE` | 9 | `id` pane, `id` destination tab, placement (§6.1) |
 | `SetLayout` | `command_tag::SET_LAYOUT` | 10 | `id` tab, layout (§7.2) |
+| `ReorderSessions` | `command_tag::REORDER_SESSIONS` | 11 | `count`, that many `id` sessions |
 
 `ReorderTabs` carries the whole order, never a swap: a swap applied to the
 wrong arrangement silently produces a third arrangement nobody has.
+`ReorderSessions` carries the whole order of the host's sessions the same way.
 
 *Fixtures:* `command.jsonl`, "create a session, with a working directory"
 through "set a tab's layout, carried whole".
@@ -222,6 +224,14 @@ Every command is answered exactly once, with one of:
 | `InvalidOrder` | `rejection_tag::INVALID_ORDER` | 4 |
 | `InvalidLayout` | `rejection_tag::INVALID_LAYOUT` | 5 |
 | `SpawnFailed` | `rejection_tag::SPAWN_FAILED` | 6 |
+| `UnknownCommand` | `rejection_tag::UNKNOWN_COMMAND` | 7 |
+
+A `Command` whose tag or payload the server cannot read is answered with
+`UnknownCommand` and the connection stays open. Two peers of one protocol
+version are not necessarily one build — a released server and a local one both
+say "protocol 1" — so an unknown command is a request the server cannot serve,
+not a peer speaking garbage, and ending the connection over it would take every
+pane on the link with it.
 
 A rejected command changes nothing: the generation is unchanged and no delta
 is emitted. *Fixtures:* `command.jsonl`, "applied, creating nothing" through
@@ -308,6 +318,7 @@ some of them is a `Snapshot`.
 | `PaneTitle` | `delta_tag::PANE_TITLE` | 11 | `id` pane, `bytes` title |
 | `PaneWorkingDirectory` | `delta_tag::PANE_WORKING_DIRECTORY` | 12 | `id` pane, `bytes` path |
 | `PaneResized` | `delta_tag::PANE_RESIZED` | 13 | `id` pane, `u16` columns, `u16` rows |
+| `SessionsReordered` | `delta_tag::SESSIONS_REORDERED` | 14 | `count`, that many `id` sessions |
 
 An index is a position in an ordered list and is written the width a `count`
 is. *Fixtures:* `delta.jsonl`, "a session appears, carrying its first tab and
@@ -439,11 +450,19 @@ Capabilities are a `u32` bit set:
 |---|---|---|
 | `ZSTD` | 0 | 1 |
 | `RESUME` | 1 | 2 |
+| `REORDER_SESSIONS` | 2 | 4 |
 
 Unknown bits are preserved rather than dropped, so a newer peer round-trips
 its own advertisement intact and can tell what it advertised from what came
 back. *Fixtures:* `message.jsonl`, "Hello with protocol version 2 and only an
 unknown capability bit, preserved".
+
+`REORDER_SESSIONS` is a capability rather than something implied by the
+protocol version because the two ends are upgraded separately, and a remote's
+server is only ever replaced on purpose: a client must not send
+`ReorderSessions` to a server built before the command existed, because that
+server refuses the unknown tag as garbage and ends the whole connection on it.
+A client sends the command only to a server that advertised this bit.
 
 When **both** `Hello`s carried `ZSTD`, everything after them is a single zstd
 stream in each direction — one context per connection, not per frame, so the

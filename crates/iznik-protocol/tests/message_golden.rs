@@ -439,10 +439,11 @@ fn message_golden_every_line_holds_in_both_directions() {
 /// When a bit is dropped or reported as known.
 #[test]
 fn message_golden_unknown_capability_bits_survive_a_round_trip() {
-    let advertised = Capabilities::from_bits(0x8000_0007);
-    assert_eq!(advertised.unknown_bits(), 0x8000_0004);
+    let advertised = Capabilities::from_bits(0x8000_000F);
+    assert_eq!(advertised.unknown_bits(), 0x8000_0008);
     assert_eq!(Capabilities::ZSTD.unknown_bits(), 0);
     assert_eq!(Capabilities::RESUME.unknown_bits(), 0);
+    assert_eq!(Capabilities::REORDER_SESSIONS.unknown_bits(), 0);
     let hello = ToServer::Hello {
         protocol_version: PROTOCOL_VERSION,
         client_version: "future".to_owned(),

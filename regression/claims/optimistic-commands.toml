@@ -9,7 +9,7 @@
 
 [[claim]]
 id = "optimistic-shows-exactly-what-the-host-would-send"
-statement = "Renaming a session or a tab, reordering a session's tabs and closing a session each show at once, and what they show is the same model the host's own change would produce — checked against the deltas applied to a copy through the protocol's reconciler, over two hundred generated models."
+statement = "Renaming a session or a tab, reordering a session's tabs or the host's sessions and closing a session each show at once, and what they show is the same model the host's own change would produce — checked against the deltas applied to a copy through the protocol's reconciler, over two hundred generated models."
 test = "iznik-client::optimistic_commands::optimistic_commands_show_exactly_what_the_host_would_send"
 because = "the far end is built by the reconciler the host uses, from the deltas this case writes out for itself; what ties those to the host is `optimistic-survives-the-host-saying-the-same-thing` and, over a real one, `manager-shows-a-rename-before-the-host-agrees`"
 

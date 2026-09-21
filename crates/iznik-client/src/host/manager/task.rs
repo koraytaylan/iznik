@@ -8,21 +8,25 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{CommandOutcome, encode_session_command};
 use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::bootstrap::bootstrap_watched;
-use crate::bootstrap::launch::{BootstrapError, Decision, Stage, expiry, launch};
+use crate::bootstrap::launch::{BootstrapError, Decision, Stage, bundled, expiry, launch};
+use crate::bootstrap::probe::InstalledServer;
+use crate::bootstrap::{bootstrap_watched, upgrade};
 use crate::commands::{abandoned, confirm, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
-use crate::host::state::{Action, HostEvent, HostState, HostStateMachine, UpgradeOffer};
+use crate::host::state::{
+    Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
+};
 use crate::model::HostView;
 use crate::reduce::{Effect, Notification, arrived, reduce};
 use crate::transport::Transport;
-use crate::transport::channel::{ChannelError, RemoteChannel};
+use crate::transport::channel::{ChannelError, RemoteChannel, ServerHello};
 
 /// How one turn of a host's life ended.
 enum Ended {
@@ -31,9 +35,21 @@ enum Ended {
     /// The link went, or was dropped on purpose; the machine says what to do
     /// about it.
     Gone,
+    /// Somebody asked for this host's server to be replaced with this build's.
+    ///
+    /// Answered rather than acted on where it was heard, because the
+    /// replacement stops the daemon the link is talking to: the outer loop is
+    /// what closes the channel and runs it, and the order queue stays open
+    /// across it, so what a still-drawing window asks for meanwhile is held
+    /// for the new link instead of being refused.
+    Upgrade {
+        /// Whether to replace it even though it holds panes, which ends them.
+        force: bool,
+    },
 }
 
-/// One host's whole life: connect, serve, lose the link, wait, connect again.
+/// One host's whole life: connect, serve, lose the link, wait, connect again —
+/// and replace the server when somebody asks, without ever not being held.
 pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: UnboundedReceiver<Order>) {
     let machine = Mutex::new(HostStateMachine::new(seeded(
         &shared.options.backoff,
@@ -56,7 +72,49 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
         match pump(&host, &shared, &machine, &mut orders, &mut kept, channel).await {
             Ended::Stopped => return,
             Ended::Gone => {}
+            Ended::Upgrade { force } => {
+                replace(&host, &shared, &machine, force).await;
+                // The alias is held throughout: the loop goes straight back to
+                // connecting, and everything asked for during the replacement
+                // is already on this task's queue.
+            }
         }
+    }
+}
+
+/// Replaces the server on a host from inside its own task.
+///
+/// The task stays alive and keeps taking orders while this runs, so the host
+/// is never un-held: an order that arrives now waits on the queue and is
+/// carried once the new link is up. A refusal is said aloud, because an upgrade
+/// that did not happen must not look like one that did.
+async fn replace(
+    host: &HostId,
+    shared: &Arc<Shared>,
+    machine: &Mutex<HostStateMachine>,
+    force: bool,
+) {
+    let transport = Transport::for_alias(
+        &host.0,
+        &shared.options.runtime_paths,
+        shared.options.ssh.clone(),
+    );
+    let replaced = upgrade(
+        &transport,
+        &shared.artifacts,
+        &bootstrapping(&shared.options),
+        force,
+        shared.options.bootstrap_deadline,
+    )
+    .await;
+    let error = match replaced {
+        Ok(()) => None,
+        Err(refusal) => Some(format!("upgrading {host}: {refusal}")),
+    };
+    // The next `connect` is what reaches the new server; say the failure now
+    // and let the reconnect that follows say the rest.
+    if let Some(detail) = error {
+        let _moved = advance(shared, host, machine, HostEvent::Failed { error: detail });
     }
 }
 
@@ -169,6 +227,7 @@ fn keep(kept: &mut Vec<Order>, order: Order) {
         | Order::Command { .. }
         | Order::Screen { .. }
         | Order::Reconnect
+        | Order::Upgrade { .. }
         | Order::Stop => {}
     }
 }
@@ -269,6 +328,8 @@ struct Reached {
     snapshot: iznik_protocol::model::HostModel,
     /// What its server says it is.
     version: String,
+    /// What its server advertised it can decode.
+    capabilities: Capabilities,
     /// A newer one, when this build carries one.
     offer: Option<UpgradeOffer>,
 }
@@ -294,12 +355,19 @@ async fn reach(
         // A socket on this machine: there is nothing to probe and nothing to
         // install, and `unix:` is the alias this crate owns.
         let (channel, snapshot) = launch(&transport, None, &options, expiry(deadline)).await?;
-        let version = channel.greeting().server_version.clone();
+        let greeting = channel.greeting();
+        // A socket on this machine is a daemon too, and it may be one this
+        // build did not start: its greeting says whether anything is missing,
+        // and an offer is the only honest thing to make of that.
+        let offer = offer_for(greeting, &Decision::UpToDate);
+        let version = greeting.server_version.clone();
+        let capabilities = trusted_capabilities(greeting);
         return Ok(Reached {
             channel,
             snapshot,
             version,
-            offer: None,
+            capabilities,
+            offer,
         });
     }
     let watching = |stage: Stage| {
@@ -307,19 +375,83 @@ async fn reach(
     };
     let connected =
         bootstrap_watched(&transport, &shared.artifacts, &options, deadline, &watching).await?;
-    let offer = match connected.decision {
-        Decision::UpgradeAvailable { installed, bundled } => {
-            Some(UpgradeOffer { installed, bundled })
-        }
-        _settled => None,
-    };
-    let version = connected.channel.greeting().server_version.clone();
+    let greeting = connected.channel.greeting();
+    let offer = offer_for(greeting, &connected.decision);
+    let version = greeting.server_version.clone();
+    let capabilities = trusted_capabilities(greeting);
     Ok(Reached {
         channel: connected.channel,
         snapshot: connected.snapshot,
         version,
+        capabilities,
         offer,
     })
+}
+
+/// The capabilities of a greeting this build may act on.
+///
+/// A capability bit means what the build that assigned it says it means, and
+/// the only thing that identifies a build is its version. Two servers that both
+/// say "protocol 1" may have given one bit number two different jobs — an
+/// unreleased local build did exactly that — so a server that is not this
+/// build's own version is not interpreted at all: its advertisement is dropped
+/// and every feature gated on a bit is unavailable to it. That is the
+/// conservative answer, and it costs nothing real, because a host of another
+/// version is offered an upgrade on that ground alone.
+fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
+    if greeting.server_version == bundled().crate_version {
+        greeting.capabilities
+    } else {
+        Capabilities::from_bits(0)
+    }
+}
+
+/// The upgrade offer a connection puts on the table, if any.
+///
+/// Four things offer one. A host the probe found another version on is offered
+/// it for the version. A host reached over a local socket — where no probe ran
+/// — is offered it when its greeting names another version. A host of this
+/// build's version whose server is nevertheless missing capabilities is offered
+/// it for the gap. The installed server is always read from what the greeting
+/// said, never assumed to equal what the build carries.
+fn offer_for(greeting: &ServerHello, decision: &Decision) -> Option<UpgradeOffer> {
+    // What the greeting said the host runs, which is never assumed to be what
+    // this build carries.
+    let what_the_host_said = InstalledServer {
+        crate_version: greeting.server_version.clone(),
+        protocol_version: greeting.protocol_version,
+    };
+    // The probe's own answer is the one to offer when it found a version this
+    // build does not carry.
+    if let Decision::UpgradeAvailable {
+        installed: found,
+        bundled: carried,
+    } = decision
+    {
+        return Some(UpgradeOffer {
+            installed: found.clone(),
+            bundled: carried.clone(),
+            reason: UpgradeReason::Version,
+        });
+    }
+    let carried = bundled();
+    if what_the_host_said.crate_version != carried.crate_version {
+        // A local socket, or a probe the greeting disagreed with: the version
+        // alone is reason enough, and it is the honest one.
+        return Some(UpgradeOffer {
+            installed: what_the_host_said,
+            bundled: carried,
+            reason: UpgradeReason::Version,
+        });
+    }
+    if trusted_capabilities(greeting).missing_features().bits() != 0 {
+        return Some(UpgradeOffer {
+            installed: what_the_host_said,
+            bundled: carried,
+            reason: UpgradeReason::Capabilities,
+        });
+    }
+    None
 }
 
 /// Takes what the host answered into the model, tells the machine it is
@@ -334,6 +466,7 @@ async fn accept(
         mut channel,
         snapshot,
         version,
+        capabilities,
         offer,
     } = reached;
     // The snapshot a connection begins with is taken inside the launch, before
@@ -343,23 +476,23 @@ async fn accept(
     told_the_model(host, shared, &snapshot);
     let mut given_up = Vec::new();
     if let Ok(mut model) = shared.model.lock() {
-        match model.host_mut(host) {
-            Some(view) => {
-                // What the host says replaces what it said before, and
-                // whatever is still in flight goes back on top: a command
-                // whose answer was lost with the link is still this client's
-                // to show, and its rollback must be the model that came back
-                // rather than the one from before the drop.
-                // The snapshot first, then what no answer can settle any
-                // more: this connection is not the one the announcement was
-                // owed on, and nothing else takes such a command out.
-                given_up = view.settle(snapshot);
-                given_up.extend(view.forget_answered());
-                replay(view);
-            }
-            None => {
-                let _first = model.insert(host.clone(), HostView::of(snapshot));
-            }
+        if let Some(view) = model.host_mut(host) {
+            // What the host says replaces what it said before, and
+            // whatever is still in flight goes back on top: a command
+            // whose answer was lost with the link is still this client's
+            // to show, and its rollback must be the model that came back
+            // rather than the one from before the drop.
+            // The snapshot first, then what no answer can settle any
+            // more: this connection is not the one the announcement was
+            // owed on, and nothing else takes such a command out.
+            given_up = view.settle(snapshot);
+            given_up.extend(view.forget_answered());
+            view.capabilities = capabilities;
+            replay(view);
+        } else {
+            let mut view = HostView::of(snapshot);
+            view.capabilities = capabilities;
+            let _first = model.insert(host.clone(), view);
         }
     }
     abandoned(host, &given_up);
@@ -369,6 +502,7 @@ async fn accept(
         machine,
         HostEvent::Connected {
             server_version: version,
+            capabilities,
             upgrade: offer,
         },
     );
@@ -472,6 +606,15 @@ async fn pump(
                 // Asked for, so the backoff is not waited out.
                 let _now = advance(shared, host, machine, HostEvent::RetryDue);
                 return Ended::Gone;
+            }
+            Turn::Ordered(Some(Order::Upgrade { force })) => {
+                // The link is talking to the daemon being replaced, so it goes;
+                // the outer loop runs the replacement and connects again. The
+                // machine says work is under way, so the window shows an
+                // upgrade rather than a host that merely vanished.
+                channel.close();
+                let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
+                return Ended::Upgrade { force };
             }
             Turn::Ordered(Some(order)) => {
                 let holdable = keeps(&order).then(|| order.clone());
@@ -832,10 +975,12 @@ async fn carry(
             command_id: id,
             payload: encode_session_command(&command).map_err(ChannelError::Message)?,
         },
-        // The first two are the loop's own business; the third says the
+        // The first three are the loop's own business; the last says the
         // person is looking at no pane at all, which the host is not told
         // because there is nothing for it to prefer.
-        Order::Reconnect | Order::Stop | Order::Focus { pane: None } => return Ok(()),
+        Order::Reconnect | Order::Upgrade { .. } | Order::Stop | Order::Focus { pane: None } => {
+            return Ok(());
+        }
     };
     write(channel, &message).await?;
     if let Some(grant) = granted {

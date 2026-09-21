@@ -24,7 +24,9 @@ use std::sync::Arc;
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::command::{decode_session_command, encode_command_outcome};
+use iznik_protocol::command::{
+    CommandOutcome, RejectionCode, decode_session_command, encode_command_outcome,
+};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_server, encode_to_client,
@@ -45,8 +47,9 @@ use crate::session::registry::Registry;
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// What this server can do.
-const CAPABILITIES: Capabilities =
-    Capabilities::from_bits(Capabilities::ZSTD.bits() | Capabilities::RESUME.bits());
+const CAPABILITIES: Capabilities = Capabilities::from_bits(
+    Capabilities::ZSTD.bits() | Capabilities::RESUME.bits() | Capabilities::REORDER_SESSIONS.bits(),
+);
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
 /// a queue, it is the hand-off, and a client that stops reading must stop the
@@ -563,12 +566,20 @@ async fn answer(
             command_id,
             payload,
         } => {
-            // A `Command` whose payload will not decode is a frame that did
-            // not decode: the handshake refuses a version this server does not
-            // speak, so a peer at this version sending a command this codec
-            // cannot read is speaking garbage, not making a request.
-            let command = decode_session_command(&payload)?;
-            let outcome = commands::apply(&mut *registry.write().await, command).await;
+            // A `Command` whose payload will not decode is refused, not fatal.
+            // Two peers of one protocol version are not necessarily one build —
+            // a released server and a local one both say "protocol 1" — so a
+            // tag this codec does not know is a request this server cannot
+            // serve, not a peer speaking garbage. Ending the connection over it
+            // would take every pane on the link with it, and those panes are
+            // somebody's running sessions.
+            let outcome = match decode_session_command(&payload) {
+                Ok(command) => commands::apply(&mut *registry.write().await, command).await,
+                Err(refused) => CommandOutcome::Rejected {
+                    code: RejectionCode::UnknownCommand,
+                    message: refused.to_string(),
+                },
+            };
             let answered = encode_command_outcome(&outcome)?;
             multiplexer
                 .reply(&ToClient::CommandResult {

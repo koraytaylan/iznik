@@ -13,8 +13,9 @@ use iznik_client::bootstrap::probe::InstalledServer;
 use iznik_client::host::identity::{ADDRESS_SCHEME, AddressError, GlobalPaneId, HostId};
 use iznik_client::host::state::{
     Action, BACKOFF_INITIAL, BACKOFF_MAXIMUM, BackoffPolicy, HostEvent, HostState,
-    HostStateMachine, UpgradeOffer,
+    HostStateMachine, UpgradeOffer, UpgradeReason,
 };
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::identity::PaneId;
 
 /// The pane these cases address.
@@ -36,7 +37,7 @@ const SEED: u64 = 0x0123_4567_89ab_cdef;
 const OTHER_SEED: u64 = 0xfedc_ba98_7654_3210;
 
 /// What a scripted server says it is.
-const SERVER_VERSION: &str = "0.1.0";
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
@@ -69,6 +70,7 @@ fn offer() -> UpgradeOffer {
             crate_version: SERVER_VERSION.to_owned(),
             protocol_version: 1,
         },
+        reason: UpgradeReason::Version,
     }
 }
 
@@ -76,6 +78,7 @@ fn offer() -> UpgradeOffer {
 fn connected() -> HostEvent {
     HostEvent::Connected {
         server_version: SERVER_VERSION.to_owned(),
+        capabilities: Capabilities::REORDER_SESSIONS,
         upgrade: None,
     }
 }
@@ -282,7 +285,7 @@ fn table() -> [Row; 7] {
                 // and a retry that fires late must not start a second one.
                 ("probing", &[]),
                 ("bootstrapping, uploading", &[]),
-                ("connected to 0.1.0", &["resume"]),
+                ("connected to 0.0.0", &["resume"]),
                 ("failed: no route", &["retry-at"]),
                 ("failed: silent", &["retry-at"]),
                 ("probing", &[]),
@@ -294,7 +297,7 @@ fn table() -> [Row; 7] {
             [
                 ("bootstrapping, uploading", &[]),
                 ("bootstrapping, uploading", &[]),
-                ("connected to 0.1.0", &["resume"]),
+                ("connected to 0.0.0", &["resume"]),
                 ("failed: no route", &["retry-at"]),
                 ("failed: silent", &["retry-at"]),
                 ("bootstrapping, uploading", &[]),
@@ -306,7 +309,7 @@ fn table() -> [Row; 7] {
             [
                 ("connecting", &[]),
                 ("bootstrapping, uploading", &[]),
-                ("connected to 0.1.0", &["resume"]),
+                ("connected to 0.0.0", &["resume"]),
                 ("failed: no route", &["retry-at"]),
                 ("failed: silent", &["retry-at"]),
                 ("connecting", &[]),
@@ -316,9 +319,9 @@ fn table() -> [Row; 7] {
         (
             "connected",
             [
-                ("connected to 0.1.0", &[]),
-                ("connected to 0.1.0", &[]),
-                ("connected to 0.1.0", &[]),
+                ("connected to 0.0.0", &[]),
+                ("connected to 0.0.0", &[]),
+                ("connected to 0.0.0", &[]),
                 // It was connected, whatever went wrong, so it is coming back
                 // rather than arriving — and a failure with a reason keeps it,
                 // while a link that simply went quiet has none to keep.
@@ -327,7 +330,7 @@ fn table() -> [Row; 7] {
                     &["close-channel", "retry-at"],
                 ),
                 ("reconnecting, attempt 1", &["close-channel", "retry-at"]),
-                ("connected to 0.1.0", &[]),
+                ("connected to 0.0.0", &[]),
                 ("disconnected", &["close-channel", "forget"]),
             ],
         ),
@@ -640,6 +643,7 @@ fn host_state_carries_the_upgrade_it_was_offered() {
     let _connected = machine.on(
         HostEvent::Connected {
             server_version: SERVER_VERSION.to_owned(),
+            capabilities: Capabilities::REORDER_SESSIONS,
             upgrade: Some(offer()),
         },
         now,
@@ -650,6 +654,7 @@ fn host_state_carries_the_upgrade_it_was_offered() {
         machine.state(),
         &HostState::Connected {
             server_version: SERVER_VERSION.to_owned(),
+            capabilities: Capabilities::REORDER_SESSIONS,
             upgrade: Some(offer()),
         },
         "both versions are held, and nothing was replaced"

@@ -70,6 +70,10 @@ const SPARE_PANE: usize = 2;
 /// mean anything.
 const SPARE_TAB: usize = 2;
 
+/// The fewest sessions a host must hold for putting them in another order to
+/// mean anything.
+const SPARE_SESSION: usize = 2;
+
 /// Every kind of change, in the order the generator draws them. The list is
 /// the count, so the two cannot drift apart.
 const CHANGE_KINDS: &[fn(&mut ModelGenerator, &mut HostModel) -> Vec<Delta>] = &[
@@ -80,6 +84,7 @@ const CHANGE_KINDS: &[fn(&mut ModelGenerator, &mut HostModel) -> Vec<Delta>] = &
     ModelGenerator::rename_tab,
     ModelGenerator::remove_tab,
     ModelGenerator::reorder_tabs,
+    ModelGenerator::reorder_sessions,
     ModelGenerator::add_pane,
     ModelGenerator::remove_pane,
     ModelGenerator::move_pane,
@@ -506,6 +511,21 @@ impl ModelGenerator {
         }]
     }
 
+    /// The host's sessions are put in another order, carried whole.
+    fn reorder_sessions(&mut self, model: &mut HostModel) -> Vec<Delta> {
+        let count = model.sessions.len();
+        if count < SPARE_SESSION {
+            return Vec::new();
+        }
+        let Some(rotation) = self.pick(count) else {
+            return Vec::new();
+        };
+        model.sessions.rotate_left(rotation);
+        vec![Delta::SessionsReordered {
+            order: model.sessions.iter().map(|held| held.id).collect(),
+        }]
+    }
+
     /// A pane appears in a tab, and the layout that places it follows.
     fn add_pane(&mut self, model: &mut HostModel) -> Vec<Delta> {
         let Some(place) = self.pick_tab(model) else {
@@ -796,6 +816,11 @@ pub enum RegistryOperation {
         /// How far to rotate them left.
         rotation: usize,
     },
+    /// Rotate the host's sessions by this much.
+    ReorderSessions {
+        /// How far to rotate them left.
+        rotation: usize,
+    },
     /// Arrange the chosen tab's panes another way.
     SetLayout {
         /// Which tab, counted across the host.
@@ -816,6 +841,7 @@ const OPERATION_KINDS: &[fn(&mut ModelGenerator) -> RegistryOperation] = &[
     ModelGenerator::close_tab,
     ModelGenerator::close_session,
     ModelGenerator::rotate_tabs,
+    ModelGenerator::rotate_sessions,
     ModelGenerator::set_layout,
 ];
 
@@ -945,6 +971,13 @@ impl ModelGenerator {
         let session = self.chooser();
         RegistryOperation::ReorderTabs {
             session,
+            rotation: self.chooser(),
+        }
+    }
+
+    /// Put the host's sessions in another order.
+    fn rotate_sessions(&mut self) -> RegistryOperation {
+        RegistryOperation::ReorderSessions {
             rotation: self.chooser(),
         }
     }

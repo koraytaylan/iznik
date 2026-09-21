@@ -272,6 +272,10 @@ fn change(registry: &mut Registry, operation: &RegistryOperation, model: &HostMo
                 let _ordered = registry.reorder_tabs(*chosen_session, order);
             }
         }
+        RegistryOperation::ReorderSessions { rotation } => {
+            let order = rotated_sessions(model, *rotation);
+            let _ordered = registry.reorder_sessions(order);
+        }
         RegistryOperation::SetLayout { tab } => {
             if let Some((_session, chosen_tab)) = chosen(&held_tabs, *tab)
                 && let Some(layout) = rearranged(model, *chosen_tab)
@@ -280,6 +284,16 @@ fn change(registry: &mut Registry, operation: &RegistryOperation, model: &HostMo
             }
         }
     }
+}
+
+/// The host's sessions rotated by this much, which is a permutation of them.
+fn rotated_sessions(model: &HostModel, rotation: usize) -> Vec<SessionId> {
+    let mut order: Vec<SessionId> = model.sessions.iter().map(|session| session.id).collect();
+    if !order.is_empty() {
+        let places = rotation.checked_rem(order.len()).unwrap_or(0);
+        order.rotate_left(places);
+    }
+    order
 }
 
 /// A session's tabs rotated by this much, which is a permutation of them.
@@ -395,6 +409,39 @@ async fn session_registry_each_operation_emits_its_deltas_in_order() {
             ["SessionRemoved"],
             "close_session"
         );
+
+        let one = registry
+            .create_session("one".to_owned(), COLUMNS, ROWS, None)
+            .await
+            .expect("a session");
+        drop(drain(&mut deltas));
+        let two = registry
+            .create_session("two".to_owned(), COLUMNS, ROWS, None)
+            .await
+            .expect("a session");
+        drop(drain(&mut deltas));
+        registry
+            .reorder_sessions(vec![two, one])
+            .expect("a reorder");
+        assert_eq!(
+            kinds(&drain(&mut deltas)),
+            ["SessionsReordered"],
+            "reorder_sessions"
+        );
+        assert_eq!(
+            registry
+                .snapshot()
+                .sessions
+                .iter()
+                .map(|held| held.id)
+                .collect::<Vec<_>>(),
+            [two, one],
+            "the order is the one carried"
+        );
+        registry.close_session(two).expect("a close");
+        drop(drain(&mut deltas));
+        registry.close_session(one).expect("a close");
+        drop(drain(&mut deltas));
         assert_eq!(registry.snapshot().sessions.len(), 0, "nothing is left");
     };
     tokio::time::timeout(DEADLINE, case)

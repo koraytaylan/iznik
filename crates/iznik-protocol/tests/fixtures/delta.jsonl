@@ -20,10 +20,12 @@
 {"description": "a pane is resized to the widest size a client can ask for", "delta": {"PaneResized": {"pane": 5, "columns": 65535, "rows": 65535}}, "hex": "0d0500000000000000ffffffff"}
 {"description": "a pane is resized to nothing at all", "delta": {"PaneResized": {"pane": 5, "columns": 0, "rows": 0}}, "hex": "0d050000000000000000000000"}
 {"description": "an empty payload ends before the discriminant", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
-{"description": "a discriminant no delta claims", "hex": "0e", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 14}}}
+{"description": "a discriminant no delta claims", "hex": "0f", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 15}}}
 {"description": "a rename whose name is cut short", "hex": "010100000000000000040000006177", "error": {"Truncated": {"discriminant": 1, "needed": 4, "available": 2}}}
 {"description": "a byte after the last field", "hex": "020100000000000000ff", "error": {"TrailingBytes": {"discriminant": 2, "count": 1}}}
 {"description": "a name that is not UTF-8", "hex": "04030000000000000002000000fffe", "error": {"Utf8": {"discriminant": 4}}}
 {"description": "a removal reason no variant claims", "hex": "08050000000000000002", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
 {"description": "an exit status no variant claims", "hex": "0805000000000000000102", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
 {"description": "a reorder whose order is shorter than its count", "hex": "060100000000000000020000000700000000000000", "error": {"Truncated": {"discriminant": 6, "needed": 8, "available": 0}}}
+{"description": "the host's sessions are reordered, the whole order carried", "delta": {"SessionsReordered": {"order": [1, 3]}}, "hex": "0e0200000001000000000000000300000000000000"}
+{"description": "the host's sessions are reordered to no order at all", "delta": {"SessionsReordered": {"order": []}}, "hex": "0e00000000"}

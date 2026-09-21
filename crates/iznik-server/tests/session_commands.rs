@@ -112,7 +112,7 @@ fn made(outcome: &CommandOutcome) -> Result<Created, String> {
     }
 }
 
-/// Each of the eleven commands is applied, answers what it made, and the model
+/// Each of the twelve commands is applied, answers what it made, and the model
 /// shows it.
 ///
 /// # Panics
@@ -170,7 +170,7 @@ async fn session_commands_every_command_is_applied_and_answered() {
             Created::Pane(made_pane) => made_pane,
             other => panic!("a pane was made, not {other:?}"),
         };
-        // The eight that change what is there answer `Nothing`, because there
+        // The nine that change what is there answer `Nothing`, because there
         // is nothing new for a client to be told the id of.
         let second_tab = match made(
             &apply(
@@ -223,7 +223,7 @@ async fn session_commands_every_command_is_applied_and_answered() {
         .expect("the happy path finishes");
 }
 
-/// The eight commands that change what is already there, in the order this
+/// The nine commands that change what is already there, in the order this
 /// case applies them: each leaves the model whole for the next.
 fn changes(
     session: SessionId,
@@ -244,6 +244,11 @@ fn changes(
             name: "retitled".to_owned(),
         },
         SessionCommand::ReorderTabs { session, order },
+        SessionCommand::ReorderSessions {
+            // The host holds one session at this point, and a single-session
+            // order is a permutation of it.
+            order: vec![session],
+        },
         SessionCommand::SetLayout {
             tab,
             layout: LayoutNode::Split {
@@ -335,6 +340,12 @@ async fn session_commands_every_refusal_leaves_no_trace() {
                 SessionCommand::ReorderTabs {
                     session,
                     order: vec![tab, tab],
+                },
+                RejectionCode::InvalidOrder,
+            ),
+            (
+                SessionCommand::ReorderSessions {
+                    order: vec![session, session],
                 },
                 RejectionCode::InvalidOrder,
             ),

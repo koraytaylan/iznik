@@ -156,6 +156,63 @@ fn reconcile_property_a_generation_gap_is_refused_and_changes_nothing() {
     assert_eq!(held.generation, Generation(2), "one delta, one generation");
 }
 
+/// A session reorder that names each session once puts them in that order; one
+/// that would lose or invent a session is refused and changes nothing.
+///
+/// # Panics
+///
+/// When the order is not applied, or a bad one is accepted.
+#[test]
+fn reconcile_property_reorders_sessions_by_whole_order() {
+    let mut held = three_session_host();
+    next(
+        &mut held,
+        &Delta::SessionsReordered {
+            order: vec![SessionId(3), SessionId(1), SessionId(2)],
+        },
+    )
+    .expect("a permutation applies");
+    assert_eq!(
+        held.sessions
+            .iter()
+            .map(|session| session.id)
+            .collect::<Vec<_>>(),
+        [SessionId(3), SessionId(1), SessionId(2)],
+        "the order is the one carried"
+    );
+    let before = held.clone();
+    assert_eq!(
+        next(
+            &mut held,
+            &Delta::SessionsReordered {
+                order: vec![SessionId(1), SessionId(1), SessionId(2)],
+            }
+        ),
+        Err(ReconcileError::NotASessionPermutation),
+        "an order that repeats a session is refused"
+    );
+    assert_eq!(held, before, "a refusal left a mark");
+}
+
+/// A host holding three single-tab sessions, in id order.
+fn three_session_host() -> HostModel {
+    HostModel {
+        generation: Generation(1),
+        sessions: (1..=3)
+            .map(|id| Session {
+                id: SessionId(id),
+                name: format!("session {id}"),
+                tabs: vec![Tab {
+                    id: TabId(id),
+                    name: "tab".to_owned(),
+                    panes: vec![pane(id)],
+                    layout: leaf(id),
+                }],
+            })
+            .collect(),
+    }
+}
+
 /// Every refusal names the identity involved and leaves the model exactly as
 /// it was.
 ///
@@ -309,6 +366,16 @@ fn refused_for_what_is_carried() -> Vec<(Delta, ReconcileError)> {
             ReconcileError::NotAPermutation {
                 session: SessionId(1),
             },
+        ),
+        (
+            Delta::SessionsReordered {
+                order: vec![SessionId(1), SessionId(1)],
+            },
+            ReconcileError::NotASessionPermutation,
+        ),
+        (
+            Delta::SessionsReordered { order: Vec::new() },
+            ReconcileError::NotASessionPermutation,
         ),
     ]
 }

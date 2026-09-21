@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use core::fmt::{self, Display, Formatter};
 
+use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use iznik_protocol::model::{HostModel, ModelError};
@@ -135,6 +136,13 @@ pub struct HostView {
     /// to it that arrives afterwards would otherwise confirm — or roll back —
     /// whichever later command had been given its number.
     pub minted: CommandId,
+    /// What the connected server advertised it can decode.
+    ///
+    /// Empty until a connection's `Hello` says otherwise, so a command nothing
+    /// has said this server can decode — the session reorder — is refused
+    /// rather than sent to a server that would take the whole connection down
+    /// on it.
+    pub capabilities: Capabilities,
 }
 
 impl Default for HostView {
@@ -158,6 +166,7 @@ impl HostView {
             focus: None,
             pending: Vec::new(),
             minted: CommandId(0),
+            capabilities: Capabilities::from_bits(0),
         }
     }
 

@@ -26,8 +26,8 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use crate::bootstrap::launch::{
     BOOTSTRAP_DEADLINE, BootstrapError, BootstrapOptions, UpgradeError,
 };
+use crate::bootstrap::uninstall;
 use crate::bootstrap::upload::{ArtifactSet, UploadError};
-use crate::bootstrap::{uninstall, upgrade};
 use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit, withdraw};
 use crate::host::identity::HostId;
 use crate::host::manager::task::{give_up, serve};
@@ -254,6 +254,18 @@ pub enum ManagerError {
         /// Which lock.
         what: &'static str,
     },
+    /// The connected server cannot decode the command, so it was not sent.
+    ///
+    /// A server built before a command existed refuses its frame as garbage
+    /// and ends the connection on it, so a client sends a command only when
+    /// the server advertised it can decode it. Upgrading the host is what
+    /// makes the command — and the feature that wants it — available.
+    Unsupported {
+        /// The host.
+        host: HostId,
+        /// What the command is called, for the words a person reads.
+        command: &'static str,
+    },
     /// The host refused an upgrade, or could not be reached for one.
     Upgrade {
         /// What went wrong.
@@ -286,6 +298,10 @@ impl core::fmt::Display for ManagerError {
             }
             ManagerError::UnknownHost { host } => write!(formatter, "{host} is not held"),
             ManagerError::Gone { host } => write!(formatter, "{host} is no longer running"),
+            ManagerError::Unsupported { host, command } => write!(
+                formatter,
+                "{host} is running a server too old for {command}; upgrade the host to use it"
+            ),
             ManagerError::Upgrade { source } => write!(formatter, "{source}"),
             ManagerError::Uninstall { source } => write!(formatter, "{source}"),
         }
@@ -347,6 +363,11 @@ pub(crate) enum Order {
     },
     /// Drop the channel and open another at once.
     Reconnect,
+    /// Replace the server on this host with this build's, then reconnect.
+    Upgrade {
+        /// Whether to replace it even though it holds panes, which ends them.
+        force: bool,
+    },
     /// End the task.
     Stop,
 }
@@ -740,6 +761,21 @@ impl HostManager {
     ) -> Result<Submission, ManagerError> {
         let host = HostId(alias.to_owned());
         let asked = command.clone();
+        // Refused before it is shown or sent: a server that never advertised
+        // this command refuses its frame as garbage and ends the connection on
+        // it, and a command only the connected server's capabilities can
+        // answer is not one to send. Nothing is recorded and nothing moves.
+        let name = command.name();
+        let supported = self
+            .shared
+            .with(&host, |view| command.is_supported_by(view.capabilities))
+            .ok_or_else(|| ManagerError::UnknownHost { host: host.clone() })?;
+        if !supported {
+            return Err(ManagerError::Unsupported {
+                host,
+                command: name,
+            });
+        }
         let submission = self
             .shared
             .with(&host, |view| submit(view, asked, Instant::now()))
@@ -766,31 +802,22 @@ impl HostManager {
 
     /// Replaces the server on a host with the one this build carries.
     ///
-    /// The host's task is stopped first, because an upgrade ends the daemon
-    /// its channel is talking to; it is started again afterwards, and
-    /// reconnects.
+    /// The host stays held for the whole replacement. Its task is told to
+    /// upgrade, stops its own channel, runs the bootstrap and reconnects — so
+    /// every order that arrives meanwhile goes to the task that is still
+    /// there and is held until the new link is up, rather than being refused
+    /// because the alias went missing. That is what makes a still-drawing
+    /// window's sizes and subscriptions survive an upgrade instead of racing
+    /// it: taking the handle out and blocking on a bootstrap, which is what
+    /// this used to do, made every one of them answer `workstation is not
+    /// held` while the upgrade was still succeeding.
     ///
     /// # Errors
     ///
-    /// [`ManagerError::UnknownHost`], or [`ManagerError::Upgrade`] carrying
-    /// the refusal — the live panes it would have ended, or the stage that
-    /// failed.
+    /// [`ManagerError::UnknownHost`] when no host of that name is held, and
+    /// [`ManagerError::Gone`] when its task has ended.
     pub fn upgrade(&self, alias: &str, force: bool) -> Result<(), ManagerError> {
-        let host = HostId(alias.to_owned());
-        let handle = self.take(&host)?;
-        self.end(handle);
-        let transport = self.reach(&host);
-        let options = self.shared.options.clone();
-        let artifacts = &self.shared.artifacts;
-        let replaced = self.runtime.block_on(upgrade(
-            &transport,
-            artifacts,
-            &bootstrapping(&options),
-            force,
-            options.bootstrap_deadline,
-        ));
-        self.add_host(alias);
-        replaced.map_err(|source| ManagerError::Upgrade { source })
+        self.order(alias, Order::Upgrade { force })
     }
 
     /// Takes iznik off a host, and stops holding it.

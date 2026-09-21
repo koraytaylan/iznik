@@ -58,6 +58,8 @@ mod delta_tag {
     pub(super) const PANE_WORKING_DIRECTORY: u8 = 12;
     /// `PaneResized`.
     pub(super) const PANE_RESIZED: u8 = 13;
+    /// `SessionsReordered`.
+    pub(super) const SESSIONS_REORDERED: u8 = 14;
 }
 
 /// The wire values of [`RemovalReason`], in declaration order.
@@ -177,6 +179,11 @@ pub enum Delta {
         /// Its height in cells.
         rows: u16,
     },
+    /// The host's sessions are in another order.
+    SessionsReordered {
+        /// The whole order, never a swap.
+        order: Vec<SessionId>,
+    },
 }
 
 /// Why a pane is gone.
@@ -276,7 +283,8 @@ fn check_layouts(delta: &Delta) -> Result<(), MessageError> {
         | Delta::PaneMoved { .. }
         | Delta::PaneTitle { .. }
         | Delta::PaneWorkingDirectory { .. }
-        | Delta::PaneResized { .. } => Ok(()),
+        | Delta::PaneResized { .. }
+        | Delta::SessionsReordered { .. } => Ok(()),
     }
 }
 
@@ -286,6 +294,13 @@ fn put_arrangement(sink: &mut dyn Sink, delta: &Delta) -> bool {
         Delta::SessionAdded { session } => {
             sink.put(&[delta_tag::SESSION_ADDED]);
             put_session(sink, session);
+        }
+        Delta::SessionsReordered { order } => {
+            sink.put(&[delta_tag::SESSIONS_REORDERED]);
+            put_count(sink, order.len());
+            for session in order {
+                sink.put(&session.0.to_le_bytes());
+            }
         }
         Delta::SessionRenamed { session, name } => {
             sink.put(&[delta_tag::SESSION_RENAMED]);
@@ -446,11 +461,12 @@ fn read_delta(reader: &mut Reader<'_>) -> Result<Delta, MessageError> {
             tab: TabId(u64::from_le_bytes(reader.array()?)),
             layout: read_layout(reader, ROOT_DEPTH)?,
         }),
+        delta_tag::SESSIONS_REORDERED => read_session_order(reader),
         _other => read_pane_change(reader),
     }
 }
 
-/// The reorder at the reader, whose whole order follows its count.
+/// The tab reorder at the reader, whose whole order follows its count.
 ///
 /// # Errors
 ///
@@ -463,6 +479,20 @@ fn read_reorder(reader: &mut Reader<'_>) -> Result<Delta, MessageError> {
         order.push(TabId(u64::from_le_bytes(reader.array()?)));
     }
     Ok(Delta::TabsReordered { session, order })
+}
+
+/// The session reorder at the reader, whose whole order follows its count.
+///
+/// # Errors
+///
+/// The refusals [`decode_delta`] documents.
+fn read_session_order(reader: &mut Reader<'_>) -> Result<Delta, MessageError> {
+    let count = reader.count()?;
+    let mut order = Vec::new();
+    for _index in 0..count {
+        order.push(SessionId(u64::from_le_bytes(reader.array()?)));
+    }
+    Ok(Delta::SessionsReordered { order })
 }
 
 /// The pane delta at the reader, whose discriminant it has already read.

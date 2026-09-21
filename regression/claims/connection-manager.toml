@@ -9,6 +9,30 @@
 # are `end-to-end-ssh`'s, one workstream on.
 
 [[claim]]
+id = "manager-offers-an-upgrade-for-a-capability-gap"
+statement = "A server answering this build's own version with no feature capability carries an upgrade offer whose reason is the capability gap — the only way a same-version server built before a command existed is recognised, since the version does not distinguish it — and the installed version the offer names is what the greeting said rather than what the build carries."
+test = "iznik-client::manager_traffic::manager_traffic_offers_an_upgrade_for_a_capability_gap"
+because = "the scripted server advertises exactly the capabilities the case writes and answers the version it is told to, which is the one thing no real build can be made to do"
+
+[[claim]]
+id = "manager-drops-another-versions-capabilities"
+statement = "A server of another version has its advertised capabilities dropped, so a bit it set for its own purpose is never read as a command this build may send: the reorder is refused and the offer it carries is for the version rather than a missing feature. This is the defect a stale local build caused — it set bit 2 for something else while having no decoder for the reorder, and a client that believed the bit enabled a move the server read as garbage and ended the connection on."
+test = "iznik-client::manager_traffic::manager_traffic_drops_the_capabilities_of_another_version"
+because = "the scripted server says exactly the version and capabilities the case writes, which is the one thing no real build can be made to do"
+
+[[claim]]
+id = "manager-refuses-a-command-the-server-cannot-decode"
+statement = "A session reorder sent to a connected server that did not advertise it can decode the command is refused as `Unsupported` before anything is shown or sent — and a forced upgrade, not a blind send, is what makes the command available."
+test = "iznik-client::manager_traffic::manager_traffic_refuses_a_command_the_server_cannot_decode"
+because = "the scripted server advertises exactly the capabilities the case writes, which is the one thing no real build can be made to do"
+
+[[claim]]
+id = "manager-holds-a-host-while-it-upgrades"
+statement = "Requesting an upgrade keeps the host held: the ask is accepted, the host stays in the model, pane sizes and focus sent after it are accepted rather than refused as an unknown host, and the state a window reads says the server is being upgraded — where taking the alias out and blocking on the bootstrap made every concurrent order answer `workstation is not held` while the upgrade was in fact succeeding."
+test = "iznik-client::upgrade_keeps_the_host_held::an_upgrade_keeps_the_host_held"
+because = "which orders a manager accepts and what its model holds are both answers a manager gives in-process; the server is a whole daemon on this machine and the upgrade's own transport work is a container's to prove"
+
+[[claim]]
 id = "manager-holds-two-hosts-apart"
 statement = "Two hosts are two: a session made on one appears in its own view and not the other's, and each command is answered by the host it was sent to."
 test = "iznik-client::connection_manager::connection_manager_holds_two_hosts_apart"

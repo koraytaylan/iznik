@@ -749,6 +749,21 @@ impl Registry {
         Ok(())
     }
 
+    /// Puts the host's sessions in another order, naming each of them once.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError::NotASessionPermutation`].
+    pub fn reorder_sessions(&mut self, order: Vec<SessionId>) -> Result<(), RegistryError> {
+        let delta = Delta::SessionsReordered { order };
+        if self.would_accept(&delta).is_err() {
+            return Err(RegistryError::NotASessionPermutation);
+        }
+        self.emit(delta);
+        self.settled();
+        Ok(())
+    }
+
     /// Arranges a tab another way, normalized as it is applied, placing
     /// exactly the tab's panes, each once.
     ///

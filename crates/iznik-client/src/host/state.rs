@@ -16,8 +16,11 @@ use core::fmt::{self, Display, Formatter};
 use core::time::Duration;
 use std::time::Instant;
 
+use iznik_protocol::capabilities::Capabilities;
+
 use crate::bootstrap::launch::Stage;
 use crate::bootstrap::probe::InstalledServer;
+use crate::host::identity::HostId;
 
 /// How long a host waits before its first retry.
 pub const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
@@ -77,14 +80,48 @@ impl Default for BackoffPolicy {
     }
 }
 
-/// A newer server than the one the host is running, offered rather than
-/// installed.
+/// Why replacing the server on a host is on offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpgradeReason {
+    /// The host runs a different version of the server than this build
+    /// carries.
+    Version,
+    /// The host runs the same version but its server is missing capabilities
+    /// this build knows, so features gated on them are unavailable until it is
+    /// replaced.
+    Capabilities,
+}
+
+/// A server this build could put on a host, offered rather than installed.
+///
+/// The daemon *is* the sessions, so replacing it ends every one of them; that
+/// is why this is offered and never done quietly, whichever reason put it here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpgradeOffer {
     /// What the host is running.
     pub installed: InstalledServer,
     /// What this build would put there.
     pub bundled: InstalledServer,
+    /// Why it is on offer.
+    pub reason: UpgradeReason,
+}
+
+impl UpgradeOffer {
+    /// One sentence saying what is on offer and why, naming the host it is
+    /// about.
+    #[must_use]
+    pub fn summary(&self, host: &HostId) -> String {
+        match self.reason {
+            UpgradeReason::Version => format!(
+                "upgrade {host} from iznik {} to iznik {}",
+                self.installed.crate_version, self.bundled.crate_version
+            ),
+            UpgradeReason::Capabilities => format!(
+                "upgrade {host}: its iznik {} is missing features this build has",
+                self.installed.crate_version
+            ),
+        }
+    }
 }
 
 /// Where a host is in its life.
@@ -101,10 +138,19 @@ pub enum HostState {
     },
     /// Its server is being started and greeted.
     Connecting,
+    /// Its server is being replaced with this build's.
+    ///
+    /// Distinct from [`HostState::Connecting`] because a person asked for it
+    /// and it ends the sessions the host holds: the window says which of the
+    /// two it is waiting through.
+    Upgrading,
     /// It is connected.
     Connected {
         /// What its server says it is.
         server_version: String,
+        /// What its server advertised it can decode, so a surface offers only
+        /// what this server will answer.
+        capabilities: Capabilities,
         /// A newer one, when this build carries one.
         upgrade: Option<UpgradeOffer>,
     },
@@ -128,6 +174,37 @@ pub enum HostState {
     },
 }
 
+impl HostState {
+    /// Whether this state is a connection whose server can reorder sessions.
+    ///
+    /// False for every state but [`HostState::Connected`], and false for a
+    /// connection whose server did not advertise [`Capabilities::REORDER_SESSIONS`]
+    /// — a build that predates the command and would refuse its frame.
+    #[must_use]
+    pub fn reorders_sessions(&self) -> bool {
+        match self {
+            HostState::Connected { capabilities, .. } => {
+                capabilities.bits() & Capabilities::REORDER_SESSIONS.bits() != 0
+            }
+            _otherwise => false,
+        }
+    }
+
+    /// What this connection's server is missing of the capabilities that gate
+    /// a person's features, when it is connected.
+    ///
+    /// Empty for a server of this build, for one newer, for one missing only
+    /// compression or resume, and for every state but [`HostState::Connected`]
+    /// — nothing has said what a host that is not connected can do.
+    #[must_use]
+    pub fn missing_capabilities(&self) -> Capabilities {
+        match self {
+            HostState::Connected { capabilities, .. } => capabilities.missing_features(),
+            _otherwise => Capabilities::from_bits(0),
+        }
+    }
+}
+
 impl Display for HostState {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -135,6 +212,7 @@ impl Display for HostState {
             HostState::Probing => formatter.write_str("probing"),
             HostState::Bootstrapping { stage } => write!(formatter, "bootstrapping, {stage}"),
             HostState::Connecting => formatter.write_str("connecting"),
+            HostState::Upgrading => formatter.write_str("upgrading its server"),
             HostState::Connected { server_version, .. } => {
                 write!(formatter, "connected to {server_version}")
             }
@@ -167,6 +245,8 @@ pub enum HostEvent {
     Connected {
         /// What its server says it is.
         server_version: String,
+        /// What its server advertised it can decode.
+        capabilities: Capabilities,
         /// A newer one, when this build carries one.
         upgrade: Option<UpgradeOffer>,
     },
@@ -182,6 +262,13 @@ pub enum HostEvent {
     },
     /// The moment a retry was scheduled for has come.
     RetryDue,
+    /// Somebody asked for its server to be replaced with this build's.
+    ///
+    /// Deliberately not a removal and an addition: the daemon is being
+    /// replaced, not the host, so the model, the selection and every held
+    /// order stay exactly where they are and the reconnect that follows
+    /// resumes from the byte each pane holds.
+    UpgradeAsked,
     /// Somebody asked for it to go.
     Removed,
 }
@@ -296,7 +383,10 @@ impl HostStateMachine {
     /// The teardown a state needs before the host is forgotten.
     fn teardown(state: &HostState) -> Vec<Action> {
         match state {
-            HostState::Probing | HostState::Bootstrapping { .. } | HostState::Connecting => {
+            HostState::Probing
+            | HostState::Bootstrapping { .. }
+            | HostState::Connecting
+            | HostState::Upgrading => {
                 vec![Action::StopBootstrap, Action::Forget]
             }
             HostState::Connected { .. } => vec![Action::CloseChannel, Action::Forget],
@@ -363,12 +453,14 @@ impl HostStateMachine {
             }
             HostEvent::Connected {
                 server_version,
+                capabilities,
                 upgrade,
             } => {
                 self.failures = 0;
                 self.reconnecting = false;
                 self.state = HostState::Connected {
                     server_version,
+                    capabilities,
                     upgrade,
                 };
                 // Every subscription the model holds is resumed at the byte it
@@ -379,15 +471,26 @@ impl HostStateMachine {
                 self.hold(error, now)
             }
             HostEvent::Removed => self.forget(),
-            // It is already being tried; asking again changes nothing, and a
-            // retry that fires late must not start a second bootstrap.
-            HostEvent::Added | HostEvent::RetryDue => Vec::new(),
+            // It is already being tried, and a replacement asked for now is
+            // already being honoured by whatever is running: asking again
+            // changes nothing, and a retry that fires late must not start a
+            // second bootstrap.
+            HostEvent::Added | HostEvent::RetryDue | HostEvent::UpgradeAsked => Vec::new(),
         }
     }
 
     /// A connected host.
     fn connected(&mut self, event: HostEvent, now: Instant) -> Vec<Action> {
         match event {
+            HostEvent::UpgradeAsked => {
+                // The task that heard the ask closes this channel and runs the
+                // replacement itself, so there is no action to take here. The
+                // host is not forgotten: the model, the selection and every
+                // queued order stay put, so what a still-drawing window asks
+                // for meanwhile is carried once the new link is up.
+                self.state = HostState::Upgrading;
+                Vec::new()
+            }
             HostEvent::LinkDead { .. } => {
                 self.reconnecting = true;
                 let retry_at = self.schedule(now);
@@ -408,10 +511,12 @@ impl HostStateMachine {
             }
             HostEvent::Connected {
                 server_version,
+                capabilities,
                 upgrade,
             } => {
                 self.state = HostState::Connected {
                     server_version,
+                    capabilities,
                     upgrade,
                 };
                 Vec::new()
@@ -426,6 +531,13 @@ impl HostStateMachine {
         match event {
             // A person asking for it now does not wait out the backoff.
             HostEvent::RetryDue | HostEvent::Added => self.begin(),
+            // Replacing the server of a host that is not connected reaches it
+            // the same way an upgrade does: the bootstrap runs and whatever is
+            // there is replaced. There is no live daemon to stop.
+            HostEvent::UpgradeAsked => {
+                self.state = HostState::Upgrading;
+                Vec::new()
+            }
             HostEvent::Removed => self.forget(),
             _otherwise => Vec::new(),
         }
@@ -438,9 +550,10 @@ impl HostStateMachine {
     pub fn on(&mut self, event: HostEvent, now: Instant) -> Vec<Action> {
         match self.state {
             HostState::Disconnected => self.idle(&event),
-            HostState::Probing | HostState::Bootstrapping { .. } | HostState::Connecting => {
-                self.starting(event, now)
-            }
+            HostState::Probing
+            | HostState::Bootstrapping { .. }
+            | HostState::Connecting
+            | HostState::Upgrading => self.starting(event, now),
             HostState::Connected { .. } => self.connected(event, now),
             HostState::Reconnecting { .. } | HostState::Failed { .. } => self.waiting(&event),
         }

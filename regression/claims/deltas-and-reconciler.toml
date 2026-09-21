@@ -40,8 +40,14 @@ because = "the reconciler is a pure function over a value in memory; a container
 
 [[claim]]
 id = "reconciler-refusal-leaves-no-trace"
-statement = "A delta that names an identity the host does not hold, mints one it already holds, carries an empty name, or gives an order that is not a permutation is refused by the variant naming that identity, and the model is exactly what it was."
+statement = "A delta that names an identity the host does not hold, mints one it already holds, carries an empty name, or gives an order that is not a permutation — of a session's tabs or of the host's sessions — is refused by the variant naming that identity, and the model is exactly what it was."
 test = "iznik-protocol::reconcile_property::reconcile_property_a_refusal_leaves_no_trace"
+because = "the reconciler is a pure function over a value in memory; a container adds nothing"
+
+[[claim]]
+id = "reconciler-reorders-sessions"
+statement = "A SessionsReordered delta whose order names each of the host's sessions exactly once puts the model's sessions in that order, and one that would lose or invent a session is refused with NotASessionPermutation, leaving the model as it was."
+test = "iznik-protocol::reconcile_property::reconcile_property_reorders_sessions_by_whole_order"
 because = "the reconciler is a pure function over a value in memory; a container adds nothing"
 
 [[claim]]
@@ -70,7 +76,7 @@ because = "the generator and the reconciler are both pure; a container adds noth
 
 [[claim]]
 id = "generator-covers-every-delta"
-statement = "The generator draws every one of the fourteen delta variants, so the convergence property is not proving one delta fourteen times."
+statement = "The generator draws every one of the fifteen delta variants, so the convergence property is not proving one delta fifteen times."
 test = "iznik-testkit::generate::generate_changes_cover_every_delta"
 because = "the generator is arithmetic over a seed; a container adds nothing"
 

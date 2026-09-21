@@ -9,9 +9,21 @@ because = "the command codec is pure; a container adds nothing"
 
 [[claim]]
 id = "commands-every-variant-is-pinned"
-statement = "Every one of the eleven SessionCommand variants has a golden line, so no command is pinned by nothing."
+statement = "Every one of the twelve SessionCommand variants has a golden line, so no command is pinned by nothing."
 test = "iznik-protocol::command_golden::command_golden_every_command_variant_has_a_line"
 because = "the command codec is pure; a container adds nothing"
+
+[[claim]]
+id = "commands-only-features-make-a-gap"
+statement = "The capabilities that gate a feature are what an upgrade offer is made of, and the ones that only make a connection better — compression and resume — are not: a server missing only those is missing no feature, and one missing the reorder is."
+test = "iznik-protocol::command_golden::command_golden_only_feature_bits_are_missing_features"
+because = "the feature set is a pure function of a bit set; a container adds nothing"
+
+[[claim]]
+id = "commands-late-ones-need-a-capability"
+statement = "Every command that has always been in the protocol needs no capability, and `ReorderSessions`, which arrived later, needs `REORDER_SESSIONS` — so a client can tell whether the server it is connected to can decode a command before it sends one. A tag no server of this build knows is answered with `UnknownCommand` rather than ending the connection, so a mis-routed command costs a refusal and not the panes on the link."
+test = "iznik-protocol::command_golden::command_golden_only_a_late_command_needs_a_capability"
+because = "the requirement is a pure function of the command and a bit set; a container adds nothing"
 
 [[claim]]
 id = "commands-every-outcome-form-is-pinned"

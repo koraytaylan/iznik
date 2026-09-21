@@ -46,6 +46,8 @@ pub enum RegistryError {
         /// The session whose tabs they are.
         session: SessionId,
     },
+    /// An order was not a permutation of the host's sessions.
+    NotASessionPermutation,
     /// A layout does not place exactly the tab's panes, each once.
     InvalidLayout {
         /// The tab it was for.
@@ -80,6 +82,10 @@ impl core::fmt::Display for RegistryError {
                 formatter,
                 "the order given is not a permutation of session {}'s tabs",
                 session.0
+            ),
+            RegistryError::NotASessionPermutation => write!(
+                formatter,
+                "the order given is not a permutation of the host's sessions"
             ),
             RegistryError::InvalidLayout { tab, error } => {
                 write!(formatter, "the layout for tab {}: {error}", tab.0)

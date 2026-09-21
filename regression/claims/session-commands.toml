@@ -4,7 +4,7 @@
 
 [[claim]]
 id = "applying-every-command-is-answered-with-what-it-made"
-statement = "Each of the eleven commands is applied and answers Applied with what it made — a session, a tab, a pane, or nothing — at the generation the model reached, and the model shows it."
+statement = "Each of the twelve commands is applied and answers Applied with what it made — a session, a tab, a pane, or nothing — at the generation the model reached, and the model shows it."
 test = "iznik-server::session_commands::session_commands_every_command_is_applied_and_answered"
 because = "the mapping is between a command and a registry in one process; a container adds nothing"
 

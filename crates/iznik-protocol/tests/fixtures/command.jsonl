@@ -26,7 +26,7 @@
 {"description": "rejected: SpawnFailed", "outcome": {"Rejected": {"code": "SpawnFailed", "message": "no 6"}}, "hex": "0106040000006e6f2036"}
 {"description": "rejected with an empty message", "outcome": {"Rejected": {"code": "SpawnFailed", "message": ""}}, "hex": "010600000000"}
 {"description": "an empty command ends before its discriminant", "kind": "command", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
-{"description": "a discriminant no command claims", "kind": "command", "hex": "0b", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 11}}}
+{"description": "a discriminant no command claims", "kind": "command", "hex": "0c", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 12}}}
 {"description": "a close whose session id is cut short", "kind": "command", "hex": "020300", "error": {"Truncated": {"discriminant": 2, "needed": 8, "available": 2}}}
 {"description": "a byte after a command's last field", "kind": "command", "hex": "080b00000000000000ff", "error": {"TrailingBytes": {"discriminant": 8, "count": 1}}}
 {"description": "a name that is not UTF-8", "kind": "command", "hex": "04050000000000000002000000fffe", "error": {"Utf8": {"discriminant": 4}}}
@@ -35,6 +35,9 @@
 {"description": "an empty outcome ends before its discriminant", "kind": "outcome", "hex": "", "error": {"Truncated": {"discriminant": 0, "needed": 1, "available": 0}}}
 {"description": "a discriminant no outcome claims", "kind": "outcome", "hex": "02", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 2}}}
 {"description": "a created form no variant claims", "kind": "outcome", "hex": "00070000000000000004", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 4}}}
-{"description": "a rejection code no variant claims", "kind": "outcome", "hex": "0107", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 7}}}
+{"description": "a rejection code no variant claims", "kind": "outcome", "hex": "0108", "error": {"UnknownDiscriminant": {"channel": 0, "discriminant": 8}}}
 {"description": "a byte after an outcome's last field", "kind": "outcome", "hex": "0100040000006e6f2030ff", "error": {"TrailingBytes": {"discriminant": 1, "count": 1}}}
 {"description": "a rejection message that is not UTF-8", "kind": "outcome", "hex": "010002000000fffe", "error": {"Utf8": {"discriminant": 1}}}
+{"description": "put the host's sessions in another order, carried whole", "command": {"ReorderSessions": {"order": [3, 1]}}, "hex": "0b0200000003000000000000000100000000000000"}
+{"description": "put the host's sessions in no order at all", "command": {"ReorderSessions": {"order": []}}, "hex": "0b00000000"}
+{"description": "rejected: UnknownCommand", "outcome": {"Rejected": {"code": "UnknownCommand", "message": "unknown command"}}, "hex": "01070f000000756e6b6e6f776e20636f6d6d616e64"}

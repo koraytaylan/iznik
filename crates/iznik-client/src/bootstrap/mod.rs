@@ -261,9 +261,12 @@ async fn may_replace(
 
 /// Replaces the server on a host with the one this build carries.
 ///
-/// Nothing happens to a host that already has it. A host holding panes is
-/// refused unless `force` says otherwise, because those panes are what the
-/// daemon is.
+/// A host that already runs this build's version is left alone unless `force`
+/// says otherwise: the version does not distinguish a same-version server that
+/// predates a command from one that has it, so a capability gap is only ever
+/// closed by somebody asking, with `force`, for exactly that. A host holding
+/// panes is refused unless `force` says otherwise either, because those panes
+/// are what the daemon is.
 ///
 /// # Errors
 ///
@@ -282,13 +285,18 @@ pub async fn upgrade(
         .await
         .map_err(|source| refused(&host, Stage::Probe, &source))?;
     match decide(&found, artifacts, &bundled()) {
-        Decision::UpToDate => return Ok(()),
+        // Nothing to do — unless somebody forced it, which is the only way a
+        // same-version server missing a capability is ever replaced.
+        Decision::UpToDate if !force => return Ok(()),
         Decision::Unsupported { triple } => {
             return Err(no_artifact(&host, &triple, &artifacts.triples()).into());
         }
         // Nothing is there to end, and nothing is holding panes.
         Decision::Install => {}
-        Decision::UpgradeAvailable { .. } => {
+        // A version this build does not carry, or a forced replacement of one
+        // it does: the running daemon is asked whether it may go, and then it
+        // is stopped before the new binary is put where it was.
+        Decision::UpgradeAvailable { .. } | Decision::UpToDate => {
             may_replace(transport, &found, options, force, expires).await?;
             stop(
                 transport,

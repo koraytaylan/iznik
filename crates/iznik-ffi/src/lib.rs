@@ -539,6 +539,7 @@ fn layer_of(refusal: &ManagerError) -> Layer {
         | ManagerError::NotCarrying { .. }
         | ManagerError::UnknownHost { .. }
         | ManagerError::Gone { .. }
+        | ManagerError::Unsupported { .. }
         | ManagerError::Poisoned { .. } => Layer::Client,
     }
 }

@@ -22,7 +22,9 @@ fn rejected(error: &RegistryError) -> CommandOutcome {
         RegistryError::UnknownTab { .. } => RejectionCode::UnknownTab,
         RegistryError::UnknownPane { .. } => RejectionCode::UnknownPane,
         RegistryError::EmptyName => RejectionCode::EmptyName,
-        RegistryError::NotAPermutation { .. } => RejectionCode::InvalidOrder,
+        RegistryError::NotAPermutation { .. } | RegistryError::NotASessionPermutation => {
+            RejectionCode::InvalidOrder
+        }
         RegistryError::InvalidLayout { .. } => RejectionCode::InvalidLayout,
         // A pane that was started and then taken away again is, from the
         // client's side, a pane that was never made.
@@ -114,6 +116,7 @@ fn apply_change(registry: &mut Registry, command: SessionCommand) -> CommandOutc
         SessionCommand::RenameTab { tab, name } => registry.rename_tab(tab, name),
         SessionCommand::CloseTab { tab } => registry.close_tab(tab),
         SessionCommand::ReorderTabs { session, order } => registry.reorder_tabs(session, order),
+        SessionCommand::ReorderSessions { order } => registry.reorder_sessions(order),
         SessionCommand::ClosePane { pane } => registry.close_pane(pane),
         SessionCommand::MovePane {
             pane,

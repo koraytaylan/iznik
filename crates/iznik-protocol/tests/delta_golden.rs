@@ -233,6 +233,23 @@ fn order_of(value: &Value, name: &str) -> Result<Vec<TabId>, Failure> {
         .collect()
 }
 
+/// The order a JSON array of session ids describes.
+///
+/// # Errors
+///
+/// When the value is not an array of unsigned integers.
+fn sessions_order_of(value: &Value, name: &str) -> Result<Vec<SessionId>, Failure> {
+    array_field(value, name)?
+        .iter()
+        .map(|session| {
+            session
+                .as_u64()
+                .map(SessionId)
+                .ok_or_else(|| "an order names session ids".into())
+        })
+        .collect()
+}
+
 /// The delta a JSON value describes.
 ///
 /// # Errors
@@ -266,6 +283,9 @@ fn delta_of(value: &Value) -> Result<Delta, Failure> {
         "TabsReordered" => Delta::TabsReordered {
             session: SessionId(integer_field(&fields, "session")?),
             order: order_of(&fields, "order")?,
+        },
+        "SessionsReordered" => Delta::SessionsReordered {
+            order: sessions_order_of(&fields, "order")?,
         },
         "PaneAdded" => Delta::PaneAdded {
             tab: TabId(integer_field(&fields, "tab")?),
@@ -456,6 +476,7 @@ fn delta_golden_every_variant_has_a_line() {
             "SessionAdded",
             "SessionRemoved",
             "SessionRenamed",
+            "SessionsReordered",
             "TabAdded",
             "TabRemoved",
             "TabRenamed",

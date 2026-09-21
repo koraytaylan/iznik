@@ -17,6 +17,7 @@
 //! then their fields in declaration order, in the forms [`crate::model`]
 //! documents. The golden `tests/fixtures/command.jsonl` pins every byte.
 
+use crate::capabilities::Capabilities;
 use crate::identity::{Generation, PaneId, SessionId, TabId};
 use crate::message::MessageError;
 use crate::model::{LayoutNode, SplitDirection, check_depth, put_layout, read_layout};
@@ -49,6 +50,8 @@ mod command_tag {
     pub(super) const MOVE_PANE: u8 = 9;
     /// `SetLayout`.
     pub(super) const SET_LAYOUT: u8 = 10;
+    /// `ReorderSessions`.
+    pub(super) const REORDER_SESSIONS: u8 = 11;
 }
 
 /// The discriminants of [`CommandOutcome`], in declaration order.
@@ -87,6 +90,8 @@ mod rejection_tag {
     pub(super) const INVALID_LAYOUT: u8 = 5;
     /// `SpawnFailed`.
     pub(super) const SPAWN_FAILED: u8 = 6;
+    /// `UnknownCommand`.
+    pub(super) const UNKNOWN_COMMAND: u8 = 7;
 }
 
 /// Where a new pane goes: beside a pane that is already there.
@@ -195,6 +200,68 @@ pub enum SessionCommand {
         /// The whole arrangement; the host normalizes it.
         layout: LayoutNode,
     },
+    /// Put the host's sessions in another order, carried whole.
+    ReorderSessions {
+        /// The whole order, never a swap.
+        order: Vec<SessionId>,
+    },
+}
+
+impl SessionCommand {
+    /// The command's name, as a person and a log read it.
+    ///
+    /// The protocol's own spelling of the variant, so a refusal names the
+    /// command the same way wherever it is printed.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            SessionCommand::CreateSession { .. } => "CreateSession",
+            SessionCommand::RenameSession { .. } => "RenameSession",
+            SessionCommand::CloseSession { .. } => "CloseSession",
+            SessionCommand::ReorderSessions { .. } => "ReorderSessions",
+            SessionCommand::CreateTab { .. } => "CreateTab",
+            SessionCommand::RenameTab { .. } => "RenameTab",
+            SessionCommand::CloseTab { .. } => "CloseTab",
+            SessionCommand::ReorderTabs { .. } => "ReorderTabs",
+            SessionCommand::CreatePane { .. } => "CreatePane",
+            SessionCommand::ClosePane { .. } => "ClosePane",
+            SessionCommand::MovePane { .. } => "MovePane",
+            SessionCommand::SetLayout { .. } => "SetLayout",
+        }
+    }
+
+    /// What a server must advertise before it can decode this command.
+    ///
+    /// Every command but [`SessionCommand::ReorderSessions`] has been in the
+    /// protocol since it had one, so a server that connects at all decodes it;
+    /// that one arrived later and is advertised as
+    /// [`Capabilities::REORDER_SESSIONS`]. A client sends a command only when
+    /// the server it is connected to set the bit, because a server without it
+    /// refuses the frame as garbage and the connection dies with it.
+    #[must_use]
+    pub fn needs(&self) -> Capabilities {
+        match self {
+            SessionCommand::ReorderSessions { .. } => Capabilities::REORDER_SESSIONS,
+            SessionCommand::CreateSession { .. }
+            | SessionCommand::RenameSession { .. }
+            | SessionCommand::CloseSession { .. }
+            | SessionCommand::CreateTab { .. }
+            | SessionCommand::RenameTab { .. }
+            | SessionCommand::CloseTab { .. }
+            | SessionCommand::ReorderTabs { .. }
+            | SessionCommand::CreatePane { .. }
+            | SessionCommand::ClosePane { .. }
+            | SessionCommand::MovePane { .. }
+            | SessionCommand::SetLayout { .. } => Capabilities::from_bits(0),
+        }
+    }
+
+    /// Whether a server advertising `advertised` can decode this command.
+    #[must_use]
+    pub fn is_supported_by(&self, advertised: Capabilities) -> bool {
+        let needed = self.needs();
+        advertised.bits() & needed.bits() == needed.bits()
+    }
 }
 
 /// The answer to a command, given exactly once.
@@ -247,6 +314,15 @@ pub enum RejectionCode {
     InvalidLayout,
     /// A pseudoterminal or its child could not be started.
     SpawnFailed,
+    /// The command's tag is one this server does not know.
+    ///
+    /// Two peers of one protocol version are not necessarily one build — a
+    /// released server and a local one both say "protocol 1" — so a command
+    /// this codec cannot read is a request the server cannot serve, not a peer
+    /// speaking garbage. It is refused, and the connection lives: the panes on
+    /// it are somebody's sessions, and losing them over one unknown tag is the
+    /// bug this code exists to prevent.
+    UnknownCommand,
 }
 
 impl RejectionCode {
@@ -260,6 +336,7 @@ impl RejectionCode {
             RejectionCode::InvalidOrder => rejection_tag::INVALID_ORDER,
             RejectionCode::InvalidLayout => rejection_tag::INVALID_LAYOUT,
             RejectionCode::SpawnFailed => rejection_tag::SPAWN_FAILED,
+            RejectionCode::UnknownCommand => rejection_tag::UNKNOWN_COMMAND,
         }
     }
 
@@ -277,6 +354,7 @@ impl RejectionCode {
             rejection_tag::INVALID_ORDER => Ok(RejectionCode::InvalidOrder),
             rejection_tag::INVALID_LAYOUT => Ok(RejectionCode::InvalidLayout),
             rejection_tag::SPAWN_FAILED => Ok(RejectionCode::SpawnFailed),
+            rejection_tag::UNKNOWN_COMMAND => Ok(RejectionCode::UnknownCommand),
             other => Err(unknown(other)),
         }
     }
@@ -338,6 +416,7 @@ fn check_layouts(command: &SessionCommand) -> Result<(), MessageError> {
         | SessionCommand::RenameTab { .. }
         | SessionCommand::CloseTab { .. }
         | SessionCommand::ReorderTabs { .. }
+        | SessionCommand::ReorderSessions { .. }
         | SessionCommand::CreatePane { .. }
         | SessionCommand::ClosePane { .. }
         | SessionCommand::MovePane { .. } => Ok(()),
@@ -399,6 +478,13 @@ fn put_arrangement(sink: &mut dyn Sink, command: &SessionCommand) -> bool {
             sink.put(&[command_tag::SET_LAYOUT]);
             sink.put(&tab.0.to_le_bytes());
             put_layout(sink, layout);
+        }
+        SessionCommand::ReorderSessions { order } => {
+            sink.put(&[command_tag::REORDER_SESSIONS]);
+            put_count(sink, order.len());
+            for session in order {
+                sink.put(&session.0.to_le_bytes());
+            }
         }
         _other => return false,
     }
@@ -509,11 +595,12 @@ fn read_arrangement(reader: &mut Reader<'_>) -> Result<SessionCommand, MessageEr
             tab: TabId(u64::from_le_bytes(reader.array()?)),
             layout: read_layout(reader, ROOT_DEPTH)?,
         }),
+        command_tag::REORDER_SESSIONS => read_session_order(reader),
         _other => read_pane_command(reader),
     }
 }
 
-/// The reorder at the reader, whose whole order follows its count.
+/// The tab reorder at the reader, whose whole order follows its count.
 ///
 /// # Errors
 ///
@@ -526,6 +613,20 @@ fn read_reorder(reader: &mut Reader<'_>) -> Result<SessionCommand, MessageError>
         order.push(TabId(u64::from_le_bytes(reader.array()?)));
     }
     Ok(SessionCommand::ReorderTabs { session, order })
+}
+
+/// The session reorder at the reader, whose whole order follows its count.
+///
+/// # Errors
+///
+/// The refusals [`decode_session_command`] documents.
+fn read_session_order(reader: &mut Reader<'_>) -> Result<SessionCommand, MessageError> {
+    let count = reader.count()?;
+    let mut order = Vec::new();
+    for _index in 0..count {
+        order.push(SessionId(u64::from_le_bytes(reader.array()?)));
+    }
+    Ok(SessionCommand::ReorderSessions { order })
 }
 
 /// The pane command at the reader, whose discriminant it has already read.

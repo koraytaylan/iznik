@@ -79,6 +79,9 @@ pub enum ReconcileError {
         /// The session whose tabs they are.
         session: SessionId,
     },
+    /// A reorder's order is not a permutation of the host's sessions, so
+    /// applying it would lose a session or invent one.
+    NotASessionPermutation,
     /// The value the delta carries is not a well-formed part of a model, or
     /// mints an identity the host already holds.
     Invalid {
@@ -117,6 +120,10 @@ impl Display for ReconcileError {
                 formatter,
                 "the order given is not a permutation of session {}'s tabs",
                 session.0
+            ),
+            ReconcileError::NotASessionPermutation => write!(
+                formatter,
+                "the order given is not a permutation of the host's sessions"
             ),
             ReconcileError::Invalid { error } => write!(formatter, "{error}"),
         }
@@ -184,6 +191,7 @@ pub fn apply_change(model: &mut HostModel, delta: &Delta) -> Result<(), Reconcil
             columns,
             rows,
         } => resize_pane(model, *pane, *columns, *rows),
+        Delta::SessionsReordered { order } => reorder_sessions(model, order),
     }
 }
 
@@ -430,6 +438,38 @@ fn reorder_tabs(
         }
     }
     held.tabs = arranged;
+    Ok(())
+}
+
+/// Whether an order names each of the host's sessions exactly once.
+fn is_session_permutation(order: &[SessionId], held: &[Session]) -> bool {
+    let wanted: HashSet<SessionId> = order.iter().copied().collect();
+    wanted.len() == order.len()
+        && order.len() == held.len()
+        && held.iter().all(|session| wanted.contains(&session.id))
+}
+
+/// Puts the host's sessions in the order given, which is the whole order.
+///
+/// # Errors
+///
+/// [`ReconcileError::NotASessionPermutation`] when the order would lose a
+/// session or invent one.
+fn reorder_sessions(model: &mut HostModel, order: &[SessionId]) -> Result<(), ReconcileError> {
+    if !is_session_permutation(order, &model.sessions) {
+        return Err(ReconcileError::NotASessionPermutation);
+    }
+    let mut arranged = Vec::with_capacity(order.len());
+    for wanted in order {
+        if let Some(place) = model
+            .sessions
+            .iter()
+            .position(|session| session.id == *wanted)
+        {
+            arranged.push(model.sessions.remove(place));
+        }
+    }
+    model.sessions = arranged;
     Ok(())
 }
 

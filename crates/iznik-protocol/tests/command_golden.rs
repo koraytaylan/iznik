@@ -152,6 +152,23 @@ fn order_of(value: &Value, name: &str) -> Result<Vec<TabId>, Failure> {
         .collect()
 }
 
+/// The order a JSON array of session ids describes.
+///
+/// # Errors
+///
+/// When the value is not an array of unsigned integers.
+fn sessions_order_of(value: &Value, name: &str) -> Result<Vec<SessionId>, Failure> {
+    array_field(value, name)?
+        .iter()
+        .map(|session| {
+            session
+                .as_u64()
+                .map(SessionId)
+                .ok_or_else(|| "an order names session ids".into())
+        })
+        .collect()
+}
+
 /// An optional string field: a string, or null for absent.
 ///
 /// # Errors
@@ -255,6 +272,9 @@ fn command_of(value: &Value) -> Result<SessionCommand, Failure> {
             tab: TabId(integer_field(&fields, "tab")?),
             layout: layout_of(field(&fields, "layout")?)?,
         },
+        "ReorderSessions" => SessionCommand::ReorderSessions {
+            order: sessions_order_of(&fields, "order")?,
+        },
         other => return Err(format!("no SessionCommand variant `{other}`").into()),
     })
 }
@@ -294,6 +314,7 @@ fn rejection_of(name: &str) -> Result<RejectionCode, Failure> {
         "InvalidOrder" => RejectionCode::InvalidOrder,
         "InvalidLayout" => RejectionCode::InvalidLayout,
         "SpawnFailed" => RejectionCode::SpawnFailed,
+        "UnknownCommand" => RejectionCode::UnknownCommand,
         other => return Err(format!("no RejectionCode `{other}`").into()),
     })
 }
@@ -447,6 +468,80 @@ fn command_golden_every_line_holds_in_both_directions() {
     }
 }
 
+/// Every command that has always been in the protocol needs no capability;
+/// `ReorderSessions`, which arrived later, needs the bit that says so — the
+/// one thing that keeps a client from sending it to a server that would end
+/// the connection on a tag it does not know.
+///
+/// # Panics
+///
+/// When a command's capability requirement differs.
+#[test]
+fn command_golden_only_a_late_command_needs_a_capability() {
+    let lines = lines().expect("the fixture loads");
+    let bare = iznik_protocol::capabilities::Capabilities::from_bits(0);
+    let full = iznik_protocol::capabilities::Capabilities::from_bits(
+        iznik_protocol::capabilities::Capabilities::REORDER_SESSIONS.bits(),
+    );
+    for line in &lines {
+        let Some(value) = line.get("command") else {
+            continue;
+        };
+        let command = command_of(value).expect("a command");
+        let named = value
+            .as_object()
+            .and_then(|object| object.keys().next())
+            .cloned()
+            .unwrap_or_default();
+        let late = named == "ReorderSessions";
+        assert_eq!(
+            command.is_supported_by(bare),
+            !late,
+            "{named} against a server advertising nothing"
+        );
+        assert!(
+            command.is_supported_by(full),
+            "{named} against a server advertising the reorder bit"
+        );
+    }
+}
+
+/// The bits that gate a feature are what an upgrade offer is made of, and the
+/// ones that only make a connection better are not.
+///
+/// # Panics
+///
+/// When the feature set differs.
+#[test]
+fn command_golden_only_feature_bits_are_missing_features() {
+    use iznik_protocol::capabilities::Capabilities;
+    // A server missing only compression or resume is missing no feature.
+    assert_eq!(
+        Capabilities::from_bits(0).missing_features(),
+        Capabilities::REORDER_SESSIONS,
+        "the reorder is a feature; compression and resume are not"
+    );
+    assert_eq!(
+        Capabilities::from_bits(Capabilities::ZSTD.bits()).missing_features(),
+        Capabilities::REORDER_SESSIONS
+    );
+    assert_eq!(
+        Capabilities::from_bits(Capabilities::ZSTD.bits() | Capabilities::RESUME.bits())
+            .missing_features(),
+        Capabilities::REORDER_SESSIONS
+    );
+    assert_eq!(
+        Capabilities::from_bits(Capabilities::REORDER_SESSIONS.bits()).missing_features(),
+        Capabilities::from_bits(0),
+        "a server with every feature is missing nothing"
+    );
+    assert!(
+        Capabilities::from_bits(Capabilities::REORDER_SESSIONS.bits())
+            .contains(Capabilities::REORDER_SESSIONS),
+        "and contains what it has"
+    );
+}
+
 /// Every command variant has a line, so no variant is pinned by nothing.
 ///
 /// # Panics
@@ -466,6 +561,7 @@ fn command_golden_every_command_variant_has_a_line() {
             "MovePane",
             "RenameSession",
             "RenameTab",
+            "ReorderSessions",
             "ReorderTabs",
             "SetLayout",
         ],
@@ -519,6 +615,7 @@ fn command_golden_every_outcome_form_has_a_line() {
             "InvalidLayout",
             "InvalidOrder",
             "SpawnFailed",
+            "UnknownCommand",
             "UnknownPane",
             "UnknownSession",
             "UnknownTab",

@@ -147,6 +147,8 @@ fn optimistic_commands_show_exactly_what_the_host_would_send() {
                 .first()
                 .map(|held| held.tabs.iter().rev().map(|found| found.id).collect())
                 .unwrap_or_default();
+            let sessions_order: Vec<SessionId> =
+                model.sessions.iter().rev().map(|held| held.id).collect();
             // Every command whose local effect is beyond doubt, beside the
             // change the host would announce for it.
             let table: Vec<(SessionCommand, Vec<Delta>)> = vec![
@@ -180,6 +182,14 @@ fn optimistic_commands_show_exactly_what_the_host_would_send() {
                 (
                     SessionCommand::CloseSession { session },
                     vec![Delta::SessionRemoved { session }],
+                ),
+                (
+                    SessionCommand::ReorderSessions {
+                        order: sessions_order.clone(),
+                    },
+                    vec![Delta::SessionsReordered {
+                        order: sessions_order,
+                    }],
                 ),
             ];
             for (command, deltas) in table {

@@ -17,14 +17,14 @@ use std::time::Instant;
 
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
-use iznik_client::host::state::{BackoffPolicy, HostState};
+use iznik_client::host::state::{BackoffPolicy, HostState, UpgradeOffer, UpgradeReason};
 use iznik_client::model::ClientModel;
 use iznik_client::reduce::Notification;
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_link::framed::FramedLink;
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::command::{CommandOutcome, Created, SessionCommand, encode_command_outcome};
+use iznik_protocol::command::{CommandOutcome, SessionCommand};
 use iznik_protocol::delta::{Delta, encode_delta};
 use iznik_protocol::identity::{Generation, PaneId, SessionId};
 use iznik_protocol::message::{
@@ -257,6 +257,34 @@ fn await_connected(events: &Receiver<ManagerEvent>, hosts: &[&str]) -> Result<()
         return Ok(());
     }
     Err(format!("{waiting:?} did not connect inside {PROMPT:?}").into())
+}
+
+/// Waits for one host to connect and gives back the upgrade offer its
+/// connection carried, if any.
+///
+/// The connection event is the path a window reads: the state carries the
+/// offer. Read here rather than through [`await_connected`], which would
+/// consume the very event the offer is on.
+///
+/// # Errors
+///
+/// When the host does not connect inside `PROMPT`, or its connection carries
+/// no offer.
+fn connected_offer(events: &Receiver<ManagerEvent>, host: &HostId) -> Result<UpgradeOffer, Failed> {
+    let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+    while Instant::now() < expires {
+        let left = expires.saturating_duration_since(Instant::now());
+        let Ok(event) = events.recv_timeout(left) else {
+            break;
+        };
+        if let ManagerEvent::Moved { host: said, state } = event
+            && said == *host
+            && let HostState::Connected { upgrade, .. } = state
+        {
+            return upgrade.ok_or_else(|| format!("{host:?} connected with no offer").into());
+        }
+    }
+    Err(format!("{host:?} did not connect inside {PROMPT:?}").into())
 }
 
 /// Makes a session on a host and waits for the model to hold it.
@@ -570,66 +598,6 @@ fn manager_traffic_passes_on_no_change_it_could_not_take() {
     case().unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// A host that answers a command and then comes back as a different daemon:
-/// the same socket, a model numbered below the one it had.
-///
-/// # Errors
-///
-/// When the socket cannot be bound.
-fn starts_again(runtime: &Runtime, socket: &std::path::Path) -> Result<(), Failed> {
-    let listener = runtime.block_on(async { UnixListener::bind(socket) })?;
-    let _serving = runtime.spawn(async move {
-        let Ok((stream, _from)) = listener.accept().await else {
-            return;
-        };
-        let mut link = FramedLink::new(stream);
-        loop {
-            let heard = {
-                let Ok(Some(frame)) = link.next_frame().await else {
-                    return;
-                };
-                decode_to_server(frame.payload)
-            };
-            let said = match heard {
-                Ok(ToServer::Hello { .. }) => encode_to_client(&ToClient::Hello {
-                    protocol_version: PROTOCOL_VERSION,
-                    server_version: "scripted".to_owned(),
-                    capabilities: Capabilities::from_bits(0),
-                }),
-                Ok(ToServer::SnapshotRequest) => model_at(SETTLED),
-                // Answered, and then never announced: the window this client
-                // holds a command applied in, which is where a daemon that
-                // goes away leaves one for ever if nothing notices.
-                Ok(ToServer::Command { command_id, .. }) => {
-                    let Ok(payload) = encode_command_outcome(&CommandOutcome::Applied {
-                        generation: Generation(ANSWERED),
-                        created: Created::Nothing,
-                    }) else {
-                        return;
-                    };
-                    let answer = encode_to_client(&ToClient::CommandResult {
-                        command_id,
-                        payload,
-                    });
-                    let Ok(answer) = answer else {
-                        return;
-                    };
-                    let _answered = link.send(CHANNEL_CONTROL, &answer).await;
-                    // And now it is another daemon, with another model.
-                    model_at(AGAIN)
-                }
-                Ok(_otherwise) => continue,
-                Err(_unreadable) => return,
-            };
-            let Ok(said) = said else {
-                return;
-            };
-            let _sent = link.send(CHANNEL_CONTROL, &said).await;
-        }
-    });
-    Ok(())
-}
-
 /// A snapshot of an empty model at one generation, encoded.
 ///
 /// # Errors
@@ -657,7 +625,7 @@ fn manager_traffic_passes_on_the_model_a_replaced_daemon_sends() {
         let held = scratch("again")?;
         let runtime = runtime()?;
         let socket = held.path.join("scripted.sock");
-        starts_again(&runtime, &socket)?;
+        scripted_host::starts_again(&runtime, &socket)?;
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&socket);
@@ -705,6 +673,151 @@ fn manager_traffic_passes_on_the_model_a_replaced_daemon_sends() {
     case().unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A server of this build's own version that advertised no features is
+/// nevertheless offered an upgrade, because the version does not distinguish
+/// it from one that has them and the gap is the only thing that does.
+///
+/// The scripted host answers this build's own version with no capability bits,
+/// which is exactly a same-version server built before the reorder command
+/// existed.
+///
+/// # Panics
+///
+/// When the connection carries no offer, or one for the wrong reason.
+#[test]
+fn manager_traffic_offers_an_upgrade_for_a_capability_gap() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("gap")?;
+        let runtime = runtime()?;
+        let socket = held.path.join("scripted.sock");
+        // This build's own version, so the reason can only be the gap.
+        scripted_host::serve(
+            &runtime,
+            &socket,
+            env!("CARGO_PKG_VERSION"),
+            Capabilities::from_bits(0),
+        )?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        let host = HostId(alias(&socket));
+        manager.add_host(&host.0);
+        let offered = connected_offer(&events, &host)?;
+        assert_eq!(offered.reason, UpgradeReason::Capabilities, "and says why");
+        assert_eq!(
+            offered.installed.crate_version,
+            env!("CARGO_PKG_VERSION"),
+            "the installed version is what the greeting said, not assumed"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A server of another version has its capabilities dropped, so a bit it set
+/// for something else is never read as a command this build can send.
+///
+/// This is the failure an unreleased local build caused: a stale server of
+/// another version advertised bit 2 — which it had given its own meaning —
+/// while having no decoder for command tag 11, and a client that trusted the
+/// bit enabled a move whose frame that server read as garbage and ended the
+/// connection on. A bit means what the build that assigned it says, and only a
+/// server of this build's version is that build.
+///
+/// # Panics
+///
+/// When the version is not seen as missing, or the command is let through.
+#[test]
+fn manager_traffic_drops_the_capabilities_of_another_version() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("other-version")?;
+        let runtime = runtime()?;
+        let socket = held.path.join("scripted.sock");
+        // Another version, advertising the bit this build uses for the session
+        // reorder — which must not be believed. Compression is left off so the
+        // scripted host can keep speaking plainly, and `RESUME` stands in for
+        // the other bits an unrelated build would have set.
+        scripted_host::serve(
+            &runtime,
+            &socket,
+            "0.0.0-unreleased",
+            Capabilities::from_bits(
+                Capabilities::RESUME.bits() | Capabilities::REORDER_SESSIONS.bits(),
+            ),
+        )?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        let host = HostId(alias(&socket));
+        manager.add_host(&host.0);
+        let offered = connected_offer(&events, &host)?;
+        // The command is refused, because the advertised bit was not trusted.
+        let refused = manager.command(
+            &host.0,
+            SessionCommand::ReorderSessions { order: Vec::new() },
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(iznik_client::host::manager::ManagerError::Unsupported { .. })
+            ),
+            "another version's bit 2 was believed: {refused:?}"
+        );
+        assert_eq!(
+            offered.reason,
+            UpgradeReason::Version,
+            "the reason is the version, not a feature this build thinks it is missing"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A command a connected server did not advertise it can decode is refused
+/// before it is sent, and nothing is shown or left pending.
+///
+/// The scripted host answers `Hello` with no capability bits at all, which is
+/// what a server built before `ReorderSessions` advertises. Sending the
+/// command would make that server refuse the frame as garbage and end the
+/// whole connection, so the manager refuses it here and the model does not
+/// move.
+///
+/// # Panics
+///
+/// When the command is accepted, or accepted but shown.
+#[test]
+fn manager_traffic_refuses_a_command_the_server_cannot_decode() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("unsupported")?;
+        let runtime = runtime()?;
+        let socket = held.path.join("scripted.sock");
+        scripted_host::starts_again(&runtime, &socket)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        let host = alias(&socket);
+        manager.add_host(&host);
+        await_connected(&events, &[&host])?;
+        let refused = manager.command(&host, SessionCommand::ReorderSessions { order: Vec::new() });
+        assert!(
+            matches!(
+                refused,
+                Err(iznik_client::host::manager::ManagerError::Unsupported { .. })
+            ),
+            "the command was not refused for being unsupported: {refused:?}"
+        );
+        let pending = manager
+            .model()
+            .host(&HostId(host.clone()))
+            .map_or(0, |view| view.pending.len());
+        assert_eq!(pending, 0, "nothing was left showing or waiting");
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[path = "fixtures/scripted_host.rs"]
+mod scripted_host;
 #[path = "fixtures/stream_host.rs"]
 mod stream_host;
 

@@ -378,6 +378,7 @@ fn held(alias: &str) -> Answered {
             HostState::Connected {
                 server_version,
                 upgrade,
+                ..
             } => reached = Some((server_version, upgrade.is_some())),
             // A failure is not an ending — a host that could not be reached
             // is tried again, and one that failed once may connect on the
@@ -445,6 +446,7 @@ fn named(state: &HostState) -> &'static str {
         HostState::Probing => "probing",
         HostState::Bootstrapping { .. } => "bootstrapping",
         HostState::Connecting => "connecting",
+        HostState::Upgrading => "upgrading",
         HostState::Connected { .. } => "connected",
         HostState::Reconnecting { .. } => "reconnecting",
         HostState::Failed { .. } => "failed",

@@ -14,7 +14,7 @@ use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{CommandOutcome, Created, SessionCommand};
 use iznik_protocol::delta::{Delta, decode_delta};
 use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
-use iznik_protocol::identity::{Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence, SessionId};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client,
     encode_to_server,
@@ -314,6 +314,112 @@ async fn the_handshake_refuses_what_it_cannot_speak() {
 
 /// # Panics
 ///
+/// When the server does not advertise that it can reorder sessions, or the
+/// command a client sends for one is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_handshake_advertises_reordering_sessions() {
+    bounded(async {
+        let mut host = Host::new()?;
+        let mut client = host.connect()?;
+        let greeting = client.hello(Capabilities::from_bits(0)).await?;
+        assert!(
+            SessionCommand::ReorderSessions { order: Vec::new() }
+                .is_supported_by(greeting.capabilities),
+            "the server advertises it can reorder sessions: {:?}",
+            greeting.capabilities
+        );
+        // And a two-session host answers the command it advertised.
+        let _first = make_session(&mut client).await?;
+        let _second = host
+            .registry
+            .write()
+            .await
+            .create_session("second".to_owned(), COLUMNS, ROWS, None)
+            .await?;
+        let mut order: Vec<SessionId> = host
+            .registry
+            .read()
+            .await
+            .snapshot()
+            .sessions
+            .iter()
+            .map(|held| held.id)
+            .collect();
+        order.reverse();
+        let outcome = client
+            .command(SessionCommand::ReorderSessions { order })
+            .await?;
+        assert!(
+            matches!(outcome, CommandOutcome::Applied { .. }),
+            "the reorder was refused: {outcome:?}"
+        );
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a command tag this server does not know ends the connection instead of
+/// being refused, or a well-formed request is answered with the wrong thing.
+///
+/// Two peers of one protocol version are not necessarily one build, and a
+/// server that ended the link over an unknown command would take every pane on
+/// it — somebody's running sessions — with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unknown_command_is_refused_without_ending_the_connection() {
+    bounded(async {
+        let mut host = Host::new()?;
+        let mut speaking = raw(&mut host)?;
+        let greeting = ToServer::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_version: "another-build".to_owned(),
+            capabilities: Capabilities::from_bits(0),
+        };
+        speaking
+            .send(CHANNEL_CONTROL, &encode_to_server(&greeting)?)
+            .await?;
+        let _reply = tokio::time::timeout(PROMPT, speaking.next_frame()).await??;
+        // A command tag no variant claims, sent as a well-formed `Command`
+        // frame: the codec has no such command, so it is written by hand —
+        // which is exactly what a peer of another build sends.
+        let held = encode_to_server(&ToServer::Command {
+            command_id: CommandId(1),
+            payload: vec![0x7f],
+        })?;
+        speaking.send(CHANNEL_CONTROL, &held).await?;
+        // Answered with a refusal, and the connection lives.
+        let Some(frame) = tokio::time::timeout(PROMPT, speaking.next_frame()).await?? else {
+            return Err("the connection was closed over an unknown command".into());
+        };
+        let message = decode_to_client(frame.payload)?;
+        assert!(
+            matches!(
+                message,
+                ToClient::CommandResult { command_id, .. } if command_id == CommandId(1)
+            ),
+            "an unknown command is answered with a result: {message:?}"
+        );
+        // Still usable: a ping comes back.
+        speaking
+            .send(CHANNEL_CONTROL, &encode_to_server(&ToServer::Ping)?)
+            .await?;
+        let Some(pong) = tokio::time::timeout(PROMPT, speaking.next_frame()).await?? else {
+            return Err("the connection was closed after the refusal".into());
+        };
+        assert!(
+            matches!(decode_to_client(pong.payload)?, ToClient::Pong),
+            "the connection carries on"
+        );
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
 /// When two clients do not see the same model, or a change one makes does not
 /// reach the other with the generation it produced.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -525,8 +631,15 @@ async fn garbage_closes_only_that_connection() {
 }
 
 /// Runs a cursor-position query in a pane's shell and says whether the mirror
-/// answered it — the answer is echoed back by the terminal, and nothing else
-/// the probe writes carries a capital `R`.
+/// answered it.
+///
+/// The probe is `printf '\033[6n'; sleep 0.3`: the query is printed, and the
+/// shell is then executing a command rather than sitting in its line editor.
+/// That matters on macOS, where the interactive shell's editor consumes the
+/// answer before the terminal can echo it into the history, so a pane that
+/// answered looks exactly like one that did not; Linux's shell echoes it.
+/// The answer is the `R` of a cursor-position report, which nothing else the
+/// probe writes carries.
 ///
 /// # Errors
 ///
@@ -536,20 +649,32 @@ async fn query_answered(host: &Host, pane: PaneId) -> Result<bool, Failed> {
     let asked = {
         let held = host.registry.read().await;
         let running = held.pane(pane).ok_or("the host holds no such pane")?;
-        running.input(b"printf '\\033[6n'\n".to_vec())
+        running.input(b"printf '\\033[6n'; sleep 0.3\n".to_vec())
     };
     asked?;
-    let mut settled = 0;
     for _attempt in 0..POLL_ATTEMPTS {
         tokio::time::sleep(POLL_INTERVAL).await;
-        let now = host.history(pane).await?.len();
-        if now == settled && now > before {
-            break;
+        let history = host.history(pane).await?;
+        if report_answered(history.get(before..).unwrap_or_default()) {
+            return Ok(true);
         }
-        settled = now;
     }
-    let history = host.history(pane).await?;
-    Ok(history.get(before..).unwrap_or_default().contains(&b'R'))
+    Ok(false)
+}
+
+/// Whether the bytes a probe produced carry a cursor-position report: the
+/// `R` that ends `<row>;<column>R`, immediately after the `;` and digits the
+/// report is made of.
+fn report_answered(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .rposition(|byte| *byte == b'R')
+        .is_some_and(|end| {
+            bytes
+                .get(..end)
+                .and_then(|before| before.iter().rposition(|byte| *byte == b';'))
+                .is_some()
+        })
 }
 
 /// # Panics

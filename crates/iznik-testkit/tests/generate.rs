@@ -154,12 +154,13 @@ fn generate_operations_cover_every_kind() {
             RegistryOperation::CloseTab { .. } => "CloseTab",
             RegistryOperation::CloseSession { .. } => "CloseSession",
             RegistryOperation::ReorderTabs { .. } => "ReorderTabs",
+            RegistryOperation::ReorderSessions { .. } => "ReorderSessions",
             RegistryOperation::SetLayout { .. } => "SetLayout",
         })
         .collect();
     kinds.sort_unstable();
     kinds.dedup();
-    assert_eq!(kinds.len(), 11, "the kinds drawn were {kinds:?}");
+    assert_eq!(kinds.len(), 12, "the kinds drawn were {kinds:?}");
 }
 
 /// Every kind of change comes up over enough rounds, so the convergence
@@ -171,7 +172,7 @@ fn generate_operations_cover_every_kind() {
 #[test]
 fn generate_changes_cover_every_delta() {
     let kinds = variants_drawn(SEED);
-    assert_eq!(kinds.len(), 14, "the deltas drawn were {kinds:?}");
+    assert_eq!(kinds.len(), 15, "the deltas drawn were {kinds:?}");
 }
 
 /// A seed of zero draws like any other. Zero is a fixed point of the xorshift,
@@ -185,7 +186,7 @@ fn generate_changes_cover_every_delta() {
 #[test]
 fn generate_a_seed_of_zero_still_draws() {
     let kinds = variants_drawn(0);
-    assert_eq!(kinds.len(), 14, "a seed of zero drew {kinds:?}");
+    assert_eq!(kinds.len(), 15, "a seed of zero drew {kinds:?}");
 }
 
 /// The names of the delta variants a seed draws over `ROUNDS` rounds.

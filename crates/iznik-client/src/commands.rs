@@ -261,6 +261,9 @@ fn effect(model: &HostModel, command: &SessionCommand) -> Option<Vec<Delta>> {
             session: *session,
             order: order.clone(),
         }]),
+        SessionCommand::ReorderSessions { order } => Some(vec![Delta::SessionsReordered {
+            order: order.clone(),
+        }]),
         // An identity or an arrangement only the host can mint.
         SessionCommand::CreateSession { .. }
         | SessionCommand::CreateTab { .. }

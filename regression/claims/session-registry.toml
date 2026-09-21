@@ -11,7 +11,7 @@ because = "the property is between a model in memory and the deltas that describ
 
 [[claim]]
 id = "registry-each-operation-emits-its-deltas-in-order"
-statement = "Each operation emits exactly the deltas the architecture lists, in that order, with one generation per delta."
+statement = "Each operation emits exactly the deltas the architecture lists, in that order, with one generation per delta — reorder_sessions emitting one SessionsReordered carrying the whole order."
 test = "iznik-server::session_registry::session_registry_each_operation_emits_its_deltas_in_order"
 because = "the order is between a call and a channel in one process; a container adds nothing"
 

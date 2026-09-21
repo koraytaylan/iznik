@@ -13,6 +13,18 @@ test = "iznik-server::client_connections::the_handshake_refuses_what_it_cannot_s
 because = "the handshake is a property of the loop and the stream under it, and a socket pair is a stream"
 
 [[claim]]
+id = "connection-advertises-reordering-sessions"
+statement = "The server advertises `REORDER_SESSIONS` in its `Hello`, and answers a `ReorderSessions` command carrying the host's whole session order with `Applied`."
+test = "iznik-server::client_connections::the_handshake_advertises_reordering_sessions"
+because = "what the server says it can decode and what it does with the command are both properties of the loop and the stream under it, and a socket pair is a stream"
+
+[[claim]]
+id = "connection-refuses-an-unknown-command"
+statement = "A `Command` carrying a tag this server does not know is answered with `CommandResult { Rejected { UnknownCommand } }` and the connection stays usable — because two peers of one protocol version are not necessarily one build, and ending the link over one unknown tag would take every pane on it with it."
+test = "iznik-server::client_connections::an_unknown_command_is_refused_without_ending_the_connection"
+because = "a hand-written command frame is the only way to send a tag no codec builds, which is exactly what a peer of another build sends"
+
+[[claim]]
 id = "connection-clients-see-one-model"
 statement = "A session created by one client reaches another as the same delta carrying the same generation, and a resize by one reaches both as `PaneResized` — including when neither is subscribed to the pane, because the registry is told when a pane has something to report rather than polled or left unread."
 test = "iznik-server::client_connections::two_clients_see_one_model"
