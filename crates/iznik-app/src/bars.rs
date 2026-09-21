@@ -248,6 +248,11 @@ fn tab_bar_container(
 }
 
 /// Build the empty bottom toolbar container, styled as a bar.
+///
+/// A session chip has the same padding, border and line box as a tab chip,
+/// so the bar is the tab bar's height. A shorter strip lets the name and the
+/// close mark paint outside it. Chips that run past the right edge are
+/// clipped; the palette is the fallback for what the bar cannot show.
 fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoElement {
     div()
         .id("session-bar")
@@ -256,7 +261,9 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
         .items_center()
         .gap_2()
         .w_full()
-        .h_8()
+        .min_w_0()
+        .overflow_x_hidden()
+        .h_10()
         .px_2()
         .flex_shrink_0()
         .bg(theme.status_bar)

@@ -151,6 +151,17 @@ fn bars_render_settled_model_entries(context: &mut TestAppContext) {
     check(&result);
 }
 
+/// Every chip drawn in either bar is held within that bar.
+///
+/// A session chip carries a border and a close affordance the bar must fit,
+/// and a bar too short for them cuts its own entries. Chips wider than the
+/// window are the bars' own clipped overflow, never a chip drawn past them.
+#[gpui_kit::test]
+fn bar_entries_fit_within_their_bars(context: &mut TestAppContext) {
+    let result = entries_fit(context);
+    check(&result);
+}
+
 /// Assert a bars case without making the GPUI test macro own its error path.
 ///
 /// # Panics
@@ -290,4 +301,88 @@ fn draw(
         window.draw(application).clear(application);
     })?;
     Ok(())
+}
+
+/// The UI font size the application window uses, in pixels.
+///
+/// The bars are sized in rems of the window font. A test at the harness
+/// default of 16 does not measure the size the running window draws.
+const CHROME_FONT_SIZE: f32 = 14.0;
+
+/// Render many sessions and assert each drawn chip is held within its bar.
+///
+/// The first session and the only drawn tab must sit inside their bar, border
+/// included. A session past the bar's right edge must not be drawn at all.
+///
+/// # Errors
+/// Returns a model encoding or closed-window error.
+fn entries_fit(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    let mut state = EngineState::new();
+    let host = iznik_client::host::identity::HostId("build".to_owned());
+    let model = many_session_model();
+    let payload = encode_host_model(&model)?;
+    state.apply(
+        &host,
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload,
+        },
+    );
+    context.update(gpui_kit::init);
+    let handle = context.add_window(|_, _| BarsFixture { state });
+    context.update_window(handle.into(), |_, window, _| {
+        window.set_rem_size(gpui_kit::px(CHROME_FONT_SIZE));
+    })?;
+    draw(context, handle)?;
+    context.update_window(handle.into(), |_, window, _| {
+        let session_bar = window.find("session-bar").bounds();
+        let tab_bar = window.find("tab-bar").bounds();
+        for (bar, prefix) in [(session_bar, "session-build-2"), (tab_bar, "tab-build-3")] {
+            let bounds = window.find(prefix).bounds();
+            if bounds.top() < bar.top() || bounds.bottom() > bar.bottom() {
+                return Err(format!(
+                    "{prefix} escapes its bar vertically: chip {bounds:?} bar {bar:?}"
+                )
+                .into());
+            }
+        }
+        let last = window.find("session-build-590002");
+        if last.visible() && last.bounds().right() > session_bar.right() {
+            return Err("a session chip is drawn past the bar's right edge".into());
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })??;
+    Ok(())
+}
+
+/// A host with more sessions than fit the window, each holding one tab.
+fn many_session_model() -> HostModel {
+    const SESSION_COUNT: u64 = 60;
+    const IDENTITIES_PER_SESSION: u64 = 10_000;
+    let sessions = (0..SESSION_COUNT)
+        .map(|index| {
+            let base = index.saturating_mul(IDENTITIES_PER_SESSION);
+            let pane = PaneId(base.saturating_add(4));
+            Session {
+                id: SessionId(base.saturating_add(2)),
+                name: format!("session {index}"),
+                tabs: vec![Tab {
+                    id: TabId(base.saturating_add(3)),
+                    name: "shell".to_owned(),
+                    panes: vec![Pane {
+                        id: pane,
+                        title: "shell".to_owned(),
+                        working_directory: None,
+                        columns: 80,
+                        rows: 24,
+                    }],
+                    layout: LayoutNode::Leaf(pane),
+                }],
+            }
+        })
+        .collect();
+    HostModel {
+        generation: Generation(1),
+        sessions,
+    }
 }
