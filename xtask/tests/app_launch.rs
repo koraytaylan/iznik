@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use xtask::distribution::launch::{native_server, servers};
+use xtask::distribution::launch::{default_servers, servers};
 
 /// The arguments as the dispatcher hands them over, the subcommand first.
 fn arguments(rest: &[&str]) -> Vec<OsString> {
@@ -12,16 +12,30 @@ fn arguments(rest: &[&str]) -> Vec<OsString> {
         .collect()
 }
 
-/// With no flag it builds this machine's own musl server; every `--target`
-/// replaces that with the servers named; anything else is refused.
+/// With no flag it builds a server for every Linux architecture — not just
+/// this machine's, because a host is whatever it is and a server for the wrong
+/// architecture is one the application will refuse to install. Every
+/// `--target` replaces that with the servers named; anything else is refused.
 ///
 /// # Panics
 ///
 /// When a list of servers differs.
 #[test]
-fn app_builds_the_native_server_by_default() {
-    assert_eq!(servers(&arguments(&[])), Some(vec![native_server()]));
-    assert!(native_server().ends_with("-unknown-linux-musl"));
+fn app_builds_every_linux_server_by_default() {
+    assert_eq!(servers(&arguments(&[])), Some(default_servers()));
+    assert_eq!(
+        default_servers(),
+        vec![
+            "x86_64-unknown-linux-musl".to_owned(),
+            "aarch64-unknown-linux-musl".to_owned()
+        ],
+        "both hosts an ssh connection meets are prepared for"
+    );
+    assert_eq!(
+        servers(&arguments(&["--target", "aarch64-unknown-linux-musl"])),
+        Some(vec!["aarch64-unknown-linux-musl".to_owned()]),
+        "one --target narrows the build to that one"
+    );
     assert_eq!(
         servers(&arguments(&[
             "--target",

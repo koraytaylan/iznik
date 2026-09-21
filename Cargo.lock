@@ -3654,7 +3654,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iznik-app"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "gpui-kit",
  "gpui-kit-assets",
@@ -3668,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-cli"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-client",
  "iznik-protocol",
@@ -3679,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-client"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-harness",
  "iznik-link",
@@ -3694,7 +3694,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-ffi"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-client",
  "iznik-protocol",
@@ -3704,7 +3704,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-harness"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "nix 0.31.3",
  "regex",
@@ -3716,7 +3716,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-link"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-protocol",
  "iznik-testkit",
@@ -3726,7 +3726,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-protocol"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-testkit",
  "serde_json",
@@ -3734,7 +3734,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-regression"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-client",
  "iznik-harness",
@@ -3750,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-server"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-harness",
  "iznik-link",
@@ -3766,7 +3766,7 @@ dependencies = [
 
 [[package]]
 name = "iznik-testkit"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "iznik-harness",
  "iznik-link",
@@ -9087,7 +9087,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "cbindgen 0.29.4",
  "iznik-harness",

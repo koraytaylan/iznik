@@ -302,7 +302,7 @@ fn host_probe_reads_a_prefix_with_a_space_in_it() {
         "Linux",
         "x86_64",
         "yes",
-        &[(spaced, "yes", "iznik-server 0.1.0 protocol 1", "no")],
+        &[(spaced, "yes", "iznik-server 0.0.0 protocol 1", "no")],
     );
     let read = parse(&said).expect("a probe");
     assert_eq!(
@@ -312,7 +312,7 @@ fn host_probe_reads_a_prefix_with_a_space_in_it() {
     );
     assert_eq!(
         read.server.map(|held| held.crate_version),
-        Some("0.1.0".to_owned()),
+        Some("0.0.0".to_owned()),
         "and the server there is still read"
     );
 }
@@ -356,18 +356,18 @@ fn host_probe_reads_the_terminfo_at_the_prefix_it_chose() {
 /// taken for one.
 #[test]
 fn host_probe_reads_an_installed_server() {
-    let read = parse(&linux("yes", "yes", "yes", "iznik-server 0.1.0 protocol 1"))
+    let read = parse(&linux("yes", "yes", "yes", "iznik-server 0.0.0 protocol 1"))
         .expect("a probe")
         .server;
     assert_eq!(
         read,
         Some(InstalledServer {
-            crate_version: "0.1.0".to_owned(),
+            crate_version: "0.0.0".to_owned(),
             protocol_version: 1,
         }),
         "the version and the protocol it speaks"
     );
-    for said in ["-", "iznik-server 0.1.0", "something else entirely", ""] {
+    for said in ["-", "iznik-server 0.0.0", "something else entirely", ""] {
         assert_eq!(
             parse(&linux("yes", "yes", "yes", said))
                 .expect("a probe")
