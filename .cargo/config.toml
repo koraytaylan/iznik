@@ -6,13 +6,20 @@ app = "run --quiet --package xtask -- app"
 
 # The musl cross-compilers supply libc and the startup objects; rustc's
 # self-contained copies must not be linked beside them.
+#
+# `linker_messages` is allowed for these targets only. rustc passes `-Wl,-O1`
+# to a GNU-flavored linker at opt-level 2 and up, and Zig 0.15's `zig cc` — the
+# cross-compiler these linkers are a shim over — reports that as a deprecated
+# setting on stderr while honoring it. The linker warning is the toolchain's
+# and not something this workspace can act on, so it is silenced where it
+# arises rather than for every target.
 [target.x86_64-unknown-linux-musl]
 linker = "x86_64-linux-musl-gcc"
-rustflags = ["-C", "link-self-contained=no"]
+rustflags = ["-C", "link-self-contained=no", "-A", "linker_messages"]
 
 [target.aarch64-unknown-linux-musl]
 linker = "aarch64-linux-musl-gcc"
-rustflags = ["-C", "link-self-contained=no"]
+rustflags = ["-C", "link-self-contained=no", "-A", "linker_messages"]
 
 # The libghostty-vt-sys build script otherwise builds the emulator in Zig's
 # Debug mode for the dev profile, and every test would run a different, many
@@ -20,3 +27,12 @@ rustflags = ["-C", "link-self-contained=no"]
 # everywhere.
 [env]
 LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseFast"
+
+# Cargo otherwise closes every build by naming the transitive packages that a
+# future rustc will reject — today only `block v0.1.6`, reached through
+# `gpui-kit`'s `cocoa`, whose uninhabited static is upstream's to fix and not
+# this workspace's. That summary is not actionable here and only adds noise to
+# the gates' output, so the report is not printed. It is still generated:
+# `cargo report future-incompatibilities` reads it on demand.
+[future-incompat-report]
+frequency = "never"
