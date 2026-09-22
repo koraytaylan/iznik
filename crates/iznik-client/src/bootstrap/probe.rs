@@ -107,6 +107,9 @@ pub enum OperatingSystem {
     Linux,
     /// What it calls `Darwin`.
     Darwin,
+    /// What Windows reports as `Windows_NT`. OpenSSH there is an optional
+    /// feature, off until someone turns it on.
+    Windows,
 }
 
 /// The machines iznik has artifacts for.
@@ -287,7 +290,19 @@ pub async fn probe(
     transport: &impl RunsRemotely,
     deadline: Duration,
 ) -> Result<HostProbe, ProbeError> {
-    parse(&transport.run(PROBE_SCRIPT, deadline).await?)
+    match transport.run(PROBE_SCRIPT, deadline).await {
+        Ok(output) => parse(&output),
+        // A Windows host's shell is `cmd.exe`, which cannot run the POSIX
+        // script. The failure is kept when the PowerShell probe fails too, so
+        // a Unix host that could not be asked is not reported as a Windows one.
+        Err(failure) => match transport
+            .run(&crate::bootstrap::windows::probe_command(), deadline)
+            .await
+        {
+            Ok(output) => parse(&output),
+            Err(_windows) => Err(failure),
+        },
+    }
 }
 
 /// One field of the probe's answer: its name and the rest of its line.
@@ -310,6 +325,7 @@ fn operating_system(said: &str) -> Option<OperatingSystem> {
     match said {
         "Linux" => Some(OperatingSystem::Linux),
         "Darwin" => Some(OperatingSystem::Darwin),
+        "Windows_NT" => Some(OperatingSystem::Windows),
         _other => None,
     }
 }
@@ -317,8 +333,8 @@ fn operating_system(said: &str) -> Option<OperatingSystem> {
 /// The machine a `uname -m` names, if it is one iznik serves.
 fn architecture(said: &str) -> Option<Architecture> {
     match said {
-        "x86_64" | "amd64" => Some(Architecture::X86_64),
-        "aarch64" | "arm64" => Some(Architecture::Aarch64),
+        "x86_64" | "amd64" | "AMD64" => Some(Architecture::X86_64),
+        "aarch64" | "arm64" | "ARM64" => Some(Architecture::Aarch64),
         _other => None,
     }
 }

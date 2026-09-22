@@ -12,6 +12,7 @@ pub mod launch;
 pub mod probe;
 pub mod terminfo;
 pub mod upload;
+pub mod windows;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -214,11 +215,18 @@ async fn install(
 /// A [`BootstrapError`] at [`Stage::Launch`] when the host could not be asked.
 async fn stop(
     transport: &Transport,
-    prefix: &Path,
+    found: &HostProbe,
     deadline: Duration,
 ) -> Result<(), BootstrapError> {
     let host = transport.alias();
-    let asked = with_prefix(REMOTE_STOP_SCRIPT, prefix);
+    let asked = match found.operating_system {
+        probe::OperatingSystem::Windows => {
+            windows::command_for(windows::STOP_SCRIPT, &found.prefix)
+        }
+        probe::OperatingSystem::Linux | probe::OperatingSystem::Darwin => {
+            with_prefix(REMOTE_STOP_SCRIPT, &found.prefix)
+        }
+    };
     let _said = probe::RunsRemotely::run(transport, &asked, deadline)
         .await
         .map_err(|source| refused(&host, Stage::Launch, &source))?;
@@ -298,12 +306,7 @@ pub async fn upgrade(
         // is stopped before the new binary is put where it was.
         Decision::UpgradeAvailable { .. } | Decision::UpToDate => {
             may_replace(transport, &found, options, force, expires).await?;
-            stop(
-                transport,
-                &found.prefix,
-                left(expires, options.command_deadline),
-            )
-            .await?;
+            stop(transport, &found, left(expires, options.command_deadline)).await?;
         }
     }
     let installed = install(
@@ -353,7 +356,14 @@ pub async fn uninstall(
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
         .map_err(|source| refused(&host, Stage::Probe, &source))?;
-    let asked = with_prefix(REMOTE_UNINSTALL_SCRIPT, &found.prefix);
+    let asked = match found.operating_system {
+        probe::OperatingSystem::Windows => {
+            windows::command_for(windows::UNINSTALL_SCRIPT, &found.prefix)
+        }
+        probe::OperatingSystem::Linux | probe::OperatingSystem::Darwin => {
+            with_prefix(REMOTE_UNINSTALL_SCRIPT, &found.prefix)
+        }
+    };
     let said = probe::RunsRemotely::run(transport, &asked, left(expires, options.command_deadline))
         .await
         .map_err(|source| refused(&host, Stage::Launch, &source))?;

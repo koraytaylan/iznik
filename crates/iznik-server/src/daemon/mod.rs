@@ -18,6 +18,7 @@ pub mod idle;
 pub mod lock;
 pub mod logging;
 pub mod socket;
+pub mod stop;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -30,8 +31,8 @@ use std::time::Duration;
 use core::fmt::{self, Display, Formatter};
 
 use iznik_protocol::message::PROTOCOL_VERSION;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::{Pid, Uid, setsid};
+#[cfg(unix)]
+use nix::unistd::{Uid, setsid};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Notify, RwLock, watch};
 
@@ -54,7 +55,7 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DIRECTORY_NAME: &str = "iznik";
 
 /// The socket every client connects to, inside that directory.
-const SOCKET_NAME: &str = "server.sock";
+const SOCKET_NAME: &str = socket::NAME;
 
 /// The lock that enforces a single instance, beside it.
 const LOCK_NAME: &str = "server.lock";
@@ -64,6 +65,7 @@ const LOG_NAME: &str = "server.log";
 
 /// The mode the runtime directory is created with: the owner's, and nobody
 /// else's — a socket anyone can connect to is a shell anyone can have.
+#[cfg(unix)]
 const OWNER_ONLY: u32 = 0o700;
 
 /// The flag that shortens the idle interval, so a test can watch a daemon go.
@@ -139,6 +141,7 @@ impl RuntimePaths {
             path: directory.to_path_buf(),
             source,
         })?;
+        #[cfg(unix)]
         std::fs::set_permissions(
             directory,
             <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(OWNER_ONLY),
@@ -172,13 +175,26 @@ impl RuntimePaths {
 
 /// The directory the runtime files belong in on this host.
 fn base() -> PathBuf {
-    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|held| !held.is_empty()) {
-        return PathBuf::from(runtime).join(DIRECTORY_NAME);
+    #[cfg(windows)]
+    {
+        if let Some(profile) = std::env::var_os("LOCALAPPDATA").filter(|held| !held.is_empty()) {
+            return PathBuf::from(profile).join(DIRECTORY_NAME);
+        }
+        let temporary = std::env::var_os("TEMP")
+            .filter(|held| !held.is_empty())
+            .map_or_else(std::env::temp_dir, PathBuf::from);
+        return temporary.join(DIRECTORY_NAME);
     }
-    let temporary = std::env::var_os("TMPDIR")
-        .filter(|held| !held.is_empty())
-        .map_or_else(std::env::temp_dir, PathBuf::from);
-    temporary.join(format!("{DIRECTORY_NAME}-{}", Uid::current().as_raw()))
+    #[cfg(unix)]
+    {
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|held| !held.is_empty()) {
+            return PathBuf::from(runtime).join(DIRECTORY_NAME);
+        }
+        let temporary = std::env::var_os("TMPDIR")
+            .filter(|held| !held.is_empty())
+            .map_or_else(std::env::temp_dir, PathBuf::from);
+        temporary.join(format!("{DIRECTORY_NAME}-{}", Uid::current().as_raw()))
+    }
 }
 
 /// Every timing and default the daemon runs under, so a test can shorten any
@@ -270,11 +286,11 @@ impl From<MirrorError> for DaemonError {
 ///
 /// It spawns, so it must be called from within a Tokio runtime.
 async fn admit(
-    accepted: Result<(tokio::net::UnixStream, tokio::net::unix::SocketAddr), std::io::Error>,
+    accepted: Result<socket::Stream, std::io::Error>,
     registry: &Arc<RwLock<Registry>>,
     attached: &Attached,
 ) {
-    let (stream, _address) = match accepted {
+    let stream = match accepted {
         Ok(accepted) => accepted,
         Err(error) => {
             // A peer that went away between knocking and being let in fails
@@ -416,7 +432,7 @@ pub async fn serve(
 ///
 /// It spawns, so it must be called from within a Tokio runtime.
 async fn accept_until(
-    listener: &tokio::net::UnixListener,
+    listener: &socket::Listener,
     registry: &Arc<RwLock<Registry>>,
     options: &DaemonOptions,
     mut shutdown: watch::Receiver<bool>,
@@ -442,13 +458,13 @@ async fn accept_until(
 /// eight arguments.
 struct AcceptLoop<'listener> {
     /// The socket every client knocks on.
-    listener: &'listener tokio::net::UnixListener,
+    listener: &'listener socket::Listener,
     /// The sessions and panes this daemon holds.
     registry: &'listener Arc<RwLock<Registry>>,
     /// Raised whenever a pane has something to report.
     signal: Arc<Notify>,
-    /// `SIGTERM`, which ends the daemon.
-    terminated: tokio::signal::unix::Signal,
+    /// The signal that ends the daemon.
+    terminated: stop::Termination,
     /// The clock the idle check is read against.
     ticker: tokio::time::Interval,
     /// The clients attached right now, and who has come and gone.
@@ -464,12 +480,12 @@ impl<'listener> AcceptLoop<'listener> {
     ///
     /// [`DaemonError::Io`] when the signal handler cannot be installed.
     fn new(
-        listener: &'listener tokio::net::UnixListener,
+        listener: &'listener socket::Listener,
         registry: &'listener Arc<RwLock<Registry>>,
         signal: Arc<Notify>,
     ) -> Result<AcceptLoop<'listener>, DaemonError> {
-        let terminated = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .map_err(|source| DaemonError::Io { source })?;
+        let terminated =
+            stop::Termination::install().map_err(|source| DaemonError::Io { source })?;
         // Held outside the loop: a deadline built inside the `select!` is
         // rearmed by every accept and every pane that speaks, so a busy daemon
         // would never look at whether it is idle and would then judge its
@@ -504,6 +520,7 @@ impl<'listener> AcceptLoop<'listener> {
     ) -> Option<bool> {
         tokio::select! {
             accepted = self.listener.accept() => {
+                let accepted = accepted.map(|(stream, _address)| stream);
                 admit(accepted, self.registry, &self.attached).await;
                 Some(false)
             }
@@ -660,6 +677,7 @@ async fn foreground(arguments: &[OsString]) -> ExitCode {
     };
     // After the options and the paths, so a command line this machine will not
     // take is refused before this process leaves the shell that ran it.
+    #[cfg(unix)]
     if let Err(error) = setsid() {
         tracing::debug!(%error, "this process kept its caller's session");
     }
@@ -818,16 +836,21 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
         complain("something holds the lock and the file names no process").await;
         return ExitCode::from(FAILED);
     }
-    let Ok(pid) = i32::try_from(holder) else {
-        complain("the lock file names no process this system could have").await;
-        return ExitCode::from(FAILED);
-    };
-    if let Err(error) = signal::kill(Pid::from_raw(pid), Signal::SIGTERM) {
+    if let Err(error) = stop::end_process(holder).await {
         complain(&format!(
             "process {holder} could not be told to stop: {error}"
         ))
         .await;
         return ExitCode::from(FAILED);
+    }
+    // Windows ends the process outright, so it never reaches the removal a
+    // graceful exit would do. The files would otherwise keep the next start
+    // from taking the lock.
+    #[cfg(windows)]
+    {
+        let _removed = std::fs::remove_file(&paths.lock);
+        let _removed = std::fs::remove_file(&paths.socket);
+        return ExitCode::SUCCESS;
     }
     // Both, and in this order: the daemon removes its socket and only then
     // releases its lock, so a `--stop` that returned on the socket alone would

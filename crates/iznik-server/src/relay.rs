@@ -14,9 +14,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
-use tokio::net::UnixStream;
 
 use crate::daemon::idle::SOCKET_POLL_INTERVAL;
+use crate::daemon::socket::{self, Stream};
 use crate::daemon::{DaemonOptions, RuntimePaths};
 
 /// The exit status of a relay that could not reach a daemon.
@@ -39,8 +39,8 @@ async fn complain(line: &str) {
 /// # Errors
 ///
 /// Words for a person when the daemon cannot be started or never answers.
-async fn reach(paths: &RuntimePaths, cap: Duration) -> Result<UnixStream, String> {
-    if let Ok(stream) = UnixStream::connect(&paths.socket).await {
+async fn reach(paths: &RuntimePaths, cap: Duration) -> Result<Stream, String> {
+    if let Ok(stream) = socket::connect(&paths.socket).await {
         return Ok(stream);
     }
     let Ok(program) = std::env::current_exe() else {
@@ -68,7 +68,7 @@ async fn reach(paths: &RuntimePaths, cap: Duration) -> Result<UnixStream, String
     }
     let waited = Instant::now();
     while waited.elapsed() < cap {
-        if let Ok(stream) = UnixStream::connect(&paths.socket).await {
+        if let Ok(stream) = socket::connect(&paths.socket).await {
             return Ok(stream);
         }
         tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
@@ -92,7 +92,7 @@ async fn reach(paths: &RuntimePaths, cap: Duration) -> Result<UnixStream, String
 /// # Errors
 ///
 /// Words for a person when the copy fails partway.
-async fn relay(stream: UnixStream) -> Result<(), String> {
+async fn relay(stream: Stream) -> Result<(), String> {
     let (mut from_daemon, mut to_daemon) = stream.into_split();
     let outward = tokio::spawn(async move {
         let mut input = tokio::io::stdin();

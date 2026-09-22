@@ -233,7 +233,9 @@ Every successful push to `develop` also updates the rolling GitHub prerelease
 named `develop-snapshot`. The Linux archive, the two macOS archives and the
 Windows client zip are replaced in place, so the release URL stays stable
 while always pointing at the latest verified development build. The Windows
-zip is the application and the remote servers it can install. It is unsigned.
+zip is the application and the remote servers it can install, including a
+Windows server for a machine whose OpenSSH Server feature is turned on. A Mac
+host is reached the same way, through Remote Login. The zip is unsigned.
 The workflow is [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml).
 
 ## License

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use iznik_client::bootstrap::launch::{server_path, triple_of};
 use iznik_client::bootstrap::probe::{
     Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_SCRIPT, ProbeError,
     RunsRemotely, parse, probe,
@@ -178,6 +179,18 @@ fn host_probe_knows_the_machines_it_serves() {
             "x86_64",
             OperatingSystem::Darwin,
             Architecture::X86_64,
+        ),
+        (
+            "Windows_NT",
+            "AMD64",
+            OperatingSystem::Windows,
+            Architecture::X86_64,
+        ),
+        (
+            "Windows_NT",
+            "ARM64",
+            OperatingSystem::Windows,
+            Architecture::Aarch64,
         ),
     ] {
         let read = case(system, machine).expect("a machine iznik serves");
@@ -472,4 +485,83 @@ async fn host_probe_is_one_round_trip() {
         Ok::<(), Failed>(())
     };
     case.await.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a Windows answer is not the Windows server triple, or the installed
+/// name is not the one Windows runs.
+#[test]
+fn host_probe_names_windows_server() {
+    let read = parse(&answer(
+        "Windows_NT",
+        "AMD64",
+        "no",
+        &three(["yes", "no", "no"], None),
+    ))
+    .expect("a windows host");
+    assert_eq!(read.operating_system, OperatingSystem::Windows);
+    assert_eq!(triple_of(&read), "x86_64-pc-windows-msvc");
+    assert_eq!(
+        server_path(&read),
+        PathBuf::from("/data/me/iznik/bin/iznik-server.exe")
+    );
+}
+
+/// A runner whose POSIX shell refuses and whose PowerShell answers.
+struct WindowsShell {
+    /// How many times the POSIX script was tried.
+    shell: Arc<AtomicUsize>,
+    /// How many times the Windows probe was tried.
+    second: Arc<AtomicUsize>,
+}
+
+impl RunsRemotely for WindowsShell {
+    fn run(
+        &self,
+        command: &str,
+        _deadline: Duration,
+    ) -> impl Future<Output = Result<String, ProbeError>> + Send {
+        let command = command.to_owned();
+        let shell = Arc::clone(&self.shell);
+        let second = Arc::clone(&self.second);
+        async move {
+            if command.trim() == PROBE_SCRIPT.trim() {
+                shell.fetch_add(1, Ordering::Relaxed);
+                Err(ProbeError::Transport {
+                    detail: "the shell could not run it".to_owned(),
+                })
+            } else if command == iznik_client::bootstrap::windows::probe_command() {
+                second.fetch_add(1, Ordering::Relaxed);
+                Ok(answer(
+                    "Windows_NT",
+                    "AMD64",
+                    "no",
+                    &three(["yes", "yes", "yes"], None),
+                ))
+            } else {
+                Err(ProbeError::Malformed { detail: command })
+            }
+        }
+    }
+}
+
+/// # Panics
+///
+/// When a host whose shell refuses the POSIX script is not then asked with
+/// PowerShell, or that answer is not read as Windows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_probe_asks_windows_after_the_shell_refuses() {
+    let shell = Arc::new(AtomicUsize::new(0));
+    let second = Arc::new(AtomicUsize::new(0));
+    let runner = WindowsShell {
+        shell: Arc::clone(&shell),
+        second: Arc::clone(&second),
+    };
+    let read = probe(&runner, AT_ONCE)
+        .await
+        .expect("the powershell probe answers");
+    assert_eq!(read.operating_system, OperatingSystem::Windows);
+    assert_eq!(shell.load(Ordering::Relaxed), 1);
+    assert_eq!(second.load(Ordering::Relaxed), 1);
 }

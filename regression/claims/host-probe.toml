@@ -18,9 +18,15 @@ because = "the answer is a string the host printed, and reading it is the same w
 
 [[claim]]
 id = "probe-knows-the-machines-it-serves"
-statement = "Linux and Darwin on x86-64 and aarch64, by every name `uname` gives them, are read; anything else is refused naming what the host said it runs and what it said it is, rather than a server that will not start being discovered later."
+statement = "Linux, Darwin and Windows on x86-64 and aarch64, by every name `uname` and Windows give them, are read; anything else is refused naming what the host said it runs and what it said it is, rather than a server that will not start being discovered later."
 test = "iznik-client::host_probe::host_probe_knows_the_machines_it_serves"
 because = "the fixture has one architecture and one operating system, and this is about the others"
+
+[[claim]]
+id = "probe-asks-powershell-when-the-shell-refuses"
+statement = "When the POSIX probe cannot be run, the same questions are asked once more as PowerShell, and a Windows_NT answer is read as a Windows host whose server is iznik-server.exe."
+test = "iznik-client::host_probe::host_probe_asks_windows_after_the_shell_refuses"
+because = "the refusal and the second answer are strings, and a container's shell is POSIX so it cannot be the machine that refuses"
 
 [[claim]]
 id = "probe-takes-the-first-writable-prefix"

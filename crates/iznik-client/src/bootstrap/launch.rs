@@ -18,7 +18,7 @@ use iznik_protocol::model::{HostModel, decode_host_model};
 use crate::bootstrap::probe::{
     Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_DEADLINE,
 };
-use crate::bootstrap::upload::{ArtifactSet, BINARY_NAME, UPLOAD_DEADLINE};
+use crate::bootstrap::upload::{ArtifactSet, UPLOAD_DEADLINE, executable_name};
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, ChannelOptions, RemoteChannel};
 
@@ -230,13 +230,17 @@ pub fn triple_of(found: &HostProbe) -> String {
     match found.operating_system {
         OperatingSystem::Linux => format!("{machine}-unknown-linux-musl"),
         OperatingSystem::Darwin => format!("{machine}-apple-darwin"),
+        OperatingSystem::Windows => format!("{machine}-pc-windows-msvc"),
     }
 }
 
 /// Where the server is, or will be, under a probed prefix.
 #[must_use]
 pub fn server_path(found: &HostProbe) -> PathBuf {
-    found.prefix.join(BINARY_DIRECTORY).join(BINARY_NAME)
+    found
+        .prefix
+        .join(BINARY_DIRECTORY)
+        .join(executable_name(found.operating_system))
 }
 
 /// What to do about a host, given what it said and what this build carries.

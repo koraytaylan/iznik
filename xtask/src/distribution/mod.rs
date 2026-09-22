@@ -12,6 +12,7 @@ pub mod darwin;
 pub mod launch;
 pub mod linux;
 pub mod shape;
+pub mod windows;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -181,6 +182,8 @@ pub fn build_with_output(
         linux::build(root, target, output)?
     } else if darwin::TARGETS.contains(&target) {
         darwin::build(root, target, output)?
+    } else if windows::TARGETS.contains(&target) {
+        windows::build(root, target, output)?
     } else {
         return Err(DistributionError::UnknownTarget {
             target: target.to_owned(),
@@ -314,12 +317,12 @@ pub fn protocol_version(root: &Path) -> Result<u16, DistributionError> {
         })
 }
 
-/// What this subcommand takes: the one triple to build for, of the four this
-/// distributes.
+/// What this subcommand takes: the one triple to build for.
 fn usage_line() -> String {
     let triples: Vec<&str> = linux::TARGETS
         .iter()
         .chain(darwin::TARGETS)
+        .chain(windows::TARGETS)
         .copied()
         .collect();
     format!(

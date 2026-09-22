@@ -61,6 +61,7 @@ fn system_of(found: &HostProbe) -> &'static str {
     match found.operating_system {
         OperatingSystem::Linux => "Linux",
         OperatingSystem::Darwin => "Darwin",
+        OperatingSystem::Windows => "Windows_NT",
     }
 }
 

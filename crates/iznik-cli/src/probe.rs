@@ -69,6 +69,7 @@ pub fn running(held: OperatingSystem) -> &'static str {
     match held {
         OperatingSystem::Linux => "linux",
         OperatingSystem::Darwin => "darwin",
+        OperatingSystem::Windows => "windows",
     }
 }
 

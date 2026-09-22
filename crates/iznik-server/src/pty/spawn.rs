@@ -13,10 +13,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(unix)]
 use nix::sys::signal::{self, Signal as NixSignal};
+#[cfg(unix)]
 use nix::sys::wait::{WaitStatus, waitpid};
+#[cfg(unix)]
 use nix::unistd::Pid;
+#[cfg(windows)]
+use portable_pty::ChildKiller;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+#[cfg(windows)]
+use std::sync::{Arc as Shared, Mutex};
 
 /// The `TERM` variable's name.
 const TERM_VARIABLE: &str = "TERM";
@@ -175,7 +182,14 @@ pub struct PtyProcess {
     /// The master end, kept open for the pane's lifetime and used to resize.
     master: Box<dyn MasterPty + Send>,
     /// The child, owned so its handle lives; it is waited for through `nix`.
+    #[cfg(unix)]
     _child: Box<dyn Child + Send + Sync>,
+    /// The child on Windows, taken by the reaper that waits for it.
+    #[cfg(windows)]
+    child: Shared<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
+    /// A handle that can end the child without waiting for it.
+    #[cfg(windows)]
+    child_stop: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// The child's process id, which is also its process group.
     process_id: u32,
     /// Whether the child has been reaped, so the drop need not kill it.
@@ -233,9 +247,23 @@ impl PtyProcess {
     ///
     /// [`PtyError::Signal`] when the signal cannot be sent.
     pub fn signal(&self, signal: Signal) -> Result<(), PtyError> {
-        signal::kill(self.pid(), nix_signal(signal)).map_err(|source| PtyError::Signal {
-            source: Box::new(source),
-        })
+        #[cfg(unix)]
+        {
+            signal::kill(self.pid(), nix_signal(signal)).map_err(|source| PtyError::Signal {
+                source: Box::new(source),
+            })
+        }
+        #[cfg(windows)]
+        {
+            let _signal = signal;
+            let mut child_stop = match self.child_stop.lock() {
+                Ok(child_stop) => child_stop,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            child_stop.kill().map_err(|source| PtyError::Signal {
+                source: source.into(),
+            })
+        }
     }
 
     /// Waits for the child to end and says how it did.
@@ -252,7 +280,10 @@ impl PtyProcess {
     /// and keep this owner alive until it returns.
     pub(crate) fn reaper(&self) -> ProcessReaper {
         ProcessReaper {
+            #[cfg(unix)]
             process: self.pid(),
+            #[cfg(windows)]
+            child: Shared::clone(&self.child),
             reaped: Arc::clone(&self.reaped),
         }
     }
@@ -264,10 +295,17 @@ impl PtyProcess {
     /// # Errors
     /// Returns `Signal` when the foreground group cannot be signaled.
     pub(crate) fn hangup_terminal(&self) -> Result<(), PtyError> {
-        let foreground = self.foreground_group().unwrap_or_else(|| self.pid());
-        signal::killpg(foreground, NixSignal::SIGHUP).map_err(|source| PtyError::Signal {
-            source: Box::new(source),
-        })
+        #[cfg(unix)]
+        {
+            let foreground = self.foreground_group().unwrap_or_else(|| self.pid());
+            signal::killpg(foreground, NixSignal::SIGHUP).map_err(|source| PtyError::Signal {
+                source: Box::new(source),
+            })
+        }
+        #[cfg(windows)]
+        {
+            self.signal(Signal::Hangup)
+        }
     }
 
     /// Best-effort forced cleanup of the owned shell and its ordinary foreground
@@ -277,15 +315,27 @@ impl PtyProcess {
         if self.reaped.load(Ordering::Acquire) {
             return;
         }
-        if let Some(foreground) = self.foreground_group()
-            && foreground != self.pid()
+        #[cfg(unix)]
         {
-            let _killed = signal::killpg(foreground, NixSignal::SIGKILL);
+            if let Some(foreground) = self.foreground_group()
+                && foreground != self.pid()
+            {
+                let _killed = signal::killpg(foreground, NixSignal::SIGKILL);
+            }
+            let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
         }
-        let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
+        #[cfg(windows)]
+        {
+            let mut child_stop = match self.child_stop.lock() {
+                Ok(child_stop) => child_stop,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let _killed = child_stop.kill();
+        }
     }
 
     /// Read a positive foreground group from the owned terminal descriptor.
+    #[cfg(unix)]
     fn foreground_group(&self) -> Option<Pid> {
         self.master
             .process_group_leader()
@@ -294,6 +344,7 @@ impl PtyProcess {
     }
 
     /// The child's process id as a [`Pid`], saturating an impossible overflow.
+    #[cfg(unix)]
     fn pid(&self) -> Pid {
         Pid::from_raw(i32::try_from(self.process_id).unwrap_or(i32::MAX))
     }
@@ -314,7 +365,11 @@ impl Drop for PtyProcess {
 #[derive(Debug)]
 pub(crate) struct ProcessReaper {
     /// Owned shell PID; its PTY owner remains alive for the duration of the wait.
+    #[cfg(unix)]
     process: Pid,
+    /// The child on Windows, shared with the owner so only one wait runs.
+    #[cfg(windows)]
+    child: Shared<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
     /// Publish completion before any owner can attempt subsequent cleanup.
     reaped: Arc<AtomicBool>,
 }
@@ -325,18 +380,43 @@ impl ProcessReaper {
     /// # Errors
     /// Returns `Wait` when the kernel refuses the wait or reports an unexpected status.
     pub(crate) fn wait(self) -> Result<ExitStatus, PtyError> {
-        let status = waitpid(self.process, None).map_err(|source| PtyError::Wait {
-            source: Box::new(source),
-        })?;
-        self.reaped.store(true, Ordering::Release);
-        match status {
-            WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
-            WaitStatus::Signaled(_pid, signal, _dumped) => {
-                Ok(ExitStatus::Signalled(signal_of(signal)))
+        #[cfg(unix)]
+        {
+            let status = waitpid(self.process, None).map_err(|source| PtyError::Wait {
+                source: Box::new(source),
+            })?;
+            self.reaped.store(true, Ordering::Release);
+            match status {
+                WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
+                WaitStatus::Signaled(_pid, signal, _dumped) => {
+                    Ok(ExitStatus::Signalled(signal_of(signal)))
+                }
+                other => Err(PtyError::Wait {
+                    source: format!("unexpected wait status: {other:?}").into(),
+                }),
             }
-            other => Err(PtyError::Wait {
-                source: format!("unexpected wait status: {other:?}").into(),
-            }),
+        }
+        #[cfg(windows)]
+        {
+            let mut held = match self.child.lock() {
+                Ok(held) => held,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let Some(mut child) = held.take() else {
+                self.reaped.store(true, Ordering::Release);
+                return Ok(ExitStatus::Exited(0));
+            };
+            let status = child.wait().map_err(|source| PtyError::Wait {
+                source: source.into(),
+            })?;
+            self.reaped.store(true, Ordering::Release);
+            if status.signal().is_some() {
+                Ok(ExitStatus::Signalled(Signal::Terminate))
+            } else {
+                Ok(ExitStatus::Exited(
+                    i32::try_from(status.exit_code()).unwrap_or(i32::MAX),
+                ))
+            }
         }
     }
 }
@@ -388,12 +468,27 @@ pub fn spawn(options: &SpawnOptions) -> Result<PtyProcess, PtyError> {
         program,
         source: "the spawned child reported no process id".into(),
     })?;
-    Ok(PtyProcess {
-        master: pair.master,
-        _child: child,
-        process_id,
-        reaped: Arc::new(AtomicBool::new(false)),
-    })
+    let reaped = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    {
+        Ok(PtyProcess {
+            master: pair.master,
+            _child: child,
+            process_id,
+            reaped,
+        })
+    }
+    #[cfg(windows)]
+    {
+        let child_stop = child.clone_killer();
+        Ok(PtyProcess {
+            master: pair.master,
+            child: Shared::new(Mutex::new(Some(child))),
+            child_stop: Mutex::new(child_stop),
+            process_id,
+            reaped,
+        })
+    }
 }
 
 /// The `portable-pty` command for a spawn: a login shell, or a named program,
@@ -439,6 +534,7 @@ fn program_name(program: &Program) -> String {
 /// The signal a reported death carries. `Signal` is closed to the three the
 /// server sends, so an unexpected death — a Ctrl-C's `SIGINT`, a crash's
 /// `SIGSEGV` — is surfaced as `Terminate`: a signal death still, never a code.
+#[cfg(unix)]
 fn signal_of(signal: NixSignal) -> Signal {
     match signal {
         NixSignal::SIGHUP => Signal::Hangup,
@@ -448,6 +544,7 @@ fn signal_of(signal: NixSignal) -> Signal {
 }
 
 /// The `nix` signal for one the server sends.
+#[cfg(unix)]
 fn nix_signal(signal: Signal) -> NixSignal {
     match signal {
         Signal::Hangup => NixSignal::SIGHUP,

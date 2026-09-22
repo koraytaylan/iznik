@@ -8,13 +8,19 @@
 //! reach it, but the id is a courtesy — the lock is the truth.
 
 use std::fs::{File, OpenOptions};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use core::fmt::{self, Display, Formatter};
 
+#[cfg(unix)]
 use nix::errno::Errno;
+#[cfg(unix)]
 use nix::fcntl::{Flock, FlockArg};
+
+#[cfg(windows)]
+use super::socket;
 
 /// The mode the lock file is created with: the owner's, and nobody else's.
 const OWNER_ONLY: u32 = 0o600;
@@ -25,6 +31,13 @@ const CONTENTION_ATTEMPTS: usize = 20;
 
 /// How long between those attempts.
 const CONTENTION_PAUSE: core::time::Duration = core::time::Duration::from_millis(5);
+
+/// How old a Windows lock file must be, with nothing listening, before a new
+/// daemon treats it as a killed predecessor. A start binds its port
+/// immediately after creating the file, so a file younger than this is a
+/// daemon still coming up, not a corpse.
+#[cfg(windows)]
+const STALE_LOCK: core::time::Duration = core::time::Duration::from_secs(2);
 
 /// Why a lock could not be taken.
 #[derive(Debug)]
@@ -63,9 +76,14 @@ impl core::error::Error for LockError {}
 /// and removed by [`Lock::release`].
 #[derive(Debug)]
 pub struct Lock {
-    /// The locked file. Nothing reads it: what it is for is the lock the
-    /// kernel holds on it, which is released when it is dropped.
+    /// The locked file. On Unix nothing reads it: what it is for is the lock
+    /// the kernel holds, released when this is dropped. On Windows the file's
+    /// existence is the lock, and this handle keeps that obvious.
+    #[cfg(unix)]
     _held: Flock<File>,
+    /// The locked file on Windows.
+    #[cfg(windows)]
+    _held: File,
     /// Where it is, so it can be removed when the daemon goes.
     path: PathBuf,
 }
@@ -81,6 +99,23 @@ impl Lock {
     /// [`LockError::Held`] naming the holder when another daemon has it, and
     /// [`LockError::Io`] when the file cannot be opened or written.
     pub async fn acquire(path: &Path) -> Result<Lock, LockError> {
+        #[cfg(unix)]
+        {
+            Self::acquire_exclusive(path).await
+        }
+        #[cfg(windows)]
+        {
+            acquire_windows(path).await
+        }
+    }
+
+    /// Takes the lock on Unix.
+    ///
+    /// # Errors
+    ///
+    /// As [`Lock::acquire`].
+    #[cfg(unix)]
+    async fn acquire_exclusive(path: &Path) -> Result<Lock, LockError> {
         let opened = OpenOptions::new()
             .read(true)
             .write(true)
@@ -158,9 +193,81 @@ impl Lock {
     /// its lock file out from under it and let a third daemon lock a fresh one
     /// — two daemons at once, which is the one thing this exists to prevent.
     pub fn release(self) {
-        let _removed = std::fs::remove_file(&self.path);
-        drop(self);
+        #[cfg(unix)]
+        {
+            let _removed = std::fs::remove_file(&self.path);
+            drop(self);
+        }
+        #[cfg(windows)]
+        {
+            // A file this process still has open cannot be removed. Drop the
+            // handle first. The file still exists until the removal, so another
+            // start cannot create it in between.
+            let path = self.path.clone();
+            drop(self);
+            let _removed = std::fs::remove_file(path);
+        }
     }
+}
+
+/// Takes the lock on Windows by creating the file. A file that is already
+/// there and whose port answers is a live daemon. A file older than
+/// [`STALE_LOCK`] with nothing listening is a killed one and is removed.
+///
+/// # Errors
+///
+/// As [`Lock::acquire`].
+#[cfg(windows)]
+async fn acquire_windows(path: &Path) -> Result<Lock, LockError> {
+    let mut patience = CONTENTION_ATTEMPTS;
+    loop {
+        match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(held) => {
+                let lock = Lock {
+                    _held: held,
+                    path: path.to_path_buf(),
+                };
+                lock.record()?;
+                return Ok(lock);
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                if patience == 0 || stale(path).await {
+                    if stale(path).await {
+                        let _removed = std::fs::remove_file(path);
+                        let _removed = std::fs::remove_file(socket_beside(path));
+                        continue;
+                    }
+                    return Err(LockError::Held {
+                        process_id: holder(path).unwrap_or_default(),
+                    });
+                }
+                patience = patience.saturating_sub(1);
+                tokio::time::sleep(CONTENTION_PAUSE).await;
+            }
+            Err(source) => {
+                return Err(LockError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        }
+    }
+}
+
+/// Whether `path` names a lock whose daemon is gone.
+#[cfg(windows)]
+async fn stale(path: &Path) -> bool {
+    let elapsed = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .and_then(|modified| modified.elapsed())
+        .is_ok_and(|elapsed| elapsed > STALE_LOCK);
+    elapsed && !socket::answering(&socket_beside(path)).await
+}
+
+/// The endpoint file beside a lock file.
+#[cfg(windows)]
+fn socket_beside(path: &Path) -> PathBuf {
+    path.with_file_name(socket::NAME)
 }
 
 /// What a look at the lock found.
@@ -189,6 +296,26 @@ pub enum Holder {
 /// which would then signal it.
 #[must_use]
 pub fn held_by(path: &Path) -> Holder {
+    #[cfg(windows)]
+    {
+        return match std::fs::read_to_string(path) {
+            Ok(text) => Holder::Held {
+                process_id: text.trim().parse().unwrap_or_default(),
+            },
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Holder::Nobody,
+            Err(source) => Holder::Unknown { source },
+        };
+    }
+    #[cfg(unix)]
+    {
+        held_exclusive(path)
+    }
+}
+
+/// Who holds the lock on Unix, by trying a shared lock that a daemon's
+/// exclusive hold refuses.
+#[cfg(unix)]
+fn held_exclusive(path: &Path) -> Holder {
     let opened = match OpenOptions::new().read(true).open(path) {
         Ok(opened) => opened,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Holder::Nobody,

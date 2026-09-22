@@ -34,8 +34,20 @@ pub const UPLOAD_CHUNK_LENGTH: usize = 1024 * 1024;
 /// silent link is a failure rather than a wait.
 pub const UPLOAD_DEADLINE: Duration = Duration::from_mins(5);
 
-/// The name the server is installed under.
+/// The name the server is installed under on Unix.
 pub const BINARY_NAME: &str = "iznik-server";
+
+/// The name the server is installed under on `system`. Windows runs a file
+/// named `iznik-server.exe`; the artifact in the bundle is still
+/// [`BINARY_NAME`], and the upload renames it.
+#[must_use]
+pub fn executable_name(system: crate::bootstrap::probe::OperatingSystem) -> &'static str {
+    match system {
+        crate::bootstrap::probe::OperatingSystem::Windows => "iznik-server.exe",
+        crate::bootstrap::probe::OperatingSystem::Linux
+        | crate::bootstrap::probe::OperatingSystem::Darwin => BINARY_NAME,
+    }
+}
 
 /// The directory under a prefix that the server goes in.
 pub const BINARY_DIRECTORY: &str = "bin";
@@ -53,7 +65,7 @@ const DIGEST_REFUSED: i32 = 65;
 pub(crate) const PREFIX_VARIABLE: &str = "IZNIK_PREFIX";
 
 /// The variable it passes the digest in.
-const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
+pub(crate) const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 
 /// The one remote script, exposed so a scenario can drive it directly.
 ///
@@ -467,13 +479,25 @@ pub async fn upload(
         })?;
     unchanged(artifact, &bytes)?;
     let expected = hexadecimal(&artifact.digest);
-    let command = remote_command(REMOTE_UPLOAD_SCRIPT, &probe.prefix, &expected);
+    let command = match probe.operating_system {
+        crate::bootstrap::probe::OperatingSystem::Windows => {
+            crate::bootstrap::windows::upload_command(&probe.prefix, &expected)
+        }
+        crate::bootstrap::probe::OperatingSystem::Linux
+        | crate::bootstrap::probe::OperatingSystem::Darwin => {
+            remote_command(REMOTE_UPLOAD_SCRIPT, &probe.prefix, &expected)
+        }
+    };
     let said = transport
         .feed(&command, &bytes, "uploading the server", deadline)
         .await
         .map_err(|error| name_the_digest(error, &expected))?;
-    let server = installed_path(&said)
-        .unwrap_or_else(|| probe.prefix.join(BINARY_DIRECTORY).join(BINARY_NAME));
+    let server = installed_path(&said).unwrap_or_else(|| {
+        probe
+            .prefix
+            .join(BINARY_DIRECTORY)
+            .join(executable_name(probe.operating_system))
+    });
     let (terminfo, terminfo_refused) = terminfo_for(transport, probe, &expected, deadline).await;
     Ok(Installed {
         server,
