@@ -114,6 +114,7 @@ rather than ending the connection.
 |---|---|
 | `bridge` | The engine as the window sees it: a `HostManager` on the tokio runtime it owns, one channel carrying every `ManagerEvent` to the window's thread, and the operations whose calls wait on a host's own task performed off it. |
 | `chrome` | The window's body and banners: the visible tab's pane grid, the stage that describes the next step, and the strips that say what is wrong. |
+| `clipboard` | OSC 52 clipboard writes decoded from pane output and carried on the terminal snapshot. |
 | `bars` | Model-driven tab and session bars rendered above the pane area. |
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |
@@ -193,7 +194,10 @@ inside GPUI's own test context.
 `EngineBridge::terminal_event` forwards its query replies as input and requests
 a fresh screen after a sequence gap. The grid consumes owned snapshots and
 returns their `consumed_bytes` through `EngineBridge::credit`. Screen replay
-consumes no stream credit and never replays historical query effects.
+consumes no stream credit and never replays historical query effects. A program
+clipboard write, such as OSC 52 from a text selection inside a full-screen
+application, is carried on the snapshot and applied to the system clipboard.
+Screen replay drops those writes, so attaching again does not replace the clipboard.
 
 Snapshots retain graphemes, widths, styles, resolved colors, cursor state,
 alternate-screen state and history extent. Both row and global damage are

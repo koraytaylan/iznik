@@ -2,6 +2,8 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+mod clipboard;
+
 pub mod actions;
 pub mod bars;
 pub mod bridge;

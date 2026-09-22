@@ -149,6 +149,12 @@ test = "iznik-app::input_encoding::input_copy_rejects_a_frame_from_another_pane"
 because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
 
 [[claim]]
+id = "input-program-clipboard"
+statement = "A program OSC 52 plain-text write, for either the standard or primary destination, replaces the GPUI clipboard, while the same sequence inside an authoritative screen replay leaves that clipboard unchanged."
+test = "iznik-app::surface::surface_applies_program_clipboard_writes"
+because = "headless GPUI clipboard and the real owning VT thread determine this local routing; a transport or display adds no behavior to applying a program clipboard write"
+
+[[claim]]
 id = "input-surface-clipboard"
 statement = "The production pane surface retains grid copy and history subscriptions, writes native selection text through GPUI clipboard APIs, and rejects a foreign pane reply before clipboard changes."
 test = "iznik-app::surface::surface_routes_copy_and_history_through_grid_subscriptions"

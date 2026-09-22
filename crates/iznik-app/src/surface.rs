@@ -112,6 +112,7 @@ impl PaneSurface {
     }
 
     /// Consume a VT reply, forwarding process input before handling surface results.
+    /// A program clipboard write on the snapshot is applied before the frame.
     /// Snapshot credit is returned only after the grid accepts the frame.
     ///
     /// # Errors
@@ -131,7 +132,9 @@ impl PaneSurface {
             .map_err(SurfaceError::Engine)?
             .map_err(SurfaceError::Terminal)?;
         match output {
-            Some(VtOutput::Snapshot(snapshot)) => {
+            Some(VtOutput::Snapshot(mut snapshot)) => {
+                let copies = std::mem::take(&mut snapshot.clipboard);
+                deliver_program_clipboard(context, copies);
                 self.grid
                     .update(context, |grid, context| grid.apply(*snapshot, context))
                     .map_err(SurfaceError::Grid)?;
@@ -172,6 +175,16 @@ impl PaneSurface {
                 detail: error.to_string(),
             });
         }
+    }
+}
+
+/// Put each program copy on the system clipboard, in arrival order.
+///
+/// An empty list leaves the clipboard unchanged, which is how a reconstructed
+/// screen avoids repeating a copy the program made before the client attached.
+fn deliver_program_clipboard(context: &mut Context<'_, PaneSurface>, copies: Vec<String>) {
+    for text in copies {
+        context.write_to_clipboard(ClipboardItem::new_string(text));
     }
 }
 

@@ -22,6 +22,8 @@ use libghostty_vt::terminal::{
     PrimaryDeviceAttributes, ScrollViewport, SecondaryDeviceAttributes, SizeReportSize, Terminal,
     TertiaryDeviceAttributes,
 };
+
+use crate::clipboard::ClipboardScan;
 use tokio::runtime::Builder;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::LocalSet;
@@ -175,6 +177,8 @@ pub struct TerminalSnapshot {
     pub receipt: Option<CreditReceipt>,
     /// Query replies to forward as pane input independently of painting.
     pub responses: Vec<u8>,
+    /// Plain text a program copied, in arrival order. Empty after a reconstructed screen.
+    pub clipboard: Vec<String>,
 }
 
 /// Orders are processed in channel order on the emulator thread.
@@ -414,6 +418,10 @@ struct PaneTerminal {
     render: RenderState<'static>,
     /// Answers emitted synchronously while feeding a batch.
     responses: Rc<RefCell<Vec<u8>>>,
+    /// Program clipboard text emitted synchronously while feeding a batch.
+    clipboard: Rc<RefCell<Vec<String>>>,
+    /// Partial OSC 52 carried across output batches.
+    scan: ClipboardScan,
     /// Scheme read by the callback when a program asks about theme.
     scheme: Rc<RefCell<ColorScheme>>,
     /// Expected next stream position; absent after any discontinuity.
@@ -469,6 +477,8 @@ impl PaneTerminal {
             input: InputEncoder::new(options.maximum_wheel_reports)?,
             render: RenderState::new()?,
             responses,
+            clipboard: Rc::new(RefCell::new(Vec::new())),
+            scan: ClipboardScan::new(),
             scheme,
             sequence: None,
         };
@@ -503,6 +513,7 @@ impl PaneTerminal {
         let credit = u32::try_from(bytes.len()).map_err(|_large| VtError::Overflow)?;
         let next = sequence.0.checked_add(length).ok_or(VtError::Overflow)?;
         let follow = self.viewport()?.at_bottom();
+        self.scan.observe(bytes, &mut self.clipboard.borrow_mut());
         self.terminal.vt_write(bytes);
         if follow {
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
@@ -598,6 +609,7 @@ impl PaneTerminal {
             consumed_bytes,
             receipt: None,
             responses: std::mem::take(&mut *self.responses.borrow_mut()),
+            clipboard: std::mem::take(&mut *self.clipboard.borrow_mut()),
         };
         snapshot.set_dirty(Dirty::Clean)?;
         Ok(result)
@@ -666,8 +678,9 @@ fn apply(
         } => {
             let mut pane = PaneTerminal::new(columns, rows, &theme, options)?;
             pane.terminal.vt_write(&bytes);
-            // Reconstructed historical state must never replay query effects.
+            // Reconstructed historical state must never replay query effects or clipboard writes.
             pane.responses.borrow_mut().clear();
+            pane.clipboard.borrow_mut().clear();
             pane.sequence = Some(sequence);
             panes.insert(key.clone(), pane);
             0

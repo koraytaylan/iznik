@@ -356,6 +356,135 @@ fn pointer_and_input(context: &mut TestAppContext) -> Result<(), Failed> {
     Ok(())
 }
 
+/// A program copy reaches the system clipboard, and replaying a screen does not repeat one.
+///
+/// # Panics
+/// Fails if setup or the asserted behavior differs.
+#[gpui_kit::test]
+fn surface_applies_program_clipboard_writes(context: &mut TestAppContext) {
+    check(&program_clipboard(context));
+}
+
+/// OSC 52 from live output updates the clipboard; the same bytes in a screen do not.
+///
+/// # Errors
+/// Propagates fixture, owner and sequence failures.
+///
+/// # Panics
+/// Fails when the clipboard text differs from the program write.
+fn program_clipboard(context: &mut TestAppContext) -> Result<(), Failed> {
+    let fixture = Fixture::new(context, "program-clipboard")?;
+    fixture.screen(context, b"ready")?;
+    let mut sequence = Sequence(0);
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;aGVs")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "a split write waits for its end"
+    );
+    sequence = feed_output(&fixture, context, sequence, b"bG8=\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        Some("hello".to_owned()),
+        "a completed OSC 52 write reaches the clipboard"
+    );
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;p;cHJpbWFyeQ==\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        Some("primary".to_owned()),
+        "a primary-selection write reaches the same clipboard"
+    );
+    feed_output(&fixture, context, sequence, b"\x1b]52;c;\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "an empty program write clears the clipboard"
+    );
+    show_screen(&fixture, context, b"replay\x1b]52;c;cmVwbGF5\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "a reconstructed screen does not replay a program copy"
+    );
+    Ok(())
+}
+
+/// Replace the pane with a screen. Retained output credit has no host here.
+///
+/// # Errors
+/// Propagates owner submission or a surface failure other than the isolated engine.
+///
+/// # Panics
+/// Fails if the owning thread misses the fixture reply deadline.
+fn show_screen(
+    fixture: &Fixture,
+    context: &mut TestAppContext,
+    bytes: &[u8],
+) -> Result<(), Failed> {
+    fixture.thread.send(VtCommand::Screen {
+        key: support::key(),
+        sequence: Sequence(0),
+        columns: COLUMNS,
+        rows: ROWS,
+        bytes: bytes.to_vec(),
+        theme: Box::default(),
+    })?;
+    accept_reply(fixture, context)
+}
+
+/// Feed one output batch and return the next absolute sequence.
+///
+/// # Errors
+/// Propagates owner submission, surface consumption or an overflowing sequence.
+///
+/// # Panics
+/// Fails if the owning thread misses the fixture reply deadline.
+fn feed_output(
+    fixture: &Fixture,
+    context: &mut TestAppContext,
+    sequence: Sequence,
+    bytes: &[u8],
+) -> Result<Sequence, Failed> {
+    fixture.thread.send(VtCommand::Feed {
+        key: support::key(),
+        sequence,
+        bytes: bytes.to_vec(),
+        receipt: None,
+    })?;
+    accept_reply(fixture, context)?;
+    let length = u64::try_from(bytes.len())?;
+    Ok(Sequence(
+        sequence
+            .0
+            .checked_add(length)
+            .ok_or("sequence overflowed")?,
+    ))
+}
+
+/// Apply one owning-thread reply. Output credit has no host in this fixture.
+///
+/// # Errors
+/// Propagates a closed window or a surface failure other than the isolated engine.
+///
+/// # Panics
+/// Fails if the owning thread misses the fixture reply deadline.
+fn accept_reply(fixture: &Fixture, context: &mut TestAppContext) -> Result<(), Failed> {
+    let event = support::receive(&fixture.thread);
+    let result = fixture.handle.update(context, |surface, _, context| {
+        surface.receive(event, &fixture.bridge, context)
+    })?;
+    assert!(
+        result.is_ok() || matches!(result, Err(SurfaceError::Engine(_))),
+        "{result:?}"
+    );
+    Ok(())
+}
+
+/// The text currently on the GPUI clipboard.
+fn clipboard_text(context: &mut TestAppContext) -> Option<String> {
+    context.read(|context| context.read_from_clipboard().and_then(|item| item.text()))
+}
+
 /// Report fixture failures outside the GPUI macro, which replaces test documentation.
 ///
 /// # Panics
