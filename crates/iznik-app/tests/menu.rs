@@ -7,11 +7,13 @@ mod support;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui_kit::{App, AppContext as _, ClipboardItem, Focusable, Subscription, TestAppContext};
+use gpui_kit::{
+    App, AppContext as _, ClipboardItem, Entity, Focusable, Subscription, TestAppContext,
+};
 use iznik_app::grid::{GridInput, GridMetrics, TerminalGrid};
 use iznik_app::input::TerminalInput;
 use iznik_app::menu;
-use iznik_app::vt::{VtOptions, VtThread};
+use iznik_app::vt::{VtCommand, VtOptions, VtOutput, VtThread};
 use iznik_protocol::identity::Sequence;
 
 /// Fixture setup and assertion failures.
@@ -35,6 +37,12 @@ fn the_application_installs_its_own_menu_bar(context: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_menu_paste_item_reaches_the_focused_pane(context: &mut TestAppContext) {
     check(&paste_reaches(context));
+}
+
+/// Tab completes a path in the shell instead of moving focus out of the pane.
+#[gpui_kit::test]
+fn tab_reaches_the_focused_pane(context: &mut TestAppContext) {
+    check(&tab_reaches(context));
 }
 
 /// Convert fixture failures into a named assertion outside the GPUI macro.
@@ -121,4 +129,96 @@ fn paste_reaches(context: &mut TestAppContext) -> Result<(), Failed> {
         )
         .into())
     }
+}
+
+/// Focus a pane inside the window root and press Tab.
+///
+/// The root binds Tab to focus movement. The pane must still receive the
+/// completion byte, and Shift-Tab must still request the previous completion.
+///
+/// # Errors
+/// Returns emulator, window or assertion failures.
+///
+/// # Panics
+/// Fails when the thread misses a reply deadline.
+fn tab_reaches(context: &mut TestAppContext) -> Result<(), Failed> {
+    context.update(|app| {
+        gpui_kit::init(app);
+        menu::install(app);
+    });
+    let thread = VtThread::start(VtOptions::default())?;
+    let frame = support::open(&thread, Sequence(0), COLUMNS, ROWS)?;
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&requests);
+    let grid_slot: Rc<RefCell<Option<Entity<TerminalGrid>>>> = Rc::new(RefCell::new(None));
+    let slot = Rc::clone(&grid_slot);
+    let root = context.add_window(|window, context| {
+        let grid = context.new(|context| TerminalGrid::new(GridMetrics::default(), context));
+        *slot.borrow_mut() = Some(grid.clone());
+        gpui_kit::component::Root::new(grid, window, context)
+    });
+    let grid = grid_slot
+        .borrow()
+        .clone()
+        .ok_or("the window has no terminal")?;
+    let mut subscription = None;
+    let focus = grid.update(context, |grid, context| {
+        grid.apply(frame, context)?;
+        subscription = Some(context.subscribe(
+            &context.entity(),
+            move |_, _, event: &GridInput, _| {
+                observed.borrow_mut().push(event.clone());
+            },
+        ));
+        Ok::<_, Failed>(grid.focus_handle(context))
+    })?;
+    context.update_window(root.into(), |_, window, application| {
+        window.focus(&focus, application);
+        window.draw(application).clear(application);
+    })?;
+    context.simulate_keystrokes(root.into(), "tab");
+    let plain = encoded(&thread, &requests)?;
+    if plain.as_slice() != b"\t" {
+        return Err(format!("tab encoded {plain:?}").into());
+    }
+    context.simulate_keystrokes(root.into(), "shift-tab");
+    let reverse = encoded(&thread, &requests)?;
+    if reverse.as_slice() != b"\x1b[Z" {
+        return Err(format!("shift-tab encoded {reverse:?}").into());
+    }
+    let still = context.update_window(root.into(), |_, window, application| {
+        window.focused(application).as_ref() == Some(&focus)
+    })?;
+    drop(subscription);
+    if still {
+        Ok(())
+    } else {
+        Err("tab moved focus out of the pane".into())
+    }
+}
+
+/// Drain the pane's queued input through the native encoder.
+///
+/// # Errors
+/// Returns a thread failure or a reply that is not encoded input.
+///
+/// # Panics
+/// Fails when the thread misses a reply deadline.
+fn encoded(thread: &VtThread, requests: &Rc<RefCell<Vec<GridInput>>>) -> Result<Vec<u8>, Failed> {
+    let pending: Vec<_> = requests.borrow_mut().drain(..).collect();
+    let mut encoded = Vec::new();
+    for request in pending {
+        thread.send(VtCommand::Input {
+            key: request.key,
+            input: request.input,
+        })?;
+        let reply = support::receive(thread)
+            .result?
+            .ok_or("missing input reply")?;
+        let VtOutput::Input(bytes) = reply else {
+            return Err("expected encoded input".into());
+        };
+        encoded.extend(bytes);
+    }
+    Ok(encoded)
 }

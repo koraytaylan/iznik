@@ -457,6 +457,7 @@ const KEY_CASES: &[(&[u8], &str, &[u8])] = &[
     (b"", "ctrl-shift-h", b"\x1b[104;6u"),
     (b"\x1b[>4;2m", "ctrl-shift-h", b"\x1b[27;6;72~"),
     (b"\x1b[>4;0m", "enter", b"\r"),
+    (b"", "tab", b"\t"),
     (b"", "shift-tab", b"\x1b[Z"),
     (b"", "f5", b"\x1b[15~"),
     (b"", "ctrl-shift-pageup", b"\x1b[5;6~"),

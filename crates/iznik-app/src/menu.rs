@@ -15,7 +15,8 @@
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
-    App, Context, InteractiveElement, KeyBinding, Menu, MenuItem, SystemMenuType, Window, actions,
+    App, Context, InteractiveElement, KeyBinding, Menu, MenuItem, NoAction, SystemMenuType, Window,
+    actions,
 };
 
 use crate::actions::ActionId;
@@ -89,6 +90,9 @@ pub fn install(app: &mut App) {
 ///
 /// Copy and paste are scoped to the terminal's own key context, so a text
 /// field's own copy and paste keep working; the rest are application-wide.
+/// Tab and Shift-Tab are cleared in that same context. The window root
+/// otherwise consumes them to move focus, and a shell never sees the key
+/// it uses to complete a path.
 fn keybindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-q", Quit, None),
@@ -101,6 +105,8 @@ fn keybindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-c", Copy, Some("Terminal")),
         KeyBinding::new("cmd-v", Paste, Some("Terminal")),
+        KeyBinding::new("tab", NoAction, Some("Terminal")),
+        KeyBinding::new("shift-tab", NoAction, Some("Terminal")),
     ]
 }
 
