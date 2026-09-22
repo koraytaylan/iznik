@@ -117,6 +117,9 @@ pub(crate) struct HeldPane {
     /// and not the pane's. It is forgotten once the restored pane has been
     /// submitted again.
     pub(crate) banner_cells: Option<(u16, u16)>,
+    /// Model geometry when a different size was submitted and the model has
+    /// not moved since. The local terminal keeps the submission until then.
+    pub(crate) awaiting_model: Option<(u16, u16)>,
     /// Pending authoritative resize, preventing duplicate owner requests before its reply.
     pub(crate) native_size: Option<(u16, u16)>,
     /// Focus and failure routes remain alive with the pane.
@@ -129,7 +132,7 @@ pub struct WindowShell {
     /// Sole engine owner and model mirror; the shell does not maintain another reducer.
     hosts: HostUi,
     /// One shared terminal owner for all panes shown by the window.
-    thread: Rc<VtThread>,
+    pub(crate) thread: Rc<VtThread>,
     /// Stable pane entities, keyed by host as well as pane number.
     pub(crate) panes: BTreeMap<PaneKey, HeldPane>,
     /// The tab whose layout is currently visible.
@@ -647,10 +650,15 @@ impl WindowShell {
             };
             if let Some(key) = identity
                 && self.panes.contains_key(&key)
-                && let Err(error) =
-                    EngineBridge::feed_terminal(&self.thread, said, &self.options.theme)
             {
-                self.failure(&key.host, error.to_string(), context);
+                // A size already in the model has to be on the local terminal
+                // before these bytes, or a redraw is parsed at the old size.
+                self.synchronize_sizes(context);
+                if let Err(error) =
+                    EngineBridge::feed_terminal(&self.thread, said, &self.options.theme)
+                {
+                    self.failure(&key.host, error.to_string(), context);
+                }
             }
         }
         self.hosts.absorb_event(event);
@@ -783,6 +791,7 @@ impl WindowShell {
             subscribed: false,
             measured: None,
             banner_cells: None,
+            awaiting_model: None,
             native_size: None,
             _subscriptions: vec![focus, failure],
         }
@@ -864,17 +873,32 @@ impl WindowShell {
                     continue;
                 };
                 let desired = (pane.columns, pane.rows);
-                if snapshot.columns == pane.columns && snapshot.rows.len() == usize::from(pane.rows)
-                {
-                    crate::chrome::note_settled_size(held, self.banner_count, desired);
-                } else if held.native_size != Some(desired) {
-                    match self.thread.send(VtCommand::Resize {
-                        key,
-                        columns: pane.columns,
-                        rows: pane.rows,
-                    }) {
-                        Ok(()) => held.native_size = Some(desired),
-                        Err(error) => failures.push((host.clone(), error.to_string())),
+                let Ok(row_count) = u16::try_from(snapshot.rows.len()) else {
+                    continue;
+                };
+                let shown = (snapshot.columns, row_count);
+                let (awaiting, action) = crate::chrome::local_size(
+                    held.measured,
+                    held.awaiting_model,
+                    held.native_size,
+                    desired,
+                    shown,
+                );
+                held.awaiting_model = awaiting;
+                match action {
+                    crate::chrome::LocalSize::Settled => {
+                        crate::chrome::note_settled_size(held, self.banner_count, desired);
+                    }
+                    crate::chrome::LocalSize::Hold => {}
+                    crate::chrome::LocalSize::Apply(size) => {
+                        match self.thread.send(VtCommand::Resize {
+                            key,
+                            columns: size.0,
+                            rows: size.1,
+                        }) {
+                            Ok(()) => held.native_size = Some(size),
+                            Err(error) => failures.push((host.clone(), error.to_string())),
+                        }
                     }
                 }
             }

@@ -354,9 +354,10 @@ impl VtThread {
             .spawn(move || {
                 LocalSet::new().block_on(&runtime, async move {
                     let mut panes = BTreeMap::new();
+                    let mut pending_size = BTreeMap::new();
                     while let Some(command) = receiving.recv().await {
                         let key = command.key().clone();
-                        let result = apply(&mut panes, command, &options);
+                        let result = apply(&mut panes, &mut pending_size, command, &options);
                         if !publish(&sending, key, result) {
                             break;
                         }
@@ -661,6 +662,7 @@ fn cell_link(
 /// Reports missing/gapped panes, invalid counts, and emulator failures.
 fn apply(
     panes: &mut BTreeMap<PaneKey, PaneTerminal>,
+    pending_size: &mut BTreeMap<PaneKey, (u16, u16)>,
     command: VtCommand,
     options: &VtOptions,
 ) -> Result<Option<VtOutput>, VtError> {
@@ -682,6 +684,11 @@ fn apply(
             pane.responses.borrow_mut().clear();
             pane.clipboard.borrow_mut().clear();
             pane.sequence = Some(sequence);
+            if let Some((pending_columns, pending_rows)) = pending_size.remove(&key)
+                && (pending_columns != columns || pending_rows != rows)
+            {
+                pane.terminal.resize(pending_columns, pending_rows, 0, 0)?;
+            }
             panes.insert(key.clone(), pane);
             0
         }
@@ -692,11 +699,11 @@ fn apply(
             .ok_or(VtError::NeedsScreen)?
             .feed(sequence, &bytes)?,
         VtCommand::Resize { columns, rows, .. } => {
-            panes
-                .get_mut(&key)
-                .ok_or(VtError::NeedsScreen)?
-                .terminal
-                .resize(columns, rows, 0, 0)?;
+            let Some(pane) = panes.get_mut(&key) else {
+                pending_size.insert(key, (columns, rows));
+                return Ok(None);
+            };
+            pane.terminal.resize(columns, rows, 0, 0)?;
             0
         }
         VtCommand::Theme { theme, .. } => {
@@ -721,6 +728,7 @@ fn apply(
         VtCommand::Snapshot(_) => 0,
         VtCommand::Close(_) => {
             panes.remove(&key);
+            pending_size.remove(&key);
             return Ok(None);
         }
     };

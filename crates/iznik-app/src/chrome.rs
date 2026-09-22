@@ -17,7 +17,7 @@ use crate::grid::{self, cells};
 use crate::host_ui::Notice;
 use crate::stage;
 use crate::status;
-use crate::vt::PaneKey;
+use crate::vt::{PaneKey, VtCommand};
 use crate::window::{HeldPane, TERMINAL_PADDING, WindowShell};
 
 impl WindowShell {
@@ -86,6 +86,7 @@ impl WindowShell {
                                                 },
                                                 |_, (), _, _| {},
                                             )
+                                            .absolute()
                                             .size_full(),
                                         ),
                                 ),
@@ -142,6 +143,7 @@ impl WindowShell {
             .bridge()
             .resize(&key.host.0, key.pane, columns, rows);
         let showing_strip = self.banner_count > 0;
+        let current = self.model_cells(key);
         let reported = {
             let Some(held) = self.panes.get_mut(key) else {
                 return;
@@ -149,6 +151,7 @@ impl WindowShell {
             match submitted {
                 Ok(()) => {
                     held.measured = Some((columns, rows));
+                    held.awaiting_model = current.filter(|cells| *cells != (columns, rows));
                     if showing_strip {
                         held.banner_cells = Some((columns, rows));
                     }
@@ -159,7 +162,39 @@ impl WindowShell {
         };
         if let Some(detail) = reported {
             self.failure(&key.host, detail, context);
+            return;
         }
+        // The program redraws as soon as the host resizes it. Parsing that
+        // redraw at the previous size, then reflowing, tears a full-screen
+        // layout apart. The local terminal takes the submitted size first.
+        // A terminal that does not exist yet keeps the size and applies it
+        // when its screen arrives, instead of reporting a sequence gap.
+        if let Err(error) = self.thread.send(VtCommand::Resize {
+            key: key.clone(),
+            columns,
+            rows,
+        }) {
+            self.failure(&key.host, error.to_string(), context);
+            return;
+        }
+        if let Some(held) = self.panes.get_mut(key) {
+            held.native_size = Some((columns, rows));
+        }
+    }
+
+    /// The model geometry of one pane, when the model still has it.
+    fn model_cells(&self, key: &PaneKey) -> Option<(u16, u16)> {
+        self.hosts()
+            .state()
+            .model()
+            .host(&key.host)?
+            .model
+            .sessions
+            .iter()
+            .flat_map(|session| &session.tabs)
+            .flat_map(|tab| &tab.panes)
+            .find(|pane| pane.id == key.pane)
+            .map(|pane| (pane.columns, pane.rows))
     }
 
     /// Drop remembered pane geometry when the strips appear or leave.
@@ -176,6 +211,7 @@ impl WindowShell {
         self.banner_count = count;
         for held in self.panes.values_mut() {
             held.measured = None;
+            held.awaiting_model = None;
             held.native_size = None;
         }
     }
@@ -206,6 +242,60 @@ impl WindowShell {
             banners.push(banner(context, failure));
         }
         banners
+    }
+}
+
+/// What the local terminal should do with one pane's geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalSize {
+    /// The model size is already on the local terminal.
+    Settled,
+    /// Resize the local terminal to this size.
+    Apply((u16, u16)),
+    /// An outstanding submission is already applied or in flight.
+    Hold,
+}
+
+/// Choose the local terminal's size.
+///
+/// `awaiting_model` is the model size when a different size was submitted.
+/// While the model is still that size, the local terminal stays on the
+/// submission. A model size that is neither the submission nor that baseline
+/// belongs to someone else and wins.
+///
+/// The returned baseline replaces `awaiting_model`.
+pub fn local_size(
+    measured: Option<(u16, u16)>,
+    awaiting_model: Option<(u16, u16)>,
+    native_size: Option<(u16, u16)>,
+    desired: (u16, u16),
+    shown: (u16, u16),
+) -> (Option<(u16, u16)>, LocalSize) {
+    if measured == Some(desired) {
+        return (None, applied(native_size, desired, shown));
+    }
+    if awaiting_model == Some(desired)
+        && let Some(pending) = measured
+    {
+        let action = if shown == pending {
+            LocalSize::Hold
+        } else {
+            LocalSize::Apply(pending)
+        };
+        return (awaiting_model, action);
+    }
+    (None, applied(native_size, desired, shown))
+}
+
+/// `Settled` once `shown` is `wanted`. A resize already requested is not
+/// asked for again until the grid shows something else.
+fn applied(native_size: Option<(u16, u16)>, wanted: (u16, u16), shown: (u16, u16)) -> LocalSize {
+    if shown == wanted {
+        LocalSize::Settled
+    } else if native_size == Some(wanted) {
+        LocalSize::Hold
+    } else {
+        LocalSize::Apply(wanted)
     }
 }
 

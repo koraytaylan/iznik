@@ -399,3 +399,27 @@ fn link_snapshot_keeps_the_target() {
     assert_eq!(row.get(5).expect("after").text, ".");
     assert_eq!(row.get(5).expect("after").link, None);
 }
+
+/// A resize that arrives before the first screen is the screen's size.
+///
+/// Reporting that resize as a sequence gap made every new tab raise a failure
+/// strip, and skipping it left the program drawing for a size the grid never
+/// took.
+///
+/// # Panics
+/// Fails when the early resize is an error or the screen keeps its own size.
+#[test]
+fn resize_screen_keeps_submitted_geometry() {
+    let thread = VtThread::start(VtOptions::default()).expect("thread");
+    thread
+        .send(VtCommand::Resize {
+            key: key(),
+            columns: 20,
+            rows: 5,
+        })
+        .expect("resize");
+    assert!(receive(&thread).result.expect("early resize").is_none());
+    let opened = open(&thread, Sequence(0), 10, 3).expect("open");
+    assert_eq!(opened.columns, 20);
+    assert_eq!(opened.rows.len(), 5);
+}
