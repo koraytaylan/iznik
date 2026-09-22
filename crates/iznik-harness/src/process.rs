@@ -8,14 +8,18 @@
 
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, ErrorKind, Read};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use nix::errno::Errno;
+#[cfg(unix)]
 use nix::sys::signal::{Signal, killpg};
+#[cfg(unix)]
 use nix::unistd::Pid;
 
 /// How long a process group is given to end after `SIGTERM` before it is sent
@@ -218,6 +222,10 @@ pub fn run(
     output: Output,
 ) -> Result<Completed, ProcessError> {
     let program = command.get_program().to_string_lossy().into_owned();
+    // A process group is how a deadline reaches grandchildren. Windows has
+    // no equivalent this runner can ask for, so a deadline there ends the
+    // child it spawned and not a tree under it.
+    #[cfg(unix)]
     command.process_group(0);
     let (stdout_mode, stderr_mode) = match output {
         Output::Inherit => (Stdio::inherit(), Stdio::inherit()),
@@ -235,6 +243,7 @@ pub fn run(
         program: program.clone(),
         source,
     })?;
+    #[cfg(unix)]
     let group = match process_group(&child, &program) {
         Ok(group) => group,
         Err(error) => {
@@ -246,12 +255,18 @@ pub fn run(
     let streams = match capture_both(&mut child, limit) {
         Ok(streams) => streams,
         Err(source) => {
+            #[cfg(unix)]
             end_process_group(&mut child, group, &program)?;
+            #[cfg(windows)]
+            end_process(&mut child, &program)?;
             return Err(ProcessError::Wait { program, source });
         }
     };
     let Some(status) = await_exit(&mut child, &program, started, deadline)? else {
+        #[cfg(unix)]
         end_process_group(&mut child, group, &program)?;
+        #[cfg(windows)]
+        end_process(&mut child, &program)?;
         let (stdout, stderr) = streams.drain();
         return Err(ProcessError::TimedOut {
             program,
@@ -277,6 +292,35 @@ pub fn run(
     })
 }
 
+/// Ends the child on Windows: terminate it, wait out the grace, and
+/// terminate it again if it is still there.
+///
+/// # Errors
+///
+/// [`ProcessError::Wait`] when the child cannot be reaped.
+#[cfg(windows)]
+fn end_process(child: &mut Child, program: &str) -> Result<(), ProcessError> {
+    child.kill().unwrap_or_default();
+    let terminated = Instant::now();
+    loop {
+        if try_wait(child, program)?.is_some() {
+            return Ok(());
+        }
+        if terminated.elapsed() >= TERMINATION_GRACE {
+            break;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    child.kill().unwrap_or_default();
+    child
+        .wait()
+        .map(|_status| ())
+        .map_err(|source| ProcessError::Wait {
+            program: program.to_owned(),
+            source,
+        })
+}
+
 /// The child's process group, which is its own process id.
 ///
 /// # Errors
@@ -284,6 +328,7 @@ pub fn run(
 /// [`ProcessError::Wait`] when the id is not representable as a group — which
 /// no Linux hands out, and which must never fall back to group zero, this
 /// process's own.
+#[cfg(unix)]
 fn process_group(child: &Child, program: &str) -> Result<Pid, ProcessError> {
     i32::try_from(child.id())
         .map(Pid::from_raw)
@@ -329,6 +374,7 @@ fn try_wait(child: &mut Child, program: &str) -> Result<Option<ExitStatus>, Proc
 }
 
 /// Whether nothing is left in the group: a null signal finds no process.
+#[cfg(unix)]
 fn group_is_empty(group: Pid) -> bool {
     matches!(killpg(group, None), Err(Errno::ESRCH))
 }
@@ -345,6 +391,7 @@ fn group_is_empty(group: Pid) -> bool {
 ///
 /// [`ProcessError::Wait`] when the child cannot be reaped or the group cannot
 /// be killed.
+#[cfg(unix)]
 fn end_process_group(child: &mut Child, group: Pid, program: &str) -> Result<(), ProcessError> {
     killpg(group, Signal::SIGTERM).unwrap_or_default();
     let terminated = Instant::now();

@@ -14,7 +14,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use nix::sys::signal::kill;
+#[cfg(unix)]
 use nix::unistd::Pid;
 
 use crate::deadline::{DeadlineError, wait_until};
@@ -274,7 +276,15 @@ fn owner_alive(owner: &str) -> bool {
     let Ok(id) = owner.trim().parse::<i32>() else {
         return false;
     };
-    kill(Pid::from_raw(id), None).is_ok()
+    #[cfg(unix)]
+    {
+        kill(Pid::from_raw(id), None).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        let _id = id;
+        false
+    }
 }
 
 /// The owner label's value in a rendered label set. Podman renders a
