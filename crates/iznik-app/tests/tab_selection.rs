@@ -1,4 +1,5 @@
-//! Closing a tab keeps the window on that session.
+//! Closing a tab keeps the window on that session, and switching sessions
+//! returns to the tab each session was left on.
 
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, TestAppContext, WindowHandle};
@@ -24,6 +25,72 @@ fn host() -> HostId {
 #[gpui_kit::test]
 fn closing_a_tab_stays_in_its_session(context: &mut TestAppContext) {
     check(&stays(context));
+}
+
+#[gpui_kit::test]
+fn returning_to_a_session_shows_the_tab_it_was_left_on(context: &mut TestAppContext) {
+    check(&returns_to_the_tab(context));
+}
+
+/// Leave a session on a later tab and come back to it by clicking its chip.
+///
+/// # Errors
+/// Propagates fixture, encoding and window failures.
+///
+/// # Panics
+/// Fails when a return opens the first tab, or when a session that was never
+/// opened does so for any tab but its first.
+fn returns_to_the_tab(context: &mut TestAppContext) -> Result<(), Failed> {
+    let (handle, _directory) = open(context)?;
+    choose(context, handle, 2, 5)?;
+    click_session(context, handle, 1)?;
+    assert_eq!(shown(context, handle)?, (SessionId(1), TabId(1)));
+    click_session(context, handle, 2)?;
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(2), TabId(5)),
+        "session 2 opens the tab it was left on"
+    );
+    click_session(context, handle, 3)?;
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(3), TabId(7)),
+        "a session opened for the first time shows its first tab"
+    );
+    choose(context, handle, 3, 8)?;
+    click_session(context, handle, 1)?;
+    click_session(context, handle, 3)?;
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(3), TabId(8)),
+        "session 3 opens the tab it was left on"
+    );
+    click_session(context, handle, 1)?;
+    remove(context, handle, 5, 2)?;
+    assert_eq!(shown(context, handle)?, (SessionId(1), TabId(1)));
+    click_session(context, handle, 2)?;
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(2), TabId(4)),
+        "a tab closed while away yields the session's first tab"
+    );
+    Ok(())
+}
+
+/// Click one session chip of the fixture.
+///
+/// # Errors
+/// Returns a closed-window failure.
+fn click_session(
+    context: &mut TestAppContext,
+    handle: WindowHandle<WindowShell>,
+    session: u64,
+) -> Result<(), Failed> {
+    let chip = format!("session-build-{session}");
+    context.update_window(handle.into(), |_, window, application| {
+        window.click(chip, application);
+    })?;
+    Ok(())
 }
 
 /// Assert a selection case without making the GPUI test macro own its error path.

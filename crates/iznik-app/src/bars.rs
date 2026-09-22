@@ -103,7 +103,6 @@ pub fn render_placed(
             sessions = sessions.child(session_entry(
                 theme,
                 shell,
-                state,
                 host,
                 session,
                 &session_order,
@@ -278,7 +277,6 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
 fn session_entry(
     theme: &Theme,
     shell: Option<&WeakEntity<WindowShell>>,
-    state: &EngineState,
     host: &HostId,
     session: &Session,
     order: &[SessionId],
@@ -306,19 +304,6 @@ fn session_entry(
         .hover(|style| style.bg(theme.tab_active))
         .child(session.name.clone())
         .child(session_close(theme, shell, host, session.id));
-    let target_tab = focused_tab(state, host, session).map(|tab| TabKey {
-        host: host.clone(),
-        session: session.id,
-        tab,
-    });
-    if let (Some(target), Some(key)) = (shell.cloned(), target_tab) {
-        entry = entry.on_click(move |_event, window, application| {
-            let key = key.clone();
-            let _ignored = target.update(application, |window_shell, context| {
-                let _selected = window_shell.select(key, window, context);
-            });
-        });
-    }
     let Some(target) = shell.cloned() else {
         return entry.into_any_element();
     };
@@ -326,20 +311,29 @@ fn session_entry(
         host: host.clone(),
         session: session.id,
     };
+    let clicked = menu_key.clone();
+    let click_target = target.clone();
     let menu_order = order.to_vec();
     let menu_target = target.clone();
-    entry = entry.on_mouse_down(MouseButton::Right, move |event, window, application| {
-        application.stop_propagation();
-        let _ignored = menu_target.update(application, |window_shell, context| {
-            window_shell.open_session_menu(
-                menu_key.clone(),
-                menu_order.clone(),
-                event.position,
-                window,
-                context,
-            );
+    entry = entry
+        .on_click(move |_event, window, application| {
+            let key = clicked.clone();
+            let _ignored = click_target.update(application, |window_shell, context| {
+                let _selected = window_shell.select_session(&key, window, context);
+            });
+        })
+        .on_mouse_down(MouseButton::Right, move |event, window, application| {
+            application.stop_propagation();
+            let _ignored = menu_target.update(application, |window_shell, context| {
+                window_shell.open_session_menu(
+                    menu_key.clone(),
+                    menu_order.clone(),
+                    event.position,
+                    window,
+                    context,
+                );
+            });
         });
-    });
     let dragged = DraggedEntry::session(
         SessionKey {
             host: host.clone(),
@@ -380,6 +374,22 @@ fn session_entry(
             });
         });
     entry.into_any_element()
+}
+
+/// The tab to open for a session: the one last shown there while it still
+/// exists, otherwise the tab holding the host's focused pane, otherwise the
+/// session's first tab.
+#[must_use]
+pub fn shown_tab(
+    state: &EngineState,
+    host: &HostId,
+    session: &Session,
+    remembered: Option<TabId>,
+) -> Option<TabId> {
+    if remembered.is_some_and(|tab| session.tabs.iter().any(|candidate| candidate.id == tab)) {
+        return remembered;
+    }
+    focused_tab(state, host, session)
 }
 
 /// The tab of a session holding the host's focused pane, or its first tab.

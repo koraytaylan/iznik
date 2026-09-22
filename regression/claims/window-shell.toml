@@ -90,6 +90,12 @@ test = "iznik-app::tab_selection::closing_a_tab_stays_in_its_session"
 because = "selection after a removal is the headless production shell applying an authoritative delta; no container is required"
 
 [[claim]]
+id = "window-session-keeps-its-tab"
+statement = "Switching to another session and back shows the tab that session was left on. A session opened for the first time shows its first tab, and a tab closed while the window is elsewhere yields that session's first remaining tab."
+test = "iznik-app::tab_selection::returning_to_a_session_shows_the_tab_it_was_left_on"
+because = "per-session tab memory is the headless production shell's own selection; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"

@@ -7,7 +7,7 @@
 //! leaves an expectation behind and the reconcile that sees the model change
 //! is what acts on it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use gpui_kit::{Context, Focusable, Window};
 use iznik_client::host::identity::HostId;
@@ -15,11 +15,12 @@ use iznik_client::host::state::HostState;
 use iznik_protocol::identity::{PaneId, TabId};
 
 use crate::actions::ActionId;
+use crate::bars::{self, TabPlace};
 use crate::bridge::EngineError;
 use crate::host_ui::EngineState;
 use crate::status::Remedy;
 use crate::vt::PaneKey;
-use crate::window::{TabKey, WindowShell};
+use crate::window::{SessionKey, TabKey, WindowShell};
 
 /// A model change this window asked for and has not seen yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +56,9 @@ pub struct Following {
     pub focus: Option<PaneKey>,
     /// The tab whose pane was last given keyboard focus.
     pub focused_tab: Option<TabKey>,
+    /// The tab last shown in each session. Returning to a session opens this
+    /// tab while it still exists.
+    pub session_tab: BTreeMap<SessionKey, TabId>,
 }
 
 /// Every tab a host holds.
@@ -152,6 +156,37 @@ pub fn ready_to_start<'following>(
 }
 
 impl WindowShell {
+    /// Remember the tab now shown, so a later return to its session opens it.
+    pub(crate) fn remember_shown(&mut self, key: &TabKey) {
+        self.following.session_tab.insert(
+            SessionKey {
+                host: key.host.clone(),
+                session: key.session,
+            },
+            key.tab,
+        );
+    }
+
+    /// Keep the current tab when the model still holds it. When that tab has
+    /// gone, open the one that follows the close, and remember what is shown.
+    pub(crate) fn settle_selection(&mut self, place: Option<&TabPlace>) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| self.tab(selected).is_some())
+        {
+            return;
+        }
+        if let Some(chosen) = place
+            .and_then(|held| bars::tab_after_close(self.hosts().state(), held))
+            .or_else(|| bars::first_tab(self.hosts().state()))
+        {
+            self.set_selected(chosen);
+        } else {
+            self.selected = None;
+        }
+    }
+
     /// Begin holding a host from this window: the stage follows it, and it
     /// gets a first session when it connects holding none.
     ///

@@ -94,7 +94,7 @@ pub struct TabKey {
 }
 
 /// Stable identity of a selected session across hosts.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SessionKey {
     /// Host alias that owns the session.
     pub host: HostId,
@@ -378,8 +378,9 @@ impl WindowShell {
         self.selected.as_ref()
     }
     /// Replace the selection without laying it out; the reconcile that
-    /// follows does that.
+    /// follows does that. The session remembers this tab for the next return.
     pub(crate) fn set_selected(&mut self, key: TabKey) {
+        self.remember_shown(&key);
         self.selected = Some(key);
     }
     /// The panes of the visible layout, in reading order.
@@ -479,13 +480,12 @@ impl WindowShell {
         if self.tab(&key).is_none() {
             return false;
         }
-        self.selected = Some(key);
+        self.set_selected(key);
         self.reconcile(None, window, context);
         true
     }
-    /// Select a session's tab holding the host's focused pane, so the model
-    /// selection names the session a session menu acts on. Leaves the
-    /// selection untouched when the session or its tab is gone.
+    /// Select the tab last shown in this session, or the one holding the
+    /// host's focused pane. A missing session leaves the selection untouched.
     pub fn select_session(
         &mut self,
         key: &SessionKey,
@@ -495,16 +495,19 @@ impl WindowShell {
         let Some(session) = self.session(key) else {
             return false;
         };
-        let Some(tab) =
-            bars::focused_tab(self.hosts.state(), &key.host, session).map(|tab| TabKey {
+        let remembered = self.following.session_tab.get(key).copied();
+        let Some(tab) = bars::shown_tab(self.hosts.state(), &key.host, session, remembered) else {
+            return false;
+        };
+        self.select(
+            TabKey {
                 host: key.host.clone(),
                 session: key.session,
                 tab,
-            })
-        else {
-            return false;
-        };
-        self.select(tab, window, context)
+            },
+            window,
+            context,
+        )
     }
     /// Select the adjacent tab from the model and reconcile its visible panes.
     pub fn select_next_tab(
@@ -673,7 +676,7 @@ impl WindowShell {
         status::notify_upgrades_on_offer(self, window, context);
     }
     /// Find a tab only in the engine's reconciled model.
-    fn tab(&self, key: &TabKey) -> Option<&Tab> {
+    pub(crate) fn tab(&self, key: &TabKey) -> Option<&Tab> {
         self.hosts
             .state()
             .model()
@@ -709,15 +712,7 @@ impl WindowShell {
         context: &mut Context<'_, Self>,
     ) {
         self.follow_model(context);
-        if self
-            .selected
-            .as_ref()
-            .is_none_or(|selected| self.tab(selected).is_none())
-        {
-            self.selected = place
-                .and_then(|place| bars::tab_after_close(self.hosts.state(), place))
-                .or_else(|| bars::first_tab(self.hosts.state()));
-        }
+        self.settle_selection(place);
         let next_layout = self
             .selected
             .as_ref()
