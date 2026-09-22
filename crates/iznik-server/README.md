@@ -20,6 +20,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `daemon::lock` | The exclusive non-blocking lock that enforces a single daemon instance and names the holder. | `daemon-lifecycle` (plan 0004) |
 | `daemon::logging` | A size-capped rotating log file behind `tracing-subscriber`, because a full disk is worse than no logs. | `daemon-lifecycle` (plan 0004) |
 | `daemon::socket` | The unix socket the daemon listens on: a stale file removed and rebound once the lock is held. | `daemon-lifecycle` (plan 0004) |
+| `daemon::stop` | How a daemon is asked to end: `SIGTERM` on Unix, and a forced end of the process on Windows. | `windows-host` |
 | `history` | Per-pane history rings indexed by absolute sequence, and the shared budget that evicts from the least recently focused pane first. | `history-ring` (plan 0002) |
 | `history::ring` | The ring itself: append, range and copy by absolute sequence, without allocating per chunk in steady state. | `history-ring` (plan 0002) |
 | `multiplexer` | One multiplexer per client connection: the pump that carries every subscribed pane over one link under credit windows. | `multiplexer-assembly` (plan 0003) |

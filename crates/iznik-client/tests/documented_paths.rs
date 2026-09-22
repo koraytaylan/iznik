@@ -68,8 +68,8 @@ const PROMISES: &[Promise] = &[
     },
     Promise {
         documented: "`<runtime>/server.sock`",
-        source: "crates/iznik-server/src/daemon/mod.rs",
-        named: "const SOCKET_NAME: &str = \"server.sock\";",
+        source: "crates/iznik-server/src/daemon/socket.rs",
+        named: "pub const NAME: &str = \"server.sock\";",
     },
     Promise {
         documented: "`<runtime>/server.lock`",

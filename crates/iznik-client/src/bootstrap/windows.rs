@@ -22,8 +22,13 @@ const SECOND_SHIFT: u32 = 8;
 const CHARACTER_SHIFTS: [u32; GROUP_CHARACTERS] = [18, 12, 6, 0];
 /// Mask isolating one Base64 character.
 const CHARACTER_MASK: u32 = 0x3F;
+/// How many symbols the Base64 alphabet has.
+const ALPHABET_LENGTH: usize = 64;
 /// The Base64 alphabet.
-const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const ALPHABET: &[u8; ALPHABET_LENGTH] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/// The index of the third byte in a group of three.
+const THIRD_BYTE: usize = 2;
 
 /// The probe. It prints the same fields the POSIX probe prints.
 pub const PROBE_SCRIPT: &str = r#"
@@ -123,7 +128,7 @@ pub fn probe_command() -> String {
     encoded_shell(PROBE_SCRIPT)
 }
 
-/// A script that reads [`PREFIX_VARIABLE`], as one remote command.
+/// One remote command that sets `IZNIK_PREFIX` and then runs `script`.
 #[must_use]
 pub fn command_for(script: &str, prefix: &Path) -> String {
     format!(
@@ -133,7 +138,7 @@ pub fn command_for(script: &str, prefix: &Path) -> String {
     )
 }
 
-/// The upload, which also reads [`DIGEST_VARIABLE`].
+/// The upload as one remote command, with `IZNIK_PREFIX` and `IZNIK_DIGEST` set.
 #[must_use]
 pub fn upload_command(prefix: &Path, digest: &str) -> String {
     format!(
@@ -165,7 +170,7 @@ fn encoded(script: &str) -> String {
         rest = remaining;
         let first = chunk.first().copied().unwrap_or(0);
         let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
+        let third = chunk.get(THIRD_BYTE).copied().unwrap_or(0);
         let combined = u32::from(first).wrapping_shl(FIRST_SHIFT)
             | u32::from(second).wrapping_shl(SECOND_SHIFT)
             | u32::from(third);

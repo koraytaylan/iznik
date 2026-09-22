@@ -36,9 +36,32 @@ if [[ "$platform" == "windows" ]]; then
   archive="${name}.zip"
 fi
 url="https://ziglang.org/download/${version}/${archive}"
-root="${RUNNER_TEMP}/zig"
+# Git Bash leaves RUNNER_TEMP as D:\... . GNU tar reads a colon in the
+# archive name as a remote host, so the work directory is a POSIX path
+# before anything is downloaded into it.
+root="${RUNNER_TEMP:?}/zig"
+if command -v cygpath >/dev/null 2>&1; then
+  root="$(cygpath -u -- "$root")"
+fi
 mkdir -p "$root"
-curl --fail --silent --show-error --location --output "${root}/${archive}" "$url"
-tar --extract --file "${root}/${archive}" --directory "$root"
-echo "${root}/${name}" >> "$GITHUB_PATH"
-"${root}/${name}/zig" version
+archive_path="${root}/${archive}"
+curl --fail --silent --show-error --location --output "$archive_path" "$url"
+if [[ "$platform" == "windows" ]]; then
+  # The tar on PATH is GNU tar, and it cannot read the official zip.
+  # Windows ships bsdtar, which extracts that zip and keeps a drive
+  # letter as a local path. MSYS must not rewrite those arguments.
+  windows_archive="$(cygpath -w -- "$archive_path")"
+  windows_root="$(cygpath -w -- "$root")"
+  windows_tar="$(cygpath -w -- /c/Windows/System32/tar.exe)"
+  MSYS_NO_PATHCONV=1 "$windows_tar" -C "$windows_root" -xf "$windows_archive"
+else
+  tar --extract --file "$archive_path" --directory "$root"
+fi
+installed="${root}/${name}"
+binary="${installed}/zig"
+if [[ "$platform" == "windows" ]]; then
+  binary="${binary}.exe"
+  installed="$(cygpath -w -- "$installed")"
+fi
+echo "$installed" >> "${GITHUB_PATH:?}"
+"$binary" version

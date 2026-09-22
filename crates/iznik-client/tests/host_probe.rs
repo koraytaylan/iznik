@@ -565,3 +565,22 @@ async fn host_probe_asks_windows_after_the_shell_refuses() {
     assert_eq!(shell.load(Ordering::Relaxed), 1);
     assert_eq!(second.load(Ordering::Relaxed), 1);
 }
+
+/// # Panics
+///
+/// When a Windows command does not set the prefix before PowerShell, or the
+/// upload does not also set the digest.
+#[test]
+fn host_probe_windows_commands_set_the_prefix() {
+    let prefix = Path::new(r"C:\Users\person\AppData\Local\iznik");
+    let stop = iznik_client::bootstrap::windows::command_for("Write-Output ready", prefix);
+    let expected_prefix = "set \"IZNIK_PREFIX=C:\\Users\\person\\AppData\\Local\\iznik\"";
+    assert!(stop.starts_with(expected_prefix), "{stop}");
+    assert!(
+        stop.contains("& powershell.exe -NoProfile -NonInteractive -EncodedCommand "),
+        "{stop}"
+    );
+    let upload = iznik_client::bootstrap::windows::upload_command(prefix, "abc");
+    assert!(upload.contains("set \"IZNIK_DIGEST=abc\""), "{upload}");
+    assert!(upload.starts_with(expected_prefix), "{upload}");
+}

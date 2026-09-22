@@ -85,3 +85,9 @@ id = "probe-reads-the-terminfo-at-the-prefix-it-chose"
 statement = "The terminfo reported is the one under the prefix that was chosen, and not one under a candidate this user cannot write — because what a pane on this host will be told about is `<chosen>/terminfo`, and an entry elsewhere would have the server pointed at a directory that is not there."
 test = "iznik-client::host_probe::host_probe_reads_the_terminfo_at_the_prefix_it_chose"
 because = "which candidate an answer came from is a property of the answer and of the function that reads it"
+
+[[claim]]
+id = "probe-windows-commands-set-the-prefix"
+statement = "A Windows command sets IZNIK_PREFIX and then runs PowerShell as one encoded command, and the upload also sets IZNIK_DIGEST, so cmd does not re-read a prefix that contains a space."
+test = "iznik-client::host_probe::host_probe_windows_commands_set_the_prefix"
+because = "the command is a string this client builds, and a Windows host would only print that same string"
