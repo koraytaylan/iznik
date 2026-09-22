@@ -5,6 +5,12 @@ because = "The palette must expose exactly the actions available in the settled 
 test = "iznik-app::palette::palette_lists_only_available_entries_and_fuzzy_filters"
 
 [[claim]]
+id = "command-palette-word-prefix"
+statement = "A palette query matches a word it starts, so settt lists nothing while sett lists settings and not session, tab, or pane commands."
+test = "iznik-app::palette::palette_word_prefix_filter"
+because = "Filtering is a pure projection of the inventory and the settled model."
+
+[[claim]]
 id = "command-palette-selection"
 statement = "Palette selection wraps and opening resets transient state."
 because = "Selection movement is local UI state and needs no container."

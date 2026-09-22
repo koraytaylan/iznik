@@ -3,6 +3,10 @@
 use iznik_app::actions::{ActionContext, ActionId, INVENTORY};
 use iznik_app::host_ui::EngineState;
 use iznik_app::palette::{Palette, PaletteAction, results, selected_action};
+use iznik_client::host::identity::HostId;
+use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
+use iznik_protocol::message::{MessageError, ToClient};
+use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, Tab, encode_host_model};
 
 #[test]
 /// Available entries and fuzzy filtering stay aligned with the inventory.
@@ -101,4 +105,69 @@ fn palette_selection_resolves_inventory_identity() {
         ..Palette::default()
     };
     assert_eq!(selected_action(&state, &palette), Some(ActionId::AddHost));
+}
+
+#[test]
+/// A query matches the word it starts, not letters scattered through a sentence.
+///
+/// `settt` matches nothing: no command word starts with those letters.
+/// Session, tab and pane commands stay listed for an empty query and drop
+/// out, because "selected" and "tabs" are not that word.
+///
+/// # Panics
+///
+/// Panics when the filter keeps a command the query does not name, or drops
+/// the settings command.
+fn palette_word_prefix_filter() {
+    let state = state_with_a_pane().expect("model encodes");
+    let names = |query: &str| -> Vec<&str> {
+        results(&state, query)
+            .into_iter()
+            .map(|specification| specification.name)
+            .collect()
+    };
+    assert!(names("").iter().any(|name| name.starts_with("session:")));
+    assert!(names("").iter().any(|name| name.starts_with("tab:")));
+    assert!(names("").iter().any(|name| name.starts_with("pane:")));
+    assert!(names("settt").is_empty());
+    assert_eq!(names("sett"), ["iznik: settings"]);
+    assert_eq!(names("set"), ["layout: set", "iznik: settings"]);
+    assert!(names("sel").contains(&"session: rename"));
+    assert!(!names("sel").contains(&"iznik: settings"));
+}
+
+/// A model with one session, tab and pane, so those commands are offered.
+///
+/// # Errors
+///
+/// Returns the model encoding error.
+fn state_with_a_pane() -> Result<EngineState, MessageError> {
+    let mut state = EngineState::new();
+    let model = HostModel {
+        generation: Generation(1),
+        sessions: vec![Session {
+            id: SessionId(1),
+            name: "session".to_owned(),
+            tabs: vec![Tab {
+                id: TabId(1),
+                name: "tab".to_owned(),
+                panes: vec![Pane {
+                    id: PaneId(1),
+                    title: String::new(),
+                    working_directory: None,
+                    columns: 80,
+                    rows: 24,
+                }],
+                layout: LayoutNode::Leaf(PaneId(1)),
+            }],
+        }],
+    };
+    state.apply(
+        &HostId("devbox".to_owned()),
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload: encode_host_model(&model)?,
+        },
+    );
+    Ok(state)
 }

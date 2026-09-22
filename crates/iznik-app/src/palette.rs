@@ -144,7 +144,7 @@ impl Palette {
     }
 }
 
-/// Return available inventory rows whose names or explanations fuzzy-match a query.
+/// Return available inventory rows whose names or explanations match a query.
 #[must_use]
 pub fn results<'state>(state: &'state EngineState, query: &str) -> Vec<&'state ActionSpec> {
     let normalized = query.to_lowercase();
@@ -659,10 +659,22 @@ pub fn route_key(
     true
 }
 
-/// Whether the characters of a query occur in order in a candidate string.
+/// Whether `query` matches `candidate` by the words a person is reading.
+///
+/// Each word of the query — split on everything that is not a letter or a
+/// digit — must be a prefix of a later word of the candidate. `set` and
+/// `sett` match `settings`; `settt` matches nothing, because no word starts
+/// with those letters. Letters that merely occur somewhere in a sentence,
+/// such as the `s`, `e` and `t`s of "selected session and its tabs", do not.
 pub(crate) fn fuzzy_match(candidate: &str, query: &str) -> bool {
-    let mut candidate_characters = candidate.chars();
-    query.chars().all(|query_character| {
-        candidate_characters.any(|candidate_character| candidate_character == query_character)
+    let mut candidate_words = words_of(candidate);
+    words_of(query).all(|query_word| {
+        candidate_words.any(|candidate_word| candidate_word.starts_with(query_word))
     })
+}
+
+/// Words of `text`, split where a character is not a letter or a digit.
+fn words_of(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
 }
