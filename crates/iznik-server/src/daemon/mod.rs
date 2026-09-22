@@ -848,6 +848,7 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
     // from taking the lock.
     #[cfg(windows)]
     {
+        let _options = options;
         let _removed = std::fs::remove_file(&paths.lock);
         let _removed = std::fs::remove_file(&paths.socket);
         return ExitCode::SUCCESS;
@@ -855,19 +856,22 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
     // Both, and in this order: the daemon removes its socket and only then
     // releases its lock, so a `--stop` that returned on the socket alone would
     // let the next `--daemon` start a child that dies holding nothing.
-    let started = std::time::Instant::now();
-    while started.elapsed() < options.stop_cap {
-        let free = matches!(lock::held_by(&paths.lock), lock::Holder::Nobody);
-        if !paths.socket.exists() && free {
-            return ExitCode::SUCCESS;
+    #[cfg(unix)]
+    {
+        let started = std::time::Instant::now();
+        while started.elapsed() < options.stop_cap {
+            let free = matches!(lock::held_by(&paths.lock), lock::Holder::Nobody);
+            if !paths.socket.exists() && free {
+                return ExitCode::SUCCESS;
+            }
+            tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
         }
-        tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
+        complain(&format!(
+            "process {holder} was told to stop and has not let go"
+        ))
+        .await;
+        ExitCode::from(FAILED)
     }
-    complain(&format!(
-        "process {holder} was told to stop and has not let go"
-    ))
-    .await;
-    ExitCode::from(FAILED)
 }
 
 /// What these entry points take: the four they answer to, and the two flags

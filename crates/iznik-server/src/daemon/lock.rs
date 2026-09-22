@@ -257,11 +257,12 @@ async fn acquire_windows(path: &Path) -> Result<Lock, LockError> {
 /// Whether `path` names a lock whose daemon is gone.
 #[cfg(windows)]
 async fn stale(path: &Path) -> bool {
-    let elapsed = std::fs::metadata(path)
+    let aged = std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
-        .and_then(|modified| modified.elapsed())
-        .is_ok_and(|elapsed| elapsed > STALE_LOCK);
-    elapsed && !socket::answering(&socket_beside(path)).await
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|elapsed| elapsed > STALE_LOCK);
+    aged && !socket::answering(&socket_beside(path)).await
 }
 
 /// The endpoint file beside a lock file.
