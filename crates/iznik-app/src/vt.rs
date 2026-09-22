@@ -18,8 +18,9 @@ use libghostty_vt::render::{
 use libghostty_vt::screen::{CellWide, Screen};
 use libghostty_vt::style::{Palette, RgbColor, Style};
 use libghostty_vt::terminal::{
-    ColorScheme, ConformanceLevel, DeviceAttributes, DeviceType, Options, PrimaryDeviceAttributes,
-    ScrollViewport, SecondaryDeviceAttributes, SizeReportSize, Terminal, TertiaryDeviceAttributes,
+    ColorScheme, ConformanceLevel, DeviceAttributes, DeviceType, Options, Point, PointCoordinate,
+    PrimaryDeviceAttributes, ScrollViewport, SecondaryDeviceAttributes, SizeReportSize, Terminal,
+    TertiaryDeviceAttributes,
 };
 use tokio::runtime::Builder;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -115,6 +116,8 @@ pub struct CellSnapshot {
     pub foreground: RgbColor,
     /// Effective background, including background-only erased cells.
     pub background: RgbColor,
+    /// OSC 8 target for this cell. The visible grapheme is only the label.
+    pub link: Option<String>,
 }
 
 /// The emulator's current window into its retained rows.
@@ -555,16 +558,20 @@ impl PaneTerminal {
         let mut cell_iterator = CellIterator::new()?;
         let mut iterator = row_iterator.update(&snapshot)?;
         while let Some(row) = iterator.next() {
+            let row_index = u32::try_from(rows.len()).map_err(|_row| VtError::Overflow)?;
             dirty_rows.push(row.dirty()?);
             let mut cells = Vec::new();
             let mut reading = cell_iterator.update(row)?;
             while let Some(cell) = reading.next() {
+                let column = u16::try_from(cells.len()).map_err(|_column| VtError::Overflow)?;
+                let raw = cell.raw_cell()?;
                 cells.push(CellSnapshot {
                     text: cell.graphemes()?.into_iter().collect(),
-                    width: cell.raw_cell()?.wide()?,
+                    width: raw.wide()?,
                     style: cell.style()?,
                     foreground: cell.fg_color()?.unwrap_or(colors.foreground),
                     background: cell.bg_color()?.unwrap_or(colors.background),
+                    link: cell_link(&self.terminal, column, row_index, raw.has_hyperlink()?)?,
                 });
             }
             row.set_dirty(false)?;
@@ -594,6 +601,45 @@ impl PaneTerminal {
         };
         snapshot.set_dirty(Dirty::Clean)?;
         Ok(result)
+    }
+}
+
+/// Read the OSC 8 target of one viewport cell.
+///
+/// A cell without a hyperlink, or one whose target is not text, yields `None`.
+/// The lookup uses viewport coordinates, so a scrolled history row keeps the
+/// target that was painted on it.
+///
+/// # Errors
+/// Propagates an emulator grid or hyperlink read failure.
+fn cell_link(
+    terminal: &Terminal<'static, 'static>,
+    column: u16,
+    row: u32,
+    linked: bool,
+) -> Result<Option<String>, VtError> {
+    if !linked {
+        return Ok(None);
+    }
+    let reference = terminal.grid_ref(Point::Viewport(PointCoordinate { x: column, y: row }))?;
+    let mut buffer = Vec::new();
+    loop {
+        match reference.hyperlink_uri(&mut buffer) {
+            Ok(0) => return Ok(None),
+            Ok(length) => {
+                buffer.truncate(length);
+                return Ok(String::from_utf8(buffer)
+                    .ok()
+                    .filter(|text| !text.is_empty()));
+            }
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                if required <= buffer.len() {
+                    return Ok(None);
+                }
+                buffer.resize(required, 0);
+            }
+            Err(error) => return Err(VtError::Emulator(error)),
+        }
     }
 }
 

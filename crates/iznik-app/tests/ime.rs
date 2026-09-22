@@ -898,3 +898,93 @@ fn pointer_scale(context: &mut TestAppContext) -> Result<(), Failed> {
     );
     Ok(())
 }
+
+/// A link underline is one logical pixel tall.
+const UNDERLINE_HEIGHT: f32 = 1.5;
+/// Four of the five label cells, in the default cell width.
+const LINK_WIDTH: f32 = 32.0;
+
+#[gpui_kit::test]
+fn command_click_opens_the_link_target(context: &mut TestAppContext) {
+    check(&open_link(context));
+}
+
+/// Command-click opens the hidden OSC 8 target. A plain click and a script scheme do not.
+///
+/// # Errors
+/// Propagates fixture, window and coordinate failures.
+///
+/// # Panics
+/// Fails when the wrong address is opened or the link is not underlined.
+fn open_link(context: &mut TestAppContext) -> Result<(), Failed> {
+    use gpui_kit::{Modifiers, MouseButton, VisualTestContext};
+    let fixture = Fixture::new(context)?;
+    fixture.modes(
+        context,
+        b"\r\n\x1b]8;;https://example.com/oauth\x07click\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07no\x1b]8;;\x07",
+    )?;
+    let (column, row, script_column) = fixture.handle.update(context, |grid, window, _| {
+        let snapshot = grid.snapshot().ok_or("snapshot")?;
+        let mut link_cell = None;
+        let mut script_cell = None;
+        for (row_index, cells) in snapshot.rows.iter().enumerate() {
+            for (column_index, cell) in cells.iter().enumerate() {
+                if cell.link.as_deref() == Some("https://example.com/oauth") && link_cell.is_none()
+                {
+                    link_cell = Some((u16::try_from(column_index)?, u16::try_from(row_index)?));
+                }
+                if cell.link.as_deref() == Some("javascript:alert(1)") && script_cell.is_none() {
+                    script_cell = Some(u16::try_from(column_index)?);
+                }
+            }
+        }
+        let scale = window.scale_factor();
+        let painted = window.painted_quads().into_iter().any(|rectangle| {
+            rectangle.bounds.size.height.0 / scale <= UNDERLINE_HEIGHT
+                && rectangle.bounds.size.width.0 / scale >= LINK_WIDTH
+        });
+        assert!(painted, "the link label is underlined");
+        let (column, row) = link_cell.ok_or("missing link")?;
+        Ok::<_, Failed>((column, row, script_cell.ok_or("missing script")?))
+    })??;
+    let mut visual = VisualTestContext::from_window(fixture.handle.into(), context);
+    let position = fixture.cell(context, column, row)?;
+    visual.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+    assert!(
+        visual.opened_url().is_none(),
+        "a plain click stays in the terminal"
+    );
+    fixture.requests.borrow_mut().clear();
+    visual.simulate_mouse_down(
+        position,
+        MouseButton::Left,
+        Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        },
+    );
+    assert_eq!(
+        visual.opened_url().as_deref(),
+        Some("https://example.com/oauth"),
+        "Command-click opens the hidden target"
+    );
+    assert!(
+        fixture.requests.borrow().is_empty(),
+        "opening a link does not report the click"
+    );
+    let script = fixture.cell(context, script_column, row)?;
+    visual.simulate_mouse_down(
+        script,
+        MouseButton::Left,
+        Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        },
+    );
+    assert_eq!(
+        visual.opened_url().as_deref(),
+        Some("https://example.com/oauth"),
+        "a script target is not opened"
+    );
+    Ok(())
+}

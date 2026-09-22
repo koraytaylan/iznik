@@ -119,6 +119,8 @@ pub struct CellRun {
     pub background: RgbColor,
     /// Underline color after palette resolution and inverse-aware defaulting.
     pub underline: RgbColor,
+    /// OSC 8 target shared by every cell in the run. Absent when the run is plain text.
+    pub link: Option<String>,
 }
 
 /// Cursor geometry in one row.
@@ -263,6 +265,7 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
                 foreground: cell.foreground,
                 background: cell.background,
                 underline: underline_color(cell, colors),
+                link: cell.link.clone(),
             });
         }
         previous_wide = wide;
@@ -289,6 +292,7 @@ fn continues_run(
         && run.style == cell.style
         && run.foreground == cell.foreground
         && run.background == cell.background
+        && run.link == cell.link
 }
 
 /// Whether this cell is exactly one braille pattern.

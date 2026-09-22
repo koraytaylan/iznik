@@ -48,3 +48,15 @@ id = "client-vt-theme-overrides"
 statement = "Application theme changes preserve program OSC overrides until an OSC reset restores the new application default."
 test = "iznik-app::vt_thread::theme_updates_keep_the_program_color_override_until_reset"
 because = "theme setters and OSC processing execute in the same emulator on every host"
+
+[[claim]]
+id = "client-vt-link-target"
+statement = "An OSC 8 hyperlink stores its target on the label cells and clears it on the following cell."
+test = "iznik-app::vt_thread::link_snapshot_keeps_the_target"
+because = "the owning thread and the pinned emulator determine the stored target; a container adds nothing"
+
+[[claim]]
+id = "client-vt-link-open"
+statement = "Command-click opens the https OSC 8 target and underlines its label. A plain click and a script scheme do not open."
+test = "iznik-app::ime::command_click_opens_the_link_target"
+because = "the headless platform records the opened address without a browser or a container"

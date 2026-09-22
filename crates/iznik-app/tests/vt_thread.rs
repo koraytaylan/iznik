@@ -373,3 +373,29 @@ fn theme_updates_keep_the_program_color_override_until_reset() {
         background
     );
 }
+
+/// OSC 8 keeps its target on the label cells and nowhere past the close.
+///
+/// # Panics
+/// Fails when the label loses its target or the following cell inherits it.
+#[test]
+fn link_snapshot_keeps_the_target() {
+    let thread = VtThread::start(VtOptions::default()).expect("thread");
+    open(&thread, Sequence(0), 20, 3).expect("open");
+    let bytes = b"\x1b]8;id=login;https://example.com/oauth\x07click\x1b]8;;\x07.".to_vec();
+    thread
+        .send(VtCommand::Feed {
+            receipt: None,
+            key: key(),
+            sequence: Sequence(0),
+            bytes,
+        })
+        .expect("link");
+    let frame = snapshot(&thread).expect("frame");
+    let row = frame.rows.first().expect("row");
+    for cell in row.iter().take(5) {
+        assert_eq!(cell.link.as_deref(), Some("https://example.com/oauth"));
+    }
+    assert_eq!(row.get(5).expect("after").text, ".");
+    assert_eq!(row.get(5).expect("after").link, None);
+}

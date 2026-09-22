@@ -728,17 +728,27 @@ fn decorations(
     }
 }
 
+/// A hyperlink is underlined even when the program set no underline style.
+fn drawn_underline(run: &CellRun) -> Underline {
+    if run.link.is_some() && run.style.underline == Underline::None {
+        Underline::Single
+    } else {
+        run.style.underline
+    }
+}
+
 /// Straight underline styles use terminal cells, preserving gaps and double rules.
 fn underline(run: &CellRun, metrics: &GridMetrics, bounds: Bounds<Pixels>, window: &mut Window) {
     let origin = point(bounds.origin.x, distance(bounds.bottom(), px(STROKE_WIDTH)));
     let tint = color(run.underline);
-    match run.style.underline {
+    let drawn = drawn_underline(run);
+    match drawn {
         Underline::Single | Underline::Double => {
             window.paint_quad(fill(
                 Bounds::new(origin, size(bounds.size.width, px(STROKE_WIDTH))),
                 tint,
             ));
-            if run.style.underline == Underline::Double {
+            if drawn == Underline::Double {
                 window.paint_quad(fill(
                     Bounds::new(
                         point(origin.x, distance(origin.y, px(DOUBLE_OFFSET))),
@@ -751,7 +761,7 @@ fn underline(run: &CellRun, metrics: &GridMetrics, bounds: Bounds<Pixels>, windo
         Underline::Dotted | Underline::Dashed => {
             for column in 0..run.columns {
                 let left = offset(origin.x, scale(metrics.cell_width, f32::from(column)));
-                let width = if run.style.underline == Underline::Dotted {
+                let width = if drawn == Underline::Dotted {
                     px(STROKE_WIDTH)
                 } else {
                     scale(metrics.cell_width, DASH_FRACTION)
@@ -760,7 +770,7 @@ fn underline(run: &CellRun, metrics: &GridMetrics, bounds: Bounds<Pixels>, windo
                     Bounds::new(point(left, origin.y), size(width, px(STROKE_WIDTH))),
                     tint,
                 ));
-                if run.style.underline == Underline::Dotted {
+                if drawn == Underline::Dotted {
                     window.paint_quad(fill(
                         Bounds::new(
                             point(
