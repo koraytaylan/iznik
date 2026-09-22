@@ -207,6 +207,13 @@ screen replaces it; no output is guessed across a discontinuity.
 reuse GPUI's cached paint subtrees, including when sibling rows change.
 Narrow text runs retain font ligatures; wide graphemes are anchored at their
 own terminal columns so fallback glyph advances cannot shift following text.
+Braille patterns are drawn as a dot grid inside each cell, on whole display
+pixels of that cell so every dot in a chart is the same size and none of them
+cross into the next column. Fallback fonts draw
+those glyphs smaller than the cell and with a different advance, which lets a
+chart walk into the text beside it. Geometric symbols such as a spinner's
+squares are each centered in their own cell, so a row of them cannot collapse
+onto the first column.
 Selection and cursor geometry use the same cell metrics as row layout.
 
 The grid emits `GridScroll` for wheel and Shift-PageUp/PageDown/Home/End

@@ -205,11 +205,25 @@ pub fn draw_list(
         .collect()
 }
 
-/// Group narrow cells while isolating wide glyphs so fallback font metrics
-/// cannot move the following text off its terminal column.
+/// Unicode braille patterns occupy U+2800 through U+28FF. The low eight bits
+/// of the code point are the dot mask, which the row painter draws itself.
+const BRAILLE_BLOCK_ORIGIN: u32 = 0x2800;
+
+/// Geometric shapes and the symbol-and-arrow block. Each is one terminal cell,
+/// but fallback fonts give them a smaller advance than the cell, so a run of
+/// them collapses into a cluster.
+const SYMBOL_SPAN_COUNT: usize = 2;
+/// Inclusive code-point spans for [`SYMBOL_SPAN_COUNT`].
+const SYMBOL_SPAN: [(u32, u32); SYMBOL_SPAN_COUNT] = [(0x25A0, 0x25FF), (0x2B00, 0x2BFF)];
+
+/// Group narrow cells while isolating wide glyphs, braille patterns and
+/// cell symbols so fallback font metrics cannot move the following text off
+/// its terminal column.
 fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
     let mut runs: Vec<CellRun> = Vec::new();
     let mut previous_wide = false;
+    let mut previous_braille = false;
+    let mut previous_symbol = false;
     for (column, cell) in cells.iter().enumerate() {
         let Ok(column) = u16::try_from(column) else {
             break;
@@ -232,12 +246,11 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
                 })
                 .collect()
         };
-        if !wide
-            && !previous_wide
-            && let Some(last) = runs.last_mut()
-            && last.style == cell.style
-            && last.foreground == cell.foreground
-            && last.background == cell.background
+        let braille = is_braille_text(&text);
+        let symbol = is_symbol_text(&text);
+        let same_kind = braille == previous_braille && !symbol && !previous_symbol;
+        if let Some(last) = runs.last_mut()
+            && continues_run(last, cell, wide, previous_wide, same_kind)
         {
             last.text.push_str(&text);
             last.columns = last.columns.saturating_add(1);
@@ -253,8 +266,71 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
             });
         }
         previous_wide = wide;
+        previous_braille = braille;
+        previous_symbol = symbol;
     }
     runs
+}
+
+/// A narrow cell continues the current run when its style matches and it is
+/// the same kind of text. Braille stays in its own runs, and each geometric
+/// symbol stays in its own cell, so a chart or a spinner cannot share a shaped
+/// line with the text beside it.
+fn continues_run(
+    run: &CellRun,
+    cell: &CellSnapshot,
+    wide: bool,
+    previous_wide: bool,
+    same_kind: bool,
+) -> bool {
+    !wide
+        && !previous_wide
+        && same_kind
+        && run.style == cell.style
+        && run.foreground == cell.foreground
+        && run.background == cell.background
+}
+
+/// Whether this cell is exactly one braille pattern.
+fn is_braille_text(text: &str) -> bool {
+    let mut characters = text.chars();
+    characters
+        .next()
+        .is_some_and(|character| braille_mask(character).is_some())
+        && characters.next().is_none()
+}
+
+/// Dot mask of one braille pattern, or `None` for every other scalar.
+fn braille_mask(character: char) -> Option<u8> {
+    let offset = u32::from(character).checked_sub(BRAILLE_BLOCK_ORIGIN)?;
+    u8::try_from(offset).ok()
+}
+
+/// Whether this cell is one geometric symbol or arrow whose glyph must stay
+/// in its own column. A run of these is how a scanner spinner draws its dots.
+fn is_symbol_text(text: &str) -> bool {
+    let mut characters = text.chars();
+    characters.next().is_some_and(is_symbol_character) && characters.next().is_none()
+}
+
+/// Whether one scalar is a geometric shape or a symbol from the arrow block.
+fn is_symbol_character(character: char) -> bool {
+    let code = u32::from(character);
+    SYMBOL_SPAN
+        .iter()
+        .any(|range| code >= range.0 && code <= range.1)
+}
+
+/// Whether every scalar in a run is a braille pattern. An empty run is not.
+fn is_braille_run(text: &str) -> bool {
+    let mut found = false;
+    for character in text.chars() {
+        if braille_mask(character).is_none() {
+            return false;
+        }
+        found = true;
+    }
+    found
 }
 
 /// Resolve decoration color using the same snapshot palette as the text.

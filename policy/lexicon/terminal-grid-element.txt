@@ -1,6 +1,7 @@
 anchor
 average
 bottom
+braille
 category
 dash
 decoration
@@ -37,6 +38,7 @@ scrollbar
 strike
 stroke
 support
+symbol
 tint
 viewport
 wheel

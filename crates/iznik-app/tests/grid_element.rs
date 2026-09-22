@@ -572,6 +572,122 @@ fn overlays(context: &mut TestAppContext) -> Result<(), Failed> {
 }
 
 #[gpui_kit::test]
+fn grid_paints_braille_pattern_inside_cells(context: &mut TestAppContext) {
+    check(&braille_pattern(context));
+}
+
+/// A chart keeps its columns, and every dot of a full pattern stays inside them.
+///
+/// # Errors
+/// Returns terminal, grid or window failures.
+///
+/// # Panics
+/// Fails if braille shares a shaped run with text, or dots bunch up or leave the cell.
+fn braille_pattern(context: &mut TestAppContext) -> Result<(), Failed> {
+    /// Direct color used only by the braille dots.
+    const DOT_COLOR: u32 = 0x00e1_1d48;
+    /// Default cell width from [`GridMetrics`].
+    const CELL_WIDTH: f32 = 8.0;
+    /// Default row height from [`GridMetrics`].
+    const CELL_HEIGHT: f32 = 18.0;
+    /// First column of the braille run, after two text cells.
+    const BRAILLE_COLUMN: f32 = 2.0;
+    /// Two full patterns and one blank pattern.
+    const BRAILLE_COLUMNS: f32 = 3.0;
+    /// Eight dots in each of the two full patterns.
+    const DOT_COUNT: usize = 16;
+    /// Origins of the two columns in one cell differ by at least a quarter cell.
+    const MINIMUM_SPREAD: f32 = 2.0;
+    context.update(gpui_kit::init);
+    let handle =
+        context.add_window(|_window, context| TerminalGrid::new(GridMetrics::default(), context));
+    let thread = VtThread::start(VtOptions::default())?;
+    open(&thread, Sequence(0), DAMAGE_COLUMNS, DAMAGE_ROWS)?;
+    thread.send(VtCommand::Feed {
+        receipt: None,
+        key: key(),
+        sequence: Sequence(0),
+        bytes: "ab\u{1b}[38;2;225;29;72m\u{28FF}\u{28FF}\u{2800}\u{1b}[0mcd"
+            .as_bytes()
+            .to_vec(),
+    })?;
+    let current = snapshot(&thread)?;
+    let drawings = draw_list(&current, None)?;
+    let Some(row) = drawings.first() else {
+        return Err(std::io::Error::other("the viewport has no row").into());
+    };
+    let Some(braille_run) = row.runs.get(1) else {
+        return Err(std::io::Error::other("the braille run is missing").into());
+    };
+    assert_eq!(
+        (
+            braille_run.column,
+            braille_run.columns,
+            braille_run.text.as_str()
+        ),
+        (2, 3, "\u{28FF}\u{28FF}\u{2800}"),
+        "braille stays out of the surrounding text runs"
+    );
+    let Some(following) = row.runs.get(2) else {
+        return Err(std::io::Error::other("the text after braille is missing").into());
+    };
+    assert_eq!(
+        following.column, 5,
+        "text after a chart stays on its terminal column"
+    );
+    assert!(
+        following.text.starts_with("cd"),
+        "text after braille: {}",
+        following.text
+    );
+    handle.update(context, |grid, _window, context| {
+        grid.apply(current, context)
+    })??;
+    draw(context, handle)?;
+    handle.update(context, |grid, window, application| {
+        assert!(grid.paint_errors(application).is_empty(), "paint errors");
+        let painted = painted_bounds(window, gpui_kit::rgb(DOT_COLOR).into());
+        assert_eq!(
+            painted.len(),
+            DOT_COUNT,
+            "blank braille adds no dots: {painted:?}"
+        );
+        let left = CELL_WIDTH * BRAILLE_COLUMN;
+        let right = CELL_WIDTH * (BRAILLE_COLUMN + BRAILLE_COLUMNS);
+        let (_, _, dot_width, dot_height) =
+            painted.first().copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
+        for (horizontal, vertical, width, height) in &painted {
+            assert!(
+                *horizontal >= left
+                    && horizontal + width <= right
+                    && *vertical >= 0.0
+                    && vertical + height <= CELL_HEIGHT,
+                "dot leaves its cell: {painted:?}"
+            );
+            assert_eq!(
+                (*width, *height),
+                (dot_width, dot_height),
+                "every braille dot is the same size"
+            );
+        }
+        let first_cell: Vec<_> = painted
+            .iter()
+            .filter(|(horizontal, _, _, _)| *horizontal < left + CELL_WIDTH)
+            .collect();
+        assert_eq!(first_cell.len(), DOT_COUNT / 2, "one full pattern");
+        let near = first_cell
+            .iter()
+            .fold(f32::MAX, |near, cell| near.min(cell.0));
+        let far = first_cell.iter().fold(0.0_f32, |far, cell| far.max(cell.0));
+        assert!(
+            far - near >= MINIMUM_SPREAD,
+            "dots are bunched: {near} {far}"
+        );
+    })?;
+    Ok(())
+}
+
+#[gpui_kit::test]
 fn grid_credit_counts_consumption_once_and_retries_failed_submission(context: &mut TestAppContext) {
     check(&credit(context));
 }

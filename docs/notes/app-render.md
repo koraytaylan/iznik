@@ -53,4 +53,7 @@ They remain deferred even on their named operating system. The verifier does
 not run a synthetic test or treat this document as proof of presentation.
 The automated scene proofs additionally inspect decoration colors and exact
 cell-aligned selection, cursor, inverse-background and underline rectangles.
+Braille patterns are part of that scene proof: each pattern is a dot grid
+clipped to its cell, so a chart cannot walk into neighboring text and a
+spinner's dots keep the pattern's spacing instead of the fallback font's.
 GPUI wheel and keyboard dispatch is tested independently of display hardware.
