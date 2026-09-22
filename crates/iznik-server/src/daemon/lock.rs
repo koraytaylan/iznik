@@ -23,6 +23,7 @@ use nix::fcntl::{Flock, FlockArg};
 use super::socket;
 
 /// The mode the lock file is created with: the owner's, and nobody else's.
+#[cfg(unix)]
 const OWNER_ONLY: u32 = 0o600;
 
 /// How many times a refused attempt is tried again before it is called a

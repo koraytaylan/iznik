@@ -36,6 +36,7 @@ const CONTROL_DIRECTORY_NAME: &str = "control";
 const LOG_NAME: &str = "client.log";
 
 /// Owner-only, because a control socket is an open connection to a host.
+#[cfg(unix)]
 const OWNER_ONLY: u32 = 0o700;
 
 /// How many bytes of a unix socket path the platform allows, on the one that
