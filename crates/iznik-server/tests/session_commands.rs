@@ -51,6 +51,7 @@ fn registry_running(program: Program) -> Result<Registry, MirrorError> {
         RegistryDefaults {
             program,
             terminfo_directory: None,
+            program_interval: Duration::ZERO,
         },
         budget,
         mirrors,

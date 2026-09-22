@@ -29,6 +29,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `multiplexer::scheduler` | One scheduling round: the focused cursor first, then round-robin, a cursor at zero credit skipped, a lagging background cursor marked stale. | `multiplexer-assembly` (plan 0003) |
 | `pane` | The pane: pseudoterminal, mirror, history ring and mark observer held together by one VT task, behind one interface. | `pane-assembly` (plan 0002) |
 | `pty` | Pseudoterminal ownership: spawning the login shell in its own session and turning its blocking descriptor into async streams. | `pty-spawn` (plan 0002) |
+| `pty::program` | The foreground program and directory of a pane's process, read so a tab can name itself without shell integration. | `session-registry` (plan 0003) |
 | `pty::spawn` | Opening a pseudoterminal pair and spawning the program in its own session, with the environment a pane runs under and faithful exit statuses. | `pty-spawn` (plan 0002) |
 | `pty::streams` | The one module where blocking I/O exists: dedicated threads that turn the pseudoterminal descriptor into an async output stream and an input queue. | `pty-streams` (plan 0002) |
 | `relay` | `iznik-server --stdio`: the bridge between the standard streams and the daemon's socket, starting the daemon on first use. | `stdio-relay` (plan 0004) |
@@ -36,6 +37,8 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `session` | The session registry: the authoritative host model, the panes behind it, and the numbered deltas every change emits. | `session-registry` (plan 0003) |
 | `session::commands` | Applying a session command to the registry: validation against the model first, then the operation, answered exactly once. | `session-commands` (plan 0003) |
 | `session::registry` | The registry's operations and their delta order, the ingestion of pane marks, sizes and exits, and the debug-only validation after every operation. | `session-registry` (plan 0003) |
+| `session::registry::ingest` | Marks, sizes and exits pulled into the model, plus a foreground-program sample when the daemon is naming tabs from one. | `session-registry` (plan 0003) |
+| `session::registry::program` | Sampling each pane's foreground program and publishing it as the pane title and directory. | `session-registry` (plan 0003) |
 | `terminal` | The terminal mirror thread and the emulator every pane's bytes are fed into. | `terminal-mirror` (plan 0002) |
 | `terminal::marks` | The shell-integration observer: OSC 133, OSC 7, titles and alternate-screen switches recognized as bytes pass, across any chunk boundary, without touching them. | `shell-integration-marks` (plan 0002) |
 | `terminal::mirror` | The mirror thread's `LocalSet`, the `libghostty-vt` terminal behind each pane, and the policy that answers a program's queries only while nobody is subscribed. | `terminal-mirror` (plan 0002) |

@@ -20,6 +20,7 @@ use iznik_protocol::model::{HostModel, LayoutNode, Session, SplitDirection, Tab,
 use crate::actions::ActionId;
 use crate::host_ui::EngineState;
 use crate::palette::fuzzy_match;
+use crate::tab_label;
 use crate::window::TabKey;
 
 /// The share every pane gets when an arrangement lays them out evenly.
@@ -346,6 +347,8 @@ fn ask(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -> Opti
         .find(|session| session.id == key.session)?;
     let tab = session.tabs.iter().find(|tab| tab.id == key.tab)?;
     let host = key.host.clone();
+    let focus = state.model().host(&key.host).and_then(|view| view.focus);
+    let tab_name = tab_label::shown_tab_name(tab, focus);
     let (question, initial, expected) = match action {
         ActionId::RenameSession => (
             format!("New name for session \u{201C}{}\u{201D}", session.name),
@@ -356,12 +359,12 @@ fn ask(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -> Opti
             },
         ),
         ActionId::RenameTab => (
-            format!("New name for tab \u{201C}{}\u{201D}", tab.name),
-            tab.name.clone(),
+            format!("New name for tab \u{201C}{tab_name}\u{201D}"),
+            tab_name,
             Expected::TabName { host, tab: tab.id },
         ),
         ActionId::ReorderTabs => choice(
-            format!("Move tab \u{201C}{}\u{201D}", tab.name),
+            format!("Move tab \u{201C}{tab_name}\u{201D}"),
             &host,
             reorder_choices(session, tab.id),
         ),
@@ -370,11 +373,11 @@ fn ask(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -> Opti
             choice(
                 "Move the pane to tab".to_owned(),
                 &host,
-                move_choices(model, tab.id, pane),
+                move_choices(model, tab.id, pane, focus),
             )
         }
         ActionId::SetLayout => choice(
-            format!("Arrange tab \u{201C}{}\u{201D}", tab.name),
+            format!("Arrange tab \u{201C}{tab_name}\u{201D}"),
             &host,
             layout_choices(tab),
         ),
@@ -552,7 +555,12 @@ fn moving_pane(state: &EngineState, key: &TabKey, tab: &Tab) -> Option<PaneId> {
 }
 
 /// Every other tab on the host with a pane to place the moving pane beside.
-fn move_choices(model: &HostModel, from: TabId, pane: PaneId) -> Vec<(String, SessionCommand)> {
+fn move_choices(
+    model: &HostModel,
+    from: TabId,
+    pane: PaneId,
+    focus: Option<PaneId>,
+) -> Vec<(String, SessionCommand)> {
     model
         .sessions
         .iter()
@@ -560,8 +568,9 @@ fn move_choices(model: &HostModel, from: TabId, pane: PaneId) -> Vec<(String, Se
         .filter(|(_, tab)| tab.id != from)
         .filter_map(|(session, tab)| {
             let target = tab.layout.leaves().last().copied()?;
+            let tab_name = tab_label::shown_tab_name(tab, focus);
             Some((
-                format!("{} / {}", session.name, tab.name),
+                format!("{} / {tab_name}", session.name),
                 SessionCommand::MovePane {
                     pane,
                     to_tab: tab.id,

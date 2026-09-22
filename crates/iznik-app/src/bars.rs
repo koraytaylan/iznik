@@ -15,6 +15,7 @@ use crate::actions::ActionId;
 use crate::host_ui::EngineState;
 use crate::status;
 use crate::tab_actions::{self, DragPreview, DraggedEntry};
+use crate::tab_label;
 use crate::window::{SessionKey, TabKey, WindowShell};
 
 /// Where the tab strip is drawn.
@@ -119,12 +120,14 @@ pub fn render_placed(
                     tab: tab.id,
                 };
                 let tab_selected = selected == Some(&tab_key);
+                let label = tab_label::shown_tab_name(tab, view.focus);
                 tabs = tabs.child(tab_entry(
                     theme,
                     shell,
                     TabChip {
                         key: tab_key,
                         tab,
+                        label,
                         order: &order,
                         connected,
                         selected: tab_selected,
@@ -410,6 +413,9 @@ struct TabChip<'model> {
     key: TabKey,
     /// The tab itself.
     tab: &'model Tab,
+    /// The name the chip draws: a renamed tab's own name, otherwise the
+    /// foreground program or the directory.
+    label: String,
     /// Its session's tabs, in order, for moves and drops.
     order: &'model [TabId],
     /// Whether its host is connected.
@@ -429,6 +435,7 @@ fn tab_entry(
     let TabChip {
         key,
         tab,
+        label,
         order,
         connected,
         selected,
@@ -459,7 +466,7 @@ fn tab_entry(
         .on_mouse_down(MouseButton::Left, |_event, _window, application| {
             application.stop_propagation();
         })
-        .child(format!("{}{}", tab.name, marker))
+        .child(format!("{label}{marker}"))
         .child(tab_close(theme, shell, &key.host, tab.id));
     let Some(target) = shell.cloned() else {
         return entry.into_any_element();
@@ -479,7 +486,7 @@ fn tab_entry(
             );
         });
     });
-    let dragged = DraggedEntry::tab(key.clone(), tab.name.clone());
+    let dragged = DraggedEntry::tab(key.clone(), label.clone());
     let (preview_background, preview_foreground, preview_border) =
         (theme.tab_active, theme.tab_active_foreground, theme.border);
     let drop_target = target.clone();

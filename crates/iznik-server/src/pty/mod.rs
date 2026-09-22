@@ -5,5 +5,6 @@
 //! by task `pty-streams` of plan 0002 — turns the blocking descriptor into
 //! async output and input on dedicated threads.
 
+pub mod program;
 pub mod spawn;
 pub mod streams;

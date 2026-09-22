@@ -27,6 +27,7 @@ use crate::settings::{Settings, Watcher};
 use crate::splits;
 use crate::status;
 use crate::surface::{PaneSurface, SurfaceFailure};
+use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
 
@@ -43,9 +44,6 @@ const DEFAULT_ROWS: u16 = 24;
 pub(crate) const TERMINAL_PADDING: f32 = 8.0;
 /// Default session name used by the argument-free palette action.
 const DEFAULT_SESSION_NAME: &str = "session";
-/// Default tab name used by the argument-free palette action, matching the
-/// name the host gives a session's first tab.
-const DEFAULT_TAB_NAME: &str = "shell";
 
 /// Window options whose timing can be shortened or disabled by a headless caller.
 #[derive(Clone, Debug)]

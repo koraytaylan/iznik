@@ -195,6 +195,7 @@ impl Rig {
                     arguments: Vec::new(),
                 },
                 terminfo_directory: None,
+                program_interval: Duration::ZERO,
             },
             Arc::new(Mutex::new(HistoryBudget::new(budget))),
             MirrorThread::start()?,

@@ -290,6 +290,15 @@ impl Pane {
             .process_id()
     }
 
+    /// The foreground process, or the shell when the shell is in the foreground.
+    #[must_use]
+    pub fn foreground_process_id(&self) -> u32 {
+        self.process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .foreground_process_id()
+    }
+
     /// The bytes from `from` to the newest, as one vector. The copy is made while
     /// the history lock is held, so it is consistent; a subscriber reads
     /// incrementally from its own cursor, keeping the copy — and the lock — short,

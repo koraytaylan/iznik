@@ -10,5 +10,6 @@ pub mod frame;
 pub mod identity;
 pub mod message;
 pub mod model;
+pub mod program;
 pub mod reconcile;
 mod wire;

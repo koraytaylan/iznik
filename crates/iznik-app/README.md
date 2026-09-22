@@ -134,6 +134,7 @@ rather than ending the connection.
 | `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
 | `ssh_config` | The person's own ssh configuration: the concrete aliases it defines, and the `Host`/`HostName` block this application appends when Add Host asks. |
 | `tab_actions` | The bar's right-click menus and drag-to-reorder: the same menu shape for a tab and a session, the orders a move or a drop produces for tabs and for sessions, the entries its close affordances close, and the open menu the shell renders and dismisses. |
+| `tab_label` | The name a tab chip shows: a renamed tab's own name, otherwise the foreground program or the directory. |
 | `theme` | Application theme mapped into terminal emulator defaults. |
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |

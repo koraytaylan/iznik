@@ -16,6 +16,7 @@ Every discriminant, byte layout and rule a second implementation needs is writte
 | `identity` | The `Copy` newtypes every message names a thing by: pane, tab, session and command ids, generations and byte sequences. | `control-messages` (plan 0001) |
 | `message` | The control messages on channel 0 in both directions, the error codes and the mark kinds, and the rule that pane output on every other channel is never parsed. | `control-messages` (plan 0001) |
 | `model` | The host model: sessions holding ordered tabs holding a normalized layout tree of panes, its invariants, and the `Snapshot` payload encoding. | `model-types` (plan 0003) |
+| `program` | What a pane is running, as a tab can show it: a program name, or the directory when the foreground program is the shell. | `session-registry` (plan 0003) |
 | `reconcile` | Applying a numbered delta to a host model: exactly the next generation, every invariant checked before the first mutation. | `deltas-and-reconciler` (plan 0003) |
 | `wire` | The little-endian, length-prefixed primitives every codec in the crate reads and writes with: a sink measured before it is filled, and a reader that names what it could not read. | `control-messages` (plan 0001), as a follow-up |
 

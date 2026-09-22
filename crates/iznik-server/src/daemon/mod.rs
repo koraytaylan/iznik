@@ -408,6 +408,7 @@ pub async fn serve(
         RegistryDefaults {
             program: options.program.clone(),
             terminfo_directory: None,
+            program_interval: crate::pty::program::PROGRAM_INTERVAL,
         },
         Arc::new(Blocking::new(HistoryBudget::new(
             DEFAULT_HISTORY_BUDGET_BYTES,

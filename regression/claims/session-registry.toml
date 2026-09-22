@@ -40,6 +40,18 @@ test = "iznik-server::session_registry::session_registry_ids_are_never_reused"
 because = "identity is minted from counters in memory; a container adds nothing"
 
 [[claim]]
+id = "registry-a-running-program-names-its-pane"
+statement = "A pane running a program other than its shell takes that program's name as its title and records the process directory."
+test = "iznik-server::program_names::a_running_program_names_its_pane"
+because = "the name is read from the process on this machine; a container adds nothing"
+
+[[claim]]
+id = "registry-a-shell-pane-has-its-directory"
+statement = "A pane whose foreground program is the shell records the process directory and does not name itself after the shell."
+test = "iznik-server::program_names::a_shell_pane_has_its_directory"
+because = "the directory is read from the process on this machine; a container adds nothing"
+
+[[claim]]
 id = "registry-a-lagging-receiver-disturbs-nothing"
 statement = "A receiver that falls further behind than the delta channel holds is told so, and the registry is not disturbed by it; a fresh receiver takes up from there, which is what a client that asked for a snapshot does."
 test = "iznik-server::session_registry::session_registry_a_lagging_receiver_disturbs_nothing"

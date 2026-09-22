@@ -20,9 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use iznik_protocol::command::Placement;
-use iznik_protocol::delta::{Delta, ExitStatus as EndedAs, RemovalReason};
+use iznik_protocol::delta::{Delta, RemovalReason};
 use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
-use iznik_protocol::message::MarkKind;
 use iznik_protocol::model;
 use iznik_protocol::model::{HostModel, LayoutNode, ModelError, Session, Tab, Weighted};
 use iznik_protocol::reconcile::{ReconcileError, apply};
@@ -30,9 +29,12 @@ use tokio::sync::{Notify, broadcast, watch};
 
 use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
 use crate::pane::{Pane, PaneState};
-use crate::pty::spawn::{ExitStatus, Program, Signal, SpawnOptions};
+use crate::pty::spawn::{Program, SpawnOptions};
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
+
+mod ingest;
+mod program;
 
 /// How many deltas a client may fall behind before it is told the whole model
 /// instead — what its reconciler would have asked for anyway. A memory bound,
@@ -49,7 +51,7 @@ const ENDING_LOOK_INTERVAL: Duration = Duration::from_millis(10);
 /// on a permit already there is a look nobody takes; not five, because every
 /// look costs whoever is waiting a write lock and a session of thirty panes
 /// closing pays for all of them.
-const ENDING_LOOKS: usize = 2 * EXIT_STATUS_ATTEMPTS;
+const ENDING_LOOKS: usize = 2 * ingest::EXIT_STATUS_ATTEMPTS;
 
 /// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;
@@ -72,6 +74,9 @@ pub struct RegistryDefaults {
     pub program: Program,
     /// The terminfo a ghostty `TERM` needs, when there is one.
     pub terminfo_directory: Option<PathBuf>,
+    /// How often a pane's foreground program and directory are read.
+    /// [`Duration::ZERO`] leaves the tab named as it was created.
+    pub program_interval: Duration,
 }
 
 /// Why a session operation could not be carried out; it lives in the
@@ -121,11 +126,19 @@ pub struct Registry {
     /// this registry knows when to call [`Registry::ingest`] rather than
     /// polling for it or never calling it at all.
     signal: Arc<Notify>,
+    /// Foreground program samples, when [`RegistryDefaults::program_interval`]
+    /// is not zero.
+    programs: Option<program::ProgramWatch>,
 }
 
 impl Registry {
     /// A registry holding nothing, spawning panes on `mirrors` out of
     /// `budget`.
+    ///
+    /// # Panics
+    ///
+    /// When `defaults.program_interval` is not zero and this is called outside
+    /// a Tokio runtime: the program sampler is a task.
     #[must_use]
     pub fn new(
         defaults: RegistryDefaults,
@@ -133,6 +146,9 @@ impl Registry {
         mirrors: MirrorThread,
     ) -> Registry {
         let (deltas, _receiver) = broadcast::channel(DELTA_BROADCAST_CAPACITY);
+        let signal = Arc::new(Notify::new());
+        let programs = (!defaults.program_interval.is_zero())
+            .then(|| program::ProgramWatch::start(defaults.program_interval, Arc::clone(&signal)));
         Registry {
             model: HostModel {
                 generation: Generation(0),
@@ -147,7 +163,8 @@ impl Registry {
             mirrors,
             defaults,
             deltas,
-            signal: Arc::new(Notify::new()),
+            signal,
+            programs,
         }
     }
 
@@ -299,7 +316,11 @@ impl Registry {
                 unexplained: 0,
             },
         );
-        self.panes.insert(id, Arc::new(pane));
+        let pane = Arc::new(pane);
+        if let Some(programs) = &self.programs {
+            programs.watch(id, Arc::clone(&pane));
+        }
+        self.panes.insert(id, pane);
         self.apply_budget();
         Ok((
             id,
@@ -613,6 +634,9 @@ impl Registry {
             tracing::warn!(%error, pane = pane.0, "a pane did not close cleanly");
         }
         let _watched = self.watching.remove(&pane);
+        if let Some(programs) = &self.programs {
+            programs.forget(pane);
+        }
         self.budget
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -847,141 +871,5 @@ impl Registry {
         });
         self.settled();
         Ok(())
-    }
-}
-
-/// How many looks for a pane's exit status before it is reported as simply
-/// gone. The reaper records it a moment after the stream closes.
-const EXIT_STATUS_ATTEMPTS: usize = 100;
-
-/// `SIGHUP`'s number, which is what a client is told when a pane's child was
-/// hung up rather than exiting on its own.
-const HANGUP_SIGNAL: i32 = 1;
-
-/// `SIGKILL`'s number.
-const KILL_SIGNAL: i32 = 9;
-
-/// `SIGTERM`'s number.
-const TERMINATE_SIGNAL: i32 = 15;
-
-impl Registry {
-    /// Turns everything the panes have reported since the last call into
-    /// deltas: titles and working directories from their marks, sizes from
-    /// their state, and the removal cascade from an exit. It takes what is
-    /// there and does not wait, so whoever owns the registry calls it when
-    /// [`Registry::signal`] is raised.
-    ///
-    /// # Panics
-    ///
-    /// A pane whose child has ended is taken out of the model, and ending a
-    /// pane escalates to `SIGKILL` on a task, so this must be called from
-    /// within a Tokio runtime.
-    pub fn ingest(&mut self) {
-        let panes: Vec<PaneId> = self.watching.keys().copied().collect();
-        for pane in panes {
-            self.ingest_marks(pane);
-            self.ingest_state(pane);
-        }
-        self.settled();
-    }
-
-    /// The deltas a pane's marks have become. A mark the model does not hold
-    /// is a client's business, and the multiplexer forwards it.
-    fn ingest_marks(&mut self, pane: PaneId) {
-        let mut deltas = Vec::new();
-        if let Some(watching) = self.watching.get_mut(&pane) {
-            loop {
-                match watching.marks.try_recv() {
-                    Ok(event) => match event.kind {
-                        MarkKind::Title { text } => {
-                            deltas.push(Delta::PaneTitle { pane, title: text });
-                        }
-                        MarkKind::WorkingDirectory { path } => {
-                            deltas.push(Delta::PaneWorkingDirectory { pane, path });
-                        }
-                        MarkKind::PromptStart
-                        | MarkKind::CommandStart
-                        | MarkKind::CommandExecuted
-                        | MarkKind::CommandFinished { .. }
-                        | MarkKind::AlternateScreen { .. } => {}
-                    },
-                    // A client that fell behind on marks still gets the model
-                    // right; the ring is the durable record of the bytes.
-                    Err(broadcast::error::TryRecvError::Lagged(_missed)) => {}
-                    Err(_gone) => break,
-                }
-            }
-        }
-        for delta in deltas {
-            self.announce(delta);
-        }
-    }
-
-    /// The deltas a pane's size and end have become.
-    fn ingest_state(&mut self, pane: PaneId) {
-        let Some(watching) = self.watching.get_mut(&pane) else {
-            return;
-        };
-        // A closed sender still holds the last state it published, and that is
-        // the one that says the child has gone.
-        if !watching.state.has_changed().unwrap_or(true) {
-            return;
-        }
-        let state = *watching.state.borrow_and_update();
-        let resized = (state.columns, state.rows) != watching.size;
-        watching.size = (state.columns, state.rows);
-        let ending = state.exited && !watching.ended;
-        if resized {
-            self.announce(Delta::PaneResized {
-                pane,
-                columns: state.columns,
-                rows: state.rows,
-            });
-        }
-        if !ending {
-            return;
-        }
-        // The reaper records the status a moment after the stream closes. The
-        // pane's going is not reported until it can be reported truthfully:
-        // there is no code that stands in for a signal.
-        let status = self
-            .panes
-            .get(&pane)
-            .and_then(|held| held.exit_status_now());
-        let reason = if let Some(status) = status {
-            RemovalReason::Exited(ended_as(status))
-        } else {
-            let looks = self.watching.get_mut(&pane).map_or(usize::MAX, |recorded| {
-                recorded.unexplained = recorded.unexplained.saturating_add(1);
-                recorded.unexplained
-            });
-            if looks < EXIT_STATUS_ATTEMPTS {
-                return;
-            }
-            // A reaper that cannot say how a child ended — one already reaped
-            // by something else — would otherwise leave a dead pane in every
-            // client's model for ever, with nothing able to reach the removal
-            // path. It is gone and nobody can say how, and `Closed` is the
-            // nearest true thing there is to say.
-            tracing::warn!(
-                pane = pane.0,
-                "a pane ended and its status was never recorded"
-            );
-            RemovalReason::Closed
-        };
-        if let Some(recorded) = self.watching.get_mut(&pane) {
-            recorded.ended = true;
-        }
-        self.remove_pane(pane, reason);
-    }
-}
-
-/// How a child's end is told: a code it chose, or the signal's number.
-fn ended_as(status: ExitStatus) -> EndedAs {
-    match status {
-        ExitStatus::Exited(code) => EndedAs::Exited(code),
-        ExitStatus::Signalled(Signal::Hangup) => EndedAs::Signalled(HANGUP_SIGNAL),
-        ExitStatus::Signalled(Signal::Kill) => EndedAs::Signalled(KILL_SIGNAL),
-        ExitStatus::Signalled(Signal::Terminate) => EndedAs::Signalled(TERMINATE_SIGNAL),
     }
 }

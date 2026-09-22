@@ -334,6 +334,19 @@ impl PtyProcess {
         }
     }
 
+    /// The foreground process, or the shell when it is the foreground group.
+    pub(crate) fn foreground_process_id(&self) -> u32 {
+        #[cfg(unix)]
+        {
+            let group = self.foreground_group().unwrap_or_else(|| self.pid());
+            u32::try_from(group.as_raw()).unwrap_or(self.process_id)
+        }
+        #[cfg(windows)]
+        {
+            self.process_id
+        }
+    }
+
     /// Read a positive foreground group from the owned terminal descriptor.
     #[cfg(unix)]
     fn foreground_group(&self) -> Option<Pid> {

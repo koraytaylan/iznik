@@ -26,6 +26,7 @@ pub mod stage;
 pub mod status;
 pub mod surface;
 pub mod tab_actions;
+pub mod tab_label;
 pub mod theme;
 pub mod vt;
 pub mod window;
