@@ -84,6 +84,12 @@ test = "iznik-app::flow::the_empty_window_offers_add_host"
 because = "the headless GPUI window renders the production shell with no host"
 
 [[claim]]
+id = "window-close-stays-in-session"
+statement = "Closing a tab in a later session leaves the window on that session's neighboring tab, and closing its last tab moves to the next session, rather than the first tab of the first session. The close mark does not select the tab it closes."
+test = "iznik-app::tab_selection::closing_a_tab_stays_in_its_session"
+because = "selection after a removal is the headless production shell applying an authoritative delta; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"

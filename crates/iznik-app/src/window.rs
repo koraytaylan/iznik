@@ -468,7 +468,7 @@ impl WindowShell {
             return false;
         }
         self.selected = Some(key);
-        self.reconcile(window, context);
+        self.reconcile(None, window, context);
         true
     }
     /// Select a session's tab holding the host's focused pane, so the model
@@ -620,6 +620,13 @@ impl WindowShell {
         window: &mut Window,
         context: &mut Context<'_, Self>,
     ) {
+        // Captured before the event lands: a removed tab is already gone by
+        // the time the selection is repaired, and its old place is what says
+        // which neighbor to show.
+        let place = self
+            .selected
+            .as_ref()
+            .and_then(|selected| bars::tab_place(self.hosts.state(), selected));
         if let EngineEvent::Said(said) = &event {
             let identity = match said {
                 ManagerEvent::Screen { host, pane, .. }
@@ -639,7 +646,7 @@ impl WindowShell {
         }
         self.hosts.absorb_event(event);
         self.notify_upgrades_on_offer(window, context);
-        self.reconcile(window, context);
+        self.reconcile(place.as_ref(), window, context);
         context.notify();
     }
 
@@ -673,32 +680,26 @@ impl WindowShell {
             .iter()
             .find(|session| session.id == key.session)
     }
-    /// Choose the first existing tab when the previous selection disappeared.
-    fn first_tab(&self) -> Option<TabKey> {
-        self.hosts
-            .state()
-            .model()
-            .hosts
-            .iter()
-            .find_map(|(host, view)| {
-                view.model.sessions.iter().find_map(|session| {
-                    session.tabs.first().map(|tab| TabKey {
-                        host: host.clone(),
-                        session: session.id,
-                        tab: tab.id,
-                    })
-                })
-            })
-    }
     /// Keep live entities through tree changes; only model removal destroys an emulator.
-    fn reconcile(&mut self, window: &mut Window, context: &mut Context<'_, Self>) {
+    ///
+    /// `place` is the selection as it stood before this reconcile's model
+    /// change. When that tab is gone, the next tab of its session takes its
+    /// place, and the next session does when the session itself is gone.
+    fn reconcile(
+        &mut self,
+        place: Option<&bars::TabPlace>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
         self.follow_model(context);
         if self
             .selected
             .as_ref()
             .is_none_or(|selected| self.tab(selected).is_none())
         {
-            self.selected = self.first_tab();
+            self.selected = place
+                .and_then(|place| bars::tab_after_close(self.hosts.state(), place))
+                .or_else(|| bars::first_tab(self.hosts.state()));
         }
         let next_layout = self
             .selected

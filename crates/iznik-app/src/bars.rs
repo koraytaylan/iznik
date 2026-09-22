@@ -521,6 +521,9 @@ fn tab_close(
     if let Some(target) = shell.cloned() {
         let alias = host.0.clone();
         close = close.on_click(move |_event, _window, application| {
+            // The chip around this mark selects on click, so the mark stops
+            // the click and only closes.
+            application.stop_propagation();
             let command = SessionCommand::CloseTab { tab };
             let _ignored = target.update(application, |window_shell, _context| {
                 let _submission = window_shell.dispatch_command(&alias, command);
@@ -547,6 +550,9 @@ fn session_close(
     if let Some(target) = shell.cloned() {
         let alias = host.0.clone();
         close = close.on_click(move |_event, _window, application| {
+            // The chip around this mark selects on click, so the mark stops
+            // the click and only closes.
+            application.stop_propagation();
             let command = SessionCommand::CloseSession { session };
             let _ignored = target.update(application, |window_shell, _context| {
                 let _submission = window_shell.dispatch_command(&alias, command);
@@ -651,6 +657,138 @@ pub fn next_index(current: usize, count: usize, forward: bool) -> usize {
     } else {
         current.saturating_sub(1)
     }
+}
+
+/// Where a selection sat before the model dropped it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabPlace {
+    /// Host the selection belongs to.
+    pub host: HostId,
+    /// Session the selection belongs to.
+    pub session: SessionId,
+    /// The selected tab.
+    pub tab: TabId,
+    /// That session's tabs, in order, including the selected one.
+    pub tabs: Vec<TabId>,
+    /// That host's sessions, in order, including the selected one.
+    pub sessions: Vec<SessionId>,
+}
+
+/// The selection's place in the settled model, while the tab is still there.
+#[must_use]
+pub fn tab_place(state: &EngineState, selected: &TabKey) -> Option<TabPlace> {
+    let view = state.model().host(&selected.host)?;
+    let sessions: Vec<SessionId> = view
+        .model
+        .sessions
+        .iter()
+        .map(|session| session.id)
+        .collect();
+    let session = view
+        .model
+        .sessions
+        .iter()
+        .find(|session| session.id == selected.session)?;
+    let tabs: Vec<TabId> = session.tabs.iter().map(|tab| tab.id).collect();
+    if !tabs.contains(&selected.tab) {
+        return None;
+    }
+    Some(TabPlace {
+        host: selected.host.clone(),
+        session: selected.session,
+        tab: selected.tab,
+        tabs,
+        sessions,
+    })
+}
+
+/// The tab to show once `place` has left the model.
+///
+/// A closed tab yields the one that followed it, or the one before it when it
+/// was last. A session left with no tabs yields the session that followed it,
+/// the same way. The first tab of the first session is only the fallback when
+/// nothing of that place remains.
+#[must_use]
+pub fn tab_after_close(state: &EngineState, place: &TabPlace) -> Option<TabKey> {
+    let view = state.model().host(&place.host)?;
+    if let Some(session) = view
+        .model
+        .sessions
+        .iter()
+        .find(|session| session.id == place.session)
+    {
+        let tabs: Vec<TabId> = session.tabs.iter().map(|tab| tab.id).collect();
+        if let Some(tab) = kept_id(&place.tabs, place.tab, &tabs) {
+            return Some(TabKey {
+                host: place.host.clone(),
+                session: place.session,
+                tab,
+            });
+        }
+    }
+    let sessions: Vec<SessionId> = view
+        .model
+        .sessions
+        .iter()
+        .map(|session| session.id)
+        .collect();
+    let session = kept_id(&place.sessions, place.session, &sessions)?;
+    let tab = view
+        .model
+        .sessions
+        .iter()
+        .find(|candidate| candidate.id == session)?
+        .tabs
+        .first()?
+        .id;
+    Some(TabKey {
+        host: place.host.clone(),
+        session,
+        tab,
+    })
+}
+
+/// The first tab any host holds, in host and session order.
+#[must_use]
+pub fn first_tab(state: &EngineState) -> Option<TabKey> {
+    state.model().hosts.iter().find_map(|(host, view)| {
+        view.model.sessions.iter().find_map(|session| {
+            session.tabs.first().map(|tab| TabKey {
+                host: host.clone(),
+                session: session.id,
+                tab: tab.id,
+            })
+        })
+    })
+}
+
+/// The entry that followed `gone`, or the one before it, when it is still in
+/// `after`. An empty `after` has nowhere to land.
+fn kept_id<Item>(before: &[Item], gone: Item, after: &[Item]) -> Option<Item>
+where
+    Item: Copy + PartialEq,
+{
+    if after.is_empty() {
+        return None;
+    }
+    let Some(index) = before.iter().position(|entry| *entry == gone) else {
+        return after.first().copied();
+    };
+    let next = index
+        .checked_add(1)
+        .and_then(|next| before.get(next))
+        .copied();
+    if next.is_some_and(|candidate| after.contains(&candidate)) {
+        return next;
+    }
+    let previous = index
+        .checked_sub(1)
+        .and_then(|previous| before.get(previous))
+        .copied();
+    if previous.is_some_and(|candidate| after.contains(&candidate)) {
+        return previous;
+    }
+    after.first().copied()
 }
 
 /// Build the protocol command emitted when a tab close affordance is chosen.

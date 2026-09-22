@@ -83,6 +83,88 @@ fn tab_switching_wraps_model_order() {
 }
 
 #[test]
+/// Closing a tab in a later session stays with that session's neighbor tab.
+///
+/// Three sessions of three tabs is the case that used to jump to the first
+/// tab of the first session.
+///
+/// # Panics
+///
+/// Panics when the neighbor is the first session, or when a closed session
+/// does not yield the session beside it.
+fn closing_a_tab_stays_in_its_session() {
+    let host = iznik_client::host::identity::HostId("build".to_owned());
+    let mut state = settled_three_sessions(&host).expect("three sessions encode");
+    let mut place = bars::tab_place(&state, &tab_key(SessionId(2), TabId(5)))
+        .expect("the middle tab is present");
+    apply_tab_removed(&mut state, &host, TabId(5), Generation(2)).expect("tab removal encodes");
+    let next = bars::tab_after_close(&state, &place).expect("the session keeps a tab");
+    assert_eq!(next.session, SessionId(2), "session 2 stays on screen");
+    assert_eq!(next.tab, TabId(6), "the tab that followed the closed one");
+
+    place = bars::tab_place(&state, &tab_key(SessionId(2), TabId(6)))
+        .expect("the following tab is present");
+    apply_tab_removed(&mut state, &host, TabId(6), Generation(3)).expect("tab removal encodes");
+    let previous = bars::tab_after_close(&state, &place).expect("a tab remains before it");
+    assert_eq!(
+        previous.session,
+        SessionId(2),
+        "the same session stays on screen"
+    );
+    assert_eq!(previous.tab, TabId(4), "the tab before the closed one");
+
+    place = bars::tab_place(&state, &tab_key(SessionId(2), TabId(4)))
+        .expect("the last tab of session 2 is present");
+    apply_tab_removed(&mut state, &host, TabId(4), Generation(4)).expect("tab removal encodes");
+    let moved = bars::tab_after_close(&state, &place).expect("session 3 follows session 2");
+    assert_eq!(moved.session, SessionId(3), "the next session opens");
+    assert_eq!(moved.tab, TabId(7), "that session's first tab");
+
+    place = bars::tab_place(&state, &tab_key(SessionId(3), TabId(7)))
+        .expect("session 3's first tab is present");
+    apply_tab_removed(&mut state, &host, TabId(7), Generation(5)).expect("tab removal encodes");
+    let shown = bars::tab_after_close(&state, &place).expect("the next tab of session 3");
+    assert_eq!(shown.session, SessionId(3), "session 3 stays on screen");
+    assert_eq!(shown.tab, TabId(8), "the tab that followed the closed one");
+}
+
+#[test]
+/// Closing a whole session lands on the session beside it.
+///
+/// # Panics
+///
+/// Panics when the next session is not the one that followed, or the previous
+/// one when the closed session was last.
+fn closing_a_session_opens_the_session_beside_it() {
+    let host = iznik_client::host::identity::HostId("build".to_owned());
+    let mut state = settled_three_sessions(&host).expect("three sessions encode");
+    let mut place =
+        bars::tab_place(&state, &tab_key(SessionId(2), TabId(5))).expect("session 2 is present");
+    apply_session_removed(&mut state, &host, SessionId(2), Generation(2))
+        .expect("session removal encodes");
+    let next = bars::tab_after_close(&state, &place).expect("session 3 follows");
+    assert_eq!(
+        next.session,
+        SessionId(3),
+        "the session after the closed one"
+    );
+    assert_eq!(next.tab, TabId(7), "that session's first tab");
+
+    state = settled_three_sessions(&host).expect("three sessions encode");
+    place =
+        bars::tab_place(&state, &tab_key(SessionId(3), TabId(9))).expect("session 3 is present");
+    apply_session_removed(&mut state, &host, SessionId(3), Generation(2))
+        .expect("session removal encodes");
+    let previous = bars::tab_after_close(&state, &place).expect("session 2 is before session 3");
+    assert_eq!(
+        previous.session,
+        SessionId(2),
+        "the session before the closed one"
+    );
+    assert_eq!(previous.tab, TabId(4), "that session's first tab");
+}
+
+#[test]
 /// A tab removal delta removes the close target from the visible model order.
 ///
 /// # Panics
@@ -255,6 +337,114 @@ fn settled_entries(context: &mut TestAppContext) -> Result<(), Box<dyn std::erro
         Ok::<(), Box<dyn std::error::Error>>(())
     })??;
     Ok(())
+}
+
+/// A settled model of three sessions, each with three tabs.
+///
+/// # Errors
+///
+/// Returns the encoding error when the fixture model cannot be written.
+fn settled_three_sessions(
+    host: &iznik_client::host::identity::HostId,
+) -> Result<EngineState, Box<dyn std::error::Error>> {
+    let mut state = EngineState::new();
+    let model = three_session_model();
+    let payload = encode_host_model(&model)?;
+    state.apply(
+        host,
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload,
+        },
+    );
+    Ok(state)
+}
+
+/// Identity of one tab in the three-session fixture.
+fn tab_key(session: SessionId, tab: TabId) -> TabKey {
+    TabKey {
+        host: iznik_client::host::identity::HostId("build".to_owned()),
+        session,
+        tab,
+    }
+}
+
+/// Apply one tab removal at `generation`.
+///
+/// # Errors
+///
+/// Returns the encoding error when the delta cannot be written.
+fn apply_tab_removed(
+    state: &mut EngineState,
+    host: &iznik_client::host::identity::HostId,
+    tab: TabId,
+    generation: Generation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = encode_delta(&Delta::TabRemoved { tab })?;
+    state.apply(
+        host,
+        &ToClient::Delta {
+            generation,
+            payload,
+        },
+    );
+    Ok(())
+}
+
+/// Apply one session removal at `generation`.
+///
+/// # Errors
+///
+/// Returns the encoding error when the delta cannot be written.
+fn apply_session_removed(
+    state: &mut EngineState,
+    host: &iznik_client::host::identity::HostId,
+    session: SessionId,
+    generation: Generation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = encode_delta(&Delta::SessionRemoved { session })?;
+    state.apply(
+        host,
+        &ToClient::Delta {
+            generation,
+            payload,
+        },
+    );
+    Ok(())
+}
+
+/// Three sessions, each with three tabs, numbered in order from 1.
+fn three_session_model() -> HostModel {
+    let sessions = (1_u64..=3)
+        .map(|session| {
+            let first = session.saturating_mul(3).saturating_sub(2);
+            Session {
+                id: SessionId(session),
+                name: format!("session {session}"),
+                tabs: (first..first.saturating_add(3))
+                    .map(|tab| {
+                        let pane = PaneId(tab.saturating_add(20));
+                        Tab {
+                            id: TabId(tab),
+                            name: format!("tab {tab}"),
+                            panes: vec![Pane {
+                                id: pane,
+                                title: String::new(),
+                                working_directory: None,
+                                columns: 80,
+                                rows: 24,
+                            }],
+                            layout: LayoutNode::Leaf(pane),
+                        }
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    HostModel {
+        generation: Generation(1),
+        sessions,
+    }
 }
 
 /// Construct a session with two tabs for deterministic switching assertions.
