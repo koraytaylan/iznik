@@ -7,8 +7,8 @@ use std::time::Duration;
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, SharedString, Size, Styled, Subscription, Task,
-    TestSupportExt, Window, div, px,
+    KeyDownEvent, ParentElement, Render, SharedString, Styled, Subscription, Task, TestSupportExt,
+    Window, div, px,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
@@ -20,7 +20,7 @@ use crate::actions::ActionId;
 use crate::bars;
 use crate::bridge::{EngineBridge, EngineEvent};
 use crate::follow::{self, Following};
-use crate::grid::{GridMetrics, cells, measure_cell};
+use crate::grid::{GridMetrics, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
@@ -110,9 +110,15 @@ pub(crate) struct HeldPane {
     /// Whether this window has successfully requested a subscription.
     subscribed: bool,
     /// Last measured cell geometry successfully submitted to the engine.
-    measured: Option<(u16, u16)>,
+    pub(crate) measured: Option<(u16, u16)>,
+    /// Cell geometry submitted while a connection or failure strip was visible.
+    ///
+    /// A late echo of this size, after the strip has gone, is the strip's size
+    /// and not the pane's. It is forgotten once the restored pane has been
+    /// submitted again.
+    pub(crate) banner_cells: Option<(u16, u16)>,
     /// Pending authoritative resize, preventing duplicate owner requests before its reply.
-    native_size: Option<(u16, u16)>,
+    pub(crate) native_size: Option<(u16, u16)>,
     /// Focus and failure routes remain alive with the pane.
     _subscriptions: Vec<Subscription>,
 }
@@ -158,6 +164,8 @@ pub struct WindowShell {
     /// upgrade, so the toast is raised once per host rather than on every
     /// state the engine says.
     pub(crate) upgrade_notices: BTreeSet<HostId>,
+    /// How many connection and failure strips the previous frame drew.
+    pub(crate) banner_count: usize,
 }
 
 impl Focusable for WindowShell {
@@ -212,6 +220,7 @@ impl WindowShell {
             focus_handle,
             following: Following::default(),
             upgrade_notices: BTreeSet::new(),
+            banner_count: 0,
         };
         let initial_theme = shell.settings.theme.clone();
         shell.apply_theme(&initial_theme, context);
@@ -773,6 +782,7 @@ impl WindowShell {
             surface,
             subscribed: false,
             measured: None,
+            banner_cells: None,
             native_size: None,
             _subscriptions: vec![focus, failure],
         }
@@ -856,7 +866,7 @@ impl WindowShell {
                 let desired = (pane.columns, pane.rows);
                 if snapshot.columns == pane.columns && snapshot.rows.len() == usize::from(pane.rows)
                 {
-                    held.native_size = None;
+                    crate::chrome::note_settled_size(held, self.banner_count, desired);
                 } else if held.native_size != Some(desired) {
                     match self.thread.send(VtCommand::Resize {
                         key,
@@ -871,34 +881,6 @@ impl WindowShell {
         }
         for (host, detail) in failures {
             self.failure(&host, detail, context);
-        }
-    }
-    /// Submit changed visible geometry once; a remote resize does not cause a size fight.
-    pub(crate) fn measured(
-        &mut self,
-        key: &PaneKey,
-        size: Size<Pixels>,
-        context: &mut Context<'_, Self>,
-    ) {
-        let Some(columns) = cells(size.width, self.options.metrics.cell_width) else {
-            return;
-        };
-        let Some(rows) = cells(size.height, self.options.metrics.line_height) else {
-            return;
-        };
-        let Some(held) = self.panes.get_mut(key) else {
-            return;
-        };
-        if held.measured == Some((columns, rows)) {
-            return;
-        }
-        match self
-            .hosts
-            .bridge()
-            .resize(&key.host.0, key.pane, columns, rows)
-        {
-            Ok(()) => held.measured = Some((columns, rows)),
-            Err(error) => self.failure(&key.host, error.to_string(), context),
         }
     }
     /// Deliver a pane routing failure through the window's existing notice inventory.
@@ -969,7 +951,7 @@ impl Render for WindowShell {
                 .bg(theme.background)
                 .text_color(theme.foreground)
                 .child(TitleBar::new().child(title))
-                .children(self.banners(context))
+                .children(self.connection_strips(context))
                 .children(tab_bar)
                 .child(
                     div()

@@ -6,19 +6,19 @@
 //! the one thing that writes back — a pane's measured size — goes through the
 //! shell's own `measured`, which submits against the authoritative geometry.
 
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::{ActiveTheme as _, ElementExt as _};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, TestSupportExt,
-    WeakEntity, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
+    Size, Styled, TestSupportExt, WeakEntity, canvas, div, px,
 };
 
-use crate::grid;
+use crate::grid::{self, cells};
 use crate::host_ui::Notice;
 use crate::stage;
 use crate::status;
 use crate::vt::PaneKey;
-use crate::window::{TERMINAL_PADDING, WindowShell};
+use crate::window::{HeldPane, TERMINAL_PADDING, WindowShell};
 
 impl WindowShell {
     /// The body under the bars: the visible tab's pane grid, or the stage
@@ -49,19 +49,46 @@ impl WindowShell {
                         .p(px(TERMINAL_PADDING))
                         .child(
                             div()
+                                .id(SharedString::from(format!("terminal-bounds-{}", pane.0)))
+                                .test_support()
                                 .size_full()
                                 .overflow_hidden()
                                 .child(held.surface.clone())
-                                .on_prepaint(move |bounds, window, application| {
-                                    let entity = entity.clone();
-                                    let key = key.clone();
-                                    window.defer(application, move |_, application| {
-                                        let _updated =
-                                            entity.update(application, |shell, update_context| {
-                                                shell.measured(&key, bounds.size, update_context);
-                                            });
-                                    });
-                                }),
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "terminal-canvas-{}",
+                                            pane.0
+                                        )))
+                                        .test_support()
+                                        .absolute()
+                                        .size_full()
+                                        .child(
+                                            canvas(
+                                                move |bounds, window, application| {
+                                                    let entity = entity.clone();
+                                                    let key = key.clone();
+                                                    window.defer(
+                                                        application,
+                                                        move |_, application| {
+                                                            let _updated = entity.update(
+                                                                application,
+                                                                |shell, update_context| {
+                                                                    shell.measured(
+                                                                        &key,
+                                                                        bounds.size,
+                                                                        update_context,
+                                                                    );
+                                                                },
+                                                            );
+                                                        },
+                                                    );
+                                                },
+                                                |_, (), _, _| {},
+                                            )
+                                            .size_full(),
+                                        ),
+                                ),
                         )
                         .into_any_element()
                 },
@@ -76,6 +103,80 @@ impl WindowShell {
             );
             let theme = context.theme().clone();
             stage::render(&theme, &stage, context)
+        }
+    }
+
+    /// The connection and failure strips, forgetting submitted geometry when
+    /// the set of strips changes so a restored pane is measured again.
+    pub(crate) fn connection_strips(&mut self, context: &mut Context<'_, Self>) -> Vec<AnyElement> {
+        let strips = self.banners(context);
+        self.remember_strips(strips.len());
+        strips
+    }
+
+    /// Submit changed visible geometry once; a remote resize does not cause a size fight.
+    ///
+    /// A size submitted while a strip is visible is remembered, so a late echo of
+    /// it can be told from a size somebody actually chose.
+    pub(crate) fn measured(
+        &mut self,
+        key: &PaneKey,
+        size: Size<Pixels>,
+        context: &mut Context<'_, Self>,
+    ) {
+        let Some(columns) = cells(size.width, self.options.metrics.cell_width) else {
+            return;
+        };
+        let Some(rows) = cells(size.height, self.options.metrics.line_height) else {
+            return;
+        };
+        if self
+            .panes
+            .get(key)
+            .is_none_or(|held| held.measured == Some((columns, rows)))
+        {
+            return;
+        }
+        let submitted = self
+            .hosts()
+            .bridge()
+            .resize(&key.host.0, key.pane, columns, rows);
+        let showing_strip = self.banner_count > 0;
+        let reported = {
+            let Some(held) = self.panes.get_mut(key) else {
+                return;
+            };
+            match submitted {
+                Ok(()) => {
+                    held.measured = Some((columns, rows));
+                    if showing_strip {
+                        held.banner_cells = Some((columns, rows));
+                    }
+                    None
+                }
+                Err(error) => Some(error.to_string()),
+            }
+        };
+        if let Some(detail) = reported {
+            self.failure(&key.host, detail, context);
+        }
+    }
+
+    /// Drop remembered pane geometry when the strips appear or leave.
+    ///
+    /// While a strip is up the pane is shorter, and that shorter size is what
+    /// gets submitted. After the strip leaves, the pane is the window's size
+    /// again. Forgetting the submission makes the next frame send that size
+    /// even when it is the size from before the strip, and forgetting the
+    /// pending terminal resize lets a stale in-flight size stop blocking it.
+    fn remember_strips(&mut self, count: usize) {
+        if self.banner_count == count {
+            return;
+        }
+        self.banner_count = count;
+        for held in self.panes.values_mut() {
+            held.measured = None;
+            held.native_size = None;
         }
     }
 
@@ -105,6 +206,17 @@ impl WindowShell {
             banners.push(banner(context, failure));
         }
         banners
+    }
+}
+
+/// The model size is on screen. A late echo of the size submitted while a
+/// strip was visible is not the pane's size any more: forget it so the next
+/// frame submits the restored pane, and only once.
+pub(crate) fn note_settled_size(held: &mut HeldPane, banner_count: usize, desired: (u16, u16)) {
+    held.native_size = None;
+    if banner_count == 0 && held.banner_cells == Some(desired) && held.measured != Some(desired) {
+        held.banner_cells = None;
+        held.measured = None;
     }
 }
 

@@ -28,6 +28,8 @@ const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 400.0;
 /// A larger viewport proves that weights survive a native window resize.
 const LARGER_WIDTH: f32 = 1_200.0;
+/// Taller than the fixture window, so a resize after the banner leaves is visible.
+const TALLER_HEIGHT: f32 = 640.0;
 /// Layout rounding is permitted within one logical pixel.
 const TOLERANCE: f32 = 1.0;
 /// Several draw passes let the kit settle measurements after a resize.
@@ -799,6 +801,120 @@ fn title_bar_tabs(context: &mut TestAppContext) -> Result<(), Failed> {
         );
     })?;
     Ok(())
+}
+
+#[gpui_kit::test]
+fn window_restores_pane_height_after_banner(context: &mut TestAppContext) {
+    check(&pane_height_after_banner(context));
+}
+
+/// The disconnected strip is in the column. Connecting removes it, and the pane
+/// area must take that space back and still follow a later window resize.
+///
+/// # Errors
+/// Propagates fixture, window and encoding failures.
+///
+/// # Panics
+/// Fails when the pane area keeps the height it had while the strip was shown.
+fn pane_height_after_banner(context: &mut TestAppContext) -> Result<(), Failed> {
+    use iznik_client::host::manager::ManagerEvent;
+    use iznik_client::host::state::HostState;
+    use iznik_protocol::capabilities::Capabilities;
+    let (handle, _directory) = open_shell(context)?;
+    context.simulate_window_resize(handle.into(), size(px(WIDTH), px(HEIGHT)));
+    let clear = pane_size(context, handle, "terminal-canvas-1")?;
+    let upper_clear = pane_size(context, handle, "terminal-bounds-2")?;
+    absorb(
+        context,
+        handle,
+        ManagerEvent::Moved {
+            host: pane_key().host.clone(),
+            state: HostState::Disconnected,
+        },
+    )?;
+    let with_banner = pane_size(context, handle, "terminal-canvas-1")?;
+    assert!(
+        context.update_window(handle.into(), |_, window, _| {
+            window.try_find("host-banner-fixture").is_some()
+        })?,
+        "a disconnected host shows the connection strip"
+    );
+    assert!(
+        f32::from(clear.height) > f32::from(with_banner.height) + TOLERANCE,
+        "showing the strip gives its height up from the pane area: clear {clear:?}, with {with_banner:?}"
+    );
+    absorb(
+        context,
+        handle,
+        ManagerEvent::Moved {
+            host: pane_key().host,
+            state: HostState::Connected {
+                server_version: "0.0.0".to_owned(),
+                capabilities: Capabilities::REORDER_SESSIONS,
+                upgrade: None,
+            },
+        },
+    )?;
+    let restored = pane_size(context, handle, "terminal-canvas-1")?;
+    let upper_restored = pane_size(context, handle, "terminal-bounds-2")?;
+    let parent = pane_size(context, handle, "terminal-bounds-1")?;
+    assert!(
+        (f32::from(upper_restored.height) - f32::from(upper_clear.height)).abs() <= TOLERANCE,
+        "a vertical split regains its height when the strip leaves: clear {upper_clear:?}, after {upper_restored:?}"
+    );
+    assert!(
+        (f32::from(restored.height) - f32::from(parent.height)).abs() <= TOLERANCE
+            && (f32::from(restored.width) - f32::from(parent.width)).abs() <= TOLERANCE,
+        "the measurement overlay matches the pane after the strip leaves: overlay {restored:?}, pane {parent:?}"
+    );
+    assert!(
+        context.update_window(handle.into(), |_, window, _| {
+            window.try_find("host-banner-fixture").is_none()
+        })?,
+        "a connected host draws no connection strip"
+    );
+    assert!(
+        (f32::from(restored.height) - f32::from(clear.height)).abs() <= TOLERANCE,
+        "removing the strip returns the pane area to its clear height: clear {clear:?}, with {with_banner:?}, after {restored:?}"
+    );
+    context.simulate_window_resize(handle.into(), size(px(WIDTH), px(TALLER_HEIGHT)));
+    let taller = pane_size(context, handle, "terminal-canvas-1")?;
+    assert!(
+        f32::from(taller.height) > f32::from(restored.height) + TOLERANCE,
+        "a later window resize still changes the pane area: restored {restored:?}, taller {taller:?}"
+    );
+    let upper_taller = pane_size(context, handle, "terminal-bounds-2")?;
+    assert!(
+        f32::from(upper_taller.height) > f32::from(upper_restored.height) + TOLERANCE,
+        "a later window resize still changes a vertical split: restored {upper_restored:?}, taller {upper_taller:?}"
+    );
+    context.simulate_window_resize(handle.into(), size(px(LARGER_WIDTH), px(TALLER_HEIGHT)));
+    let wider = pane_size(context, handle, "terminal-canvas-1")?;
+    assert!(
+        f32::from(wider.width) > f32::from(taller.width) + TOLERANCE,
+        "a later window resize still changes the pane width: taller {taller:?}, wider {wider:?}"
+    );
+    Ok(())
+}
+
+/// Draw until kit measurements settle, then read the pane area.
+///
+/// # Errors
+/// Returns a closed-window failure.
+fn pane_size(
+    context: &mut TestAppContext,
+    handle: WindowHandle<iznik_app::window::WindowShell>,
+    name: &str,
+) -> Result<gpui_kit::Size<Pixels>, Failed> {
+    for _pass in 0..SETTLE_PASSES {
+        context.update_window(handle.into(), |_, window, application| {
+            window.draw(application).clear(application);
+        })?;
+    }
+    let name = SharedString::from(name.to_owned());
+    Ok(context.update_window(handle.into(), |_, window, _| {
+        window.find(name).bounds().size
+    })?)
 }
 
 /// Draw the shell and read the top edge of one tab chip.
