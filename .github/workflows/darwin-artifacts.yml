@@ -24,21 +24,21 @@ jobs:
     name: aarch64 and x86_64
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # rustup reads rust-toolchain.toml and installs the pinned channel on
       # first use; that file pins only the musl targets, so both Darwin ones
       # are added here.
       - name: Install the toolchain
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       # The emulator this links is built by its -sys crate with Zig, which the
       # runner image does not carry. CONTRIBUTING.md lists it as a
       # prerequisite; `cargo xtask doctor` names it when it is missing.
       - name: Install zig
-        run: |
-          brew install zig
-          zig version
+        run: bash scripts/ci/install-zig.sh
 
       # The case below is run by nextest, which the runner image does not
       # carry either.
@@ -63,7 +63,7 @@ jobs:
         run: cargo nextest run --package xtask -E 'binary(/^regression_distribution_darwin$/)' --run-ignored all
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iznik-server-darwin
           path: |

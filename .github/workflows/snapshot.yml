@@ -27,17 +27,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Install the Rust targets
-        run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
 
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       # .cargo/config.toml names `<arch>-linux-musl-gcc` as the linkers. Zig
       # ships a complete musl toolchain, so these route to it: cc-rs passes a
@@ -66,7 +65,7 @@ jobs:
           cargo xtask distribution --target aarch64-unknown-linux-musl
 
       - name: Upload the Linux servers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: servers-linux
           if-no-files-found: error
@@ -77,17 +76,18 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Install the Rust targets
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
@@ -98,7 +98,7 @@ jobs:
           cargo xtask distribution --target x86_64-apple-darwin
 
       - name: Upload the macOS servers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: servers-darwin
           if-no-files-found: error
@@ -109,21 +109,24 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
+      - name: Install the pinned toolchain
+        shell: bash
+        run: rustup toolchain install
+
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       - name: Build the Windows server
         shell: pwsh
         run: cargo xtask distribution --target x86_64-pc-windows-msvc
 
       - name: Upload the Windows server
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: servers-windows
           if-no-files-found: error
@@ -135,14 +138,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       - name: Install Linux UI dependencies
         run: |
@@ -150,7 +155,7 @@ jobs:
           sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
 
       - name: Download every server
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: servers-*
           merge-multiple: true
@@ -167,7 +172,7 @@ jobs:
           tar -czf "$RUNNER_TEMP/iznik-linux.tar.gz" -C "$RUNNER_TEMP/iznik-linux" .
 
       - name: Upload the Linux application
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: application-linux
           if-no-files-found: error
@@ -179,23 +184,24 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Install the Rust targets
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
       - name: Download every server
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: servers-*
           merge-multiple: true
@@ -219,7 +225,7 @@ jobs:
             -C "$RUNNER_TEMP/iznik-x86_64-apple-darwin" .
 
       - name: Upload the macOS applications
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: application-darwin
           if-no-files-found: error
@@ -231,18 +237,21 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
+      - name: Install the pinned toolchain
+        shell: bash
+        run: rustup toolchain install
+
       # libghostty-vt is built by Zig, including the Windows MSVC target.
       - name: Install the pinned Zig toolchain
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
 
       - name: Download every server
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: servers-*
           merge-multiple: true
@@ -262,7 +271,7 @@ jobs:
           tar -a -cf "$env:RUNNER_TEMP/iznik-x86_64-pc-windows-msvc.zip" -C "$env:RUNNER_TEMP/iznik-windows" .
 
       - name: Upload the Windows application
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: application-windows
           if-no-files-found: error
@@ -276,12 +285,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Download the verified application bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: application-*
           path: ${{ runner.temp }}/applications
