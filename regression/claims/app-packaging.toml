@@ -11,6 +11,12 @@ test = "iznik-app::bundle_layout::macos_layout_is_versioned"
 because = "The property list writer is deterministic and can be verified on Linux."
 
 [[claim]]
+id = "app-bundle-windows-layout"
+statement = "The Windows application layout contains bin/iznik.exe, every staged server under share/iznik/artifacts, and a version file. There is no installer."
+test = "iznik-app::bundle_layout::windows_layout_is_versioned"
+because = "The layout writer is deterministic filesystem logic and needs no Windows host."
+
+[[claim]]
 id = "app-bundle-refuses-no-servers"
 statement = "A bundle is refused when the servers directory holds no <triple>/iznik-server, so no application ships unable to install on an ssh host."
 test = "iznik-app::bundle_layout::a_bundle_without_servers_is_refused"
@@ -18,7 +24,7 @@ because = "The refusal is deterministic filesystem logic and needs no platform h
 
 [[claim]]
 id = "app-finds-bundled-servers"
-statement = "The running application finds its bundled servers two directories up from its executable in either platform layout, and none beside an executable that is not bundled."
+statement = "The running application finds its bundled servers two directories up from its executable in the Linux, Windows and macOS layouts, and none beside an executable that is not bundled."
 test = "iznik-app::bundle_layout::the_application_finds_its_bundled_servers"
 because = "The lookup is path logic over a written layout and needs no platform host."
 

@@ -25,6 +25,7 @@ use iznik_protocol::message::{
     encode_to_server,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -384,6 +385,37 @@ impl RemoteChannel {
             .unwrap_or_else(|_elapsed| Err(ChannelError::Silent { host, waited }))
     }
 
+    /// Connects to a daemon socket on this machine.
+    ///
+    /// # Errors
+    ///
+    /// [`ChannelError::Io`] when the socket cannot be reached, and on an operating
+    /// system without Unix sockets, because that alias is how tests reach a local
+    /// daemon and a Windows client reaches hosts through `ssh`.
+    async fn connect_local(socket: &Path, host: &str) -> Result<Wire, ChannelError> {
+        #[cfg(unix)]
+        {
+            let stream = UnixStream::connect(socket)
+                .await
+                .map_err(|source| ChannelError::Io {
+                    host: host.to_owned(),
+                    source,
+                })?;
+            Ok(Box::new(stream))
+        }
+        #[cfg(not(unix))]
+        {
+            let _socket = socket;
+            Err(ChannelError::Io {
+                host: host.to_owned(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "a unix: alias names a socket on this machine, and this operating system reaches hosts through ssh",
+                ),
+            })
+        }
+    }
+
     /// Gets a stream to the server, however this transport reaches one.
     ///
     /// # Errors
@@ -416,16 +448,7 @@ impl RemoteChannel {
                 }
                 (Box::new(tokio::io::join(stdout, stdin)), Some(spawned))
             }
-            Transport::Local { socket } => {
-                let stream =
-                    UnixStream::connect(socket)
-                        .await
-                        .map_err(|source| ChannelError::Io {
-                            host: host.clone(),
-                            source,
-                        })?;
-                (Box::new(stream), None)
-            }
+            Transport::Local { socket } => (Self::connect_local(socket, &host).await?, None),
         };
         Ok((FramedLink::new(wire), child, complaints))
     }

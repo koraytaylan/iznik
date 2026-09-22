@@ -31,6 +31,7 @@ report
 require
 resolve
 resolves
+restrict
 reuse
 reuses
 socket

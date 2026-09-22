@@ -24,6 +24,9 @@ const APPLICATION_NAME: &str = "iznik";
 const SERVER_BINARY: &str = "iznik-server";
 /// Where a Linux layout keeps its servers, under the layout's root.
 const LINUX_SERVERS: &[&str] = &["share", "iznik", "artifacts"];
+/// The Windows executable name. The servers sit in the same place as on Linux,
+/// two directories up from `bin`, which is how the running application finds them.
+const WINDOWS_EXECUTABLE: &str = "iznik.exe";
 /// Where a macOS bundle keeps its servers, under `Contents`.
 const MACOS_SERVERS: &[&str] = &["Resources", "artifacts"];
 /// Where `cargo xtask distribution` writes servers, under cargo's target
@@ -48,6 +51,25 @@ pub fn write_linux(binary: &Path, servers: &Path, output: &Path, version: &str) 
     fs::write(output.join("iznik.desktop"), desktop)
 }
 
+/// Write a Windows layout: `bin/iznik.exe` and the servers beside it, the same
+/// way the Linux layout carries them. There is no installer.
+///
+/// # Errors
+///
+/// Returns an I/O error when an input is missing, when `servers` holds no
+/// `<triple>/iznik-server`, or when output cannot be written.
+pub fn write_windows(
+    binary: &Path,
+    servers: &Path,
+    output: &Path,
+    version: &str,
+) -> io::Result<()> {
+    fs::create_dir_all(output.join("bin"))?;
+    let _bytes = fs::copy(binary, output.join("bin").join(WINDOWS_EXECUTABLE))?;
+    copy_servers(servers, &joined(output, LINUX_SERVERS))?;
+    fs::write(output.join("version.txt"), format!("{version}\n"))
+}
+
 /// Write a macOS `.app` bundle with its servers and a version-stamped
 /// property list.
 ///
@@ -67,7 +89,7 @@ pub fn write_macos(binary: &Path, servers: &Path, output: &Path, version: &str) 
 }
 
 /// The servers an application carries, found from its own executable: the
-/// Linux layout's `share/iznik/artifacts`, the macOS bundle's
+/// Linux and Windows layout's `share/iznik/artifacts`, the macOS bundle's
 /// `Contents/Resources/artifacts`, or, for a workspace build, the target
 /// directory's `distribution` — the first that holds a server.
 #[must_use]

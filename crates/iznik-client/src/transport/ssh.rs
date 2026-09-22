@@ -58,6 +58,15 @@ const LEAST_SECONDS: u64 = 1;
 /// The program, which is the system's and never a library.
 const PROGRAM: &str = "ssh";
 
+/// Whether this machine's `ssh` can multiplex sessions on one connection.
+///
+/// Win32-OpenSSH still cannot. Asking it for `ControlMaster` fails the
+/// connection, so a Windows build leaves those options off.
+#[must_use]
+pub fn master_is_available() -> bool {
+    cfg!(unix)
+}
+
 /// The flag every option is given with.
 const OPTION_FLAG: &str = "-o";
 
@@ -265,24 +274,42 @@ impl SshTransport {
     /// the options iznik owns, then the alias, then the command.
     ///
     /// Public because what is *not* in it is a property worth asserting, and
-    /// asserting it needs no process.
+    /// asserting it needs no process. A Unix `ssh` is asked to multiplex.
+    /// Win32-OpenSSH cannot: its control socket would have to pass file
+    /// descriptors, which it does not, so that build opens a connection per
+    /// command and still sends the keepalives and the connect timeout.
     #[must_use]
     pub fn arguments(&self, remote_command: &[String]) -> Vec<String> {
+        self.arguments_with_master(remote_command, master_is_available())
+    }
+
+    /// [`arguments`](Self::arguments) with multiplexing chosen by the caller,
+    /// so the Windows command line can be asserted on a Unix machine.
+    #[must_use]
+    pub fn arguments_with_master(&self, remote_command: &[String], master: bool) -> Vec<String> {
         let mut arguments = Vec::new();
-        for option in [
-            "ControlMaster=auto".to_owned(),
-            format!("ControlPath={}", self.control_path.display()),
-            format!("ControlPersist={}", seconds(self.options.control_persist)),
-            format!(
-                "ServerAliveInterval={}",
-                seconds(self.options.server_alive_interval)
-            ),
-            format!(
-                "ServerAliveCountMax={}",
-                self.options.server_alive_count_maximum
-            ),
-            format!("ConnectTimeout={}", seconds(self.options.connect_timeout)),
-        ] {
+        let mut options = Vec::new();
+        if master {
+            options.push("ControlMaster=auto".to_owned());
+            options.push(format!("ControlPath={}", self.control_path.display()));
+            options.push(format!(
+                "ControlPersist={}",
+                seconds(self.options.control_persist)
+            ));
+        }
+        options.push(format!(
+            "ServerAliveInterval={}",
+            seconds(self.options.server_alive_interval)
+        ));
+        options.push(format!(
+            "ServerAliveCountMax={}",
+            self.options.server_alive_count_maximum
+        ));
+        options.push(format!(
+            "ConnectTimeout={}",
+            seconds(self.options.connect_timeout)
+        ));
+        for option in options {
             arguments.push(OPTION_FLAG.to_owned());
             arguments.push(option);
         }

@@ -16,6 +16,7 @@ pub mod ssh;
 use core::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use nix::unistd::Uid;
 
 use crate::transport::ssh::{SshOptions, SshTransport};
@@ -148,15 +149,7 @@ impl ClientRuntimePaths {
             // who plants one there first would otherwise have this restrict a
             // directory of their choosing and then fill it with live SSH
             // connections. What is trusted is a real directory this user owns.
-            own_directory(made)?;
-            std::fs::set_permissions(
-                made,
-                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(OWNER_ONLY),
-            )
-            .map_err(|source| PathsError::Io {
-                path: made.to_path_buf(),
-                source,
-            })?;
+            restrict(made)?;
         }
         Ok(ClientRuntimePaths {
             log: directory.join(LOG_NAME),
@@ -205,15 +198,35 @@ impl ClientRuntimePaths {
     }
 }
 
+/// Refuses a link or a non-directory, then on Unix restricts the mode to the owner.
+///
+/// # Errors
+///
+/// [`PathsError::Io`] when the path cannot be read or its mode cannot be set,
+/// and [`PathsError::NotOurs`] when it is not a directory this user owns.
+fn restrict(path: &Path) -> Result<(), PathsError> {
+    own_directory(path)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(OWNER_ONLY),
+    )
+    .map_err(|source| PathsError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
 /// Refuses anything at `path` that is not a directory this user owns, without
-/// following a link to find out.
+/// following a link to find out. On Windows the profile directory's own
+/// access control is what keeps it private, so only the directory check runs.
 ///
 /// # Errors
 ///
 /// [`PathsError::Io`] when it cannot be read, and [`PathsError::NotOurs`] when
 /// it is a link, not a directory, or somebody else's.
 fn own_directory(path: &Path) -> Result<(), PathsError> {
-    use std::os::unix::fs::MetadataExt as _;
     let held = std::fs::symlink_metadata(path).map_err(|source| PathsError::Io {
         path: path.to_path_buf(),
         source,
@@ -224,25 +237,48 @@ fn own_directory(path: &Path) -> Result<(), PathsError> {
             detail: "it is not a directory".to_owned(),
         });
     }
-    let ours = Uid::current().as_raw();
-    if held.uid() != ours {
-        return Err(PathsError::NotOurs {
-            path: path.to_path_buf(),
-            detail: format!("it belongs to {} and not to {ours}", held.uid()),
-        });
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let ours = Uid::current().as_raw();
+        if held.uid() != ours {
+            return Err(PathsError::NotOurs {
+                path: path.to_path_buf(),
+                detail: format!("it belongs to {} and not to {ours}", held.uid()),
+            });
+        }
     }
     Ok(())
 }
 
 /// The directory the client's runtime files belong in on this machine.
 fn base() -> PathBuf {
-    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|held| !held.is_empty()) {
-        return PathBuf::from(runtime).join(DIRECTORY_NAME);
+    #[cfg(unix)]
+    {
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|held| !held.is_empty()) {
+            return PathBuf::from(runtime).join(DIRECTORY_NAME);
+        }
+        let temporary = std::env::var_os("TMPDIR")
+            .filter(|held| !held.is_empty())
+            .map_or_else(std::env::temp_dir, PathBuf::from);
+        temporary.join(format!("{DIRECTORY_NAME}-{}", Uid::current().as_raw()))
     }
-    let temporary = std::env::var_os("TMPDIR")
-        .filter(|held| !held.is_empty())
-        .map_or_else(std::env::temp_dir, PathBuf::from);
-    temporary.join(format!("{DIRECTORY_NAME}-{}", Uid::current().as_raw()))
+    #[cfg(not(unix))]
+    {
+        if let Some(profile) = std::env::var_os("LOCALAPPDATA").filter(|held| !held.is_empty()) {
+            return PathBuf::from(profile).join(DIRECTORY_NAME);
+        }
+        let temporary = std::env::var_os("TEMP")
+            .filter(|held| !held.is_empty())
+            .map_or_else(std::env::temp_dir, PathBuf::from);
+        let account = std::env::var("USERNAME").unwrap_or_default();
+        let account = if account.is_empty() {
+            "user".to_owned()
+        } else {
+            account
+        };
+        temporary.join(format!("{DIRECTORY_NAME}-{account}"))
+    }
 }
 
 /// The file name a control socket for `alias` takes: at most the sixteen

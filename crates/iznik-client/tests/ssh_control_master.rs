@@ -145,6 +145,41 @@ fn ssh_passes_what_it_owns_and_nothing_a_person_configured() {
 
 /// # Panics
 ///
+/// When the command line a Windows build would use asks for a control master,
+/// or drops the keepalives and the connect timeout.
+#[test]
+fn windows_ssh_skips_control_master() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("windows")?;
+        let paths = ClientRuntimePaths::under(&held.path)?;
+        let Transport::Ssh(transport) =
+            Transport::for_alias("host0", &paths, SshOptions::default())
+        else {
+            return Err("an ordinary alias is not local".into());
+        };
+        let arguments = transport.arguments_with_master(&["iznik-server".to_owned()], false);
+        let line = arguments.join(" ");
+        for absent in ["ControlMaster=", "ControlPath=", "ControlPersist="] {
+            assert!(
+                !arguments.iter().any(|given| given.contains(absent)),
+                "{absent} is in {line}"
+            );
+        }
+        for wanted in [
+            format!("ServerAliveInterval={}", SERVER_ALIVE_INTERVAL.as_secs()),
+            format!("ServerAliveCountMax={SERVER_ALIVE_COUNT_MAXIMUM}"),
+            format!("ConnectTimeout={}", CONNECT_TIMEOUT.as_secs()),
+        ] {
+            assert!(arguments.contains(&wanted), "{wanted} missing from {line}");
+        }
+        assert!(arguments.iter().any(|argument| argument == "host0"));
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
 /// When a `unix:` alias is not local, an ordinary one is not `ssh`, or an
 /// alias does not survive the round trip.
 #[test]

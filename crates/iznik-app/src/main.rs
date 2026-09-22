@@ -105,6 +105,8 @@ fn bundle(arguments: &[OsString]) -> ExitCode {
     };
     let result = if target.contains("darwin") || target.contains("apple") {
         iznik_app::bundle::write_macos(&binary, &servers, &output, version)
+    } else if target.contains("windows") {
+        iznik_app::bundle::write_windows(&binary, &servers, &output, version)
     } else if target.contains("linux") {
         iznik_app::bundle::write_linux(&binary, &servers, &output, version)
     } else {

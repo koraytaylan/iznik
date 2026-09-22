@@ -200,9 +200,52 @@ jobs:
           if-no-files-found: error
           path: ${{ runner.temp }}/iznik-*.tar.gz
 
+  windows:
+    name: Windows application bundle
+    needs: [servers-linux, servers-darwin]
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # libghostty-vt is built by Zig, including the Windows MSVC target.
+      - name: Install the pinned Zig toolchain
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Download every server
+        uses: actions/download-artifact@v4
+        with:
+          pattern: servers-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/servers
+
+      - name: Build the Windows application
+        shell: pwsh
+        run: cargo build --locked --release --package iznik-app
+
+      - name: Bundle the Windows application
+        shell: pwsh
+        run: |
+          cargo xtask app-bundle --target x86_64-pc-windows-msvc `
+            --binary target/release/iznik-app.exe `
+            --output "$env:RUNNER_TEMP/iznik-windows" `
+            --servers "$env:RUNNER_TEMP/servers"
+          tar -a -cf "$env:RUNNER_TEMP/iznik-x86_64-pc-windows-msvc.zip" -C "$env:RUNNER_TEMP/iznik-windows" .
+
+      - name: Upload the Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-windows
+          if-no-files-found: error
+          path: ${{ runner.temp }}/iznik-x86_64-pc-windows-msvc.zip
+
   publish:
     name: Replace the rolling prerelease
-    needs: [linux, darwin]
+    needs: [linux, darwin, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -225,8 +268,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$STAGING"
-          find "$APPLICATIONS" -type f -name 'iznik-*.tar.gz' -exec cp '{}' "$STAGING/" ';'
+          find "$APPLICATIONS" -type f \( -name 'iznik-*.tar.gz' -o -name 'iznik-*.zip' \) -exec cp '{}' "$STAGING/" ';'
           test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.tar.gz' | wc -l)" -eq 3
+          test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.zip' | wc -l)" -eq 1
 
       - name: Replace the trusted rolling prerelease
         env:
@@ -235,7 +279,7 @@ jobs:
           SNAPSHOT_TITLE: Iznik develop snapshot
         run: |
           set -euo pipefail
-          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA. Assets are replaced after each successful build; this is not a stable release."
+          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. The Windows client is a zip of the executable and the servers it can install on a remote host. It is unsigned, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
           if gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" -f sha="$GITHUB_SHA" -F force=true
             gh release edit "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
@@ -244,5 +288,5 @@ jobs:
           fi
           while IFS= read -r asset; do
             gh release delete-asset "$SNAPSHOT_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
-          done < <(gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(test("^iznik-.*\\.tar\\.gz$"))')
+          done < <(gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(test("^iznik-.*\\.(tar\\.gz|zip)$"))')
           gh release upload "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/snapshot/* --clobber

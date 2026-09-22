@@ -5,7 +5,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use iznik_app::bundle::{bundled_servers, write_linux, write_macos};
+use iznik_app::bundle::{bundled_servers, write_linux, write_macos, write_windows};
 
 /// The permission bits of an executable server.
 const EXECUTABLE_MODE: u32 = 0o755;
@@ -77,6 +77,31 @@ fn macos_layout_is_versioned() -> std::io::Result<()> {
 }
 
 #[test]
+/// Windows output contains `bin/iznik.exe`, every server and the version.
+///
+/// # Errors
+///
+/// Returns fixture I/O failures.
+///
+/// # Panics
+///
+/// Panics when generated content differs from the expected layout.
+fn windows_layout_is_versioned() -> std::io::Result<()> {
+    let root = tempfile_directory("windows")?;
+    let binary = root.join("source");
+    let servers = distribution(&root)?;
+    let output = root.join("windows");
+    executable(&binary)?;
+    write_windows(&binary, &servers, &output, env!("CARGO_PKG_VERSION"))?;
+    assert_eq!(fs::read(output.join("bin/iznik.exe"))?, b"binary");
+    let version = fs::read_to_string(output.join("version.txt"))?;
+    assert!(version.contains(env!("CARGO_PKG_VERSION")));
+    carried(&output.join("share/iznik/artifacts"))?;
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 /// A bundle is refused when the servers directory holds no server.
 ///
 /// # Errors
@@ -142,6 +167,16 @@ fn the_application_finds_its_bundled_servers() -> std::io::Result<()> {
     assert_eq!(
         bundled_servers(&root.join("iznik.app/Contents/MacOS/iznik")),
         Some(root.join("iznik.app/Contents/Resources/artifacts"))
+    );
+    write_windows(
+        &binary,
+        &servers,
+        &root.join("windows"),
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    assert_eq!(
+        bundled_servers(&root.join("windows/bin/iznik.exe")),
+        Some(root.join("windows/share/iznik/artifacts"))
     );
     assert_eq!(bundled_servers(&root.join("loose/bin/iznik")), None);
     let target = root.join("target");

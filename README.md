@@ -230,9 +230,11 @@ on anything else the command says which component is missing.
 builds them on a macOS runner, where the SDK is the system's own.
 
 Every successful push to `develop` also updates the rolling GitHub prerelease
-named `develop-snapshot`. Its four target archives are replaced in place, so
-the release URL stays stable while always pointing at the latest verified
-development build. The workflow is [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml).
+named `develop-snapshot`. The Linux archive, the two macOS archives and the
+Windows client zip are replaced in place, so the release URL stays stable
+while always pointing at the latest verified development build. The Windows
+zip is the application and the remote servers it can install. It is unsigned.
+The workflow is [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml).
 
 ## License
 

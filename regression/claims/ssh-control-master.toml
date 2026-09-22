@@ -16,6 +16,12 @@ test = "iznik-client::ssh_control_master::ssh_passes_what_it_owns_and_nothing_a_
 because = "what is being proven is the absence of arguments, which is a property of a value and not of a network"
 
 [[claim]]
+id = "transport-windows-skips-control-master"
+statement = "A Windows command line omits ControlMaster, ControlPath and ControlPersist, because Win32-OpenSSH cannot multiplex, and still sends the keepalives, the connect timeout, the alias and the command."
+test = "iznik-client::ssh_control_master::windows_ssh_skips_control_master"
+because = "the command line is a value; Win32-OpenSSH's missing multiplexing is a property of that program, not of a network"
+
+[[claim]]
 id = "transport-reads-the-one-alias-it-owns"
 statement = "`unix:<path>` names a daemon socket on this machine and is reached with no SSH at all; every other alias is handed to `ssh` untouched, and a control socket is named by a digest so it fits the hundred and four bytes a unix path allows and never collides with another alias's."
 test = "iznik-client::ssh_control_master::ssh_reads_the_one_alias_form_it_owns"
