@@ -490,7 +490,8 @@ fn keyboard_dispatch_pairs_repeat_and_release(context: &mut TestAppContext) {
     check(&keyboard_events(context));
 }
 
-/// Preserve press/repeat/release while suppressing releases of local history chords.
+/// Preserve press/repeat/release, suppress local history releases, and send a
+/// layout character when Alt produced it.
 ///
 /// # Errors
 /// Propagates fixture and keystroke parsing failures.
@@ -528,6 +529,14 @@ fn keyboard_events(context: &mut TestAppContext) -> Result<(), Failed> {
         fixture.encoded()?.is_empty(),
         "history stays local even if Shift is released first"
     );
+    let mut at_character = Keystroke::parse("alt-q")?;
+    at_character.key_char = Some("@".to_owned());
+    visual.simulate_event(KeyDownEvent {
+        keystroke: at_character,
+        is_held: false,
+        prefer_character_input: false,
+    });
+    assert_eq!(fixture.encoded()?, b"@", "Turkish Q option-q");
     Ok(())
 }
 

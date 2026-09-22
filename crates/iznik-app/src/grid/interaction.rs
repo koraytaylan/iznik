@@ -27,7 +27,7 @@ impl TerminalGrid {
             Action::Press
         };
         let input = keyboard(&event.keystroke, action);
-        if input.key == Key::Unidentified {
+        if input.key == Key::Unidentified && input.text.is_empty() {
             return;
         }
         self.pressed_keys

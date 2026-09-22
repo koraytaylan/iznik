@@ -499,6 +499,38 @@ fn input_mouse_encodes_wheel_and_rejects_invalid_geometry() {
         encoded(&thread, TerminalInput::Mouse(position)).expect_err("nonfinite position");
 }
 
+/// Alt consumed by a layout still emits the character under extended keyboard reporting.
+///
+/// # Panics
+/// Fails when the native encoder keeps the Alt chord instead of the layout character.
+#[test]
+fn input_encodes_layout_text_as_the_produced_character() {
+    let thread = VtThread::start(VtOptions::default()).expect("thread");
+    support::open(&thread, Sequence(0), 80, 24).expect("open");
+    thread
+        .send(VtCommand::Feed {
+            receipt: None,
+            key: support::key(),
+            sequence: Sequence(0),
+            bytes: b"\x1b[>11u".to_vec(),
+        })
+        .expect("extended keyboard");
+    support::snapshot(&thread).expect("mode snapshot");
+    let input = TerminalInput::Key(KeyInput {
+        key: key::Key::Unidentified,
+        action: key::Action::Press,
+        modifiers: key::Mods::empty(),
+        consumed: key::Mods::empty(),
+        text: "@".to_owned(),
+        unshifted: None,
+    });
+    assert_eq!(
+        encoded(&thread, input).expect("layout alt"),
+        b"@",
+        "extended keyboard must emit the layout character"
+    );
+}
+
 /// Unicode text and release/repeat metadata survive the request channel.
 ///
 /// # Panics

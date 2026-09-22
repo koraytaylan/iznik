@@ -96,7 +96,7 @@ because = "headless GPUI dispatch and the real native VT encoder fully determine
 
 [[claim]]
 id = "input-keyboard-event-pairing"
-statement = "GPUI repeat and release events reach the extended keyboard protocol, while a release whose press was consumed as local history navigation sends no process input."
+statement = "GPUI repeat and release events reach the extended keyboard protocol, while a release whose press was consumed as local history navigation sends no process input. Alt that produces a different layout character, such as @ from Turkish Q, is sent as that character even when extended keyboard reporting is on."
 test = "iznik-app::ime::keyboard_dispatch_pairs_repeat_and_release"
 because = "headless platform events and native VT encoding fully determine event pairing without a transport or display"
 
