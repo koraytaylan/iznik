@@ -446,6 +446,7 @@ on them is depending on something it was never told.
 | Focused | 1 048 576 (1 MiB) | What the pane the client is looking at holds. |
 | Frame payload | 65 536 (64 KiB) | The most one pane frame carries, so a keystroke echo waits behind at most one frame per active pane. |
 | Stale threshold | 4 194 304 (4 MiB) | The lag past which a background channel stops being streamed. |
+| Catch-up interval | 1 s | The least time between two screens one background pane is sent, however often it falls behind. |
 
 The one bound a client does hold a server to is that it keeps to *some*
 window. This client drops the link when more than 4 MiB delivered on one pane
@@ -472,6 +473,9 @@ that falls further behind than the stale threshold stops being streamed
 altogether; its history is kept, and rather than the megabytes it missed it is
 sent a `PaneChannel` at the newest byte and a `Screen` — as soon as it is next
 served with credit to spend, and immediately when the client focuses it. A
+screen spends no credit, so a pane that keeps flooding in the background is
+held to the catch-up interval instead: it is repainted at most that often, and
+stays unstreamed in between. A
 client must therefore be ready for a `PaneChannel` and a `Screen` on a channel
 it is not looking at. It may still `Resume` from an older sequence afterwards:
 the ring keeps every byte it holds regardless.

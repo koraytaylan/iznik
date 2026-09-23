@@ -327,7 +327,10 @@ keystroke echo waits behind at most one frame per active pane. The focused
 pane is served first; the rest are served round-robin from a moving place. A
 channel at zero credit is skipped, never waited on. A background pane that
 falls more than 4 MiB behind is marked stale: the server stops streaming it,
-keeps its history, and sends a `Screen` when the client returns to it. It
+keeps its history, and sends a `Screen` when the client returns to it — or
+when it has credit to spend, but no oftener than once a second per pane,
+because a screen spends no credit and a pane flooding in the background would
+otherwise be repainted nearly every round. It
 buffers no pane bytes of its own — the history ring *is* the queue, and a
 subscription is a cursor into it.
 

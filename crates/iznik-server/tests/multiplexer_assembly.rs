@@ -886,6 +886,49 @@ async fn credit_is_honored_and_nothing_is_buffered() {
 
 /// # Panics
 ///
+/// When a background pane that keeps falling behind with credit to spend is
+/// sent a screen more often than the catch-up interval allows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_flooding_background_pane_is_repainted_at_most_once_an_interval() {
+    bounded(async {
+        let mut rig = Rig::new(DEFAULT_HISTORY_BUDGET_BYTES, 2).await?;
+        let (falling, held) = (rig.pane(0)?, rig.pane(1)?);
+        let behind = rig.watch(falling).await?;
+        let _channel = rig.watch(held).await?;
+        rig.multiplexer.focus(held).await?;
+        // The first catch-up is not held back — the screen the subscription
+        // began with would otherwise count against it — and every later one
+        // is, for longer than the case runs.
+        rig.multiplexer.set_catch_up_interval(Duration::ZERO);
+        let lagged = STALE_THRESHOLD_BYTES.saturating_add(2 * MEBIBYTE);
+        let mut screens = Vec::new();
+        for round in 1..=2_u64 {
+            rig.ask(falling, &flood(lagged / MEBIBYTE)).await?;
+            rig.produced(falling, lagged.saturating_mul(round)).await?;
+            rig.quiescent(falling).await;
+            rig.drain(Some(behind)).await?;
+            screens.push(
+                control(&rig.sink.take())
+                    .iter()
+                    .filter(|message| matches!(message, ToClient::Screen { .. }))
+                    .count(),
+            );
+            rig.multiplexer
+                .set_catch_up_interval(Duration::from_hours(1));
+        }
+        assert_eq!(
+            screens,
+            [1, 0],
+            "caught up once, and not again inside the interval"
+        );
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
 /// When a background pane that has fallen further behind than
 /// [`STALE_THRESHOLD_BYTES`] keeps being carried byte by byte, or is not sent
 /// the truth when it is looked at.

@@ -55,6 +55,17 @@ use crate::terminal::screen::{CLEARED_SCREEN, SerializedScreen};
 /// stand to use.
 pub const KEYSTROKE_ROUND_TRIP_BUDGET: Duration = Duration::from_millis(25);
 
+/// The least time between two screens a background pane that keeps falling
+/// behind is sent.
+///
+/// A screen is serialized on the one mirror thread and costs the link its
+/// whole size, and it spends none of the pane's credit. Without a floor, a
+/// pane flooding in the background is stale again a round after every
+/// catch-up and is sent a screen nearly every round. A pane nobody is looking
+/// at being repainted once a second is plenty; the focused pane is caught up
+/// at once, always.
+pub const CATCH_UP_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Where one frame goes.
 ///
 /// The test sink collects frames in memory; plan 0004 puts a framed link under
@@ -116,6 +127,8 @@ pub struct Multiplexer<Sink: FrameSink> {
     /// Whether the client asked to be told, in each `PaneChannel`, how far
     /// the host answered a pane's terminal queries itself.
     answering: bool,
+    /// The least time between two screens one background pane is sent.
+    catch_up_interval: Duration,
 }
 
 impl<Sink: FrameSink> Drop for Multiplexer<Sink> {
@@ -152,7 +165,39 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             turn: 0,
             frame: Vec::new(),
             answering: false,
+            catch_up_interval: CATCH_UP_INTERVAL,
         }
+    }
+
+    /// Sets the least time between two screens one background pane is sent,
+    /// which the product leaves at [`CATCH_UP_INTERVAL`] and a test shortens
+    /// or lengthens.
+    pub fn set_catch_up_interval(&mut self, interval: Duration) {
+        self.catch_up_interval = interval;
+    }
+
+    /// When a cursor may next be sent a screen: at once if it never was.
+    fn catch_up_due(&self, cursor: &Cursor) -> tokio::time::Instant {
+        cursor
+            .repainted
+            .map_or_else(tokio::time::Instant::now, |at| {
+                at.checked_add(self.catch_up_interval)
+                    .unwrap_or_else(tokio::time::Instant::now)
+            })
+    }
+
+    /// The soonest a stale background cursor with credit to spend may be
+    /// caught up, when one is waiting on the interval: a pane that has
+    /// finished flooding says nothing more, so nothing else would wake the
+    /// pump for it.
+    fn next_catch_up(&self) -> Option<tokio::time::Instant> {
+        self.cursors
+            .values()
+            .filter(|cursor| {
+                cursor.stale && cursor.credit.available() > 0 && self.focused != Some(cursor.pane)
+            })
+            .map(|cursor| self.catch_up_due(cursor))
+            .min()
     }
 
     /// Tells the client, in every `PaneChannel` from now on, how far the host
@@ -367,6 +412,9 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         };
         let mut cursor = Cursor::new(pane, channel, sequence);
         cursor.credit = self.full_window(pane);
+        if matches!(plan, StartPlan::Screen { .. }) {
+            cursor.repainted = Some(tokio::time::Instant::now());
+        }
         self.cursors.insert(pane, cursor);
         Ok(())
     }
@@ -576,7 +624,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         if !self.waiting.is_empty() || self.owed_snapshot {
             return;
         }
+        let due = self.next_catch_up();
         tokio::select! {
+            () = tokio::time::sleep_until(due.unwrap_or_else(tokio::time::Instant::now)),
+                if due.is_some() => {}
             received = self.deltas.recv() => match received {
                 Ok(numbered) => self.waiting.push_back(numbered),
                 Err(broadcast::error::RecvError::Lagged(_missed)) => self.owed_snapshot = true,
@@ -781,7 +832,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             // In the same round it is marked, when it can be: a pane that has
             // just finished flooding says nothing more, so a cursor left to
             // wait for its next byte would wait for ever.
-            if focused || cursor.credit.available() > 0 {
+            // Focused, at once; in the background, only with credit to spend
+            // and no oftener than the interval, which `ready` wakes for.
+            let due = self.catch_up_due(&cursor) <= tokio::time::Instant::now();
+            if focused || (cursor.credit.available() > 0 && due) {
                 return self.catch_up(pane, &held).await.map(|()| true);
             }
             return Ok(false);
@@ -852,6 +906,7 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             cursor.sequence = sequence;
             cursor.credit = window;
             cursor.stale = false;
+            cursor.repainted = Some(tokio::time::Instant::now());
         }
         Ok(())
     }

@@ -285,6 +285,11 @@ pub struct Cursor {
     /// Whether it has fallen so far behind that the truth is cheaper than the
     /// bytes, so it is served a screen when it is looked at again.
     pub stale: bool,
+    /// When it was last sent a screen, so a background pane that keeps
+    /// falling behind is not repainted more often than the catch-up interval
+    /// allows. A screen spends no credit — the client returns credit only for
+    /// a stream's bytes — so this is the budget screens are counted against.
+    pub repainted: Option<tokio::time::Instant>,
 }
 
 impl Cursor {
@@ -298,6 +303,7 @@ impl Cursor {
             sequence,
             credit: CreditWindow::background(),
             stale: false,
+            repainted: None,
         }
     }
 
