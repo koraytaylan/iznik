@@ -211,7 +211,7 @@ fn base_character(key: &str, shift: bool) -> Option<char> {
 }
 
 /// True when Alt participated in producing layout text rather than a chord.
-fn produced_by_layout(stroke: &Keystroke, text: &str) -> bool {
+pub(super) fn produced_by_layout(stroke: &Keystroke, text: &str) -> bool {
     if stroke.modifiers.platform || stroke.modifiers.function || !stroke.modifiers.alt {
         return false;
     }
