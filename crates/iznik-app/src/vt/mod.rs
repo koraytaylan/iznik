@@ -335,6 +335,9 @@ pub enum VtOutput {
     Snapshot(Box<TerminalSnapshot>),
     /// Mode-encoded bytes to forward immediately through the engine's input path.
     Input(Vec<u8>),
+    /// Pasted text with a line break for a program without bracketed paste:
+    /// nothing was sent, and a person must confirm it first.
+    MultilinePaste(String),
 }
 
 /// One command's result. Failures retain identity so the caller can resynchronize.

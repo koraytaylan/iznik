@@ -20,6 +20,16 @@ pub struct SurfaceFailure {
     pub detail: String,
 }
 
+/// A paste with a line break waits for a person to confirm it, because the
+/// program has not asked for bracketed paste and would run each line.
+#[derive(Clone, Debug)]
+pub struct PasteConfirmation {
+    /// Pane the text is for.
+    pub key: PaneKey,
+    /// The text, not yet sent.
+    pub text: String,
+}
+
 /// A terminal surface could not consume or forward a reply.
 #[derive(Debug)]
 pub enum SurfaceError {
@@ -161,6 +171,12 @@ impl PaneSurface {
             Some(VtOutput::Clipboard(text)) => {
                 context.write_to_clipboard(ClipboardItem::new_string(text));
             }
+            Some(VtOutput::MultilinePaste(text)) => {
+                context.emit(PasteConfirmation {
+                    key: self.key.clone(),
+                    text,
+                });
+            }
             // The bridge consumes encoded input, including empty filtered reports.
             Some(VtOutput::Input(_)) | None => {}
         }
@@ -203,6 +219,7 @@ fn deliver_program_clipboard(context: &mut Context<'_, PaneSurface>, copies: Vec
 }
 
 impl EventEmitter<SurfaceFailure> for PaneSurface {}
+impl EventEmitter<PasteConfirmation> for PaneSurface {}
 
 impl Focusable for PaneSurface {
     fn focus_handle(&self, context: &App) -> FocusHandle {

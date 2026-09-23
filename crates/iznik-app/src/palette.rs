@@ -524,10 +524,42 @@ pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bri
             HostOperation::Uninstall => shell.hosts_mut().uninstall(&host.0),
         },
         Answer::Command { host, command } => shell.dispatch_command(&host.0, command).map(|_| ()),
+        Answer::Paste { key, text } => shell
+            .thread
+            .send(crate::vt::VtCommand::Input {
+                key,
+                input: crate::input::TerminalInput::ConfirmedPaste(text),
+            })
+            .map_err(|_stopped| crate::bridge::EngineError::Stopped),
     }
 }
 
 impl WindowShell {
+    /// Ask a person to confirm a multi-line paste, or send it at once when
+    /// the `confirm_multiline_paste` setting is off.
+    pub(crate) fn confirm_paste(
+        &mut self,
+        paste: &crate::surface::PasteConfirmation,
+        context: &mut Context<'_, Self>,
+    ) {
+        let key = paste.key.clone();
+        if !self.settings.confirm_multiline_paste {
+            if let Err(error) = perform(
+                self,
+                Answer::Paste {
+                    key: key.clone(),
+                    text: paste.text.clone(),
+                },
+            ) {
+                self.failure(&key.host, error.to_string(), context);
+            }
+            return;
+        }
+        self.palette
+            .ask(prompt::paste_prompt(key, paste.text.clone()));
+        context.notify();
+    }
+
     /// Open the command palette and request a repaint.
     pub fn open_palette(&mut self, context: &mut Context<'_, Self>) {
         self.palette.open();

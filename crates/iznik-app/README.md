@@ -268,7 +268,7 @@ new output follows the bottom only when the viewport was already there.
 The headless CPU budget and pending display measurements are recorded in
 [the rendering note](../../docs/notes/app-render.md).
 
-`input` owns keyboard, paste and pointer requests and invokes the pinned native encoders on the VT thread, refreshing modes for every event. Encoded input is forwarded by `bridge` independently of render snapshots.
+`input` owns keyboard, paste and pointer requests and invokes the pinned native encoders on the VT thread, refreshing modes for every event. A paste with a line break, to a program that has not turned on bracketed paste, is not sent: the window asks in the palette first, because each line would run as a command as it arrives. The `confirm_multiline_paste` setting (on by default) turns the question off. Encoded input is forwarded by `bridge` independently of render snapshots.
 
 `GridInput` carries committed composition and clipboard paste to the VT owner.
 The platform can edit only the unsent draft; remote output is never exposed as

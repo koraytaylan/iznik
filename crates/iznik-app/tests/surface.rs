@@ -515,3 +515,62 @@ fn clipboard_text(context: &mut TestAppContext) -> Option<String> {
 fn check(result: &Result<(), Failed>) {
     assert!(result.is_ok(), "{result:?}");
 }
+
+/// A multi-line paste into a program without bracketed paste sends nothing
+/// and asks the window to confirm it; the confirmation pastes it.
+///
+/// # Panics
+/// Fails if setup or the asserted behavior differs.
+#[gpui_kit::test]
+fn surface_asks_before_a_multiline_paste(context: &mut TestAppContext) {
+    check(&multiline_paste(context));
+}
+
+/// Paste two lines, observe the confirmation, then answer it.
+///
+/// # Errors
+/// Propagates fixture, owner and window failures.
+///
+/// # Panics
+/// Fails when lines are sent unconfirmed or the confirmation is lost.
+fn multiline_paste(context: &mut TestAppContext) -> Result<(), Failed> {
+    use iznik_app::grid::GridInput;
+    use iznik_app::input::TerminalInput;
+    use iznik_app::prompt::{self, Answer};
+    use iznik_app::surface::PasteConfirmation;
+    let fixture = Fixture::new(context, "multiline-paste")?;
+    let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = Rc::clone(&asked);
+    let _subscription = fixture.handle.update(context, |_, _, context| {
+        context.subscribe(
+            &context.entity(),
+            move |_, _, paste: &PasteConfirmation, _| {
+                observed.borrow_mut().push(paste.text.clone());
+            },
+        )
+    })?;
+    fixture.handle.update(context, |surface, _, context| {
+        surface.grid().update(context, |_, context| {
+            context.emit(GridInput {
+                key: support::key(),
+                input: TerminalInput::Paste("rm -rf /tmp/x\necho done".to_owned()),
+            });
+        });
+    })?;
+    accept_reply(&fixture, context)?;
+    assert_eq!(
+        asked.borrow().as_slice(),
+        ["rm -rf /tmp/x\necho done"],
+        "nothing was sent; the window is asked to confirm"
+    );
+    let question = prompt::paste_prompt(support::key(), "a\nb".to_owned());
+    assert_eq!(
+        prompt::answer(&question, "", 0),
+        Some(Answer::Paste {
+            key: support::key(),
+            text: "a\nb".to_owned(),
+        }),
+        "choosing the prompt's only entry pastes the text"
+    );
+    Ok(())
+}

@@ -124,13 +124,33 @@ fn input_mode_matrix_runs_on_the_owning_thread() {
 /// Bracket framing follows live mode and pasted terminators cannot escape the frame.
 ///
 /// # Panics
-/// Fails if control bytes survive sanitization or framing/newlines ignore live mode.
+/// Fails if control bytes survive sanitization, framing/newlines ignore live
+/// mode, or lines are sent unbracketed before a person confirms them.
 #[test]
 fn input_paste_sanitizes_payload_before_mode_dependent_framing() {
     let thread = VtThread::start(VtOptions::default()).expect("thread");
     support::open(&thread, Sequence(0), 80, 24).expect("open");
     let text = "first\nsecond\u{1b}[201~\u{0}\u{e9}";
-    let plain = encoded(&thread, TerminalInput::Paste(text.to_owned())).expect("plain paste");
+    thread
+        .send(VtCommand::Input {
+            key: support::key(),
+            input: TerminalInput::Paste(text.to_owned()),
+        })
+        .expect("unconfirmed paste");
+    assert!(
+        matches!(
+            &support::receive(&thread).result,
+            Ok(Some(VtOutput::MultilinePaste(held))) if held == text
+        ),
+        "lines without bracketed paste wait for confirmation"
+    );
+    assert_eq!(
+        encoded(&thread, TerminalInput::Paste("one line".to_owned())).expect("one line"),
+        b"one line",
+        "a single line is sent at once"
+    );
+    let plain =
+        encoded(&thread, TerminalInput::ConfirmedPaste(text.to_owned())).expect("plain paste");
     assert_eq!(plain, "first\rsecond [201~ \u{e9}".as_bytes());
     thread
         .send(VtCommand::Feed {
@@ -157,7 +177,7 @@ fn input_paste_sanitizes_payload_before_mode_dependent_framing() {
         .expect("plain mode again");
     support::snapshot(&thread).expect("mode snapshot");
     assert_eq!(
-        encoded(&thread, TerminalInput::Paste(text.to_owned())).expect("plain again"),
+        encoded(&thread, TerminalInput::ConfirmedPaste(text.to_owned())).expect("plain again"),
         plain
     );
 }

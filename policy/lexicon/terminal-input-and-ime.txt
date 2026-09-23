@@ -12,6 +12,7 @@ chord
 click
 clipboard
 composition
+confirmation
 consumes
 consuming
 consumption
@@ -44,6 +45,7 @@ modified
 modifiers
 motion
 mouse
+multiline
 overlay
 owning
 pairs

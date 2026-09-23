@@ -104,8 +104,13 @@ pub enum TerminalInput {
     Copy(CopyInput),
     /// A keyboard event, including layout metadata and release/repeat state.
     Key(KeyInput),
-    /// Clipboard text sanitized and framed by the native paste encoder.
+    /// Clipboard text sanitized and framed by the native paste encoder. Text
+    /// with a line break, to a program that has not asked for bracketed
+    /// paste, is handed back as [`VtOutput::MultilinePaste`] for a person to
+    /// confirm, because each line would run as a command as it arrives.
     Paste(String),
+    /// Clipboard text a person has confirmed, encoded whatever the mode.
+    ConfirmedPaste(String),
     /// A pointer event, suppressed when the terminal has not requested it.
     Mouse(MouseInput),
     /// Platform pointer input with a local fallback selected by live terminal modes.
@@ -150,7 +155,13 @@ impl InputEncoder {
                     .map(VtOutput::Clipboard);
             }
             TerminalInput::Key(input) => self.key(terminal, input)?,
-            TerminalInput::Paste(text) => encode_paste(terminal, text)?,
+            TerminalInput::Paste(text) => {
+                if !terminal.mode(Mode::BRACKETED_PASTE)? && text.contains(['\n', '\r']) {
+                    return Ok(VtOutput::MultilinePaste(text.clone()));
+                }
+                encode_paste(terminal, text)?
+            }
+            TerminalInput::ConfirmedPaste(text) => encode_paste(terminal, text)?,
             TerminalInput::Mouse(input) => self.mouse(terminal, input)?,
             TerminalInput::Pointer(input) => return self.pointer(terminal, input),
         };

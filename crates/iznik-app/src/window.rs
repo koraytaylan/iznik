@@ -27,7 +27,7 @@ use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
 use crate::splits;
 use crate::status;
-use crate::surface::{PaneSurface, SurfaceFailure};
+use crate::surface::{PaneSurface, PasteConfirmation, SurfaceFailure};
 use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
@@ -756,6 +756,9 @@ impl WindowShell {
         let failure = context.subscribe(&surface, |shell, _, failure: &SurfaceFailure, context| {
             shell.failure(&failure.key.host, failure.detail.clone(), context);
         });
+        let paste = context.subscribe(&surface, |shell, _, paste: &PasteConfirmation, context| {
+            shell.confirm_paste(paste, context);
+        });
         HeldPane {
             surface,
             subscribed: false,
@@ -763,7 +766,7 @@ impl WindowShell {
             banner_cells: None,
             awaiting_model: None,
             native_size: None,
-            _subscriptions: vec![focus, failure],
+            _subscriptions: vec![focus, failure, paste],
         }
     }
     /// Subscribe on appearance and unsubscribe on hiding, without repeating successful orders.

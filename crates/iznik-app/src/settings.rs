@@ -45,6 +45,7 @@ const OWNED_FIELDS: &[&str] = &[
     "theme_name",
     "scrollback_bytes",
     "clipboard_write",
+    "confirm_multiline_paste",
 ];
 /// The prefix of a keybinding override's field.
 const KEYBINDING_PREFIX: &str = "keybinding.";
@@ -64,6 +65,9 @@ pub struct Settings {
     /// Whether a program in the focused pane may write the system clipboard
     /// with OSC 52.
     pub clipboard_write: bool,
+    /// Whether a paste with line breaks into a program without bracketed
+    /// paste waits for a person to confirm it.
+    pub confirm_multiline_paste: bool,
     /// Lines of the file this version does not own — unknown fields, comments
     /// and blank lines — written back as they were.
     pub unowned: Vec<String>,
@@ -77,6 +81,7 @@ impl Default for Settings {
             keybindings: BTreeMap::new(),
             scrollback_bytes: SCROLLBACK_BYTES,
             clipboard_write: true,
+            confirm_multiline_paste: true,
             unowned: Vec::new(),
         }
     }
@@ -255,7 +260,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\nconfirm_multiline_paste={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -268,7 +273,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme.tabs_in_title_bar,
         settings.theme_name,
         settings.scrollback_bytes,
-        settings.clipboard_write
+        settings.clipboard_write,
+        settings.confirm_multiline_paste
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "{KEYBINDING_PREFIX}{action}={chord}");
@@ -371,20 +377,13 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             "background" => settings.theme.background = color(field, value)?,
             "font_family" => value.clone_into(&mut settings.theme.font_family),
             "theme_name" => value.clone_into(&mut settings.theme_name),
-            "tabs_in_title_bar" => {
-                settings.theme.tabs_in_title_bar = value
-                    .parse()
-                    .map_err(|_parse_error| error(field, "not true or false"))?;
-            }
+            "tabs_in_title_bar" => settings.theme.tabs_in_title_bar = flag(field, value)?,
             "line_height" => {
                 settings.theme.line_height =
                     bounded(field, value, (MINIMUM_LINE_HEIGHT, MAXIMUM_LINE_HEIGHT))?;
             }
-            "clipboard_write" => {
-                settings.clipboard_write = value
-                    .parse()
-                    .map_err(|_parse_error| error(field, "not true or false"))?;
-            }
+            "clipboard_write" => settings.clipboard_write = flag(field, value)?,
+            "confirm_multiline_paste" => settings.confirm_multiline_paste = flag(field, value)?,
             "scrollback_bytes" => {
                 settings.scrollback_bytes = value
                     .parse::<usize>()
@@ -408,6 +407,17 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
         }
     }
     Ok(settings)
+}
+
+/// Parse one `true` or `false` value.
+///
+/// # Errors
+///
+/// Returns a field-specific error for anything else.
+fn flag(field: &str, value: &str) -> Result<bool, SettingsError> {
+    value
+        .parse()
+        .map_err(|_parse_error| error(field, "not true or false"))
 }
 
 /// Parse one RGB color value.

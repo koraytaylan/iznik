@@ -29,8 +29,9 @@ const EVEN_WEIGHT: u32 = 1;
 /// A palette action waiting for its argument.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
-    /// The action the argument completes.
-    pub action: ActionId,
+    /// The action the argument completes; `None` for a confirmation a pane
+    /// asked for, such as a paste.
+    pub action: Option<ActionId>,
     /// The question shown above the answer.
     pub question: String,
     /// The text the answer starts from, such as the name being replaced.
@@ -115,6 +116,13 @@ pub enum Answer {
         /// The host it acts on.
         host: HostId,
     },
+    /// Send text a person confirmed to a pane, whatever its paste mode.
+    Paste {
+        /// The pane.
+        key: crate::vt::PaneKey,
+        /// The text.
+        text: String,
+    },
     /// Send this session command to this host.
     Command {
         /// The host the command is for.
@@ -122,6 +130,24 @@ pub enum Answer {
         /// The complete command.
         command: SessionCommand,
     },
+}
+
+/// Ask before pasting text with line breaks into a program that has not
+/// asked for bracketed paste, which would run each line as it arrives.
+#[must_use]
+pub fn paste_prompt(key: crate::vt::PaneKey, text: String) -> Prompt {
+    let lines = text.lines().count();
+    Prompt {
+        action: None,
+        question: format!(
+            "Paste {lines} lines? The program is not expecting a paste, so each line may run as a command."
+        ),
+        initial: String::new(),
+        expected: Expected::Choice(vec![Choice {
+            label: format!("Paste {lines} lines"),
+            answer: Answer::Paste { key, text },
+        }]),
+    }
 }
 
 /// What choosing an action leads to.
@@ -188,7 +214,7 @@ fn session_reorder_step(state: &EngineState, selected: Option<&TabKey>) -> Optio
         .find(|session| session.id == moving)
         .map(|session| session.name.clone())?;
     Some(Prompt {
-        action: ActionId::ReorderSessions,
+        action: Some(ActionId::ReorderSessions),
         question: format!("Move session \u{201C}{name}\u{201D}"),
         initial: String::new(),
         expected: Expected::Choice(choice_answers(&host, choices)),
@@ -226,7 +252,7 @@ fn reorder_session_choices(
 #[must_use]
 pub fn add_host_prompt(aliases: Vec<String>) -> Prompt {
     Prompt {
-        action: ActionId::AddHost,
+        action: Some(ActionId::AddHost),
         question: "Host to add: an ssh alias, or unix:/path/to/socket".to_owned(),
         initial: String::new(),
         expected: Expected::Alias { aliases },
@@ -238,7 +264,7 @@ pub fn add_host_prompt(aliases: Vec<String>) -> Prompt {
 #[must_use]
 pub fn host_address_prompt(alias: String) -> Prompt {
     Prompt {
-        action: ActionId::AddHost,
+        action: Some(ActionId::AddHost),
         question: format!(
             "Address for \u{201C}{alias}\u{201D}, to write to your ssh configuration"
         ),
@@ -319,7 +345,7 @@ fn host_step(
         ),
     };
     Some(Step::Ask(Prompt {
-        action,
+        action: Some(action),
         question: question.to_owned(),
         initial: String::new(),
         expected: Expected::Choice(
@@ -384,7 +410,7 @@ fn ask(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -> Opti
         _ => return None,
     };
     Some(Prompt {
-        action,
+        action: Some(action),
         question,
         initial,
         expected,
