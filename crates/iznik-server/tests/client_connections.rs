@@ -77,6 +77,7 @@ impl Host {
                     arguments: Vec::new(),
                 },
                 terminfo_directory: None,
+                agent_socket: None,
                 program_interval: Duration::ZERO,
             },
             Arc::new(Mutex::new(HistoryBudget::new(DEFAULT_HISTORY_BUDGET_BYTES))),

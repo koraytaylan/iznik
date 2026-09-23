@@ -31,6 +31,7 @@ fn sample_registry(program: Program) -> Result<Registry, MirrorError> {
         RegistryDefaults {
             program,
             terminfo_directory: None,
+            agent_socket: None,
             program_interval: SAMPLE_INTERVAL,
         },
         Arc::new(Mutex::new(HistoryBudget::new(DEFAULT_HISTORY_BUDGET_BYTES))),

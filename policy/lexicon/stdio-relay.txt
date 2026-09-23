@@ -1,6 +1,9 @@
+adopt
+agent
 audibly
 carries
 outward
 pipes
 relays
 stdio
+variables

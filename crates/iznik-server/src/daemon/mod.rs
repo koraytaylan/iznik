@@ -14,6 +14,7 @@
 //! Every timing is a field of [`DaemonOptions`], so no test waits ten minutes
 //! to watch an idle daemon go.
 
+pub mod agent;
 pub mod idle;
 pub mod lock;
 pub mod logging;
@@ -99,6 +100,9 @@ pub struct RuntimePaths {
     pub lock: PathBuf,
     /// The log file.
     pub log: PathBuf,
+    /// The link every pane's `SSH_AUTH_SOCK` names, which each relay points
+    /// at the agent of its own connection.
+    pub agent: PathBuf,
 }
 
 /// Why the runtime paths could not be settled.
@@ -154,6 +158,7 @@ impl RuntimePaths {
             socket: directory.join(SOCKET_NAME),
             lock: directory.join(LOCK_NAME),
             log: directory.join(LOG_NAME),
+            agent: directory.join(agent::AGENT_NAME),
             directory: directory.to_path_buf(),
         })
     }
@@ -410,6 +415,7 @@ pub async fn serve(
         RegistryDefaults {
             program: options.program.clone(),
             terminfo_directory: None,
+            agent_socket: Some(paths.agent.clone()),
             program_interval: crate::pty::program::PROGRAM_INTERVAL,
         },
         Arc::new(Blocking::new(HistoryBudget::new(

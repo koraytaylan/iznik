@@ -39,6 +39,7 @@ fn raw_writer(path: &str) -> SpawnOptions {
         rows: ROWS,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 

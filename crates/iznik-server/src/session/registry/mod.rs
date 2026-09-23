@@ -74,6 +74,9 @@ pub struct RegistryDefaults {
     pub program: Program,
     /// The terminfo a ghostty `TERM` needs, when there is one.
     pub terminfo_directory: Option<PathBuf>,
+    /// What every pane's `SSH_AUTH_SOCK` names; see
+    /// [`SpawnOptions::agent_socket`].
+    pub agent_socket: Option<PathBuf>,
     /// How often a pane's foreground program and directory are read.
     /// [`Duration::ZERO`] leaves the tab named as it was created.
     pub program_interval: Duration,
@@ -271,6 +274,7 @@ impl Registry {
             rows,
             working_directory,
             terminfo_directory: self.defaults.terminfo_directory.clone(),
+            agent_socket: self.defaults.agent_socket.clone(),
         };
         let id = PaneId(self.next_pane);
         let pane = Pane::spawn(&options, DEFAULT_PANE_HISTORY_BYTES, &self.mirrors).await?;

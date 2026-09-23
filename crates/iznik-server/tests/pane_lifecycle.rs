@@ -62,6 +62,7 @@ fn registry_running(script: String) -> Result<Registry, MirrorError> {
                 arguments: vec!["-c".to_owned(), script],
             },
             terminfo_directory: None,
+            agent_socket: None,
             program_interval: Duration::ZERO,
         },
         Arc::new(Mutex::new(HistoryBudget::new(DEFAULT_HISTORY_BUDGET_BYTES))),
@@ -161,6 +162,7 @@ async fn pane_lifecycle_closing_an_ended_pane_signals_nothing() {
         rows: ROWS,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     };
     let pane = Pane::spawn(&options, DEFAULT_HISTORY_BUDGET_BYTES, &thread)
         .await
@@ -215,6 +217,7 @@ fn running_script(script: String) -> SpawnOptions {
         rows: ROWS,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 

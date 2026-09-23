@@ -44,6 +44,7 @@ fn shell_options(columns: u16, rows: u16) -> SpawnOptions {
         rows,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 

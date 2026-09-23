@@ -309,3 +309,119 @@ async fn it_fails_audibly_when_it_cannot_make_its_directory() {
     };
     case.await.unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// The variables of the login the daemon was started from.
+const LOGIN_VARIABLES: [&str; 4] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "IZNIK_LOG"];
+
+/// Waits for a file the pane's program writes, and reads it.
+///
+/// # Errors
+///
+/// When it is not there, with something in it, within [`PROMPT`].
+async fn written(path: &std::path::Path) -> Result<String, Failed> {
+    let read = tokio::time::timeout(PROMPT, async {
+        loop {
+            let held = std::fs::read_to_string(path).unwrap_or_default();
+            if held.ends_with('\n') {
+                return held;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    Ok(read)
+}
+
+/// # Panics
+///
+/// When a pane inherits the daemon's login — its connection, its terminal,
+/// its agent — or when a relay does not point the pane's agent link at its
+/// own connection's agent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pane_gets_the_agent_of_the_newest_connection() {
+    let case = async {
+        let home = Home::new("agent")?;
+        let seen = home.path.join("environment");
+        let probe = home.path.join("probe");
+        std::fs::write(
+            &probe,
+            format!("#!/bin/sh\nenv > \"{}\"\nexec sleep 1000\n", seen.display()),
+        )?;
+        std::fs::set_permissions(
+            &probe,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )?;
+        let mut daemon = home.server();
+        daemon
+            .args(["--daemon", "--program"])
+            .arg(&probe)
+            .env("SSH_AUTH_SOCK", home.path.join("first-login-agent"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for variable in LOGIN_VARIABLES {
+            daemon.env(variable, "the first login");
+        }
+        assert!(daemon.status().await?.success(), "the daemon starts");
+
+        let first_agent = home.path.join("first-agent");
+        let mut child = home
+            .server()
+            .arg("--stdio")
+            .env("SSH_AUTH_SOCK", &first_agent)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut client = speaking(&mut child)?;
+        let _greeting = client.hello(Capabilities::from_bits(0)).await?;
+        let _made = client
+            .command(iznik_protocol::command::SessionCommand::CreateSession {
+                name: "work".to_owned(),
+                columns: 80,
+                rows: 24,
+                working_directory: None,
+            })
+            .await?;
+        let environment = written(&seen).await?;
+        for variable in LOGIN_VARIABLES {
+            assert!(
+                !environment.contains(&format!("{variable}=")),
+                "{variable} is not the pane's: {environment}"
+            );
+        }
+        let link = home.path.join("iznik").join("agent.sock");
+        assert!(
+            environment.contains(&format!("SSH_AUTH_SOCK={}\n", link.display())),
+            "the pane's agent is the link: {environment}"
+        );
+        assert_eq!(
+            std::fs::read_link(&link)?,
+            first_agent,
+            "at this connection's agent"
+        );
+
+        let second_agent = home.path.join("second-agent");
+        let mut second = home
+            .server()
+            .arg("--stdio")
+            .env("SSH_AUTH_SOCK", &second_agent)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut again = speaking(&mut second)?;
+        let _greeted = again.hello(Capabilities::from_bits(0)).await?;
+        assert_eq!(
+            std::fs::read_link(&link)?,
+            second_agent,
+            "and then the next one's"
+        );
+        for mut relay in [child, second] {
+            let _told = relay.start_kill();
+            let _waited = relay.wait().await;
+        }
+        Ok::<(), Failed>(())
+    };
+    case.await.unwrap_or_else(|error| panic!("{error}"));
+}

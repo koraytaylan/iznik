@@ -81,6 +81,11 @@ const PROMISES: &[Promise] = &[
         source: "crates/iznik-server/src/daemon/mod.rs",
         named: "const LOG_NAME: &str = \"server.log\";",
     },
+    Promise {
+        documented: "`<runtime>/agent.sock`",
+        source: "crates/iznik-server/src/daemon/agent.rs",
+        named: "pub const AGENT_NAME: &str = \"agent.sock\";",
+    },
 ];
 
 /// The workspace root, from this crate's own directory.

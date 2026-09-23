@@ -335,6 +335,7 @@ fn shell_integration_marks_the_asset_emits_the_marks() {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     };
     let process = spawn(&options).expect("bash starts");
     let reader = Reader::new(process.master().try_clone_reader().expect("a reader"));

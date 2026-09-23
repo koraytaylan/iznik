@@ -64,6 +64,7 @@ fn registry_running(program: Program) -> Result<Registry, MirrorError> {
         RegistryDefaults {
             program,
             terminfo_directory: None,
+            agent_socket: None,
             program_interval: Duration::ZERO,
         },
         budget,
@@ -98,6 +99,7 @@ fn registry_sharing(budget: Arc<Mutex<HistoryBudget>>) -> Result<Registry, Mirro
                 arguments: Vec::new(),
             },
             terminfo_directory: None,
+            agent_socket: None,
             program_interval: Duration::ZERO,
         },
         budget,

@@ -49,6 +49,23 @@ const TERM_PROGRAM_VARIABLE: &str = "TERM_PROGRAM";
 /// `TERM_PROGRAM`, always: what a program asking who renders it is told.
 const TERM_PROGRAM_VALUE: &str = "iznik";
 
+/// The variables the daemon's own environment carries that describe the SSH
+/// login it was started from rather than the host: a pane outlives that
+/// login, so what they say is stale for all of its life but the first
+/// minutes. `SSH_AUTH_SOCK` is among them, and is replaced rather than
+/// removed when the daemon has a stable agent link to give.
+const SESSION_VARIABLES: &[&str] = &[
+    "SSH_CONNECTION",
+    "SSH_CLIENT",
+    "SSH_TTY",
+    "SSH_ORIGINAL_COMMAND",
+    crate::daemon::agent::AGENT_VARIABLE,
+    "XDG_SESSION_ID",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_CLASS",
+    crate::daemon::logging::LEVEL_VARIABLE,
+];
+
 /// What to spawn on the pseudoterminal.
 #[derive(Clone, Debug)]
 pub enum Program {
@@ -79,6 +96,11 @@ pub struct SpawnOptions {
     /// The terminfo directory a ghostty `TERM` needs; without it the fallback
     /// `TERM` is used and `TERMINFO` is left unset.
     pub terminfo_directory: Option<PathBuf>,
+    /// What `SSH_AUTH_SOCK` names in the pane: the daemon's agent link, which
+    /// the newest relay keeps pointed at a live agent. Without it the pane
+    /// has no `SSH_AUTH_SOCK` rather than the daemon's, which died with the
+    /// login that started it.
+    pub agent_socket: Option<PathBuf>,
 }
 
 /// A signal the server sends, and the cause of a signal death it reports.
@@ -541,6 +563,12 @@ fn command_of(options: &SpawnOptions) -> CommandBuilder {
         // pane whose curses library searches the system default, which is what
         // removing the variable makes true.
         command.env_remove(TERMINFO_VARIABLE);
+    }
+    for variable in SESSION_VARIABLES {
+        command.env_remove(variable);
+    }
+    if let Some(agent) = &options.agent_socket {
+        command.env(crate::daemon::agent::AGENT_VARIABLE, agent);
     }
     command.env(COLORTERM_VARIABLE, COLORTERM_VALUE);
     command.env(TERM_PROGRAM_VARIABLE, TERM_PROGRAM_VALUE);

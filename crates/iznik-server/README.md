@@ -16,6 +16,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 |---|---|---|
 | `connection` | One accepted stream: the handshake, the dispatch of every control message, and the single writer that owns the order of frames on the wire. | `client-connections` (plan 0004) |
 | `daemon` | The daemon: runtime paths, the single-instance lock, the accept loop, idle shutdown, logging, and the `--daemon`, `--foreground`, `--stop` and `--version` entry points. | `daemon-lifecycle` (plan 0004) |
+| `daemon::agent` | The SSH agent a pane is told about: one stable link in the runtime directory, re-pointed by every relay at the agent of the connection it arrived on. | `server-review` |
 | `daemon::idle` | The idle interval after which a daemon with no panes and no clients exits. | `daemon-lifecycle` (plan 0004) |
 | `daemon::lock` | The exclusive non-blocking lock that enforces a single daemon instance and names the holder. | `daemon-lifecycle` (plan 0004) |
 | `daemon::logging` | A size-capped rotating log file behind `tracing-subscriber`, because a full disk is worse than no logs. | `daemon-lifecycle` (plan 0004) |

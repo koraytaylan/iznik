@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 
+use crate::daemon::agent;
 use crate::daemon::idle::SOCKET_POLL_INTERVAL;
 use crate::daemon::socket::{self, Stream};
 use crate::daemon::{DaemonOptions, RuntimePaths};
@@ -138,6 +139,9 @@ pub async fn run(arguments: &[OsString]) -> ExitCode {
             return ExitCode::from(FAILED);
         }
     };
+    // Before the daemon is reached, so a pane made over this connection is
+    // made with this connection's agent behind its link.
+    agent::adopt(&paths.agent).await;
     let cap = DaemonOptions::default().socket_ready_cap;
     let stream = match reach(&paths, cap).await {
         Ok(stream) => stream,

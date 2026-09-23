@@ -158,6 +158,7 @@ fn sh(script: &str) -> SpawnOptions {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 
@@ -175,6 +176,7 @@ fn program(path: &str, arguments: &[&str]) -> SpawnOptions {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 
@@ -201,6 +203,7 @@ fn pty_spawn_the_login_shell_initializes_as_one() {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     };
     let mut session = Session::start(&options).expect("the login shell starts");
     session

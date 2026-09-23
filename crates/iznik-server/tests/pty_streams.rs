@@ -29,6 +29,7 @@ fn raw_cat() -> SpawnOptions {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     }
 }
 
@@ -236,6 +237,7 @@ async fn pty_streams_the_stream_ends_at_the_last_byte() {
         rows: 24,
         working_directory: None,
         terminfo_directory: None,
+        agent_socket: None,
     })
     .expect("sh starts");
     let (mut output, _input) = streams(&process).expect("streams open");

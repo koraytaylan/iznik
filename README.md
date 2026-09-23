@@ -119,6 +119,7 @@ nothing else:
 | `<runtime>/server.sock` | The daemon's socket. |
 | `<runtime>/server.lock` | The lock that keeps one daemon per user, holding its process id. |
 | `<runtime>/server.log` | What the daemon has to say. |
+| `<runtime>/agent.sock` | A link to the SSH agent of the newest connection, re-pointed by each one as it arrives, and what every pane's `SSH_AUTH_SOCK` names. Made only by a connection that forwards an agent. |
 
 The prefix is the first of `$XDG_DATA_HOME/iznik`, `$HOME/.local/share/iznik`
 and the runtime directory that the host says this user both owns and may
@@ -127,7 +128,10 @@ write; nothing is created to find out. The runtime directory is
 `XDG_RUNTIME_DIR`.
 
 The daemon outlives the SSH session that started it — that is the point of it
-— and exits on its own once it has held no panes and no clients for ten
+— so a pane is not handed that session's `SSH_CONNECTION`, `SSH_CLIENT`,
+`SSH_TTY` or `XDG_SESSION_ID`, and its `SSH_AUTH_SOCK` is the agent link above
+rather than the first session's agent, which would be dead after a reconnect.
+The daemon exits on its own once it has held no panes and no clients for ten
 minutes. Connecting again to a host that already has the version this build
 carries uploads nothing at all.
 
