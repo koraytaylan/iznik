@@ -357,7 +357,10 @@ where
     let (mut reader, writer) = link.split();
     let (frames, queued) = mpsc::channel(FRAME_QUEUE);
     let (requests, asked) = mpsc::channel(REQUEST_QUEUE);
-    let deltas = registry.read().await.deltas();
+    let (deltas, _attached) = {
+        let held = registry.read().await;
+        (held.deltas(), held.attach_client())
+    };
     let multiplexer = Multiplexer::new(Arc::clone(&registry), Handoff { frames }, deltas);
     let writing: JoinHandle<Result<(), ConnectionError>> =
         tokio::spawn(write_frames(writer, queued));

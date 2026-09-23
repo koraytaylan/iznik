@@ -3,7 +3,7 @@
 //! sets a title of its own.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -30,6 +30,24 @@ pub(super) struct ProgramWatch {
     stop: Arc<Notify>,
     /// Cleared on drop, so a sample already in flight does not start another.
     running: Arc<AtomicBool>,
+    /// How many clients are attached. Nobody sees a tab's name while none
+    /// is, and on a host without `/proc` every sample forks `ps` and `lsof`,
+    /// so a daemon nobody is looking at samples nothing.
+    clients: Arc<AtomicUsize>,
+}
+
+/// One attached client, counted while it lives: while any is, the sampler
+/// runs. Dropping it releases the count.
+#[derive(Debug)]
+pub struct ClientAttachment {
+    /// The count it belongs to.
+    clients: Arc<AtomicUsize>,
+}
+
+impl Drop for ClientAttachment {
+    fn drop(&mut self) {
+        let _before = self.clients.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// What the sampler knows about one pane.
@@ -86,14 +104,34 @@ impl ProgramWatch {
         let wake_now = Arc::clone(&wake);
         let stop_now = Arc::clone(&stop);
         let still_running = Arc::clone(&running);
+        let clients = Arc::new(AtomicUsize::new(0));
+        let looking = SampleLoop {
+            interval,
+            signal,
+            stop: stop_now,
+            wake: wake_now,
+            running: still_running,
+            clients: Arc::clone(&clients),
+        };
         tokio::spawn(async move {
-            run(watched, interval, signal, stop_now, wake_now, still_running).await;
+            run(watched, looking).await;
         });
         ProgramWatch {
             entries,
             wake,
             stop,
             running,
+            clients,
+        }
+    }
+
+    /// Counts a client in, and samples at once rather than after an interval
+    /// of names that were not being kept up to date.
+    pub(super) fn attach(&self) -> ClientAttachment {
+        let _before = self.clients.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify_one();
+        ClientAttachment {
+            clients: Arc::clone(&self.clients),
         }
     }
 
@@ -157,29 +195,45 @@ impl Registry {
     }
 }
 
-/// Samples until [`ProgramWatch`] is dropped.
-async fn run(
-    entries: Arc<Mutex<BTreeMap<PaneId, ProgramEntry>>>,
+/// What the sampling task runs by.
+struct SampleLoop {
+    /// How often it samples.
     interval: Duration,
+    /// Raised when a sample changed.
     signal: Arc<Notify>,
+    /// Ends it.
     stop: Arc<Notify>,
+    /// Makes it sample at once.
     wake: Arc<Notify>,
+    /// Cleared when the watch is dropped.
     running: Arc<AtomicBool>,
-) {
-    while running.load(Ordering::Acquire) {
-        let asked = asked_of(&entries);
+    /// How many clients are attached; with none it samples nothing.
+    clients: Arc<AtomicUsize>,
+}
+
+/// Samples until [`ProgramWatch`] is dropped, while any client is attached.
+async fn run(entries: Arc<Mutex<BTreeMap<PaneId, ProgramEntry>>>, looking: SampleLoop) {
+    while looking.running.load(Ordering::Acquire) {
+        let attached = looking.clients.load(Ordering::Acquire) > 0;
+        let asked = if attached {
+            asked_of(&entries)
+        } else {
+            Vec::new()
+        };
         if !asked.is_empty() {
             let process_ids: Vec<u32> = asked.iter().map(|one| one.process_id).collect();
             let samples = read_programs(&process_ids).await;
             if record_samples(&entries, &asked, &samples) {
-                signal.notify_one();
+                looking.signal.notify_one();
             }
         }
+        // With nobody attached there is no interval to keep: the next client
+        // to attach wakes it.
         tokio::select! {
             biased;
-            () = stop.notified() => break,
-            () = wake.notified() => {}
-            () = tokio::time::sleep(interval) => {}
+            () = looking.stop.notified() => break,
+            () = looking.wake.notified() => {}
+            () = tokio::time::sleep(looking.interval), if attached => {}
         }
     }
 }

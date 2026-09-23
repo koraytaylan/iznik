@@ -36,6 +36,8 @@ use crate::terminal::mirror::MirrorThread;
 mod ingest;
 mod program;
 
+pub use program::ClientAttachment;
+
 /// How many deltas a client may fall behind before it is told the whole model
 /// instead — what its reconciler would have asked for anyway. A memory bound,
 /// not a correctness one.
@@ -357,6 +359,13 @@ impl Registry {
     /// ingestion. The creates use [`Registry::emit`] and refuse on a refusal.
     fn announce(&mut self, delta: Delta) {
         let _said = self.emit(delta);
+    }
+
+    /// Counts a client in for as long as the returned guard lives: while no
+    /// client is attached, the foreground programs of panes are not sampled.
+    #[must_use]
+    pub fn attach_client(&self) -> Option<ClientAttachment> {
+        self.programs.as_ref().map(program::ProgramWatch::attach)
     }
 
     /// Says a pane was looked at, so the panes that were not shrink first.

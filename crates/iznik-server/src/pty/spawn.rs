@@ -390,16 +390,34 @@ impl PtyProcess {
     }
 
     /// The foreground process, or the shell when it is the foreground group.
+    ///
+    /// The terminal names a process group, and a group's id is its leader's
+    /// process id only while the leader lives: the first command of a
+    /// pipeline can end and leave the rest running, and its id can then be
+    /// handed to an unrelated process. The group is taken as a process only
+    /// when that process still leads it in this pane's session; otherwise the
+    /// shell is what is reported.
     pub(crate) fn foreground_process_id(&self) -> u32 {
         #[cfg(unix)]
         {
-            let group = self.foreground_group().unwrap_or_else(|| self.pid());
+            let group = self
+                .foreground_group()
+                .filter(|group| self.leads_in_session(*group))
+                .unwrap_or_else(|| self.pid());
             u32::try_from(group.as_raw()).unwrap_or(self.process_id)
         }
         #[cfg(windows)]
         {
             self.process_id
         }
+    }
+
+    /// Whether the process whose id is `group` leads that group, in this
+    /// pane's session.
+    #[cfg(unix)]
+    fn leads_in_session(&self, group: Pid) -> bool {
+        nix::unistd::getpgid(Some(group)) == Ok(group)
+            && nix::unistd::getsid(Some(group)) == Ok(self.pid())
     }
 
     /// Read a positive foreground group from the owned terminal descriptor.

@@ -62,6 +62,7 @@ async fn a_running_program_names_its_pane() {
         arguments: vec!["30".into()],
     })
     .expect("the registry");
+    let _attached = registry.attach_client();
     registry
         .create_session("work".to_owned(), 80, 24, None)
         .await
@@ -88,6 +89,7 @@ async fn a_shell_pane_has_its_directory() {
         arguments: vec!["-c".into(), "sleep 30".into()],
     })
     .expect("the registry");
+    let _attached = registry.attach_client();
     registry
         .create_session("work".to_owned(), 80, 24, None)
         .await
@@ -131,4 +133,34 @@ async fn wait_for(
         }
         tokio::time::sleep(LOOK_INTERVAL).await;
     }
+}
+
+/// Nobody is shown a tab's name while no client is attached, so nothing is
+/// sampled then; the first client to attach is shown it at once.
+///
+/// # Panics
+///
+/// When a pane is named with no client attached, or not named once one is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nothing_is_read_with_nobody_attached() {
+    let mut registry = sample_registry(Program::Command {
+        path: "sleep".into(),
+        arguments: vec!["30".into()],
+    })
+    .expect("the registry");
+    registry
+        .create_session("work".to_owned(), 80, 24, None)
+        .await
+        .expect("the session");
+    tokio::time::sleep(SAMPLE_INTERVAL.saturating_mul(5)).await;
+    registry.ingest();
+    let (_pane, alone, _nowhere) = pane_text(&registry.snapshot()).expect("the pane");
+    assert!(alone.is_empty(), "sampled with nobody attached: {alone}");
+    let attached = registry.attach_client();
+    let (pane, title, _directory) = wait_for(&mut registry, |named, _read| named == "sleep")
+        .await
+        .expect("the sample once a client attaches");
+    assert_eq!(title, "sleep");
+    drop(attached);
+    registry.close_pane(pane).expect("the pane closes");
 }
