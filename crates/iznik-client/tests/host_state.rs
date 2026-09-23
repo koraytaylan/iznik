@@ -113,6 +113,7 @@ fn machine_in(named: &str, now: Instant) -> HostStateMachine {
             HostEvent::Failed {
                 error: "no route".to_owned(),
                 cause: Cause::Transient,
+                stage: None,
             },
         ],
         _disconnected => Vec::new(),
@@ -240,6 +241,7 @@ fn event(named: &str) -> HostEvent {
         "failed" => HostEvent::Failed {
             error: "no route".to_owned(),
             cause: Cause::Transient,
+            stage: None,
         },
         "dead" => HostEvent::LinkDead {
             detail: "silent".to_owned(),
@@ -422,6 +424,7 @@ fn host_state_counts_a_reconnection_that_keeps_failing() {
             HostEvent::Failed {
                 error: "no route".to_owned(),
                 cause: Cause::Transient,
+                stage: None,
             },
             now,
         );
@@ -438,6 +441,7 @@ fn host_state_counts_a_reconnection_that_keeps_failing() {
         HostEvent::Failed {
             error: "no route".to_owned(),
             cause: Cause::Transient,
+            stage: None,
         },
         now,
     );
@@ -506,6 +510,7 @@ fn fail_again(machine: &mut HostStateMachine, now: Instant) -> Result<Instant, F
         HostEvent::Failed {
             error: "no route".to_owned(),
             cause: Cause::Transient,
+            stage: None,
         },
         now,
     ))
@@ -692,6 +697,7 @@ fn host_state_waits_to_be_asked_after_a_permanent_failure() {
                 HostEvent::Failed {
                     error: "refused".to_owned(),
                     cause,
+                    stage: None,
                 },
                 now,
             );

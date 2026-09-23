@@ -6,6 +6,7 @@ pub mod error;
 pub mod model;
 pub mod pane;
 mod shape;
+mod status;
 
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::BTreeMap;

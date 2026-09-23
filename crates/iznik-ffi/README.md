@@ -12,6 +12,7 @@ The C ABI over `iznik-client`, and the one crate in this workspace that may cont
 | `error` | `iznik_error`: a code, the layer it came from, and a message the application may display verbatim. | `ffi-surface` (plan 0006) |
 | `model` | The events carried to the application in `iznik/1`'s own encoding, so there is one format, not two. | `ffi-surface` (plan 0006) |
 | `pane` | The pane byte pipe: attach, detach, the output callback that hands bytes straight to a surface, mandatory credit, input that is one message per call, resize and focus. | `pane-byte-pipe` (plan 0006) |
+| `status` | A host's state as a program reads it: the `iznik_host_status` a `HostStatus` event points at — state, failure kind and layer, whether it is retried, and the upgrade on offer. This crate's own, not part of the ABI; the struct it fills is in `model`. | `ffi-surface` (plan 0006) |
 | `shape` | What turns one event of iznik's own into one of the application's: its kind, its host, its bytes, and the numbers that say which pane, place, generation and command. This crate's own, not part of the ABI. | `ffi-surface` (plan 0006) |
 
 ## The header

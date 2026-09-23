@@ -146,6 +146,7 @@ fn failed() -> HostState {
     HostState::Failed {
         error: "unreachable".to_owned(),
         cause: iznik_client::bootstrap::launch::Cause::Transient,
+        stage: None,
         retry_at: Some(std::time::Instant::now()),
     }
 }

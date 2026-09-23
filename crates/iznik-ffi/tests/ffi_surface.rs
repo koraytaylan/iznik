@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use iznik::error::{Error, INVALID_ARGUMENT, Layer, OK};
-use iznik::model::{Event, EventKind};
+use iznik::model::{Event, EventKind, FailureKind, HostStateKind, HostStatus};
 use iznik::pane::{PaneCallbacks, iznik_pane_attach, iznik_pane_input};
 use iznik::{
     ABI_VERSION, Client, Configuration, iznik_abi_version, iznik_client_free, iznik_client_new,
@@ -799,6 +799,108 @@ fn ffi_surface_refuses_what_is_not_text_and_says_its_version() {
         );
         let version = named(iznik_version());
         assert_eq!(version, env!("CARGO_PKG_VERSION"), "and its own version");
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// What the status handler keeps of each `HostStatus` event, and of the
+/// `HostState` event that came before it.
+#[derive(Debug, Default)]
+struct Statuses {
+    /// Each status, with the kind of the event before it.
+    kept: Vec<(Option<EventKind>, HostStateKind, FailureKind, Layer, bool)>,
+    /// The kind of the last event of any other kind.
+    before: Option<EventKind>,
+}
+
+/// A handler that keeps every status it is given.
+extern "C" fn statuses(event: *const Event, context: *mut c_void) {
+    if event.is_null() || context.is_null() {
+        return;
+    }
+    // SAFETY: iznik hands a live event, valid for this call.
+    let held = unsafe { &*event };
+    // SAFETY: this case's own box, which outlives the client.
+    let kept = unsafe { &*context.cast::<Mutex<Statuses>>() };
+    let Ok(mut kept) = kept.lock() else {
+        return;
+    };
+    if held.kind != EventKind::HostStatus {
+        kept.before = Some(held.kind);
+        return;
+    }
+    if held.payload.is_null() || held.payload_length != size_of::<HostStatus>() {
+        return;
+    }
+    // SAFETY: the boundary's promise for this kind: the payload points at one
+    // `iznik_host_status`, valid for this call, which is where it is copied.
+    let status = unsafe { held.payload.cast::<HostStatus>().read_unaligned() };
+    let before = kept.before.take();
+    kept.kept.push((
+        before,
+        status.state,
+        status.failure,
+        status.layer,
+        status.retrying,
+    ));
+}
+
+/// # Panics
+///
+/// When a host's move is not followed by a status a program can read, or the
+/// status of a host that cannot be reached does not say what kind of failure
+/// it is and that it will be tried again.
+#[test]
+fn ffi_surface_says_a_host_state_for_a_program() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("status")?;
+        let made = client(&held)?;
+        let kept: *mut Mutex<Statuses> = Box::into_raw(Box::new(Mutex::new(Statuses::default())));
+        // SAFETY: the client is live and the context outlives it.
+        unsafe { iznik_set_event_callback(made, Some(statuses), kept.cast::<c_void>()) };
+        let nowhere = CString::new(format!("unix:{}", held.path.join("nowhere.sock").display()))?;
+        let mut error = blank();
+        // SAFETY: the client is live and the alias null-terminated.
+        let added = unsafe { iznik_host_add(made, nowhere.as_ptr(), &raw mut error) };
+        assert_eq!(added, OK);
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        let failed = |statuses: &Statuses| {
+            statuses
+                .kept
+                .iter()
+                .any(|status| status.1 == HostStateKind::Failed)
+        };
+        // SAFETY: this case's own box, alive here, and every reader locks.
+        while Instant::now() < expires && !unsafe { &*kept }.lock().is_ok_and(|seen| failed(&seen))
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // SAFETY: it came from `iznik_client_new` and is freed once, here.
+        unsafe { iznik_client_free(made) };
+        // SAFETY: the box this case made, taken back once nothing calls into it.
+        let seen = unsafe { Box::from_raw(kept) }
+            .into_inner()
+            .map_err(|_broken| "a broken record")?;
+        assert!(
+            seen.kept
+                .iter()
+                .all(|status| status.0 == Some(EventKind::HostState)),
+            "each status follows the words for the same move: {:?}",
+            seen.kept
+        );
+        let failure = seen
+            .kept
+            .iter()
+            .find(|status| status.1 == HostStateKind::Failed)
+            .ok_or("no failed status")?;
+        assert_eq!(
+            failure.2,
+            FailureKind::Transient,
+            "a missing socket may come back"
+        );
+        assert!(failure.4, "so it is tried again");
+        assert_ne!(failure.3, Layer::Client, "and the layer is not this engine");
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

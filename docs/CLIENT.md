@@ -182,6 +182,9 @@ reconnection now rather than after the backoff.
 
 - `IZNIK_EVENT_KIND_HOST_STATE` — a host moved from one state to another. The
   payload is the state as UTF-8, for a person to read.
+- `IZNIK_EVENT_KIND_HOST_STATUS` — the same move, for your program: it comes
+  right after each `IZNIK_EVENT_KIND_HOST_STATE`, and its payload points at
+  one `iznik_host_status` (`payload_length` is its size). See *Host status*.
 - `IZNIK_EVENT_KIND_SNAPSHOT` — the host's whole model, with `generation`
   saying which generation of it this is.
 - `IZNIK_EVENT_KIND_DELTA` — one numbered change, with `generation` saying
@@ -197,7 +200,7 @@ reconnection now rather than after the backoff.
 - `IZNIK_EVENT_KIND_PANE_DETACHED` — the host has stopped sending a pane's
   output. There is no payload; `pane` names the pane.
 
-Every payload is in `iznik/1`'s own encoding — the same schema the wire uses,
+Every other payload is in `iznik/1`'s own encoding — the same schema the wire uses,
 so there is one format and not two. The Rust crate that reads it is
 `iznik_protocol`; the encoding is documented with the protocol.
 
@@ -205,6 +208,31 @@ so there is one format and not two. The Rust crate that reads it is
 showing ahead of it.** If you want a rename on screen before the host has
 agreed to it, make that change yourself and put it back when the
 `IZNIK_EVENT_KIND_COMMAND_RESULT` for your number says the host refused.
+
+### Host status
+
+An `iznik_host_status` says, without words to parse:
+
+- `state`, an `iznik_host_state_kind`: `IZNIK_HOST_STATE_KIND_DISCONNECTED`,
+  `IZNIK_HOST_STATE_KIND_PROBING`, `IZNIK_HOST_STATE_KIND_BOOTSTRAPPING`,
+  `IZNIK_HOST_STATE_KIND_CONNECTING`, `IZNIK_HOST_STATE_KIND_UPGRADING`,
+  `IZNIK_HOST_STATE_KIND_CONNECTED`, `IZNIK_HOST_STATE_KIND_RECONNECTING`,
+  `IZNIK_HOST_STATE_KIND_FAILED` or `IZNIK_HOST_STATE_KIND_REMOVED`.
+- `failure`, an `iznik_failure_kind`: `IZNIK_FAILURE_KIND_NONE` unless the
+  host is failing; then `IZNIK_FAILURE_KIND_TRANSIENT`, which is retried, or
+  `IZNIK_FAILURE_KIND_CREDENTIALS`, `IZNIK_FAILURE_KIND_HOST_KEY` or
+  `IZNIK_FAILURE_KIND_UNSUPPORTED`, which are not tried again until you call
+  `iznik_host_reconnect`.
+- `layer`, the `iznik_layer` the failure is in, when there is one.
+- `retrying`, whether it will be tried again by itself, and `attempt`, how
+  many times a reconnecting host has failed since it was last connected.
+- `upgrade`, an `iznik_upgrade_kind` — `IZNIK_UPGRADE_KIND_NONE`,
+  `IZNIK_UPGRADE_KIND_VERSION` or `IZNIK_UPGRADE_KIND_CAPABILITIES` — for a
+  connected host a newer server is on offer for, with `installed_version` and
+  `bundled_version` naming both ends of it (null when there is no offer).
+
+Every pointer in it is valid for the callback and no longer, like every other
+buffer.
 
 ## Commands
 
@@ -394,7 +422,8 @@ Functions: `iznik_abi_version`, `iznik_version`, `iznik_client_new`,
 
 Types: `iznik_client`, `iznik_configuration`, `iznik_error`, `iznik_layer`,
 `iznik_event`, `iznik_event_kind`, `iznik_event_callback`,
-`iznik_pane_callbacks`.
+`iznik_pane_callbacks`, `iznik_host_status`, `iznik_host_state_kind`,
+`iznik_failure_kind`, `iznik_upgrade_kind`.
 
 Codes: `IZNIK_OK`, `IZNIK_INVALID_ARGUMENT`, `IZNIK_UNKNOWN_HOST`,
 `IZNIK_REFUSED`.

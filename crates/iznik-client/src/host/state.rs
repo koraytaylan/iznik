@@ -172,6 +172,9 @@ pub enum HostState {
         error: String,
         /// What kind of failure it was.
         cause: Cause,
+        /// Which part of reaching it failed, when it was a bootstrap that did
+        /// — what says which layer to look at.
+        stage: Option<Stage>,
         /// When it will be tried again, or nothing when it will not be until
         /// somebody asks: a refused key or a changed host key is refused the
         /// same way on every attempt, and each attempt counts towards
@@ -271,6 +274,8 @@ pub enum HostEvent {
         /// What kind of failure it was, which decides whether it is tried
         /// again by itself.
         cause: Cause,
+        /// Which part of reaching it failed, when it was a bootstrap that did.
+        stage: Option<Stage>,
     },
     /// The link to a connected host stopped answering.
     LinkDead {
@@ -441,12 +446,19 @@ impl HostStateMachine {
     /// has failed, and what matters about it is why. A permanent failure is
     /// [`HostState::Failed`] either way, because what matters about it is
     /// always why.
-    fn hold(&mut self, error: String, cause: Cause, now: Instant) -> Vec<Action> {
+    fn hold(
+        &mut self,
+        error: String,
+        cause: Cause,
+        stage: Option<Stage>,
+        now: Instant,
+    ) -> Vec<Action> {
         if cause.is_permanent() {
             self.failures = self.failures.saturating_add(1);
             self.state = HostState::Failed {
                 error,
                 cause,
+                stage,
                 retry_at: None,
             };
             return Vec::new();
@@ -462,6 +474,7 @@ impl HostStateMachine {
             HostState::Failed {
                 error,
                 cause,
+                stage,
                 retry_at: Some(retry_at),
             }
         };
@@ -500,8 +513,12 @@ impl HostStateMachine {
                 // holds, which is what carries a pane across a drop.
                 vec![Action::Resume]
             }
-            HostEvent::Failed { error, cause } => self.hold(error, cause, now),
-            HostEvent::LinkDead { detail } => self.hold(detail, Cause::Transient, now),
+            HostEvent::Failed {
+                error,
+                cause,
+                stage,
+            } => self.hold(error, cause, stage, now),
+            HostEvent::LinkDead { detail } => self.hold(detail, Cause::Transient, None, now),
             HostEvent::Removed => self.forget(),
             // It is already being tried, and a replacement asked for now is
             // already being honoured by whatever is running: asking again
@@ -533,12 +550,16 @@ impl HostStateMachine {
                 };
                 vec![Action::CloseChannel, Action::RetryAt(retry_at)]
             }
-            HostEvent::Failed { error, cause } => {
+            HostEvent::Failed {
+                error,
+                cause,
+                stage,
+            } => {
                 // It was connected, whatever went wrong: it is coming back,
                 // not arriving for the first time.
                 self.reconnecting = true;
                 let mut held = vec![Action::CloseChannel];
-                held.extend(self.hold(error, cause, now));
+                held.extend(self.hold(error, cause, stage, now));
                 held
             }
             HostEvent::Connected {

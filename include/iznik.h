@@ -76,7 +76,8 @@ typedef enum {
 typedef enum {
   /**
    * A host moved from one state to another. The payload is the state as
-   * UTF-8, for a person to read.
+   * UTF-8, for a person to read; a `HostStatus` event follows with the same
+   * move for a program.
    */
   IZNIK_EVENT_KIND_HOST_STATE = 0,
   /**
@@ -127,7 +128,102 @@ typedef enum {
    * reads, it is a pane nothing more will arrive for.
    */
   IZNIK_EVENT_KIND_PANE_DETACHED = 8,
+  /**
+   * The same move as the `HostState` just before it, for a program to act
+   * on rather than a person to read. The payload points at one
+   * `iznik_host_status`, and `payload_length` is its size.
+   */
+  IZNIK_EVENT_KIND_HOST_STATUS = 9,
 } iznik_event_kind;
+
+/**
+ * Where a host is, as a program reads it.
+ */
+typedef enum {
+  /**
+   * Nothing is being done about it.
+   */
+  IZNIK_HOST_STATE_KIND_DISCONNECTED = 0,
+  /**
+   * It is being asked what it is.
+   */
+  IZNIK_HOST_STATE_KIND_PROBING = 1,
+  /**
+   * A server is being put on it.
+   */
+  IZNIK_HOST_STATE_KIND_BOOTSTRAPPING = 2,
+  /**
+   * Its server is being started and greeted.
+   */
+  IZNIK_HOST_STATE_KIND_CONNECTING = 3,
+  /**
+   * Its server is being replaced.
+   */
+  IZNIK_HOST_STATE_KIND_UPGRADING = 4,
+  /**
+   * It is connected.
+   */
+  IZNIK_HOST_STATE_KIND_CONNECTED = 5,
+  /**
+   * Its link went, and it will be tried again.
+   */
+  IZNIK_HOST_STATE_KIND_RECONNECTING = 6,
+  /**
+   * It could not be reached.
+   */
+  IZNIK_HOST_STATE_KIND_FAILED = 7,
+  /**
+   * It is no longer held at all.
+   */
+  IZNIK_HOST_STATE_KIND_REMOVED = 8,
+} iznik_host_state_kind;
+
+/**
+ * What kind of failure a host is in, which says whether waiting helps.
+ */
+typedef enum {
+  /**
+   * It is not failing.
+   */
+  IZNIK_FAILURE_KIND_NONE = 0,
+  /**
+   * Something that may pass by itself; it is tried again.
+   */
+  IZNIK_FAILURE_KIND_TRANSIENT = 1,
+  /**
+   * The host refused the credentials offered. Not tried again until
+   * somebody asks.
+   */
+  IZNIK_FAILURE_KIND_CREDENTIALS = 2,
+  /**
+   * The host's key is not one this machine accepts — unknown, or changed.
+   * Not tried again until somebody asks.
+   */
+  IZNIK_FAILURE_KIND_HOST_KEY = 3,
+  /**
+   * The host is a machine this build carries no server for. Not tried
+   * again until somebody asks.
+   */
+  IZNIK_FAILURE_KIND_UNSUPPORTED = 4,
+} iznik_failure_kind;
+
+/**
+ * Why an upgrade is on offer.
+ */
+typedef enum {
+  /**
+   * None is.
+   */
+  IZNIK_UPGRADE_KIND_NONE = 0,
+  /**
+   * The host runs another version than this build carries.
+   */
+  IZNIK_UPGRADE_KIND_VERSION = 1,
+  /**
+   * The host runs this version, missing features this build has.
+   */
+  IZNIK_UPGRADE_KIND_CAPABILITIES = 2,
+} iznik_upgrade_kind;
 
 /**
  * The client the application holds a pointer to.
@@ -296,6 +392,51 @@ typedef struct {
    */
   void (*detached)(void *context);
 } iznik_pane_callbacks;
+
+/**
+ * A host's state, as a `HostStatus` event carries it.
+ *
+ * Every pointer in it is valid for the duration of the callback and no
+ * longer.
+ */
+typedef struct {
+  /**
+   * Where the host is.
+   */
+  iznik_host_state_kind state;
+  /**
+   * What kind of failure it is in; `None` unless it is failing.
+   */
+  iznik_failure_kind failure;
+  /**
+   * Which layer the failure is in; meaningful only when `failure` is not
+   * `None`.
+   */
+  iznik_layer layer;
+  /**
+   * Whether it will be tried again by itself.
+   */
+  bool retrying;
+  /**
+   * How many times it has failed since it was last connected, when it is
+   * reconnecting; zero otherwise.
+   */
+  uint32_t attempt;
+  /**
+   * Why an upgrade is on offer, for a connected host; `None` otherwise.
+   */
+  iznik_upgrade_kind upgrade;
+  /**
+   * The version the host runs, as UTF-8, when an upgrade is on offer; null
+   * otherwise.
+   */
+  const char *installed_version;
+  /**
+   * The version this build would put there, as UTF-8, when an upgrade is on
+   * offer; null otherwise.
+   */
+  const char *bundled_version;
+} iznik_host_status;
 
 #ifdef __cplusplus
 extern "C" {

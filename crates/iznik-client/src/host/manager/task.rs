@@ -115,16 +115,16 @@ async fn replace(
     let error = match replaced {
         Ok(()) => None,
         Err(refusal) => {
-            let cause = match &refusal {
-                UpgradeError::Bootstrap(source) => source.cause,
-                UpgradeError::LivePanes { .. } => Cause::Transient,
+            let (cause, stage) = match &refusal {
+                UpgradeError::Bootstrap(source) => (source.cause, Some(source.stage)),
+                UpgradeError::LivePanes { .. } => (Cause::Transient, None),
             };
-            Some((format!("upgrading {host}: {refusal}"), cause))
+            Some((format!("upgrading {host}: {refusal}"), cause, stage))
         }
     };
     // The next `connect` is what reaches the new server; say the failure now
     // and let the reconnect that follows say the rest.
-    let Some((detail, cause)) = error else {
+    let Some((detail, cause, stage)) = error else {
         return true;
     };
     let _moved = advance(
@@ -134,6 +134,7 @@ async fn replace(
         HostEvent::Failed {
             error: detail,
             cause,
+            stage,
         },
     );
     false
@@ -239,6 +240,7 @@ async fn connect(
                     HostEvent::Failed {
                         error: error.to_string(),
                         cause: error.cause,
+                        stage: Some(error.stage),
                     },
                 );
             }

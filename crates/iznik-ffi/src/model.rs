@@ -10,12 +10,15 @@
 
 use core::ffi::{c_char, c_void};
 
+use crate::error::Layer;
+
 /// What an event is about, and how to read its payload.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
     /// A host moved from one state to another. The payload is the state as
-    /// UTF-8, for a person to read.
+    /// UTF-8, for a person to read; a `HostStatus` event follows with the same
+    /// move for a program.
     HostState = 0,
     /// The host's whole model. The payload is a `HostModel` as
     /// `iznik_protocol::model::decode_host_model` reads it.
@@ -49,6 +52,94 @@ pub enum EventKind {
     /// and there is no payload: a pane that has gone is not a state anybody
     /// reads, it is a pane nothing more will arrive for.
     PaneDetached = 8,
+    /// The same move as the `HostState` just before it, for a program to act
+    /// on rather than a person to read. The payload points at one
+    /// `iznik_host_status`, and `payload_length` is its size.
+    HostStatus = 9,
+}
+
+/// Where a host is, as a program reads it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostStateKind {
+    /// Nothing is being done about it.
+    Disconnected = 0,
+    /// It is being asked what it is.
+    Probing = 1,
+    /// A server is being put on it.
+    Bootstrapping = 2,
+    /// Its server is being started and greeted.
+    Connecting = 3,
+    /// Its server is being replaced.
+    Upgrading = 4,
+    /// It is connected.
+    Connected = 5,
+    /// Its link went, and it will be tried again.
+    Reconnecting = 6,
+    /// It could not be reached.
+    Failed = 7,
+    /// It is no longer held at all.
+    Removed = 8,
+}
+
+/// What kind of failure a host is in, which says whether waiting helps.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// It is not failing.
+    None = 0,
+    /// Something that may pass by itself; it is tried again.
+    Transient = 1,
+    /// The host refused the credentials offered. Not tried again until
+    /// somebody asks.
+    Credentials = 2,
+    /// The host's key is not one this machine accepts — unknown, or changed.
+    /// Not tried again until somebody asks.
+    HostKey = 3,
+    /// The host is a machine this build carries no server for. Not tried
+    /// again until somebody asks.
+    Unsupported = 4,
+}
+
+/// Why an upgrade is on offer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpgradeKind {
+    /// None is.
+    None = 0,
+    /// The host runs another version than this build carries.
+    Version = 1,
+    /// The host runs this version, missing features this build has.
+    Capabilities = 2,
+}
+
+/// A host's state, as a `HostStatus` event carries it.
+///
+/// Every pointer in it is valid for the duration of the callback and no
+/// longer.
+#[repr(C)]
+#[derive(Debug)]
+pub struct HostStatus {
+    /// Where the host is.
+    pub state: HostStateKind,
+    /// What kind of failure it is in; `None` unless it is failing.
+    pub failure: FailureKind,
+    /// Which layer the failure is in; meaningful only when `failure` is not
+    /// `None`.
+    pub layer: Layer,
+    /// Whether it will be tried again by itself.
+    pub retrying: bool,
+    /// How many times it has failed since it was last connected, when it is
+    /// reconnecting; zero otherwise.
+    pub attempt: u32,
+    /// Why an upgrade is on offer, for a connected host; `None` otherwise.
+    pub upgrade: UpgradeKind,
+    /// The version the host runs, as UTF-8, when an upgrade is on offer; null
+    /// otherwise.
+    pub installed_version: *const c_char,
+    /// The version this build would put there, as UTF-8, when an upgrade is on
+    /// offer; null otherwise.
+    pub bundled_version: *const c_char,
 }
 
 /// One thing that happened.

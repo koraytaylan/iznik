@@ -17,7 +17,7 @@ use iznik_protocol::message::{ToClient, encode_to_client};
 
 use crate::model::{Event, EventCallback};
 use crate::pane::PaneCallbacks;
-use crate::shape;
+use crate::{shape, status};
 
 /// A pointer the application gave and iznik carries back to it untouched.
 ///
@@ -143,6 +143,15 @@ pub(crate) fn deliver(
         };
         carry(callback, context, &event);
         deliveries.end();
+        // The status of a move is its own callback, looked up afresh: the
+        // handler that was just told the words may have taken the callback
+        // away, or freed the client, and nothing begins with what it took.
+        if status::is_a_move(&event)
+            && let Some((again, still)) = listened(listening, deliveries)
+        {
+            status::carry_status(again, still.0, &event);
+            deliveries.end();
+        }
     }
 }
 
