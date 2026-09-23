@@ -29,28 +29,16 @@ const SUBSTITUTE: u8 = 0x1a;
 /// A larger write is discarded. One mebibyte of base64 is more than a selection
 /// from a full-screen application needs, and the buffer must stay bounded.
 const MAXIMUM_BODY_BYTES: usize = 1_048_576;
-/// Base64 letters before the lowercase group.
-const LETTERS: u8 = 26;
-/// Base64 digits after the two letter groups.
-const DIGITS: u8 = 10;
-/// Sextets in one base64 group.
+/// The standard base64 alphabet; a character's position is its six-bit value.
+const BASE64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/// Bits one base64 character carries.
+const CHARACTER_BITS: u32 = 6;
+/// Bits in one decoded byte.
+const BYTE_BITS: u32 = 8;
+/// Characters in one complete base64 group, padding included.
 const GROUP_LENGTH: usize = 4;
-/// Index of the third sextet. `0` and `1` are the only bare match values allowed.
-const THIRD: usize = 2;
-/// Index of the fourth sextet.
-const LAST: usize = 3;
-/// Decoded bytes in a base64 group with no padding.
-const DECODED_BYTES: usize = 3;
-/// How far the first sextet moves into the high bits of the first decoded byte.
-const FIRST_SHIFT: u32 = 2;
-/// How far the second sextet is split between the first and second decoded bytes.
-const SECOND_SHIFT: u32 = 4;
-/// How far the third sextet moves into the high bits of the third decoded byte.
-const THIRD_SHIFT: u32 = 6;
-/// The low eight bits of a combined sextet word.
-const BYTE_MASK: u32 = 0xff;
-/// The most padding characters one base64 group can end with.
-const MAXIMUM_PADDING: usize = 2;
+/// The padding character that fills out a final group.
+const PADDING: u8 = b'=';
 
 /// Where an OSC 52 scan is between output batches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -250,94 +238,42 @@ fn record_clipboard(body: &[u8], copies: &mut Vec<String>) {
 
 /// Decode standard base64, ignoring ASCII whitespace.
 ///
-/// `None` means the payload is not a complete, valid base64 group.
+/// Each character is looked up in [`BASE64_ALPHABET`] and its six bits are
+/// shifted into an pending; every time eight bits are waiting, one byte
+/// comes out. Padding may only end the payload, and the payload must be whole
+/// groups of four. `None` means it is not valid base64.
 fn decode_base64(encoded: &str) -> Option<Vec<u8>> {
-    let mut output = Vec::new();
-    let mut first = 0;
-    let mut second = 0;
-    let mut third = 0;
-    let mut last = 0;
-    let mut filled = 0;
-    let mut padding = 0;
-    for byte in encoded.bytes() {
-        if is_space(byte) {
-            continue;
-        }
-        let value = if byte == b'=' {
-            if filled == 0 || padding == MAXIMUM_PADDING {
-                return None;
-            }
-            padding = padding.checked_add(1)?;
-            0
-        } else {
-            if padding != 0 {
-                return None;
-            }
-            base64_value(byte)?
-        };
-        match filled {
-            0 => first = value,
-            1 => second = value,
-            THIRD => third = value,
-            LAST => last = value,
-            _ => return None,
-        }
-        filled = filled.checked_add(1)?;
-        if filled == GROUP_LENGTH {
-            emit(&mut output, [first, second, third, last], padding)?;
-            filled = 0;
-            padding = 0;
-        }
-    }
-    if filled != 0 {
+    let characters: Vec<u8> = encoded.bytes().filter(|byte| !is_space(*byte)).collect();
+    if characters.len().checked_rem(GROUP_LENGTH) != Some(0) {
         return None;
     }
-    Some(output)
-}
-
-/// One sextet value, or `None` when `byte` is not in the base64 alphabet.
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => byte.checked_sub(b'A'),
-        b'a'..=b'z' => byte.checked_sub(b'a')?.checked_add(LETTERS),
-        b'0'..=b'9' => byte
-            .checked_sub(b'0')?
-            .checked_add(LETTERS.saturating_add(LETTERS)),
-        b'+' => LETTERS.checked_add(LETTERS)?.checked_add(DIGITS),
-        b'/' => LETTERS
-            .checked_add(LETTERS)?
-            .checked_add(DIGITS)?
-            .checked_add(1),
-        _ => None,
+    let data_length = characters
+        .iter()
+        .rposition(|character| *character != PADDING)
+        .map_or(0, |last| last.saturating_add(1));
+    let padding = characters.len().saturating_sub(data_length);
+    if padding >= GROUP_LENGTH.saturating_sub(1) {
+        return None;
     }
+    let mut output = Vec::new();
+    let mut pending: u32 = 0;
+    let mut waiting: u32 = 0;
+    for character in characters.get(..data_length)? {
+        let value = BASE64_ALPHABET
+            .iter()
+            .position(|symbol| symbol == character)?;
+        pending = pending.checked_shl(CHARACTER_BITS)? | u32::try_from(value).ok()?;
+        waiting = waiting.saturating_add(CHARACTER_BITS);
+        if waiting >= BYTE_BITS {
+            waiting = waiting.saturating_sub(BYTE_BITS);
+            output.push(u8::try_from(pending.checked_shr(waiting)? & u32::from(u8::MAX)).ok()?);
+            pending &= 1_u32.checked_shl(waiting)?.saturating_sub(1);
+        }
+    }
+    Some(output)
 }
 
 /// Whether `byte` is ASCII whitespace a base64 payload may contain.
 fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
-}
-
-/// Append the decoded bytes of one complete base64 group.
-fn emit(output: &mut Vec<u8>, group: [u8; GROUP_LENGTH], padding: usize) -> Option<()> {
-    let [first, second, third, last] = group;
-    let high =
-        u32::from(first).checked_shl(FIRST_SHIFT)? | u32::from(second).checked_shr(SECOND_SHIFT)?;
-    let mid =
-        u32::from(second).checked_shl(SECOND_SHIFT)? | u32::from(third).checked_shr(FIRST_SHIFT)?;
-    let low = u32::from(third).checked_shl(THIRD_SHIFT)? | u32::from(last);
-    let produced = DECODED_BYTES.checked_sub(padding)?;
-    push_byte(output, high)?;
-    if produced > 1 {
-        push_byte(output, mid)?;
-    }
-    if produced == DECODED_BYTES {
-        push_byte(output, low)?;
-    }
-    Some(())
-}
-
-/// Append the low eight bits of a combined sextet word.
-fn push_byte(output: &mut Vec<u8>, value: u32) -> Option<()> {
-    output.push(u8::try_from(value & BYTE_MASK).ok()?);
-    Some(())
 }

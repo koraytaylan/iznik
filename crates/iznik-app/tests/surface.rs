@@ -414,19 +414,40 @@ fn program_clipboard(context: &mut TestAppContext) -> Result<(), Failed> {
         None,
         "an OSC inside a DCS payload is not a copy"
     );
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;aGV=sbG8\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "padding inside the payload is not base64"
+    );
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;aGVsbG8\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "a payload that is not whole groups is not base64"
+    );
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;d29y\nbGQ=\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        Some("world".to_owned()),
+        "whitespace inside the payload is ignored"
+    );
     fixture.handle.update(context, |surface, _, _| {
         surface.allow_program_clipboard(false);
     })?;
     feed_output(&fixture, context, sequence, b"\x1b]52;c;aGVsbG8=\x07")?;
     assert_eq!(
         clipboard_text(context),
-        None,
+        Some("world".to_owned()),
         "a pane that may not write the clipboard does not"
     );
+    fixture.handle.update(context, |surface, _, _| {
+        surface.allow_program_clipboard(true);
+    })?;
     show_screen(&fixture, context, b"replay\x1b]52;c;cmVwbGF5\x07")?;
     assert_eq!(
         clipboard_text(context),
-        None,
+        Some("world".to_owned()),
         "a reconstructed screen does not replay a program copy"
     );
     Ok(())
