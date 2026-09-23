@@ -278,6 +278,15 @@ You will see the host move through states on the event callback while this
 happens, and the model you have may be replaced by a snapshot. Apply the
 snapshot; it is the truth.
 
+**Some failures are not retried.** A host that refuses the credentials
+offered, whose host key is not one this machine accepts, or that is a machine
+this build carries no server for is refused the same way on every attempt —
+and every attempt with a refused key counts towards whatever lockout the host
+keeps. Such a host moves to a failed state and stays there, saying it will not
+be tried again, until you call `iznik_host_reconnect` (after the person has
+fixed what was wrong) or remove it. Every other failure — a link that dropped,
+a host that did not answer — is retried with the backoff.
+
 ## Upgrades and passphrases
 
 A host may be running an older server than this build carries. That is

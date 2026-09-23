@@ -14,11 +14,14 @@ use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::bootstrap::launch::{BootstrapError, Decision, Stage, bundled, expiry, launch};
+use crate::bootstrap::launch::{
+    BootstrapError, Cause, Decision, Stage, UpgradeError, bundled, expiry, launch,
+};
 use crate::bootstrap::probe::InstalledServer;
 use crate::bootstrap::{bootstrap_watched, upgrade};
 use crate::commands::{abandoned, confirm, expire, replay};
 use crate::host::identity::HostId;
+use crate::host::manager::waiting::{Waiting, hold_until, keep, keeps, waiting};
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{
     Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
@@ -63,9 +66,9 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
     let mut kept: Vec<Order> = Vec::new();
     loop {
         let Some(channel) = connect(&host, &shared, &machine, &mut orders, &mut kept).await else {
-            // Nothing more will be tried, and whoever is watching is told so
-            // rather than left with a host that simply stopped saying
-            // anything.
+            // It was told to stop while it had no link, and whoever is
+            // watching is told so rather than left with a host that simply
+            // stopped saying anything.
             shared.publish(&ManagerEvent::Removed { host });
             return;
         };
@@ -109,12 +112,26 @@ async fn replace(
     .await;
     let error = match replaced {
         Ok(()) => None,
-        Err(refusal) => Some(format!("upgrading {host}: {refusal}")),
+        Err(refusal) => {
+            let cause = match &refusal {
+                UpgradeError::Bootstrap(source) => source.cause,
+                UpgradeError::LivePanes { .. } => Cause::Transient,
+            };
+            Some((format!("upgrading {host}: {refusal}"), cause))
+        }
     };
     // The next `connect` is what reaches the new server; say the failure now
     // and let the reconnect that follows say the rest.
-    if let Some(detail) = error {
-        let _moved = advance(shared, host, machine, HostEvent::Failed { error: detail });
+    if let Some((detail, cause)) = error {
+        let _moved = advance(
+            shared,
+            host,
+            machine,
+            HostEvent::Failed {
+                error: detail,
+                cause,
+            },
+        );
     }
 }
 
@@ -153,116 +170,11 @@ fn advance(
     taken
 }
 
-/// The moment a waiting host is to be tried again, if it is waiting.
-fn waiting_until(machine: &Mutex<HostStateMachine>) -> Option<Instant> {
-    match machine.lock().ok()?.state() {
-        HostState::Reconnecting { retry_at, .. } | HostState::Failed { retry_at, .. } => {
-            Some(*retry_at)
-        }
-        _running => None,
-    }
-}
-
-/// Waits until `moment`, taking orders meanwhile.
-///
-/// Answers `false` when the host was told to stop. Orders that need a channel
-/// are dropped: there is none, and a keystroke held for a minute and then
-/// delivered is worse than one that went nowhere.
-async fn hold_until(
-    moment: Instant,
-    orders: &mut UnboundedReceiver<Order>,
-    kept: &mut Vec<Order>,
-) -> bool {
-    loop {
-        let waiting = tokio::time::sleep_until(moment.into());
-        tokio::select! {
-            () = waiting => return true,
-            order = orders.recv() => match order {
-                None | Some(Order::Stop) => return false,
-                // Somebody asked for it now, so the wait is over.
-                Some(Order::Reconnect) => return true,
-                Some(held) => keep(kept, held),
-            },
-        }
-    }
-}
-
-/// Holds on to an order worth asking for again once there is a link, and lets
-/// the rest go.
-///
-/// What is worth keeping is what nothing will ask for twice: a subscription, a
-/// size, which pane has the person's attention. Keystrokes and credit are not
-/// — a keystroke delivered a minute late is worse than one that went nowhere,
-/// and credit belongs to a channel that no longer exists.
-fn keep(kept: &mut Vec<Order>, order: Order) {
-    match order {
-        Order::Subscribe { pane } => {
-            kept.retain(|held| !about(held, pane));
-            kept.push(Order::Subscribe { pane });
-        }
-        // Kept, not merely cancelling: the resume that follows a
-        // reconnection asks for every pane the model still holds, so a pane
-        // somebody let go of while the host was down would come back
-        // uninvited unless the letting go is asked for too.
-        Order::Unsubscribe { pane } => {
-            kept.retain(|held| !about(held, pane));
-            kept.push(Order::Unsubscribe { pane });
-        }
-        // The latest size and the latest focus, and only those: what is kept
-        // is a state to arrive at, not a history to replay, and a person
-        // moving between panes for an hour on a host that is down must not
-        // grow this without end.
-        Order::Resize { pane, .. } => {
-            kept.retain(
-                |held| !matches!(held, Order::Resize { pane: named, .. } if *named == pane),
-            );
-            kept.push(order);
-        }
-        Order::Focus { .. } => {
-            kept.retain(|held| !matches!(held, Order::Focus { .. }));
-            kept.push(order);
-        }
-        Order::Input { .. }
-        | Order::Credit { .. }
-        | Order::Command { .. }
-        | Order::Screen { .. }
-        | Order::Reconnect
-        | Order::Upgrade { .. }
-        | Order::Stop => {}
-    }
-}
-
-/// Whether the pile would hold this kind of order.
-///
-/// The same four kinds [`keep`] keeps, asked before an order is given away, so
-/// that only what would be held is copied: a keystroke, a credit, a command
-/// and a screen are gone with the link, and copying a paste to hold what
-/// nobody would resend would copy the paste.
-fn keeps(order: &Order) -> bool {
-    matches!(
-        order,
-        Order::Subscribe { .. }
-            | Order::Unsubscribe { .. }
-            | Order::Resize { .. }
-            | Order::Focus { .. }
-    )
-}
-
-/// Whether a held order is one pane's subscription, which a later one about
-/// the same pane replaces.
-///
-/// A size is not: a pane subscribed again is still the size it was told.
-fn about(order: &Order, pane: PaneId) -> bool {
-    match order {
-        Order::Subscribe { pane: named } | Order::Unsubscribe { pane: named } => *named == pane,
-        _otherwise => false,
-    }
-}
-
 /// Gets a channel to the host, waiting out whatever backoff the machine holds
 /// and trying again for as long as it says to.
 ///
-/// Answers `None` when the host was told to stop.
+/// Answers `None` when the host was told to stop, and never gives up by
+/// itself: a failure retrying cannot mend waits for somebody to ask.
 async fn connect(
     host: &HostId,
     shared: &Arc<Shared>,
@@ -271,8 +183,9 @@ async fn connect(
     kept: &mut Vec<Order>,
 ) -> Option<RemoteChannel> {
     loop {
-        if let Some(moment) = waiting_until(machine) {
-            if !hold_until(moment, orders, kept).await {
+        let wait = waiting(machine);
+        if !matches!(wait, Waiting::Not) {
+            if !hold_until(&wait, orders, kept).await {
                 let _torn = advance(shared, host, machine, HostEvent::Removed);
                 return None;
             }
@@ -296,27 +209,22 @@ async fn connect(
                 kept.extend(standing.into_iter().skip(sent));
                 return Some(channel);
             }
+            // The machine decides what comes next — a wait, or for a failure
+            // trying again cannot mend, a wait for somebody to ask — and the
+            // top of this loop waits it out either way.
             Err(error) => {
-                let taken = advance(
+                let _held = advance(
                     shared,
                     host,
                     machine,
                     HostEvent::Failed {
                         error: error.to_string(),
+                        cause: error.cause,
                     },
                 );
-                // A machine that scheduled nothing has nothing more to do.
-                if !taken.iter().any(waits) {
-                    return None;
-                }
             }
         }
     }
-}
-
-/// Whether an action is one that schedules another attempt.
-fn waits(action: &Action) -> bool {
-    matches!(action, Action::RetryAt(_moment))
 }
 
 /// What reaching a host got: its channel, what it holds, what its server says

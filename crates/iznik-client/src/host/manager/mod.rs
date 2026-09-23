@@ -54,6 +54,7 @@ pub const ORDERS_PER_TURN: usize = 64;
 
 pub mod credit;
 mod task;
+mod waiting;
 
 /// How long a caller waits for a host's task to end before it is cut short.
 ///

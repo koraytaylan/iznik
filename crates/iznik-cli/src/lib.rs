@@ -147,8 +147,21 @@ pub fn holding(
                 state: HostState::Connected { .. },
                 ..
             }) => return Ok((manager, events)),
-            // Not an ending: a host that could not be reached is tried again,
-            // and the harness that models this waits through exactly this.
+            // A failure trying again cannot mend — a refused key, a host key
+            // not accepted, a machine with no server — is an ending: the
+            // host will not be tried again until somebody asks.
+            Ok(ManagerEvent::Moved {
+                state:
+                    HostState::Failed {
+                        error,
+                        retry_at: None,
+                        ..
+                    },
+                ..
+            }) => return Err((TRANSPORT_LAYER, error)),
+            // Anything else is not an ending: a host that could not be reached
+            // is tried again, and the harness that models this waits through
+            // exactly this.
             Ok(ManagerEvent::Moved {
                 state: HostState::Failed { error, .. },
                 ..

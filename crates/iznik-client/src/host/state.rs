@@ -1,7 +1,8 @@
 //! A host's life, as a table.
 //!
 //! Probing, bootstrapping, connected, reconnecting behind a growing wait,
-//! failed with a time to try again — all of it decided here, where it is a
+//! failed with a time to try again or — when trying again cannot help —
+//! waiting for somebody to ask; all of it decided here, where it is a
 //! pure function of a state, an event and a moment, and none of it discovered
 //! in the manager under a link that has just died. What happens when a laptop
 //! closes on four hosts at once is a property of this file.
@@ -18,7 +19,7 @@ use std::time::Instant;
 
 use iznik_protocol::capabilities::Capabilities;
 
-use crate::bootstrap::launch::Stage;
+use crate::bootstrap::launch::{Cause, Stage};
 use crate::bootstrap::probe::InstalledServer;
 use crate::host::identity::HostId;
 
@@ -165,12 +166,17 @@ pub enum HostState {
         /// When it will be tried again.
         retry_at: Instant,
     },
-    /// It could not be reached, and it will be tried again.
+    /// It could not be reached.
     Failed {
         /// What went wrong, in the words whatever failed used.
         error: String,
-        /// When it will be tried again.
-        retry_at: Instant,
+        /// What kind of failure it was.
+        cause: Cause,
+        /// When it will be tried again, or nothing when it will not be until
+        /// somebody asks: a refused key or a changed host key is refused the
+        /// same way on every attempt, and each attempt counts towards
+        /// whatever lockout the host keeps.
+        retry_at: Option<Instant>,
     },
 }
 
@@ -226,6 +232,14 @@ impl Display for HostState {
                 trouble: Some(said),
                 ..
             } => write!(formatter, "reconnecting, attempt {attempt}: {said}"),
+            HostState::Failed {
+                error,
+                retry_at: None,
+                ..
+            } => write!(
+                formatter,
+                "failed: {error} (not tried again until a reconnection is asked for)"
+            ),
             HostState::Failed { error, .. } => write!(formatter, "failed: {error}"),
         }
     }
@@ -254,6 +268,9 @@ pub enum HostEvent {
     Failed {
         /// What went wrong.
         error: String,
+        /// What kind of failure it was, which decides whether it is tried
+        /// again by itself.
+        cause: Cause,
     },
     /// The link to a connected host stopped answering.
     LinkDead {
@@ -416,12 +433,24 @@ impl HostStateMachine {
         vec![Action::Bootstrap]
     }
 
-    /// Puts the host into a wait with a time to try again.
+    /// Puts the host into a wait with a time to try again — or, for a failure
+    /// that trying again cannot mend, into a wait for somebody to ask.
     ///
     /// Which wait it is depends on whether the host was ever reached: one that
     /// was is reconnecting, and its attempts are counted; one that never was
-    /// has failed, and what matters about it is why.
-    fn hold(&mut self, error: String, now: Instant) -> Vec<Action> {
+    /// has failed, and what matters about it is why. A permanent failure is
+    /// [`HostState::Failed`] either way, because what matters about it is
+    /// always why.
+    fn hold(&mut self, error: String, cause: Cause, now: Instant) -> Vec<Action> {
+        if cause.is_permanent() {
+            self.failures = self.failures.saturating_add(1);
+            self.state = HostState::Failed {
+                error,
+                cause,
+                retry_at: None,
+            };
+            return Vec::new();
+        }
         let retry_at = self.schedule(now);
         self.state = if self.reconnecting {
             HostState::Reconnecting {
@@ -430,7 +459,11 @@ impl HostStateMachine {
                 retry_at,
             }
         } else {
-            HostState::Failed { error, retry_at }
+            HostState::Failed {
+                error,
+                cause,
+                retry_at: Some(retry_at),
+            }
         };
         vec![Action::RetryAt(retry_at)]
     }
@@ -467,9 +500,8 @@ impl HostStateMachine {
                 // holds, which is what carries a pane across a drop.
                 vec![Action::Resume]
             }
-            HostEvent::Failed { error } | HostEvent::LinkDead { detail: error } => {
-                self.hold(error, now)
-            }
+            HostEvent::Failed { error, cause } => self.hold(error, cause, now),
+            HostEvent::LinkDead { detail } => self.hold(detail, Cause::Transient, now),
             HostEvent::Removed => self.forget(),
             // It is already being tried, and a replacement asked for now is
             // already being honoured by whatever is running: asking again
@@ -501,12 +533,12 @@ impl HostStateMachine {
                 };
                 vec![Action::CloseChannel, Action::RetryAt(retry_at)]
             }
-            HostEvent::Failed { error } => {
+            HostEvent::Failed { error, cause } => {
                 // It was connected, whatever went wrong: it is coming back,
                 // not arriving for the first time.
                 self.reconnecting = true;
                 let mut held = vec![Action::CloseChannel];
-                held.extend(self.hold(error, now));
+                held.extend(self.hold(error, cause, now));
                 held
             }
             HostEvent::Connected {

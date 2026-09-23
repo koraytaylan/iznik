@@ -16,11 +16,12 @@ use iznik_protocol::message::{
 use iznik_protocol::model::{HostModel, decode_host_model};
 
 use crate::bootstrap::probe::{
-    Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_DEADLINE,
+    Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_DEADLINE, ProbeError,
 };
 use crate::bootstrap::upload::{ArtifactSet, UPLOAD_DEADLINE, executable_name};
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, ChannelOptions, RemoteChannel};
+use crate::transport::ssh::SshError;
 
 /// How long a connection to a host that needs nothing installed may take.
 ///
@@ -98,6 +99,72 @@ impl Display for Stage {
     }
 }
 
+/// What kind of failure stopped a bootstrap, which decides whether trying
+/// again can help.
+///
+/// Typed rather than read back out of words, because the answer changes what
+/// the client does: a link that dropped comes back by itself, while a refused
+/// key or a changed host key is refused the same way every minute for ever —
+/// and each attempt is another strike towards whatever lockout the host
+/// keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cause {
+    /// Something that may pass by itself: a link, a deadline, a daemon that
+    /// has not started yet.
+    Transient,
+    /// The host refused the credentials offered.
+    Credentials,
+    /// The host's key is not one this machine accepts.
+    HostKey,
+    /// The host is a machine this build carries no server for.
+    Unsupported,
+}
+
+impl Cause {
+    /// Whether nothing will change until a person acts, so the host is not
+    /// tried again until somebody asks.
+    #[must_use]
+    pub fn is_permanent(self) -> bool {
+        !matches!(self, Cause::Transient)
+    }
+
+    /// What `ssh` refusing means for trying again.
+    #[must_use]
+    pub fn of_ssh(source: &SshError) -> Cause {
+        match source {
+            SshError::AuthenticationFailed { .. } => Cause::Credentials,
+            SshError::HostKeyChanged { .. } => Cause::HostKey,
+            SshError::Unreachable { .. }
+            | SshError::RemoteCommandFailed { .. }
+            | SshError::Spawn { .. }
+            | SshError::Timeout { .. } => Cause::Transient,
+        }
+    }
+
+    /// What a probe that did not answer means for trying again.
+    #[must_use]
+    pub fn of_probe(source: &ProbeError) -> Cause {
+        match source {
+            ProbeError::Ssh(refusal) => Cause::of_ssh(refusal),
+            ProbeError::Unsupported { .. } => Cause::Unsupported,
+            ProbeError::Transport { .. }
+            | ProbeError::Malformed { .. }
+            | ProbeError::Unwritable { .. } => Cause::Transient,
+        }
+    }
+}
+
+impl Display for Cause {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Cause::Transient => "transient",
+            Cause::Credentials => "credentials refused",
+            Cause::HostKey => "host key not accepted",
+            Cause::Unsupported => "unsupported machine",
+        })
+    }
+}
+
 /// Why a bootstrap did not finish, and how far it had got.
 ///
 /// The stage is the point: a person told only that a host "failed" learns
@@ -110,6 +177,8 @@ pub struct BootstrapError {
     pub stage: Stage,
     /// What the remote said, or what went wrong here.
     pub detail: String,
+    /// What kind of failure it was, which decides whether to try again.
+    pub cause: Cause,
 }
 
 impl Display for BootstrapError {
@@ -118,6 +187,7 @@ impl Display for BootstrapError {
             host,
             stage,
             detail,
+            ..
         } = self;
         write!(formatter, "{host}, {stage}: {detail}")
     }
@@ -294,12 +364,21 @@ pub fn left(expires: Instant, stage: Duration) -> Duration {
     stage.min(expires.saturating_duration_since(Instant::now()))
 }
 
-/// A refusal from a stage, in that stage's own words.
+/// A refusal from a stage, in that stage's own words, of a kind that may pass.
 pub(crate) fn refused(host: &str, stage: Stage, detail: &impl Display) -> BootstrapError {
     BootstrapError {
         host: host.to_owned(),
         stage,
         detail: detail.to_string(),
+        cause: Cause::Transient,
+    }
+}
+
+/// A refusal from a probe, keeping what kind of failure it was.
+pub(crate) fn refused_probe(host: &str, stage: Stage, source: &ProbeError) -> BootstrapError {
+    BootstrapError {
+        cause: Cause::of_probe(source),
+        ..refused(host, stage, source)
     }
 }
 

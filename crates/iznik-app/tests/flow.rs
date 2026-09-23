@@ -47,7 +47,8 @@ fn connected() -> HostState {
 fn failed() -> HostState {
     HostState::Failed {
         error: "ssh: Could not resolve hostname".to_owned(),
-        retry_at: std::time::Instant::now(),
+        cause: iznik_client::bootstrap::launch::Cause::Transient,
+        retry_at: Some(std::time::Instant::now()),
     }
 }
 

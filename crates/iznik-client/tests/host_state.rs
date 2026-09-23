@@ -8,7 +8,7 @@
 use core::time::Duration;
 use std::time::Instant;
 
-use iznik_client::bootstrap::launch::Stage;
+use iznik_client::bootstrap::launch::{Cause, Stage};
 use iznik_client::bootstrap::probe::InstalledServer;
 use iznik_client::host::identity::{ADDRESS_SCHEME, AddressError, GlobalPaneId, HostId};
 use iznik_client::host::state::{
@@ -112,6 +112,7 @@ fn machine_in(named: &str, now: Instant) -> HostStateMachine {
             HostEvent::Added,
             HostEvent::Failed {
                 error: "no route".to_owned(),
+                cause: Cause::Transient,
             },
         ],
         _disconnected => Vec::new(),
@@ -238,6 +239,7 @@ fn event(named: &str) -> HostEvent {
         "connected" => connected(),
         "failed" => HostEvent::Failed {
             error: "no route".to_owned(),
+            cause: Cause::Transient,
         },
         "dead" => HostEvent::LinkDead {
             detail: "silent".to_owned(),
@@ -419,6 +421,7 @@ fn host_state_counts_a_reconnection_that_keeps_failing() {
         let _failed = machine.on(
             HostEvent::Failed {
                 error: "no route".to_owned(),
+                cause: Cause::Transient,
             },
             now,
         );
@@ -434,6 +437,7 @@ fn host_state_counts_a_reconnection_that_keeps_failing() {
     let _never = fresh.on(
         HostEvent::Failed {
             error: "no route".to_owned(),
+            cause: Cause::Transient,
         },
         now,
     );
@@ -501,6 +505,7 @@ fn fail_again(machine: &mut HostStateMachine, now: Instant) -> Result<Instant, F
     scheduled(machine.on(
         HostEvent::Failed {
             error: "no route".to_owned(),
+            cause: Cause::Transient,
         },
         now,
     ))
@@ -671,4 +676,49 @@ fn host_state_defaults_to_the_policy_the_architecture_names() {
     assert_eq!(policy.maximum, BACKOFF_MAXIMUM, "a minute at most");
     assert_eq!(BACKOFF_INITIAL, Duration::from_secs(1), "which is a second");
     assert_eq!(BACKOFF_MAXIMUM, Duration::from_mins(1), "and a minute");
+}
+
+/// # Panics
+///
+/// When a failure that trying again cannot mend schedules another attempt, or
+/// a host parked on one does not start again once somebody asks.
+#[test]
+fn host_state_waits_to_be_asked_after_a_permanent_failure() {
+    let now = Instant::now();
+    for cause in [Cause::Credentials, Cause::HostKey, Cause::Unsupported] {
+        for from in ["probing", "connected"] {
+            let mut machine = machine_in(from, now);
+            let taken = machine.on(
+                HostEvent::Failed {
+                    error: "refused".to_owned(),
+                    cause,
+                },
+                now,
+            );
+            assert!(
+                !taken
+                    .iter()
+                    .any(|action| matches!(action, Action::RetryAt(_))),
+                "{cause} from {from} is not tried again by itself: {taken:?}"
+            );
+            assert!(
+                matches!(
+                    machine.state(),
+                    HostState::Failed {
+                        retry_at: None,
+                        cause: held,
+                        ..
+                    } if *held == cause
+                ),
+                "and it waits as a failure carrying why: {:?}",
+                machine.state()
+            );
+            let asked = machine.on(HostEvent::RetryDue, now);
+            assert_eq!(
+                shapes(&asked),
+                ["bootstrap"],
+                "until a reconnection is asked for"
+            );
+        }
+    }
 }

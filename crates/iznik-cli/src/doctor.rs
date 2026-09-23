@@ -21,7 +21,7 @@ use iznik_client::bootstrap::launch::BootstrapOptions;
 use iznik_client::bootstrap::probe::{HostProbe, ProbeError, RunsRemotely, probe};
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::HostState;
-use iznik_client::transport::ssh::SshOptions;
+use iznik_client::transport::ssh::{SshError, SshOptions};
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
 use iznik_protocol::message::PROTOCOL_VERSION;
 
@@ -263,6 +263,7 @@ fn asked(alias: &str) -> Value {
 /// people paste into bug reports.
 fn refused_by(source: &ProbeError) -> Value {
     let (layer, why) = match source {
+        ProbeError::Ssh(refusal) => (TRANSPORT_LAYER, ssh_kind(refusal).to_owned()),
         ProbeError::Transport { .. } => (TRANSPORT_LAYER, "the host could not be asked".to_owned()),
         ProbeError::Unsupported {
             operating_system,
@@ -281,6 +282,19 @@ fn refused_by(source: &ProbeError) -> Value {
         ),
     };
     failed(layer, &why)
+}
+
+/// What kind of refusal `ssh` gave, in this program's words and never in its
+/// own.
+fn ssh_kind(refusal: &SshError) -> &'static str {
+    match refusal {
+        SshError::Unreachable { .. } => "the host could not be reached",
+        SshError::AuthenticationFailed { .. } => "the host refused the credentials offered",
+        SshError::HostKeyChanged { .. } => "the host's key was not accepted",
+        SshError::RemoteCommandFailed { .. } => "the host could not run the probe",
+        SshError::Spawn { .. } => "ssh could not be started",
+        SshError::Timeout { .. } => "the host did not answer in time",
+    }
 }
 
 /// A probe's answer as one object.
@@ -388,9 +402,13 @@ fn held(alias: &str) -> Answered {
             // said what it is, and waiting for it to say it a third time is
             // not diagnosis. The words are compared and never written down,
             // for the reason `named` gives.
-            HostState::Failed { error, .. } => {
+            // A failure that is not tried again by itself is as final as the
+            // same one twice.
+            HostState::Failed {
+                error, retry_at, ..
+            } => {
                 fell = true;
-                twice = before.as_ref() == Some(&error);
+                twice = retry_at.is_none() || before.as_ref() == Some(&error);
                 before = Some(error);
             }
             _otherwise => {}

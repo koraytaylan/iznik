@@ -171,7 +171,12 @@ pub struct HostProbe {
 /// Why a host could not be probed, or could not be used.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeError {
-    /// The command could not be run there.
+    /// `ssh` could not run the command there, or ran it and it failed —
+    /// kept as `ssh`'s own classification, because whether a person must act
+    /// before trying again (a refused key, a host key that changed) is
+    /// decided from it.
+    Ssh(SshError),
+    /// The command could not be run there, for a reason that is not `ssh`'s.
     Transport {
         /// What `ssh` said.
         detail: String,
@@ -198,6 +203,7 @@ pub enum ProbeError {
 impl Display for ProbeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ProbeError::Ssh(source) => write!(formatter, "{source}"),
             ProbeError::Transport { detail } => write!(formatter, "{detail}"),
             ProbeError::Unsupported {
                 operating_system,
@@ -226,9 +232,16 @@ impl core::error::Error for ProbeError {}
 
 impl From<SshError> for ProbeError {
     fn from(source: SshError) -> ProbeError {
-        ProbeError::Transport {
-            detail: source.to_string(),
-        }
+        ProbeError::Ssh(source)
+    }
+}
+
+impl ProbeError {
+    /// Whether the command reached the host's shell and failed there, which
+    /// is the one failure that says the shell may not be a POSIX one.
+    #[must_use]
+    pub fn ran_and_failed(&self) -> bool {
+        matches!(self, ProbeError::Ssh(SshError::RemoteCommandFailed { .. }))
     }
 }
 
@@ -241,7 +254,8 @@ pub trait RunsRemotely {
     ///
     /// # Errors
     ///
-    /// [`ProbeError::Transport`] when it cannot be run or does not succeed.
+    /// [`ProbeError::Ssh`] when `ssh` cannot run it or it does not succeed,
+    /// and [`ProbeError::Transport`] when it cannot be waited for.
     fn run(
         &self,
         command: &str,
@@ -295,7 +309,8 @@ impl RunsRemotely for Transport {
 ///
 /// # Errors
 ///
-/// [`ProbeError::Transport`] when the script cannot be run,
+/// [`ProbeError::Ssh`] or [`ProbeError::Transport`] when the script cannot be
+/// run,
 /// [`ProbeError::Unsupported`] for a machine iznik has no artifact for,
 /// [`ProbeError::Unwritable`] when nowhere is writable, and
 /// [`ProbeError::Malformed`] when the answer is not one this can read.
@@ -304,10 +319,17 @@ pub async fn probe(
     deadline: Duration,
 ) -> Result<HostProbe, ProbeError> {
     let posix = transport.run(&probe_command(), deadline).await;
-    if let Ok(output) = &posix
-        && !windows_underneath(output)
-    {
-        return parse(output);
+    let windows_may_answer = match &posix {
+        Ok(output) => windows_underneath(output),
+        // Only a command that ran and failed says anything about the shell.
+        // A host that refused the key, whose key changed, or that did not
+        // answer at all would refuse a second command for the same reason,
+        // and a second connection with a refused key is a second strike
+        // towards whatever lockout the host keeps.
+        Err(failure) => failure.ran_and_failed(),
+    };
+    if !windows_may_answer {
+        return posix.and_then(|output| parse(&output));
     }
     // A Windows host's shell is `cmd.exe`, which cannot run the POSIX
     // script — or a POSIX layer on Windows, which runs it and says it is

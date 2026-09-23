@@ -18,6 +18,7 @@ The client engine the GPUI application (`iznik-app`) links directly, and the C A
 | `host::manager` | The host manager: one task per host, isolation between hosts, and the resume that keeps a pane's bytes across a drop. | `connection-manager` (plan 0005) |
 | `host::manager::credit` | Delivery receipts and stream identities, admitting each current receipt once at the carrying boundary. | `stream-credit` (plan 0007) |
 | `host::manager::task` | What one host's own task does, from its first bootstrap to its last: connect, serve, lose the link, wait, connect again. | `connection-manager` (plan 0005) |
+| `host::manager::waiting` | What a host's task does with no link: how long it waits — until a retry, or until asked after a failure retrying cannot mend — and which orders it keeps for the next link. | `connection-manager` (plan 0005) |
 | `host::state` | The per-host connection state machine with exponential backoff and jitter, as a pure table of transitions. | `host-identity-and-state` (plan 0005) |
 | `model` | The client's model: one host view per host with its subscriptions, focus and pending commands, holding everything a resume needs. | `client-model` (plan 0005) |
 | `reduce` | The reducer that applies every server message to the client model, routed by host first, yielding the effects the engine acts on. | `client-reducer` (plan 0005) |

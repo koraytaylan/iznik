@@ -20,6 +20,7 @@ use iznik_client::bootstrap::probe::{
     RunsRemotely, parse, probe, probe_command,
 };
 use iznik_client::bootstrap::terminfo::TERMINAL_NAME;
+use iznik_client::transport::ssh::SshError;
 
 /// The deadline these cases hand the probe; nothing here waits for anything.
 const AT_ONCE: Duration = Duration::from_secs(1);
@@ -528,9 +529,11 @@ impl RunsRemotely for WindowsShell {
         async move {
             if command == probe_command() {
                 shell.fetch_add(1, Ordering::Relaxed);
-                Err(ProbeError::Transport {
-                    detail: "the shell could not run it".to_owned(),
-                })
+                Err(ProbeError::Ssh(SshError::RemoteCommandFailed {
+                    host: "host0".to_owned(),
+                    status: 1,
+                    stderr: "'sh' is not recognized as an internal or external command".to_owned(),
+                }))
             } else if command == iznik_client::bootstrap::windows::probe_command() {
                 second.fetch_add(1, Ordering::Relaxed);
                 Ok(answer(
@@ -628,4 +631,66 @@ async fn host_probe_asks_windows_under_a_posix_layer() {
         .await
         .expect("the powershell probe answers");
     assert_eq!(read.operating_system, OperatingSystem::Windows);
+}
+
+/// A runner whose every command is refused the same way, counting them.
+struct AlwaysRefused {
+    /// What it refuses with.
+    refusal: SshError,
+    /// How many commands it was asked to run.
+    asked: Arc<AtomicUsize>,
+}
+
+impl RunsRemotely for AlwaysRefused {
+    fn run(
+        &self,
+        _command: &str,
+        _deadline: Duration,
+    ) -> impl Future<Output = Result<String, ProbeError>> + Send {
+        self.asked.fetch_add(1, Ordering::Relaxed);
+        let refused = Err(ProbeError::Ssh(self.refusal.clone()));
+        async move { refused }
+    }
+}
+
+/// # Panics
+///
+/// When a host that refused the connection itself — the key, the host key,
+/// the link — is asked a second time with PowerShell, which would be a second
+/// strike towards a lockout for nothing, or when the refusal loses its kind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_probe_asks_once_when_the_connection_is_refused() {
+    let host = "host0".to_owned();
+    let detail = "said no".to_owned();
+    for refusal in [
+        SshError::AuthenticationFailed {
+            host: host.clone(),
+            detail: detail.clone(),
+        },
+        SshError::HostKeyChanged {
+            host: host.clone(),
+            detail: detail.clone(),
+        },
+        SshError::Unreachable {
+            host: host.clone(),
+            detail: detail.clone(),
+        },
+    ] {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let runner = AlwaysRefused {
+            refusal: refusal.clone(),
+            asked: Arc::clone(&asked),
+        };
+        let refused = probe(&runner, AT_ONCE).await;
+        assert_eq!(
+            refused,
+            Err(ProbeError::Ssh(refusal.clone())),
+            "the refusal keeps its kind"
+        );
+        assert_eq!(
+            asked.load(Ordering::Relaxed),
+            1,
+            "{refusal:?} is asked once"
+        );
+    }
 }

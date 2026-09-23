@@ -7,6 +7,7 @@ backoff
 band
 bootstrapping
 carries
+cause
 connecting
 counts
 delay
@@ -52,6 +53,7 @@ once
 otherwise
 parses
 past
+permanent
 plain
 prelude
 probing
@@ -83,6 +85,7 @@ third
 time
 together
 torn
+transient
 tried
 trouble
 unescaped

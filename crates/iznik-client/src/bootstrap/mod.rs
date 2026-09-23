@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::bootstrap::launch::{
-    BootstrapError, BootstrapOptions, Bootstrapped, Decision, Stage, UpgradeError, bundled, decide,
-    expiry, launch, left, live_panes, refused, server_path, triple_of,
+    BootstrapError, BootstrapOptions, Bootstrapped, Cause, Decision, Stage, UpgradeError, bundled,
+    decide, expiry, launch, left, live_panes, refused, refused_probe, server_path, triple_of,
 };
 use crate::bootstrap::probe::{HostProbe, probe};
 use crate::bootstrap::upload::{
@@ -94,6 +94,7 @@ fn no_artifact(host: &str, triple: &str, carried: &[&str]) -> BootstrapError {
         host: host.to_owned(),
         stage: Stage::Probe,
         detail,
+        cause: Cause::Unsupported,
     }
 }
 
@@ -141,7 +142,7 @@ pub async fn bootstrap_watched(
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
-        .map_err(|source| refused(&host, Stage::Probe, &source))?;
+        .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
     let decision = decide(&found, artifacts, &bundled());
     if let Decision::Unsupported { triple } = &decision {
         return Err(no_artifact(&host, triple, &artifacts.triples()));
@@ -227,7 +228,7 @@ async fn stop(
     };
     let _said = probe::RunsRemotely::run(transport, &asked, deadline)
         .await
-        .map_err(|source| refused(&host, Stage::Launch, &source))?;
+        .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
     Ok(())
 }
 
@@ -289,7 +290,7 @@ pub async fn upgrade(
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
-        .map_err(|source| refused(&host, Stage::Probe, &source))?;
+        .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
     match decide(&found, artifacts, &bundled()) {
         // Nothing to do — unless somebody forced it, which is the only way a
         // same-version server missing a capability is ever replaced.
@@ -327,6 +328,7 @@ pub async fn upgrade(
         return Err(UpgradeError::Bootstrap(BootstrapError {
             host,
             stage: Stage::Launch,
+            cause: Cause::Transient,
             detail: format!(
                 "the server was replaced but {answering} is still answering, not {carried}: \
                  the daemon that was there did not stop"
@@ -353,7 +355,7 @@ pub async fn uninstall(
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
-        .map_err(|source| refused(&host, Stage::Probe, &source))?;
+        .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
     let asked = match found.operating_system {
         probe::OperatingSystem::Windows => {
             windows::command_for(windows::UNINSTALL_SCRIPT, &found.prefix)
@@ -364,7 +366,7 @@ pub async fn uninstall(
     };
     let said = probe::RunsRemotely::run(transport, &asked, left(expires, options.command_deadline))
         .await
-        .map_err(|source| refused(&host, Stage::Launch, &source))?;
+        .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
     removed(&host, &said)
 }
 

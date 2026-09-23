@@ -737,7 +737,11 @@ fn connection_manager_does_not_let_four_hosts_retry_at_once() {
             })?;
             if let ManagerEvent::Moved {
                 host,
-                state: HostState::Failed { retry_at, .. },
+                state:
+                    HostState::Failed {
+                        retry_at: Some(retry_at),
+                        ..
+                    },
             } = failed
             {
                 // Failure occurred between submission and observation. The
