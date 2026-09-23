@@ -246,7 +246,17 @@ async fn act(
     effect: Effect,
 ) -> bool {
     match effect {
-        Effect::RequestSnapshot => write(channel, &ToServer::SnapshotRequest).await.is_ok(),
+        // Once per connection until it comes: every delta after a gap is
+        // another gap, and each asking again would have the host serialize
+        // its whole model again.
+        Effect::RequestSnapshot => {
+            let asked = shared
+                .with(host, |view| {
+                    core::mem::replace(&mut view.snapshot_asked, true)
+                })
+                .unwrap_or(false);
+            asked || write(channel, &ToServer::SnapshotRequest).await.is_ok()
+        }
         // Written down here, where the model's lock is not held: a log is a
         // file, and a file is something every other caller would be waiting
         // on if it were written from inside a reduction.

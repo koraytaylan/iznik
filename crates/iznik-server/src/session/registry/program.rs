@@ -322,7 +322,7 @@ fn publish(registry: &mut Registry, pending: PendingSample) {
 }
 
 /// The title and directory the model holds for `pane`.
-fn pane_text(model: &HostModel, pane: PaneId) -> Option<(String, Option<String>)> {
+pub(super) fn pane_text(model: &HostModel, pane: PaneId) -> Option<(String, Option<String>)> {
     model
         .sessions
         .iter()

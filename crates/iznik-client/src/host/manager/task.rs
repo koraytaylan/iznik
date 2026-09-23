@@ -427,6 +427,9 @@ async fn accept(
     if let Ok(mut model) = shared.model.lock() {
         if let Some(view) = model.host_mut(host) {
             fresh = view.reached(instance);
+            // A new connection has asked for nothing yet: the launch's own
+            // snapshot is what it began with.
+            view.snapshot_asked = false;
             // What the host says replaces what it said before, and
             // whatever is still in flight goes back on top: a command
             // whose answer was lost with the link is still this client's

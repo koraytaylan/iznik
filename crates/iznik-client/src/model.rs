@@ -157,6 +157,13 @@ pub struct HostView {
     /// Bytes before it may still be sent, on a resume; an emulator fed them
     /// must not send its answers, because the program has had them once.
     pub answered: BTreeMap<PaneId, Sequence>,
+    /// Whether a snapshot has been asked for on this connection and has not
+    /// arrived yet.
+    ///
+    /// One request is enough: every delta after a gap is another gap until
+    /// the whole model comes, and asking once per delta would have the host
+    /// serialize its model once per change while it catches this client up.
+    pub snapshot_asked: bool,
 }
 
 impl Default for HostView {
@@ -183,6 +190,7 @@ impl HostView {
             capabilities: Capabilities::from_bits(0),
             instance: None,
             answered: BTreeMap::new(),
+            snapshot_asked: false,
         }
     }
 

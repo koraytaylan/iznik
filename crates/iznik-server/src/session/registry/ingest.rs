@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use super::Registry;
+use super::program::pane_text;
 use crate::pty::spawn::ExitStatus;
 
 /// How long after a pane's end is first seen its exit status is waited for
@@ -72,7 +73,25 @@ impl Registry {
             programs.note_shell_directory(pane);
         }
         for delta in deltas {
-            self.announce(delta);
+            // A program that sets the title it already has — a prompt that
+            // names the terminal on every line — changes nothing, and every
+            // client would otherwise be sent a delta for it every time.
+            if !self.already_holds(&delta) {
+                self.announce(delta);
+            }
+        }
+    }
+
+    /// Whether the model already says what a title or directory delta would
+    /// make it say.
+    fn already_holds(&self, delta: &Delta) -> bool {
+        match delta {
+            Delta::PaneTitle { pane, title } => {
+                pane_text(&self.model, *pane).is_some_and(|(held, _directory)| held == *title)
+            }
+            Delta::PaneWorkingDirectory { pane, path } => pane_text(&self.model, *pane)
+                .is_some_and(|(_title, held)| held.as_deref() == Some(path.as_str())),
+            _other => false,
         }
     }
 

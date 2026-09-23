@@ -14,11 +14,11 @@
 //! guesses, and that a subscription's cursor tracks the bytes.
 
 use iznik_protocol::command::{CommandOutcome, decode_command_outcome};
-use iznik_protocol::delta::decode_delta;
+use iznik_protocol::delta::{Delta, decode_delta};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use iznik_protocol::message::{ErrorCode, MarkKind, ToClient};
 use iznik_protocol::model::decode_host_model;
-use iznik_protocol::reconcile::{ReconcileError, apply};
+use iznik_protocol::reconcile::{ReconcileError, apply, apply_change};
 
 use crate::commands::replay;
 use crate::host::identity::HostId;
@@ -305,6 +305,7 @@ fn replace(
             // because a snapshot is what the host has said and not what this
             // client has asked for.
             let commands = view.settle(replaced);
+            view.snapshot_asked = false;
             replay(view);
             if !commands.is_empty() {
                 return vec![Effect::Abandoned { commands }];
@@ -331,12 +332,11 @@ fn reconcile(
     // Against what the host last said, not against what this client is
     // showing: a change already applied optimistically would be refused as one
     // the model cannot take, and a snapshot would be asked for after every
-    // close that worked.
-    let mut standing = view.settled.clone();
-    match apply(&mut standing, generation, &delta) {
+    // close that worked. In place: a refusal leaves the model exactly as it
+    // was, so there is nothing a copy would protect.
+    match apply(&mut view.settled, generation, &delta) {
         Ok(()) => {
-            view.settle(standing);
-            replay(view);
+            show(view, generation, &delta);
             Vec::new()
         }
         // A number was missed. Nothing is guessed and nothing is applied: the
@@ -348,6 +348,28 @@ fn reconcile(
         // snapshot settles which is right.
         Err(source) => unreadable(host, &format!("a change did not fit: {source}")),
     }
+}
+
+/// Brings what this client shows up to a change the settled model has just
+/// taken.
+///
+/// With nothing in flight the two models are the same, so the change is
+/// applied to the shown one too and neither is copied — which is every delta
+/// of a client that is not in the middle of a command. With something in
+/// flight the pending effects go back on top of the settled model, as they
+/// must.
+fn show(view: &mut HostView, generation: Generation, delta: &Delta) {
+    if view.pending.is_empty() {
+        if apply_change(&mut view.model, delta).is_ok() {
+            view.model.generation = generation;
+        } else {
+            // The two had parted, which nothing should make happen; the
+            // settled one is what the host said.
+            view.model = view.settled.clone();
+        }
+        return;
+    }
+    replay(view);
 }
 
 /// What is done about something the host said that this could not use.
