@@ -63,14 +63,14 @@ because = "column assignment is pure CPU work over a real emulator snapshot; a c
 
 [[claim]]
 id = "grid-macos-display-timings"
-statement = "Native macOS presentation of the scrolling 10,000-cell grid has measured median and tail frame timings on recorded display hardware."
+statement = "Native macOS presentation of the scrolling 10,000-cell grid is unmeasured: its median and tail frame timings await a manual measurement on recorded display hardware, and no automated run proves them."
 display = "docs/notes/app-render.md"
 platform = "macos"
 because = "native GPU presentation requires a manual measurement with hardware, refresh rate and scale factor recorded; headless scene inspection cannot establish it"
 
 [[claim]]
 id = "grid-linux-display-timings"
-statement = "Native Linux presentation of the scrolling 10,000-cell grid has measured median and tail frame timings on recorded display hardware."
+statement = "Native Linux presentation of the scrolling 10,000-cell grid is unmeasured: its median and tail frame timings await a manual measurement on recorded display hardware, and no automated run proves them."
 display = "docs/notes/app-render.md"
 platform = "linux"
 because = "a dedicated X11 or Wayland display fixture and manual presentation measurement are required, including hardware, refresh rate and scale factor"

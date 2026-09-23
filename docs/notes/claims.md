@@ -35,7 +35,20 @@ scenario = "in-container"
   `[[test]]` of that name — so a misspelt target fails when the registry
   loads, not as a claim whose verdict never appears.
 
-A claim names one proof or the other, never both and never neither.
+- `display = "docs/notes/<record>.md"` marks a display-bound presentation
+  measurement — frame timings on real display hardware — that no automated
+  run can make. It needs a nonempty `because` saying what the measurement
+  requires, and the record must be an existing Markdown file under
+  `docs/notes/`. A `display` claim is **never proven**: the verifier reports it
+  deferred on every machine, even the platform it names and even when the
+  record holds numbers, because a document is not evidence of GPU behaviour.
+  Its statement says so — it states that the measurement is still to be made,
+  not that it was. It is the only kind of claim the gate passes without a
+  proof, and it exists so that the application's manual measurements are
+  visible in the report rather than absent from it; it does not apply to CPU
+  budgets, emulator behaviour, transport or anything a test can measure.
+
+A claim names exactly one of these proofs, never two and never none.
 
 Two optional keys mark a claim that can only be established under a named
 condition:
@@ -100,8 +113,11 @@ listed. Proofs under a non-default cargo profile run in a second invocation with
 `--cargo-profile`. It then reads `target/nextest/claims/claims.xml`, the JUnit
 report the `claims` profile writes, and reports each claim as **proven** (its
 test passed), **failed** (its test failed), **missing** (its test did not appear
-— an unproven claim, never a proven one), or **deferred**. The gate passes when
-every claim is proven or deferred.
+— an unproven claim, never a proven one), or **deferred** (a `platform` this
+machine is not, or a `display` measurement). The gate passes when every claim
+is proven or deferred, so deferred claims are printed apart, after the rest,
+under a heading that says they were neither proven nor failed, and the
+summary counts them as "deferred and not proven".
 
 ## Running one scenario by hand
 

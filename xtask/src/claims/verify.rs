@@ -61,7 +61,10 @@ pub enum Status {
     /// Its proof did not appear in the report — an unproven claim, never a
     /// proven one.
     Missing,
-    /// Its proof could not run here and was not attempted.
+    /// Its proof could not run here and was not attempted: a platform this
+    /// machine is not, or a display measurement no automated run makes. The
+    /// gate passes with it, and it is reported apart from the proven claims,
+    /// because nothing proved it.
     Deferred {
         /// Why it was deferred.
         reason: String,
@@ -90,6 +93,7 @@ pub struct Report {
 
 impl Report {
     /// Whether every claim is proven or deferred — the report a gate passes on.
+    /// A deferred claim is not a proven one; it only does not fail the gate.
     #[must_use]
     pub fn holds(&self) -> bool {
         self.outcomes
@@ -450,7 +454,7 @@ pub fn is_this_platform(platform: &str) -> bool {
 fn is_deferred(claim: &Claim) -> Option<String> {
     if let Proof::Display { record, because } = &claim.proof {
         return Some(format!(
-            "manual display measurement: {because}; record: {record}"
+            "unmeasured: a manual display measurement no automated run makes: {because}; record: {record}"
         ));
     }
     let platform = claim.platform.as_ref()?;

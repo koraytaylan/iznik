@@ -8,8 +8,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use xtask::claims::registry::{self, Claim, Proof, RegistryError};
+use xtask::claims::render;
 use xtask::claims::selection::{self, Selection, SelectionError};
-use xtask::claims::verify::{self, Invocation, Status};
+use xtask::claims::verify::{self, Invocation, Outcome, Report, Status};
 
 /// A throwaway directory tree, removed when it drops.
 struct Tree {
@@ -791,7 +792,7 @@ fn claims_display_records_stay_deferred_on_the_running_platform() {
         };
         assert!(reason.contains("requires a native display"), "{reason}");
         assert!(reason.contains("docs/notes/display.md"), "{reason}");
-        assert!(verify::Report { outcomes }.holds());
+        assert!(Report { outcomes }.holds());
     }
 }
 
@@ -864,4 +865,45 @@ fn claims_display_records_require_an_existing_markdown_note() {
             "{record}: {error}"
         );
     }
+}
+
+/// A deferred claim is printed apart from the proven ones, under a heading
+/// that says it was neither proven nor failed, and the summary says the same.
+///
+/// # Panics
+///
+/// When a deferred claim is listed among the others or counted as proven.
+#[test]
+fn claims_deferred_claims_are_printed_apart() {
+    let outcome = |id: &str, status: Status| Outcome {
+        task: "alpha".to_owned(),
+        id: id.to_owned(),
+        statement: format!("{id} holds."),
+        status,
+    };
+    let report = Report {
+        outcomes: vec![
+            outcome(
+                "unmeasured",
+                Status::Deferred {
+                    reason: "unmeasured: a manual display measurement".to_owned(),
+                },
+            ),
+            outcome("measured", Status::Proven),
+        ],
+    };
+    let text = render(&report);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "proven: measured \u{2014} measured holds. (alpha)",
+            "deferred \u{2014} not run here, so neither proven nor failed (1):",
+            "deferred: unmeasured \u{2014} unmeasured holds. (alpha)",
+            "    unmeasured: a manual display measurement",
+            "claims: 1 proven, 0 failed, 0 missing, 1 deferred and not proven",
+        ],
+        "{text}"
+    );
+    assert!(report.holds(), "a deferred claim does not fail the gate");
 }

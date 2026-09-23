@@ -82,19 +82,33 @@ fn print_report(report: &Report) {
     let _printed = writeln!(std::io::stdout(), "{}", render(report));
 }
 
-/// The whole report as text: one line per claim, a failure's or a deferral's
-/// reason indented under it, and a summary — or that nothing was selected.
-fn render(report: &Report) -> String {
+/// The whole report as text: one line per claim that ran or should have, a
+/// failure's reason indented under it, then — apart, under their own heading,
+/// because the gate passes with them and nothing proved them — every deferred
+/// claim with its reason, and a summary. Or that nothing was selected.
+#[must_use]
+pub fn render(report: &Report) -> String {
     if report.outcomes.is_empty() {
         return "claims: no claims selected".to_owned();
     }
-    let lines: Vec<String> = report.outcomes.iter().map(render_outcome).collect();
+    let (pending, settled): (Vec<&Outcome>, Vec<&Outcome>) = report
+        .outcomes
+        .iter()
+        .partition(|outcome| matches!(outcome.status, Status::Deferred { .. }));
+    let mut lines: Vec<String> = settled.into_iter().map(render_outcome).collect();
+    if !pending.is_empty() {
+        lines.push(format!(
+            "deferred \u{2014} not run here, so neither proven nor failed ({}):",
+            pending.len()
+        ));
+        lines.extend(pending.into_iter().map(render_outcome));
+    }
     let proven = count(report, |status| matches!(status, Status::Proven));
     let failed = count(report, |status| matches!(status, Status::Failed { .. }));
     let missing = count(report, |status| matches!(status, Status::Missing));
     let deferred = count(report, |status| matches!(status, Status::Deferred { .. }));
     format!(
-        "{}\nclaims: {proven} proven, {failed} failed, {missing} missing, {deferred} deferred",
+        "{}\nclaims: {proven} proven, {failed} failed, {missing} missing, {deferred} deferred and not proven",
         lines.join("\n")
     )
 }
