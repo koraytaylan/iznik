@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::bootstrap::upload::posix_command;
 use crate::transport::Transport;
 use crate::transport::ssh::SshError;
 
@@ -99,6 +100,18 @@ do
   index=$((index + 1))
 done
 "#;
+
+/// What `uname -s` begins with on the POSIX layers Windows can carry — Git
+/// for Windows, MSYS2, Cygwin. A host whose `ssh` login found one of those
+/// is a Windows host all the same, and is asked again as one.
+const WINDOWS_POSIX_LAYERS: &[&str] = &["MINGW", "MSYS", "CYGWIN"];
+
+/// The command the probe asks a POSIX host to run: [`PROBE_SCRIPT`] under
+/// `sh`, whatever the person's login shell is.
+#[must_use]
+pub fn probe_command() -> String {
+    posix_command(PROBE_SCRIPT, &[])
+}
 
 /// The operating systems iznik has artifacts for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,19 +303,33 @@ pub async fn probe(
     transport: &impl RunsRemotely,
     deadline: Duration,
 ) -> Result<HostProbe, ProbeError> {
-    match transport.run(PROBE_SCRIPT, deadline).await {
-        Ok(output) => parse(&output),
-        // A Windows host's shell is `cmd.exe`, which cannot run the POSIX
-        // script. The failure is kept when the PowerShell probe fails too, so
-        // a Unix host that could not be asked is not reported as a Windows one.
-        Err(failure) => match transport
-            .run(&crate::bootstrap::windows::probe_command(), deadline)
-            .await
-        {
-            Ok(output) => parse(&output),
-            Err(_windows) => Err(failure),
-        },
+    let posix = transport.run(&probe_command(), deadline).await;
+    if let Ok(output) = &posix
+        && !windows_underneath(output)
+    {
+        return parse(output);
     }
+    // A Windows host's shell is `cmd.exe`, which cannot run the POSIX
+    // script — or a POSIX layer on Windows, which runs it and says it is
+    // not a machine iznik serves. The failure is kept when the PowerShell
+    // probe fails too, so a Unix host that could not be asked is not
+    // reported as a Windows one.
+    match transport
+        .run(&crate::bootstrap::windows::probe_command(), deadline)
+        .await
+    {
+        Ok(output) => parse(&output),
+        Err(_windows) => posix.and_then(|output| parse(&output)),
+    }
+}
+
+/// Whether a POSIX answer came from a layer on top of Windows.
+fn windows_underneath(output: &str) -> bool {
+    named(output, "system").is_some_and(|system| {
+        WINDOWS_POSIX_LAYERS
+            .iter()
+            .any(|layer| system.starts_with(layer))
+    })
 }
 
 /// One field of the probe's answer: its name and the rest of its line.

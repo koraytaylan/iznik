@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-use iznik_client::bootstrap::upload::{BINARY_NAME, REMOTE_UPLOAD_SCRIPT, hexadecimal};
+use iznik_client::bootstrap::probe::{ProbeError, parse, probe_command};
+use iznik_client::bootstrap::upload::{
+    BINARY_NAME, REMOTE_UPLOAD_SCRIPT, hexadecimal, posix_command,
+};
 use iznik_harness::process::{self, Completed, Deadline, Output, ProcessError};
 
 /// How long one run of the script may take. It is milliseconds; this is a
@@ -374,6 +377,76 @@ fn upload_script_refuses_a_prefix_this_user_does_not_own() {
             "and nothing was installed there"
         );
         drop(held);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The login shells a host may hand iznik's command to, as `ssh` does: the
+/// shell's own `-c` and the whole command as one string.
+const LOGIN_SHELLS: [&str; 4] = ["sh", "bash", "zsh", "fish"];
+
+/// Runs `command` the way `sshd` does, under every login shell this machine
+/// has, and gives back what each printed.
+///
+/// # Errors
+///
+/// When `sh` is not here, or a shell that is here cannot run it.
+fn as_a_login_shell(command: &str) -> Result<Vec<(String, String)>, Failed> {
+    let mut said = Vec::new();
+    for shell in LOGIN_SHELLS {
+        let Ok(found) = located(shell) else {
+            if shell == "sh" {
+                return Err("no `sh` on this machine".into());
+            }
+            continue;
+        };
+        let mut running = Command::new(found);
+        running.arg("-c").arg(command).stdin(Stdio::null());
+        let done = process::run(running, Deadline(RUN_DEADLINE), Output::Capture)?;
+        said.push((
+            shell.to_owned(),
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+        ));
+    }
+    Ok(said)
+}
+
+/// # Panics
+///
+/// When a command built for a host does not run its script under `sh` with
+/// every variable exactly as it was given, whichever login shell reads it
+/// first — a prefix with a quote and a space included.
+#[test]
+fn posix_command_runs_the_same_under_any_login_shell() {
+    let case = || -> Result<(), Failed> {
+        let prefix = "/tmp/it's a \"prefix\"";
+        let script = "said() { printf '%s|%s' \"$IZNIK_PREFIX\" \"$IZNIK_DIGEST\"; }\nsaid\n";
+        let command = posix_command(script, &[("IZNIK_PREFIX", prefix), ("IZNIK_DIGEST", "abc")]);
+        for (shell, printed) in as_a_login_shell(&command)? {
+            assert_eq!(printed, format!("{prefix}|abc"), "under {shell}: {command}");
+        }
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When the probe a host is sent does not run, under whatever login shell
+/// reads it, into an answer the probe can read.
+#[test]
+fn probe_command_is_read_by_any_login_shell() {
+    let case = || -> Result<(), Failed> {
+        let command = probe_command();
+        assert!(command.starts_with("sh -c '"), "{command}");
+        for (shell, printed) in as_a_login_shell(&command)? {
+            let read = parse(&printed);
+            assert!(
+                !matches!(read, Err(ProbeError::Malformed { .. })),
+                "under {shell} the probe answered: {printed}"
+            );
+        }
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

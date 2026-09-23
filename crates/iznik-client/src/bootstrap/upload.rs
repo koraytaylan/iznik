@@ -345,12 +345,37 @@ impl ArtifactSet {
 /// needs.
 #[must_use]
 pub fn remote_command(script: &str, prefix: &Path, digest: &str) -> String {
-    format!(
-        "{PREFIX_VARIABLE}={} {DIGEST_VARIABLE}={} sh -c {}",
-        quoted(&prefix.display().to_string()),
-        quoted(digest),
-        quoted(script)
+    posix_command(
+        script,
+        &[
+            (PREFIX_VARIABLE, &prefix.display().to_string()),
+            (DIGEST_VARIABLE, digest),
+        ],
     )
+}
+
+/// A POSIX script as the one command `ssh` hands to the host's login shell:
+/// `sh -c` and the script as a single quoted word, with every variable it
+/// reads assigned and exported at its top.
+///
+/// The login shell is whatever the person chose, and only the `sh` it starts
+/// reads the script — so a host whose shell is fish, which cannot parse a
+/// POSIX function, is asked in a language it can. The assignments are inside
+/// the quoted word rather than before `sh` for the same reason: `NAME=value
+/// command` is a Bourne-shell form, not something every login shell reads.
+/// What the login shell must still read is one single-quoted word, which may
+/// span lines; a C shell cannot, and a host whose login shell is `csh` or
+/// `tcsh` is not one iznik can bootstrap.
+#[must_use]
+pub fn posix_command(script: &str, variables: &[(&str, &str)]) -> String {
+    use core::fmt::Write as _;
+    let mut whole = String::new();
+    for (name, value) in variables {
+        // Writing to a `String` cannot fail.
+        let _written = writeln!(whole, "{name}={}\nexport {name}", quoted(value));
+    }
+    whole.push_str(script);
+    format!("sh -c {}", quoted(&whole))
 }
 
 /// One argument as a shell will read it back unchanged.

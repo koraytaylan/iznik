@@ -22,7 +22,9 @@ use crate::bootstrap::launch::{
     expiry, launch, left, live_panes, refused, server_path, triple_of,
 };
 use crate::bootstrap::probe::{HostProbe, probe};
-use crate::bootstrap::upload::{Installed, PREFIX_VARIABLE, TERMINFO_DIRECTORY, quoted, upload};
+use crate::bootstrap::upload::{
+    Installed, PREFIX_VARIABLE, TERMINFO_DIRECTORY, posix_command, upload,
+};
 use crate::transport::Transport;
 
 /// The remote script that ends a daemon before its server is replaced.
@@ -69,14 +71,10 @@ pub struct Removed {
     pub runtime: PathBuf,
 }
 
-/// One remote script, with the prefix in the environment the script reads it
+/// One remote script, with the prefix in the variable the script reads it
 /// from.
 fn with_prefix(script: &str, prefix: &Path) -> String {
-    format!(
-        "{PREFIX_VARIABLE}={} sh -c {}",
-        quoted(&prefix.display().to_string()),
-        quoted(script)
-    )
+    posix_command(script, &[(PREFIX_VARIABLE, &prefix.display().to_string())])
 }
 
 /// The refusal an unsupported machine becomes, before anything is uploaded.

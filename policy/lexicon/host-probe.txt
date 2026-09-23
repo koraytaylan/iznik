@@ -16,6 +16,7 @@ fresh
 home
 host
 installed
+layers
 linux
 machine
 machines
@@ -26,6 +27,7 @@ nowhere
 offered
 operating
 places
+posix
 prefix
 probe
 probed
@@ -38,6 +40,7 @@ said
 says
 server
 serves
+shells
 spaced
 system
 taken
@@ -46,7 +49,9 @@ terminfo
 three
 tic
 trip
+underneath
 unsupported
 unwritable
+variables
 writable
 yes

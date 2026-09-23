@@ -17,7 +17,7 @@ use std::time::Duration;
 use iznik_client::bootstrap::launch::{server_path, triple_of};
 use iznik_client::bootstrap::probe::{
     Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_SCRIPT, ProbeError,
-    RunsRemotely, parse, probe,
+    RunsRemotely, parse, probe, probe_command,
 };
 use iznik_client::bootstrap::terminfo::TERMINAL_NAME;
 
@@ -104,7 +104,7 @@ impl RunsRemotely for Counted {
         let said = self.said.clone();
         let script = command.to_owned();
         async move {
-            if script.trim() == PROBE_SCRIPT.trim() {
+            if script == probe_command() {
                 Ok(said)
             } else {
                 Err(ProbeError::Malformed {
@@ -526,7 +526,7 @@ impl RunsRemotely for WindowsShell {
         let shell = Arc::clone(&self.shell);
         let second = Arc::clone(&self.second);
         async move {
-            if command.trim() == PROBE_SCRIPT.trim() {
+            if command == probe_command() {
                 shell.fetch_add(1, Ordering::Relaxed);
                 Err(ProbeError::Transport {
                     detail: "the shell could not run it".to_owned(),
@@ -583,4 +583,49 @@ fn host_probe_windows_commands_set_the_prefix() {
     let upload = iznik_client::bootstrap::windows::upload_command(prefix, "abc");
     assert!(upload.contains("set \"IZNIK_DIGEST=abc\""), "{upload}");
     assert!(upload.starts_with(expected_prefix), "{upload}");
+}
+
+/// A runner on a Windows host whose login shell is a POSIX layer: it runs the
+/// POSIX script and says it is MinGW, and its PowerShell says it is Windows.
+struct PosixOnWindows;
+
+impl RunsRemotely for PosixOnWindows {
+    fn run(
+        &self,
+        command: &str,
+        _deadline: Duration,
+    ) -> impl Future<Output = Result<String, ProbeError>> + Send {
+        let answered = if command == probe_command() {
+            Ok(answer(
+                "MINGW64_NT-10.0-19045",
+                "x86_64",
+                "no",
+                &three(["yes", "yes", "yes"], None),
+            ))
+        } else if command == iznik_client::bootstrap::windows::probe_command() {
+            Ok(answer(
+                "Windows_NT",
+                "AMD64",
+                "no",
+                &three(["yes", "yes", "yes"], None),
+            ))
+        } else {
+            Err(ProbeError::Malformed {
+                detail: command.to_owned(),
+            })
+        };
+        async move { answered }
+    }
+}
+
+/// # Panics
+///
+/// When a Windows host whose `ssh` login lands in Git for Windows' `sh` is
+/// read as an unsupported machine rather than asked again as Windows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_probe_asks_windows_under_a_posix_layer() {
+    let read = probe(&PosixOnWindows, AT_ONCE)
+        .await
+        .expect("the powershell probe answers");
+    assert_eq!(read.operating_system, OperatingSystem::Windows);
 }
