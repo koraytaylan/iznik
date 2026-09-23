@@ -78,11 +78,37 @@ pub struct CreditGrant {
     pub bytes: u32,
 }
 
+/// The most bytes a host may have delivered on one pane's stream that this
+/// client has not yet returned credit for.
+///
+/// A host that keeps to flow control never has more outstanding than the
+/// largest window it gives a pane — a mebibyte, for the one a person is
+/// looking at — because it sends nothing once a window is spent. Four times
+/// that is a margin for a server with other figures, not an allowance: a host
+/// past it is not being flow-controlled, and every byte it sends is one this
+/// client holds for an application that has not asked for more.
+pub const MAXIMUM_UNRETURNED_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Why bytes that arrived for a pane cannot be taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Undeliverable {
+    /// No stream is open for the pane; the bytes are nobody's.
+    NoStream,
+    /// The host sent past its window: this much would be outstanding.
+    Overrun {
+        /// What would be unreturned with these bytes counted.
+        unreturned: u64,
+    },
+}
+
 /// Current stream identities, protected by the manager's shared credit mutex.
 #[derive(Debug, Default)]
 pub struct CreditStreams {
     /// Host-qualified panes; channel aliases are invalidated on every announcement.
     streams: BTreeMap<(HostId, PaneId), Arc<Stream>>,
+    /// Bytes each current stream has delivered that no claimed receipt has
+    /// returned yet.
+    unreturned: BTreeMap<(HostId, PaneId), u64>,
 }
 
 impl CreditStreams {
@@ -91,6 +117,9 @@ impl CreditStreams {
         self.streams.retain(|(held_host, held_pane), stream| {
             held_host != host || (*held_pane != pane && stream.channel != channel)
         });
+        let streams = &self.streams;
+        self.unreturned
+            .retain(|named, _count| streams.contains_key(named));
         if channel != 0 {
             self.streams.insert(
                 (host.clone(), pane),
@@ -106,11 +135,50 @@ impl CreditStreams {
     /// Forget all streams of a lost connection without affecting another host.
     pub fn disconnect(&mut self, host: &HostId) {
         self.streams.retain(|(held_host, _), _| held_host != host);
+        self.unreturned
+            .retain(|(held_host, _), _| held_host != host);
     }
 
     /// Forget a detached pane's stream; held receipts remain expired forever.
     pub fn detach(&mut self, host: &HostId, pane: PaneId) {
-        self.streams.remove(&(host.clone(), pane));
+        let named = (host.clone(), pane);
+        self.streams.remove(&named);
+        self.unreturned.remove(&named);
+    }
+
+    /// Takes what an admitted grant returns off what its stream has
+    /// outstanding.
+    pub fn returned(&mut self, grant: &CreditGrant) {
+        if let Some(counted) = self.unreturned.get_mut(&(grant.host.clone(), grant.pane)) {
+            *counted = counted.saturating_sub(u64::from(grant.bytes));
+        }
+    }
+
+    /// Counts bytes that arrived on a pane's stream against what the host may
+    /// have outstanding, and binds a receipt for them to the stream.
+    ///
+    /// # Errors
+    ///
+    /// [`Undeliverable::NoStream`] when no stream is open for the pane, and
+    /// [`Undeliverable::Overrun`] when these bytes would put more than
+    /// [`MAXIMUM_UNRETURNED_BYTES`] outstanding on it — a host sending past
+    /// its window, which is a protocol error and not a delivery.
+    pub fn deliver(
+        &mut self,
+        host: &HostId,
+        pane: PaneId,
+        bytes: u32,
+    ) -> Result<CreditReceipt, Undeliverable> {
+        let receipt = self
+            .receipt(host, pane, bytes)
+            .ok_or(Undeliverable::NoStream)?;
+        let counted = self.unreturned.entry((host.clone(), pane)).or_default();
+        let unreturned = counted.saturating_add(u64::from(bytes));
+        if unreturned > MAXIMUM_UNRETURNED_BYTES {
+            return Err(Undeliverable::Overrun { unreturned });
+        }
+        *counted = unreturned;
+        Ok(receipt)
     }
 
     /// Bind a delivered byte count to the current stream, without returning anything yet.

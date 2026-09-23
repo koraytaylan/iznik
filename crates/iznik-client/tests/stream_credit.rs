@@ -166,3 +166,40 @@ fn stream_credit_sums_a_turn_per_stream() {
         .sum();
     assert_eq!(total, u64::from(u32::MAX / 2) * 3, "and no byte is lost");
 }
+
+/// # Panics
+///
+/// When a stream may have more than the most outstanding delivered to it, or
+/// what a claimed grant returns is not taken off what it has outstanding.
+#[test]
+fn stream_credit_refuses_a_host_past_its_window() {
+    use iznik_client::host::manager::credit::{MAXIMUM_UNRETURNED_BYTES, Undeliverable};
+    let host = HostId("flooding".to_owned());
+    let pane = PaneId(1);
+    let mut streams = CreditStreams::default();
+    streams.open(&host, pane, 7);
+    let most = u32::try_from(MAXIMUM_UNRETURNED_BYTES).expect("the most fits a frame count");
+    let whole = streams
+        .deliver(&host, pane, most)
+        .expect("up to the most is taken");
+    assert!(
+        matches!(
+            streams.deliver(&host, pane, 1),
+            Err(Undeliverable::Overrun { .. })
+        ),
+        "one byte past it is not"
+    );
+    let grant = streams.claim(&whole).expect("a current receipt");
+    streams.returned(&grant);
+    assert!(
+        streams.deliver(&host, pane, 1).is_ok(),
+        "and credit returned makes room again"
+    );
+    assert_eq!(
+        streams
+            .deliver(&HostId("elsewhere".to_owned()), pane, 1)
+            .err(),
+        Some(Undeliverable::NoStream),
+        "while a pane with no stream is nobody's"
+    );
+}

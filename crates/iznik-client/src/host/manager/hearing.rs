@@ -9,6 +9,7 @@ use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client};
 
 use crate::commands::{abandoned, confirm};
 use crate::host::identity::HostId;
+use crate::host::manager::credit::{MAXIMUM_UNRETURNED_BYTES, Undeliverable};
 use crate::host::manager::task::write;
 use crate::host::manager::{ManagerEvent, Shared};
 use crate::reduce::{Effect, Notification, arrived, reduce};
@@ -16,17 +17,19 @@ use crate::transport::channel::RemoteChannel;
 
 /// Takes what arrived into the model and does what it asks for.
 ///
-/// Answers `false` when the channel would not take what had to be written
-/// back.
+/// # Errors
+///
+/// What to say about a link that has to go: the channel would not take what
+/// had to be written back, or the host broke flow control.
 pub(super) async fn heard(
     host: &HostId,
     shared: &Arc<Shared>,
     channel: &mut RemoteChannel,
     received: crate::transport::channel::Received,
-) -> bool {
+) -> Result<(), String> {
     let effects = if received.channel == CHANNEL_CONTROL {
         let Ok(message) = decode_to_client(&received.payload) else {
-            return true;
+            return Ok(());
         };
         let taken = reduce_under(shared, host, &message);
         if let Ok(mut credit) = shared.credit.lock() {
@@ -60,28 +63,33 @@ pub(super) async fn heard(
         }
         taken
     } else {
-        if !carried(host, shared, &received) {
-            return false;
-        }
+        carried(host, shared, &received)?;
         Vec::new()
     };
     for effect in effects {
         if !act(host, shared, channel, effect).await {
-            return false;
+            return Err("the link would not take what had to be written back".to_owned());
         }
     }
-    true
+    Ok(())
 }
 
 /// Moves a pane's cursor by what arrived on its channel, and passes the bytes
 /// on with the byte position they start at.
+///
+/// # Errors
+///
+/// What to say about a link that has to go: the model's lock broken, or a
+/// host that sent a pane more than it may have outstanding — which is not a
+/// delivery but a host out of flow control, and taking it would hold without
+/// bound whatever it chose to send.
 fn carried(
     host: &HostId,
     shared: &Arc<Shared>,
     received: &crate::transport::channel::Received,
-) -> bool {
+) -> Result<(), String> {
     let Ok(mut model) = shared.model.lock() else {
-        return false;
+        return Err("the model's lock is broken".to_owned());
     };
     // The byte these start at is the cursor *before* they are counted.
     let standing = model
@@ -94,13 +102,27 @@ fn carried(
                 .map(|held| (pane, held.cursor))
         });
     let Some((pane, sequence)) = standing else {
-        return true;
+        return Ok(());
     };
-    let Some(receipt) = u32::try_from(received.payload.len())
-        .ok()
-        .and_then(|bytes| shared.credit.lock().ok()?.receipt(host, pane, bytes))
-    else {
-        return false;
+    let bytes = u32::try_from(received.payload.len())
+        .map_err(|_too_many| "a frame longer than a frame may be arrived".to_owned())?;
+    let delivered = shared
+        .credit
+        .lock()
+        .map_err(|_broken| "the credit lock is broken".to_owned())?
+        .deliver(host, pane, bytes);
+    let receipt = match delivered {
+        Ok(receipt) => receipt,
+        Err(Undeliverable::NoStream) => return Ok(()),
+        Err(Undeliverable::Overrun { unreturned }) => {
+            let detail = format!(
+                "{host} sent pane {} past its credit: {unreturned} bytes would be outstanding, \
+                 more than the {MAXIMUM_UNRETURNED_BYTES} any window allows",
+                pane.0
+            );
+            tracing::warn!(host = %host.0, pane = pane.0, unreturned, "a host sent past its credit");
+            return Err(detail);
+        }
     };
     let _nothing = arrived(&mut model, host, received.channel, received.payload.len());
     drop(model);
@@ -111,7 +133,7 @@ fn carried(
         bytes: received.payload.clone(),
         receipt: Some(receipt),
     });
-    true
+    Ok(())
 }
 
 /// Announces a whole model, in the encoding the host itself uses.

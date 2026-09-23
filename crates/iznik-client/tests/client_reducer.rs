@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use iznik_client::host::identity::HostId;
 use iznik_client::model::{ClientModel, HostView, NO_CHANNEL};
-use iznik_client::reduce::{Effect, Notification, arrived, reduce};
+use iznik_client::reduce::{Effect, MAXIMUM_SCREEN_SIDE, Notification, arrived, reduce};
 use iznik_protocol::command::{CommandOutcome, Created, encode_command_outcome};
 use iznik_protocol::delta::{Delta, encode_delta};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence, SessionId};
@@ -508,4 +508,55 @@ fn client_reducer_gives_a_channel_to_one_pane_at_a_time() {
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a screen of a size no terminal is reaches a surface, or moves the
+/// cursor of the pane it names.
+#[test]
+fn client_reducer_refuses_a_screen_no_terminal_is() {
+    let host = work();
+    let mut generator = ModelGenerator::new(SEED);
+    let mut model = knowing(&host, generator.model());
+    for (columns, rows) in [
+        (0, ROWS),
+        (COLUMNS, 0),
+        (u16::MAX, u16::MAX),
+        (MAXIMUM_SCREEN_SIDE.saturating_add(1), ROWS),
+    ] {
+        let taken = reduce(
+            &mut model,
+            &host,
+            &ToClient::Screen {
+                pane: PANE,
+                sequence: FROM,
+                columns,
+                rows,
+                bytes: Vec::new(),
+            },
+        );
+        assert!(
+            matches!(
+                taken.as_slice(),
+                [Effect::Notify(Notification::Malformed { .. })]
+            ),
+            "{columns} by {rows} is refused, and said to be: {taken:?}"
+        );
+    }
+    let taken = reduce(
+        &mut model,
+        &host,
+        &ToClient::Screen {
+            pane: PANE,
+            sequence: FROM,
+            columns: MAXIMUM_SCREEN_SIDE,
+            rows: MAXIMUM_SCREEN_SIDE,
+            bytes: Vec::new(),
+        },
+    );
+    assert!(
+        matches!(taken.as_slice(), [Effect::Screen { .. }]),
+        "while the largest it allows is taken: {taken:?}"
+    );
 }

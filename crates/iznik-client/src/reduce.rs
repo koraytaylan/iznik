@@ -115,6 +115,19 @@ pub enum Notification {
     },
 }
 
+/// The most cells a screen may be across or down.
+///
+/// Far past any display — a 4K monitor at a one-pixel font is under four
+/// thousand columns — and far short of what a hostile or broken host could
+/// say in a `u16`: a screen of 65 535 by 65 535 cells is four billion of them,
+/// which a surface asked to draw it would try to allocate.
+pub const MAXIMUM_SCREEN_SIDE: u16 = 4096;
+
+/// Whether a screen's width or height is one a terminal could have.
+fn drawable(cells: u16) -> bool {
+    cells != 0 && cells <= MAXIMUM_SCREEN_SIDE
+}
+
 /// Applies one message from `host` to the model, and says what must follow.
 ///
 /// Routing happens before anything else: a message names a host, and nothing
@@ -156,6 +169,20 @@ pub fn reduce(model: &mut ClientModel, host: &HostId, message: &ToClient) -> Vec
             rows,
             bytes,
         } => {
+            // A size no terminal is: refused here, at the edge of the engine,
+            // rather than handed to a surface that would allocate every cell
+            // of it. The cursor stays where it was, so a later screen that
+            // makes sense is still taken.
+            if !drawable(*columns) || !drawable(*rows) {
+                return vec![Effect::Notify(Notification::Malformed {
+                    host: host.clone(),
+                    detail: format!(
+                        "pane {} was sent a screen of {columns} by {rows} cells, which no \
+                         terminal is",
+                        pane.0
+                    ),
+                })];
+            }
             if let Some(held) = view.subscription_mut(*pane) {
                 held.resume_at(*sequence);
             }

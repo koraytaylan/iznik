@@ -531,8 +531,8 @@ async fn pump(
         };
         match turn {
             Turn::Arrived(Ok(received)) => {
-                if !heard(host, shared, &mut channel, received).await {
-                    let _dead = advance(shared, host, machine, dead("the link failed"));
+                if let Err(detail) = heard(host, shared, &mut channel, received).await {
+                    let _dead = advance(shared, host, machine, dead(&detail));
                     return Ended::Gone;
                 }
             }
@@ -763,11 +763,11 @@ async fn carry_credit(
 /// Admits one receipt, once and only while its stream is current, into what
 /// this turn will return.
 fn claim_into(batch: &mut CreditBatch, receipt: &CreditReceipt, shared: &Shared) {
-    let admitted = shared
-        .credit
-        .lock()
-        .ok()
-        .and_then(|credit| credit.claim(receipt));
+    let admitted = shared.credit.lock().ok().and_then(|mut credit| {
+        let grant = credit.claim(receipt)?;
+        credit.returned(&grant);
+        Some(grant)
+    });
     if let Some(grant) = admitted {
         batch.add(grant);
     }

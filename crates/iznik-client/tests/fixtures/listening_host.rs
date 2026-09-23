@@ -58,9 +58,10 @@ pub(super) fn start(
                 script: script.clone(),
                 telling: telling.clone(),
             };
-            if serving.serve(FramedLink::new(stream)).await.is_err() {
-                return;
-            }
+            // A connection that ended badly — the client dropped it while it
+            // was being written to — is one connection, and the next is
+            // still taken.
+            let _ended = serving.serve(FramedLink::new(stream)).await;
             connection = connection.saturating_add(1);
         }
     });

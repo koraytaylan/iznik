@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use iznik_protocol::dictionary::COMPRESSION_DICTIONARY;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use zstd::stream::raw::{Decoder, Encoder, Operation, OutBuffer};
+use zstd::stream::raw::{CParameter, DParameter, Decoder, Encoder, Operation, OutBuffer};
 
 use crate::framed::FramedLink;
 
@@ -40,12 +40,46 @@ pub const SMALL_FRAME_LATENCY_CEILING: Duration = Duration::from_millis(1);
 /// byte is what a keystroke pays.
 const COMPRESSION_LEVEL: i32 = 3;
 
+/// The base-two logarithm of the window the link compresses with and the most
+/// it will decompress with: two mebibytes, which is what zstd's own level-three
+/// parameters choose for a stream of unknown length.
+///
+/// Said on both ends rather than left to the library's defaults because the
+/// decoder's default is the other way round: it accepts any window up to 128
+/// MiB, so a peer that declared one would have this side allocate it — per
+/// connection, on a client with a host per window. The encoder is pinned to the
+/// same figure so that what one end sends the other always accepts.
+pub const WINDOW_LOG: u32 = 21;
+
 /// The scratch one encode or decode step writes into before its bytes are
 /// appended to a buffer. Smaller than a frame only means more steps.
 const WORK_LENGTH: usize = 16 * 1024;
 
 /// How many compressed bytes are taken from the stream at a time.
 const READ_LENGTH: usize = 16 * 1024;
+
+/// An encoder primed with the dictionary, whose window is [`WINDOW_LOG`].
+///
+/// # Errors
+///
+/// Whatever zstd says when it cannot build the context.
+fn bounded_encoder() -> io::Result<Encoder<'static>> {
+    let mut encoder = Encoder::with_dictionary(COMPRESSION_LEVEL, COMPRESSION_DICTIONARY)?;
+    encoder.set_parameter(CParameter::WindowLog(WINDOW_LOG))?;
+    Ok(encoder)
+}
+
+/// A decoder primed with the dictionary, refusing any window past
+/// [`WINDOW_LOG`].
+///
+/// # Errors
+///
+/// Whatever zstd says when it cannot build the context.
+fn bounded_decoder() -> io::Result<Decoder<'static>> {
+    let mut decoder = Decoder::with_dictionary(COMPRESSION_DICTIONARY)?;
+    decoder.set_parameter(DParameter::WindowLogMax(WINDOW_LOG))?;
+    Ok(decoder)
+}
 
 /// A byte stream with zstd between it and its user: what is written is
 /// compressed, what is read is decompressed, and both ends carry the state of
@@ -148,8 +182,8 @@ impl<Stream> ZstdStream<Stream> {
     pub fn new(stream: Stream, leftover: Vec<u8>) -> io::Result<ZstdStream<Stream>> {
         Ok(ZstdStream {
             stream,
-            encoder: Encoder::with_dictionary(COMPRESSION_LEVEL, COMPRESSION_DICTIONARY)?,
-            decoder: Decoder::with_dictionary(COMPRESSION_DICTIONARY)?,
+            encoder: bounded_encoder()?,
+            decoder: bounded_decoder()?,
             outgoing: Vec::new(),
             sent: 0,
             needs_input: leftover.is_empty(),

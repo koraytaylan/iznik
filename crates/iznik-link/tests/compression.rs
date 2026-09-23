@@ -11,7 +11,7 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use iznik_link::compression::{
-    MINIMUM_CORPUS_RATIO, SMALL_FRAME_LATENCY_CEILING, ZstdStream, compressed,
+    MINIMUM_CORPUS_RATIO, SMALL_FRAME_LATENCY_CEILING, WINDOW_LOG, ZstdStream, compressed,
 };
 use iznik_link::framed::FramedLink;
 use iznik_testkit::corpus;
@@ -439,4 +439,37 @@ async fn compression_pending_read_preserves_output() {
     tokio::time::timeout(DEADLINE, case)
         .await
         .expect("idle polling deadline");
+}
+
+/// The window a hostile peer declares, far past what the link uses.
+const WIDE_WINDOW_LOG: u32 = WINDOW_LOG.saturating_add(3);
+
+/// A peer that compresses with a window wider than the link's own is refused
+/// as soon as it says so, rather than having this side allocate the window.
+///
+/// # Panics
+///
+/// When a stream declaring a sixteen-mebibyte window is decoded.
+#[tokio::test]
+async fn compression_refuses_a_window_wider_than_its_own() {
+    let case = async {
+        let mut wide = zstd::stream::write::Encoder::with_dictionary(
+            Vec::new(),
+            3,
+            iznik_protocol::dictionary::COMPRESSION_DICTIONARY,
+        )
+        .expect("an encoder");
+        wide.set_parameter(zstd::stream::raw::CParameter::WindowLog(WIDE_WINDOW_LOG))
+            .expect("a window it may declare");
+        std::io::Write::write_all(&mut wide, &[5, 0, 0, 0, 1, b'h', b'e', b'l', b'l', b'o'])
+            .expect("bytes to compress");
+        let declared = wide.finish().expect("a whole stream");
+        let (here, _there) = duplex(PIPE);
+        let mut link = compressed(here, declared).expect("a compressed link");
+        let read = link.next_frame().await;
+        assert!(read.is_err(), "the wide window is refused: {read:?}");
+    };
+    tokio::time::timeout(DEADLINE, case)
+        .await
+        .expect("the window case finishes");
 }

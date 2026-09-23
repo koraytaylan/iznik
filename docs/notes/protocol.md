@@ -421,6 +421,12 @@ on them is depending on something it was never told.
 | Frame payload | 65 536 (64 KiB) | The most one pane frame carries, so a keystroke echo waits behind at most one frame per active pane. |
 | Stale threshold | 4 194 304 (4 MiB) | The lag past which a background channel stops being streamed. |
 
+The one bound a client does hold a server to is that it keeps to *some*
+window. This client drops the link when more than 4 MiB delivered on one pane
+channel have not yet been credited — four times the largest window this server
+gives, so a server with other figures still fits, and a server past it is not
+flow-controlled at all.
+
 A window never grows past its ceiling: a client that returns more credit than
 it was ever sent is confused, and letting the window grow on its word would
 let one pane fill the server's memory. `Focus { pane }` moves the larger
@@ -481,6 +487,11 @@ fresh header. Both contexts are primed with a dictionary trained on a
 committed corpus of real terminal output, so the first kilobytes of a session
 are not the expensive ones. Each frame is flushed as it is written: nothing
 waits in a compressor's buffer for the next frame that may never come.
+
+Each end compresses with a window of 2 MiB (a zstd window log of 21, what
+zstd's own level-three parameters choose for a stream of unknown length) and
+refuses a stream that declares a larger one, rather than allocating whatever
+window a peer names.
 
 **The leftover-bytes rule.** A plain reader reads in blocks, so by the time it
 has parsed the peer's `Hello` it has almost certainly read some of the peer's

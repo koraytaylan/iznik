@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
-use iznik_client::host::manager::credit::CreditReceipt;
+use iznik_client::host::manager::credit::{CreditReceipt, MAXIMUM_UNRETURNED_BYTES};
 use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::{BackoffPolicy, HostState};
 use iznik_client::transport::channel::ChannelOptions;
@@ -376,6 +376,55 @@ fn wire_orders_tell_a_new_link_where_the_focus_is() {
             said.iter().any(|(connection, message)| *connection == 0
                 && matches!(message, ToServer::Focus { .. })),
             "the first link was told once"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a host that sends a pane past any window it could have been given is
+/// not dropped, or more than the most outstanding is passed on.
+#[test]
+fn wire_orders_drop_a_host_that_sends_past_its_credit() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("overrun")?;
+        let runtime = runtime()?;
+        let announced = encode_to_client(&ToClient::PaneChannel {
+            pane: PANE,
+            channel: PANE_CHANNEL,
+            sequence: Sequence(0),
+        })?;
+        let frame = vec![b'x'; usize::try_from(MAXIMUM_INPUT_LENGTH)?];
+        let most = usize::try_from(MAXIMUM_UNRETURNED_BYTES)?;
+        let frames = most.div_ceil(frame.len()).saturating_add(1);
+        let mut on_subscribe = vec![(CHANNEL_CONTROL, announced)];
+        on_subscribe.extend(core::iter::repeat_n((PANE_CHANNEL, frame), frames));
+        let script = Script {
+            on_subscribe,
+            ..Script::default()
+        };
+        let (host, heard) = scripted(&runtime, &held, script)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        manager.add_host(&host)?;
+        await_connected(&events)?;
+        manager.subscribe(&host, PANE)?;
+        let _again = heard_until(&heard, |(connection, message)| {
+            *connection == 1 && matches!(message, ToServer::SnapshotRequest)
+        })?;
+        let passed_on: usize = events
+            .try_iter()
+            .filter_map(|event| match event {
+                ManagerEvent::Bytes { bytes, .. } => Some(bytes.len()),
+                _otherwise => None,
+            })
+            .sum();
+        assert!(
+            passed_on <= most,
+            "no more than the most outstanding was passed on: {passed_on}"
         );
         drop(manager);
         Ok(())

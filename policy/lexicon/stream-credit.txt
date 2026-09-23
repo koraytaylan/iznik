@@ -9,3 +9,5 @@ receipts
 replacement
 restart
 return
+undeliverable
+unreturned
