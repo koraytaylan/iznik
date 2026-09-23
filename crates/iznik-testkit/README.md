@@ -12,6 +12,7 @@ The instruments that need the emulator or the server: the golden loader, the hea
 | `golden` | The one JSONL golden loader every golden test uses, whose error names the file and the line, and the hex the goldens carry bytes in. | `frame-codec` (plan 0001) |
 | `metrics` | Resident memory and CPU time of a process from `/proc`, the one implementation behind every ceiling. | `pty-harness` (plan 0001) |
 | `pty` | The pseudoterminal harness: real processes on real pseudoterminals, read until quiet rather than until a clock. | `pty-harness` (plan 0001) |
+| `scratch` | Scratch paths under the temporary directory, unique to the process and to the call, so concurrent runs and concurrent tests never share a file. | review fixes |
 | `stack` | The in-process stack: a daemon under a temporary runtime directory, in process or as a binary, told what a pane runs so a measurement does not depend on the machine, torn down on drop. | `integration-harness` (plan 0004) |
 | `vt` | The headless VT oracle over `libghostty-vt`, with deterministic snapshots that can be committed as goldens. | `vt-oracle` (plan 0001) |
 

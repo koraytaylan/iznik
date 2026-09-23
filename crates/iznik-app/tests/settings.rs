@@ -92,7 +92,7 @@ fn overrides_validate_against_inventory() {
 ///
 /// Panics when reload state does not match the file changes.
 fn watcher_applies_changed_file() {
-    let path = std::env::temp_dir().join("iznik-settings-watch");
+    let path = iznik_testkit::scratch::path("settings-watch");
     let settings = Settings::default();
     fs::write(&path, encode(&settings)).expect("settings fixture");
     let mut watcher = Watcher::new(&path);
@@ -110,11 +110,7 @@ fn watcher_applies_changed_file() {
 ///
 /// Panics when a missing file is reported as an error or clears the current font.
 fn a_missing_settings_file_keeps_the_current_value() {
-    let path = std::env::temp_dir().join(format!(
-        "iznik-settings-missing-{}-{}",
-        std::process::id(),
-        "keeps"
-    ));
+    let path = iznik_testkit::scratch::path("settings-missing");
     let _removed = fs::remove_file(&path);
     let mut watcher = Watcher::new(&path);
     let mut current = Settings::default();
@@ -202,8 +198,7 @@ fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::e
         gpui_kit::init(app);
         assert!(apply_default_theme(app).is_ok(), "bundled themes register");
     });
-    let directory =
-        std::env::temp_dir().join(format!("iznik-settings-persist-{}", std::process::id()));
+    let directory = iznik_testkit::scratch::path("settings-persist");
     let _stale = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory)?;
     let path = directory.join("settings");

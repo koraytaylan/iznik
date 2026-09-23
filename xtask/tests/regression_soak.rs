@@ -335,7 +335,7 @@ fn regression_soak_compacts_what_the_held_client_prints() {
 /// What went wrong when `awk` cannot be run, will not take the program, or
 /// the files it needs cannot be written.
 fn compacted(printed: &str) -> Result<String, String> {
-    let directory = std::env::temp_dir().join(format!("iznik-soak-compact-{}", std::process::id()));
+    let directory = iznik_testkit::scratch::path("soak-compact");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let program = directory.join("compact.awk");
     std::fs::write(&program, format!("{COMPACT}\n")).map_err(|error| error.to_string())?;

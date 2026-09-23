@@ -178,7 +178,7 @@ async fn pane_history_is_the_byte_stream() {
     assert!(wait_started(&pane, &mut marks).await, "the first prompt");
 
     let content = corpus::generated(0x50a5, 4 * 1024 * 1024);
-    let path = std::env::temp_dir().join("iznik-pane-history.bin");
+    let path = iznik_testkit::scratch::path("pane-history");
     std::fs::write(&path, &content).expect("the file is written");
 
     // Raw output, so the file's bytes reach history untranslated by the terminal.

@@ -631,7 +631,7 @@ fn wait_for(
 /// # Errors
 /// Returns filesystem errors.
 fn temporary_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let directory = std::env::temp_dir().join(format!("iznik-app-e2e-{}", std::process::id()));
+    let directory = iznik_testkit::scratch::path("app-e2e");
     std::fs::remove_dir_all(&directory).ok();
     std::fs::create_dir_all(directory.join("artifacts"))?;
     Ok(directory)

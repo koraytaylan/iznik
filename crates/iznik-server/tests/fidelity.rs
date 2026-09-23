@@ -93,7 +93,7 @@ fn layout(snapshot: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fidelity_is_byte_identical_and_reproduces_every_construct() {
     let thread = MirrorThread::start().expect("the mirror thread starts");
-    let path = std::env::temp_dir().join("iznik-fidelity-construct.bin");
+    let path = iznik_testkit::scratch::path("fidelity-construct");
     for construct in constructs() {
         // Graphics are images a client re-requests, not the text screen this
         // proves; the serializer skips them and so does this.
@@ -152,7 +152,7 @@ async fn fidelity_survives_a_flood() {
 
     let thread = MirrorThread::start().expect("the mirror thread starts");
     let content = corpus::generated(0xf100d, FLOOD_BYTES);
-    let path = std::env::temp_dir().join("iznik-fidelity-flood.bin");
+    let path = iznik_testkit::scratch::path("fidelity-flood");
     std::fs::write(&path, &content).expect("the flood is written");
 
     let pane = Pane::spawn(&raw_writer(&path.to_string_lossy()), RING_BYTES, &thread)
