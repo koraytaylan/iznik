@@ -425,21 +425,27 @@ async fn accept(
 }
 
 /// Asks the host to carry on every subscribed pane from the byte this client
-/// holds.
+/// holds, and tells it again which pane the person is looking at.
 ///
 /// This is the whole point of keeping a cursor: a person who closed a laptop
-/// sees what arrived while it was shut, rather than a fresh screen.
+/// sees what arrived while it was shut, rather than a fresh screen. The focus
+/// goes with it because it belongs to the connection on the host's side — a
+/// new link starts with no pane preferred, and a person who has not moved
+/// since would otherwise have their pane share bandwidth with every other
+/// until they happened to click.
 async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel) {
-    let held: Vec<(PaneId, Sequence)> = shared
+    let (held, focus): (Vec<(PaneId, Sequence)>, Option<PaneId>) = shared
         .model
         .lock()
         .ok()
         .and_then(|model| {
             model.host(host).map(|view| {
-                view.subscriptions
+                let held = view
+                    .subscriptions
                     .iter()
                     .map(|(pane, held)| (*pane, held.cursor))
-                    .collect()
+                    .collect();
+                (held, view.focus)
             })
         })
         .unwrap_or_default();
@@ -452,6 +458,9 @@ async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel
             },
         )
         .await;
+    }
+    if let Some(pane) = focus {
+        let _sent = write(channel, &ToServer::Focus { pane }).await;
     }
 }
 

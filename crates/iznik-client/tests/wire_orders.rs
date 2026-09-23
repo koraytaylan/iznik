@@ -345,3 +345,40 @@ fn wire_orders_return_a_turn_of_credit_as_one_message() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// What makes the scripted host drop the link it arrives on.
+const CLOSING_WORD: &[u8] = b"close";
+
+/// # Panics
+///
+/// When a link made again after a drop does not tell the host which pane the
+/// person is looking at, as the link before it had.
+#[test]
+fn wire_orders_tell_a_new_link_where_the_focus_is() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("focus")?;
+        let runtime = runtime()?;
+        let script = Script {
+            close_on: Some(CLOSING_WORD.to_vec()),
+            ..Script::default()
+        };
+        let (host, heard) = scripted(&runtime, &held, script)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        manager.add_host(&host)?;
+        await_connected(&events)?;
+        manager.focus(&host, Some(PANE))?;
+        manager.input(&host, PANE, CLOSING_WORD.to_vec())?;
+        let said = heard_until(&heard, |(connection, message)| {
+            *connection == 1 && matches!(message, ToServer::Focus { pane } if *pane == PANE)
+        })?;
+        assert!(
+            said.iter().any(|(connection, message)| *connection == 0
+                && matches!(message, ToServer::Focus { .. })),
+            "the first link was told once"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

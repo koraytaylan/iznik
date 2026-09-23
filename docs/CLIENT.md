@@ -269,7 +269,8 @@ with a backoff, and the host's daemon has kept the sessions running the whole
 time.
 
 **What you keep:** everything. Your surfaces, your attachments, the pane
-contents you have drawn.
+contents you have drawn, and the focus: the new link is told which pane you
+last named with `iznik_pane_focus`, so you need not say it again.
 
 **What you discard:** nothing, until a `screen` callback tells you to. When
 one arrives, what came before it is gone and you reset to what it says.
