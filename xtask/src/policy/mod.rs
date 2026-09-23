@@ -47,9 +47,16 @@ pub type Check = fn(&Path) -> Result<Vec<Violation>, PolicyError>;
 /// binary's, each a crate root when present.
 pub const CRATE_ROOTS: &[&str] = &["src/lib.rs", "src/main.rs"];
 
-/// The directories at the root that hold no source: the build output and the
-/// repository's own data.
-const UNSCANNED_ROOT_DIRECTORIES: &[&str] = &["target", ".git"];
+/// The directories at the root that hold no source of this checkout: the
+/// build output, the repository's own data, and the places `.gitignore` keeps
+/// other checkouts and agents' state — Makina's `.worktrees` and the agent
+/// directory `.claude`, whose worktrees are whole copies of this tree.
+const UNSCANNED_ROOT_DIRECTORIES: &[&str] =
+    &["target", ".git", ".claude", ".worktrees", "node_modules"];
+
+/// What marks a directory as a checkout of its own: a `.git` directory, or
+/// the `.git` file a worktree has.
+const CHECKOUT_MARKER: &str = ".git";
 
 /// Every check with its name, in the order `xtask policy` runs them.
 pub const CHECKS: &[(&str, Check)] = &[
@@ -201,8 +208,11 @@ pub fn relative(root: &Path, path: &Path) -> PathBuf {
 }
 
 /// Every file under `directory`, recursively, in sorted order, leaving out
-/// the fixtures and the root's own `target` and `.git` directories. A
-/// directory that does not exist has no files.
+/// the fixtures, the root's directories that hold no source of this checkout
+/// (`target`, `.git`, `.claude`, `.worktrees`, `node_modules`), and any
+/// directory below the root that is a checkout of its own — one holding a
+/// `.git` — because its files are another tree's. A directory that does not
+/// exist has no files.
 ///
 /// # Errors
 ///
@@ -230,7 +240,9 @@ pub fn files_under(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, Policy
                     .file_name()
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| UNSCANNED_ROOT_DIRECTORIES.contains(&name));
-            if is_fixture(root, &path) || unscanned {
+            let nested_checkout =
+                path != root && path.is_dir() && path.join(CHECKOUT_MARKER).exists();
+            if is_fixture(root, &path) || unscanned || nested_checkout {
                 continue;
             }
             if path.is_dir() {

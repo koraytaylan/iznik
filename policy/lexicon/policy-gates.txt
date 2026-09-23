@@ -17,6 +17,7 @@ case
 cases
 cfg
 characters
+checkout
 checks
 clean
 closing
