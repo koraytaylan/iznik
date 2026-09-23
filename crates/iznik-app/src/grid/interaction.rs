@@ -279,14 +279,14 @@ impl TerminalGrid {
         self.pointer_override = false;
     }
 
-    /// Open the OSC 8 target under a Command-click when its scheme is one the
-    /// platform browser can be handed. The click is consumed so it is neither
+    /// Open the OSC 8 target under a Command-click when the platform would
+    /// show it rather than run it. The click is consumed so it is neither
     /// a selection nor a report to the program.
     fn open_link(&self, position: Point<Pixels>, context: &mut Context<'_, Self>) -> bool {
         let Some(link) = self.link_target(position) else {
             return false;
         };
-        if !link_scheme(&link) {
+        if !super::link::safe_to_open(&link) {
             return false;
         }
         context.open_url(&link);
@@ -422,32 +422,4 @@ impl TerminalGrid {
         }
         context.stop_propagation();
     }
-}
-
-/// Schemes a Command-click may hand to the platform browser.
-const LINK_SCHEME: &[&str] = &["https", "http", "mailto", "file"];
-
-/// Whether `link` is an OSC 8 target safe to open.
-///
-/// Web and file targets need a hierarchical part. A mail target needs an address.
-/// Anything else, including a script scheme or a target with control bytes, stays text.
-fn link_scheme(link: &str) -> bool {
-    let Some((scheme, rest)) = link.split_once(':') else {
-        return false;
-    };
-    if link.chars().any(link_rejected) {
-        return false;
-    }
-    if scheme.eq_ignore_ascii_case("mailto") {
-        return !rest.is_empty();
-    }
-    LINK_SCHEME
-        .iter()
-        .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
-        && rest.strip_prefix("//").is_some_and(|body| !body.is_empty())
-}
-
-/// A control byte or space would make the opened target a different address.
-fn link_rejected(character: char) -> bool {
-    character.is_ascii_control() || character.is_ascii_whitespace()
 }

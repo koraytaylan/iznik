@@ -5,6 +5,7 @@ mod draw;
 mod ime;
 mod interaction;
 pub mod keyboard;
+pub mod link;
 mod paint;
 mod selection;
 mod shapes;

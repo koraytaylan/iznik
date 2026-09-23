@@ -140,6 +140,7 @@ rather than ending the connection.
 | `session_tabs` | The file that records the tab each session was left on, so the next launch opens it. |
 | `prompt` | The palette's argument step: names, host aliases, destinations and arrangements an action needs before it is sent. |
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
+| `grid::link` | Which OSC 8 targets a Command-click hands to the platform: web and mail addresses, and local files that are not programs, scripts or application bundles; never a `file:` target on another host. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
 | `grid::draw` | Row draw lists built from snapshot cells, and which rows a new snapshot actually changes. |
 | `grid::selection` | Selection held in retained rows, and the part of it a viewport shows. |

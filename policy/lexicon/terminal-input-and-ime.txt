@@ -27,14 +27,17 @@ edits
 emoji
 entity
 expansion
+extensions
 filtered
 grants
 graphemes
+hierarchy
 ignore
 ime
 inputs
 interaction
 keypad
+mail
 matrix
 modes
 modified
@@ -45,6 +48,7 @@ overlay
 owning
 pairs
 paste
+permissions
 phase
 pointers
 preedit
@@ -61,7 +65,9 @@ retains
 retries
 reverse
 reversed
+safe
 sanitizes
+schemes
 scrolls
 tracking
 tracks
@@ -73,3 +79,4 @@ unshifted
 unwraps
 utf16
 visual
+web
