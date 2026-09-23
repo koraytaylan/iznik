@@ -721,6 +721,11 @@ impl HostManager {
     /// this used to do, made every one of them answer `workstation is not
     /// held` while the upgrade was still succeeding.
     ///
+    /// A host with no link — waiting out a backoff, or parked after a failure
+    /// retrying cannot mend — is upgraded at once rather than at its next
+    /// retry, and then tried again: a forced upgrade exists for the daemon
+    /// this client cannot connect to at all.
+    ///
     /// # Errors
     ///
     /// [`ManagerError::UnknownHost`] when no host of that name is held, and

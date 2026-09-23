@@ -188,3 +188,74 @@ fn an_upgrade_keeps_the_host_held() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// An upgrade asked for while the host has no link is acted on, not dropped.
+///
+/// A forced upgrade is for exactly the daemon this client cannot connect to —
+/// one on another protocol, one that will not start — so a host waiting out
+/// its backoff is the host it is most often asked of. Accepting the ask and
+/// then letting it go would leave a host that is never upgraded and never
+/// says why. The host here is a socket nobody is listening on, waiting an
+/// hour before it is tried again, so what moves it is the ask and nothing
+/// else; the replacement cannot reach a socket either, and says so.
+///
+/// # Panics
+///
+/// When the ask is refused, or the host does not move to upgrading and then
+/// report what became of the upgrade long before its retry was due.
+#[test]
+fn an_upgrade_asked_for_without_a_link_is_acted_on() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("disconnected")?;
+        let artifacts = held.path.join("artifacts");
+        std::fs::create_dir_all(&artifacts)?;
+        let paths = ClientRuntimePaths::under(&held.path.join("runtime"))?;
+        let mut options = ManagerOptions::new(artifacts, paths);
+        options.backoff = BackoffPolicy {
+            initial: Duration::from_hours(1),
+            maximum: Duration::from_hours(1),
+            ..BackoffPolicy::default()
+        };
+        let manager = HostManager::new(options)?;
+        let events = manager.events();
+        let host = HostId(alias(&held.path.join("nobody.sock")));
+        manager.add_host(&host.0)?;
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        let mut seen = Vec::new();
+        let mut asked = false;
+        while Instant::now() < expires {
+            let left = expires.saturating_duration_since(Instant::now());
+            let Ok(ManagerEvent::Moved { state, .. }) = events.recv_timeout(left) else {
+                continue;
+            };
+            if matches!(state, HostState::Failed { .. }) && !asked {
+                // Waiting an hour: only the ask can move it now.
+                manager.upgrade(&host.0, true)?;
+                asked = true;
+                continue;
+            }
+            if !asked {
+                continue;
+            }
+            let reported = matches!(
+                &state,
+                HostState::Failed { error, .. } if error.starts_with("upgrading")
+            );
+            seen.push(state);
+            if reported {
+                break;
+            }
+        }
+        assert!(
+            matches!(seen.first(), Some(HostState::Upgrading)),
+            "the waiting host moves to upgrading at once: {seen:?}"
+        );
+        assert!(
+            matches!(seen.last(), Some(HostState::Failed { error, .. }) if error.starts_with("upgrading")),
+            "and then says what became of the upgrade: {seen:?}"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

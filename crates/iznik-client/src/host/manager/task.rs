@@ -23,7 +23,7 @@ use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
 use crate::host::manager::hearing::{heard, told_the_model};
-use crate::host::manager::waiting::{Waiting, hold_until, keep, keeps, waiting};
+use crate::host::manager::waiting::{Waiting, Woken, hold_until, keep, keeps, waiting};
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{
     Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
@@ -77,7 +77,7 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
             Ended::Stopped => return,
             Ended::Gone => {}
             Ended::Upgrade { force } => {
-                replace(&host, &shared, &machine, force).await;
+                let _replaced = replace(&host, &shared, &machine, force).await;
                 // The alias is held throughout: the loop goes straight back to
                 // connecting, and everything asked for during the replacement
                 // is already on this task's queue.
@@ -91,13 +91,14 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
 /// The task stays alive and keeps taking orders while this runs, so the host
 /// is never un-held: an order that arrives now waits on the queue and is
 /// carried once the new link is up. A refusal is said aloud, because an upgrade
-/// that did not happen must not look like one that did.
+/// that did not happen must not look like one that did — and answered, so a
+/// caller can wait out what the refusal scheduled before trying again.
 async fn replace(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     force: bool,
-) {
+) -> bool {
     let transport = Transport::for_alias(
         &host.0,
         &shared.options.runtime_paths,
@@ -123,17 +124,19 @@ async fn replace(
     };
     // The next `connect` is what reaches the new server; say the failure now
     // and let the reconnect that follows say the rest.
-    if let Some((detail, cause)) = error {
-        let _moved = advance(
-            shared,
-            host,
-            machine,
-            HostEvent::Failed {
-                error: detail,
-                cause,
-            },
-        );
-    }
+    let Some((detail, cause)) = error else {
+        return true;
+    };
+    let _moved = advance(
+        shared,
+        host,
+        machine,
+        HostEvent::Failed {
+            error: detail,
+            cause,
+        },
+    );
+    false
 }
 
 /// Moves the host's machine, tells anyone watching when it moved, and gives
@@ -186,11 +189,23 @@ async fn connect(
     loop {
         let wait = waiting(machine);
         if !matches!(wait, Waiting::Not) {
-            if !hold_until(&wait, orders, kept).await {
-                let _torn = advance(shared, host, machine, HostEvent::Removed);
-                return None;
+            match hold_until(&wait, orders, kept).await {
+                None => {
+                    let _torn = advance(shared, host, machine, HostEvent::Removed);
+                    return None;
+                }
+                Some(Woken::Due) => {
+                    let _tried = advance(shared, host, machine, HostEvent::RetryDue);
+                }
+                // Replaced first, then reached: the replacement is what may
+                // make the host reachable at all.
+                Some(Woken::Upgrade { force }) => {
+                    let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
+                    if !replace(host, shared, machine, force).await {
+                        continue;
+                    }
+                }
             }
-            let _tried = advance(shared, host, machine, HostEvent::RetryDue);
         }
         match reach(host, shared, machine).await {
             Ok(reached) => {

@@ -36,16 +36,33 @@ pub(super) fn waiting(machine: &Mutex<HostStateMachine>) -> Waiting {
     }
 }
 
+/// Why a wait ended with the host still held.
+pub(super) enum Woken {
+    /// It is time to try again, or somebody asked for it now.
+    Due,
+    /// Somebody asked for its server to be replaced, which is how it is to
+    /// be tried again.
+    ///
+    /// An upgrade asked for while there is no link is not an order to drop:
+    /// a forced one exists for exactly the daemon this client can no longer
+    /// connect to at all, and dropping it while `upgrade` answered that it was
+    /// accepted would leave a host that is never upgraded and never says why.
+    Upgrade {
+        /// Whether to replace it even though it holds panes.
+        force: bool,
+    },
+}
+
 /// Waits as long as `wait` says, taking orders meanwhile.
 ///
-/// Answers `false` when the host was told to stop. Orders that need a channel
+/// Answers `None` when the host was told to stop. Orders that need a channel
 /// are dropped: there is none, and a keystroke held for a minute and then
 /// delivered is worse than one that went nowhere.
 pub(super) async fn hold_until(
     wait: &Waiting,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
-) -> bool {
+) -> Option<Woken> {
     loop {
         let waiting = async {
             match wait {
@@ -55,11 +72,12 @@ pub(super) async fn hold_until(
             }
         };
         tokio::select! {
-            () = waiting => return true,
+            () = waiting => return Some(Woken::Due),
             order = orders.recv() => match order {
-                None | Some(Order::Stop) => return false,
+                None | Some(Order::Stop) => return None,
                 // Somebody asked for it now, so the wait is over.
-                Some(Order::Reconnect) => return true,
+                Some(Order::Reconnect) => return Some(Woken::Due),
+                Some(Order::Upgrade { force }) => return Some(Woken::Upgrade { force }),
                 Some(held) => keep(kept, held),
             },
         }
@@ -105,6 +123,7 @@ pub(super) fn keep(kept: &mut Vec<Order>, order: Order) {
         | Order::Credit { .. }
         | Order::Command { .. }
         | Order::Screen { .. }
+        // The last three end a wait rather than being held through one.
         | Order::Reconnect
         | Order::Upgrade { .. }
         | Order::Stop => {}
