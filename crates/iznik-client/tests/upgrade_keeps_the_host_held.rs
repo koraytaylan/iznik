@@ -144,7 +144,7 @@ fn an_upgrade_keeps_the_host_held() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = HostId(alias(stack.socket()));
-        manager.add_host(&host.0);
+        manager.add_host(&host.0)?;
         await_connected(&events, &host)?;
 
         // The ask itself must be accepted.

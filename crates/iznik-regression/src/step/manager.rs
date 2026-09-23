@@ -551,10 +551,9 @@ fn about_a_host(
     deadline: Instant,
 ) -> Result<(), String> {
     match action {
-        Action::AddHost { alias } => {
-            manager.add_host(alias);
-            Ok(())
-        }
+        Action::AddHost { alias } => manager
+            .add_host(alias)
+            .map_err(|refusal| refusal.to_string()),
         Action::AwaitState { alias, is } => {
             let named = HostId(alias.clone());
             await_until(

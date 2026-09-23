@@ -281,9 +281,10 @@ impl EngineBridge {
     ///
     /// # Errors
     ///
-    /// [`EngineError::Stopped`] when the engine has ended.
+    /// [`EngineError::Stopped`] when the engine has ended, and
+    /// [`EngineError::Manager`] when the alias is not one a host may have.
     pub fn add_host(&self, alias: &str) -> Result<(), EngineError> {
-        self.engine()?.add_host(alias);
+        self.engine()?.add_host(alias)?;
         Ok(())
     }
 

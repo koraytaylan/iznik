@@ -142,7 +142,9 @@ arrives on the event callback. An alias is whatever the user typed. `unix:`
 followed by a path names a daemon socket on this machine, which is how a Mac
 attaches to itself and how every test drives this; anything else is handed to
 `ssh` untouched, so a host from the user's own SSH configuration works
-because it is their SSH that resolves it.
+because it is their SSH that resolves it. It is always given to `ssh` after `--`,
+so it is read as a host and never as an option; an empty alias, or one
+beginning with `-`, is refused with `IZNIK_INVALID_ARGUMENT`.
 
 `iznik_host_remove` lets one go. `iznik_host_reconnect` asks for a
 reconnection now rather than after the backoff.

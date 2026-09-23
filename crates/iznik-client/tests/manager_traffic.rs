@@ -409,7 +409,7 @@ fn manager_traffic_carries_a_burst_as_fast_as_it_is_given() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(stack.socket());
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         let _session = make_a_session(&manager, &events, &host, "work")?;
         manager.subscribe(&host, PANE)?;
@@ -555,7 +555,7 @@ fn manager_traffic_passes_on_no_change_it_could_not_take() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         // Everything it says, in the order it says it, and nothing thrown
         // away: a case that waited for one kind of event would discard the
         // very event it is about.
@@ -629,7 +629,7 @@ fn manager_traffic_passes_on_the_model_a_replaced_daemon_sends() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         // A command the host answers and never announces, which is what this
         // client keeps applied until the model reaches the generation the
@@ -700,7 +700,7 @@ fn manager_traffic_offers_an_upgrade_for_a_capability_gap() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = HostId(alias(&socket));
-        manager.add_host(&host.0);
+        manager.add_host(&host.0)?;
         let offered = connected_offer(&events, &host)?;
         assert_eq!(offered.reason, UpgradeReason::Capabilities, "and says why");
         assert_eq!(
@@ -748,7 +748,7 @@ fn manager_traffic_drops_the_capabilities_of_another_version() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = HostId(alias(&socket));
-        manager.add_host(&host.0);
+        manager.add_host(&host.0)?;
         let offered = connected_offer(&events, &host)?;
         // The command is refused, because the advertised bit was not trusted.
         let refused = manager.command(
@@ -795,7 +795,7 @@ fn manager_traffic_refuses_a_command_the_server_cannot_decode() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         let refused = manager.command(&host, SessionCommand::ReorderSessions { order: Vec::new() });
         assert!(
@@ -860,7 +860,7 @@ fn manager_traffic_returns_only_current_delivery_credit_once() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_event(&events, "connected", CREDIT_DEADLINE, |event| {
             matches!(
                 event,

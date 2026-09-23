@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use iznik_client::transport::ssh::{
-    CONNECT_TIMEOUT, CONTROL_PERSIST, SERVER_ALIVE_COUNT_MAXIMUM, SERVER_ALIVE_INTERVAL, SshError,
-    SshOptions, classify,
+    CONNECT_TIMEOUT, CONTROL_PERSIST, END_OF_OPTIONS, SERVER_ALIVE_COUNT_MAXIMUM,
+    SERVER_ALIVE_INTERVAL, SshError, SshOptions, classify,
 };
 use iznik_client::transport::{
     ClientRuntimePaths, LOCAL_PREFIX, MINIMUM_CONTROL_NAME_LENGTH, Transport,
@@ -374,4 +374,65 @@ fn ssh_tells_a_link_failure_from_a_command_failure() {
         matches!(failed, SshError::RemoteCommandFailed { status: 1, .. }),
         "while any other status is the command's: {failed:?}"
     );
+}
+
+/// # Panics
+///
+/// When anything but the alias follows the end of the options, whether a
+/// command is being run or a master ended — so that an alias beginning with a
+/// dash is a host to `ssh` and never an option of its own.
+#[test]
+fn ssh_ends_its_options_before_the_alias() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("options_end")?;
+        let paths = ClientRuntimePaths::under(&held.path)?;
+        let alias = "-oProxyCommand=touch /tmp/iznik-owned";
+        let Transport::Ssh(transport) = Transport::for_alias(alias, &paths, SshOptions::default())
+        else {
+            return Err("an ordinary alias is not local".into());
+        };
+        let command = "/iznik/bin/iznik-server".to_owned();
+        for (arguments, after) in [
+            (
+                transport.arguments(std::slice::from_ref(&command)),
+                vec![alias.to_owned(), command.clone()],
+            ),
+            (
+                transport.arguments_with_master(std::slice::from_ref(&command), false),
+                vec![alias.to_owned(), command.clone()],
+            ),
+            (transport.close_arguments(), vec![alias.to_owned()]),
+        ] {
+            let line = arguments.join(" ");
+            let ended = arguments
+                .iter()
+                .position(|argument| argument == END_OF_OPTIONS)
+                .ok_or_else(|| format!("the options are never ended: {line}"))?;
+            assert_eq!(
+                arguments.get(ended.saturating_add(1)..),
+                Some(after.as_slice()),
+                "only the alias and the command follow the end of the options: {line}"
+            );
+            assert_eq!(
+                arguments
+                    .iter()
+                    .filter(|argument| *argument == alias)
+                    .count(),
+                1,
+                "and the alias appears nowhere else: {line}"
+            );
+        }
+        let closing = transport.close_arguments();
+        let exit = closing
+            .windows(2)
+            .position(|pair| pair == ["-O", "exit"])
+            .ok_or("ending a master asks it to exit")?;
+        let ended = closing
+            .iter()
+            .position(|argument| argument == END_OF_OPTIONS)
+            .ok_or("the options are never ended")?;
+        assert!(exit < ended, "and asks before the options end: {closing:?}");
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
 }

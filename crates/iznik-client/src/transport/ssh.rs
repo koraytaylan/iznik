@@ -70,6 +70,10 @@ pub fn master_is_available() -> bool {
 /// The flag every option is given with.
 const OPTION_FLAG: &str = "-o";
 
+/// What ends `ssh`'s options, so that what follows is the host whatever it
+/// begins with.
+pub const END_OF_OPTIONS: &str = "--";
+
 /// The flag that ends a master.
 const CONTROL_FLAG: &str = "-O";
 
@@ -271,7 +275,8 @@ impl SshTransport {
     }
 
     /// The whole argument vector for running `remote_command` on this host:
-    /// the options iznik owns, then the alias, then the command.
+    /// the options iznik owns, then [`END_OF_OPTIONS`] and the alias, then the
+    /// command.
     ///
     /// Public because what is *not* in it is a property worth asserting, and
     /// asserting it needs no process. A Unix `ssh` is asked to multiplex.
@@ -287,7 +292,28 @@ impl SshTransport {
     /// so the Windows command line can be asserted on a Unix machine.
     #[must_use]
     pub fn arguments_with_master(&self, remote_command: &[String], master: bool) -> Vec<String> {
-        let mut arguments = Vec::new();
+        let mut arguments = self.options(master);
+        arguments.extend(self.destination());
+        arguments.extend(remote_command.iter().cloned());
+        arguments
+    }
+
+    /// The whole argument vector that ends this host's master: the options
+    /// iznik owns, the control command, then the alias.
+    ///
+    /// Public for the reason [`arguments`](Self::arguments) is: that the
+    /// alias still comes after [`END_OF_OPTIONS`] here is worth asserting.
+    #[must_use]
+    pub fn close_arguments(&self) -> Vec<String> {
+        let mut arguments = self.options(master_is_available());
+        arguments.push(CONTROL_FLAG.to_owned());
+        arguments.push(EXIT_COMMAND.to_owned());
+        arguments.extend(self.destination());
+        arguments
+    }
+
+    /// The options iznik owns, each after its flag.
+    fn options(&self, master: bool) -> Vec<String> {
         let mut options = Vec::new();
         if master {
             options.push("ControlMaster=auto".to_owned());
@@ -309,13 +335,19 @@ impl SshTransport {
             "ConnectTimeout={}",
             seconds(self.options.connect_timeout)
         ));
-        for option in options {
-            arguments.push(OPTION_FLAG.to_owned());
-            arguments.push(option);
-        }
-        arguments.push(self.alias.clone());
-        arguments.extend(remote_command.iter().cloned());
-        arguments
+        options
+            .into_iter()
+            .flat_map(|option| vec![OPTION_FLAG.to_owned(), option])
+            .collect()
+    }
+
+    /// The end of the options and the alias after it.
+    ///
+    /// Whatever a person typed is a host and never an option: without the
+    /// marker, an alias such as `-oProxyCommand=…` would be read by `ssh` as
+    /// one of its own options, and that one runs a command on this machine.
+    fn destination(&self) -> Vec<String> {
+        vec![END_OF_OPTIONS.to_owned(), self.alias.clone()]
     }
 
     /// Runs `remote_command` on this host, with its standard streams piped.
@@ -352,10 +384,7 @@ impl SshTransport {
     ///
     /// [`SshError::Spawn`] when `ssh` itself cannot be started.
     pub fn close_master(&self) -> Result<SshChild, SshError> {
-        let mut arguments = self.arguments(&[]);
-        // Before the alias, which is the last thing `arguments` puts there.
-        let at = arguments.len().saturating_sub(1);
-        arguments.splice(at..at, [CONTROL_FLAG.to_owned(), EXIT_COMMAND.to_owned()]);
+        let arguments = self.close_arguments();
         let mut command = Command::new(PROGRAM);
         command
             .args(arguments)

@@ -72,6 +72,61 @@ impl HostId {
     }
 }
 
+/// What begins an option on `ssh`'s command line, and so may not begin a
+/// host's name.
+const OPTION_MARKER: char = '-';
+
+/// Why a name is not one a host may be held under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AliasError {
+    /// Nothing was named.
+    Empty,
+    /// It begins with a dash, which `ssh` reads as one of its own options.
+    ///
+    /// Refused even though the command line ends its options before the
+    /// alias: a name like `-oProxyCommand=…` is never a host somebody meant,
+    /// and holding one would carry it into every log and every command.
+    Option {
+        /// What was given.
+        given: String,
+    },
+}
+
+impl Display for AliasError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            AliasError::Empty => formatter.write_str("no host was named"),
+            AliasError::Option { given } => write!(
+                formatter,
+                "{given:?} begins with {OPTION_MARKER:?}, which ssh would read as an option \
+                 rather than a host"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for AliasError {}
+
+impl HostId {
+    /// A host by the name a person gave, when it is one a host may have.
+    ///
+    /// # Errors
+    ///
+    /// [`AliasError::Empty`] for nothing, and [`AliasError::Option`] for a
+    /// name beginning with a dash.
+    pub fn admit(alias: &str) -> Result<HostId, AliasError> {
+        if alias.is_empty() {
+            return Err(AliasError::Empty);
+        }
+        if alias.starts_with(OPTION_MARKER) {
+            return Err(AliasError::Option {
+                given: alias.to_owned(),
+            });
+        }
+        Ok(HostId(alias.to_owned()))
+    }
+}
+
 /// One pane, anywhere.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GlobalPaneId {

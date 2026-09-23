@@ -352,7 +352,9 @@ fn held(alias: &str) -> Answered {
         Err(source) => return every(CLIENT_LAYER, &source.to_string()),
     };
     let events = manager.events();
-    manager.add_host(alias);
+    if let Err(source) = manager.add_host(alias) {
+        return every(CLIENT_LAYER, &source.to_string());
+    }
     // Every state it went through on the way, which is the half of a
     // diagnosis that says whether it struggled or simply worked.
     let mut went = Vec::new();

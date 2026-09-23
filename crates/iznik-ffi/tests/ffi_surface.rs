@@ -439,6 +439,19 @@ fn ffi_surface_says_which_layer_failed() {
         );
         assert_eq!(error.layer, Layer::Client, "against this layer");
         assert!(!said(&error).is_empty(), "with something to read");
+        // A name `ssh` would take for one of its own options is not a host.
+        let option = CString::new("-oProxyCommand=touch /tmp/iznik-owned")?;
+        // SAFETY: the client is live and the alias null-terminated.
+        let dashed = unsafe { iznik_host_add(made, option.as_ptr(), &raw mut error) };
+        assert_eq!(
+            dashed, INVALID_ARGUMENT,
+            "an alias that is an option refuses"
+        );
+        assert!(
+            said(&error).contains("option"),
+            "and says why: {}",
+            said(&error)
+        );
         // A socket that is not there: taken as a host, because a host must be
         // held before it can be asked to give anything up.
         let nowhere = CString::new(format!("unix:{}", held.path.join("nowhere.sock").display()))?;

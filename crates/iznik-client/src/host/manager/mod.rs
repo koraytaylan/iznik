@@ -29,7 +29,7 @@ use crate::bootstrap::launch::{
 use crate::bootstrap::uninstall;
 use crate::bootstrap::upload::{ArtifactSet, UploadError};
 use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit, withdraw};
-use crate::host::identity::HostId;
+use crate::host::identity::{AliasError, HostId};
 use crate::host::manager::task::{give_up, serve};
 use crate::host::state::{BackoffPolicy, HostState};
 use crate::model::{ClientModel, HostView};
@@ -209,6 +209,11 @@ pub enum ManagerError {
         /// What went wrong.
         source: UploadError,
     },
+    /// The name is not one a host may be held under.
+    Alias {
+        /// Why.
+        source: AliasError,
+    },
     /// No host of that name is held.
     UnknownHost {
         /// The name that was asked for.
@@ -285,6 +290,7 @@ impl core::fmt::Display for ManagerError {
                 write!(formatter, "the manager's runtime: {source}")
             }
             ManagerError::Artifacts { source } => write!(formatter, "{source}"),
+            ManagerError::Alias { source } => write!(formatter, "{source}"),
             ManagerError::Log { path, detail } => {
                 write!(formatter, "the log at {}: {detail}", path.display())
             }
@@ -611,8 +617,13 @@ impl HostManager {
     /// Returns at once: the connecting is the host's own task's business, and
     /// a manager that waited here would be a manager that waits on the slowest
     /// host somebody named.
-    pub fn add_host(&self, alias: &str) {
-        let host = HostId(alias.to_owned());
+    ///
+    /// # Errors
+    ///
+    /// [`ManagerError::Alias`] when the name is not one a host may have: empty,
+    /// or beginning with a dash, which `ssh` would read as an option.
+    pub fn add_host(&self, alias: &str) -> Result<(), ManagerError> {
+        let host = HostId::admit(alias).map_err(|source| ManagerError::Alias { source })?;
         // Twice is once, while the first is still running. Starting a second
         // task for one alias would leave the first detached and still going:
         // two channels, two `ssh` children, and a model written by whichever
@@ -622,7 +633,7 @@ impl HostManager {
             held.get(&host)
                 .is_some_and(|handle| !handle.orders.is_closed())
         }) {
-            return;
+            return Ok(());
         }
         if let Ok(mut model) = self.shared.model.lock()
             && model.host(&host).is_none()
@@ -636,6 +647,7 @@ impl HostManager {
         if let Ok(mut hosts) = self.hosts.lock() {
             let _replaced = hosts.insert(host, HostHandle { orders, task });
         }
+        Ok(())
     }
 
     /// Stops holding a host: its task ends, its channel closes, and what the
@@ -843,7 +855,9 @@ impl HostManager {
                 // It is still on the host, so it is still held here: a host
                 // nobody holds is a host nobody can ask again, and the only
                 // way back would be to add it from nothing.
-                self.add_host(alias);
+                // The alias was held a moment ago, so it is one a host may
+                // have and adding it again cannot be refused for its name.
+                let _held = self.add_host(alias);
                 return Err(ManagerError::Uninstall { source });
             }
         }

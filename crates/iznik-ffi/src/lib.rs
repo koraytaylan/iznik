@@ -535,6 +535,7 @@ fn layer_of(refusal: &ManagerError) -> Layer {
         ManagerError::Uninstall { source } => staged(source.stage),
         ManagerError::Runtime { .. }
         | ManagerError::Artifacts { .. }
+        | ManagerError::Alias { .. }
         | ManagerError::Log { .. }
         | ManagerError::NotCarrying { .. }
         | ManagerError::UnknownHost { .. }
@@ -625,7 +626,9 @@ pub unsafe extern "C" fn iznik_set_event_callback(
 
 /// Begins holding a host, and connecting to it.
 ///
-/// Returns at once; what happens next arrives on the callback.
+/// Returns at once; what happens next arrives on the callback. An empty
+/// alias, or one beginning with `-`, is refused with
+/// `IZNIK_INVALID_ARGUMENT`: `ssh` would read it as an option.
 ///
 /// **Obligation:** `alias` is a null-terminated UTF-8 string, and may be freed
 /// as soon as this returns.
@@ -641,12 +644,7 @@ pub unsafe extern "C" fn iznik_host_add(
     error: *mut Error,
 ) -> c_int {
     // SAFETY: the caller's obligations, above, for each of the three.
-    unsafe {
-        with_host(client, alias, error, |manager, named| {
-            manager.add_host(named);
-            Ok(())
-        })
-    }
+    unsafe { with_host(client, alias, error, HostManager::add_host) }
 }
 
 /// Stops holding a host.
@@ -873,6 +871,9 @@ unsafe fn with_host(
 fn code_of(refusal: &ManagerError) -> c_int {
     match refusal {
         ManagerError::UnknownHost { .. } => UNKNOWN_HOST,
+        // A name no host may have is a mistake in the argument, not a host
+        // that said no.
+        ManagerError::Alias { .. } => INVALID_ARGUMENT,
         _otherwise => REFUSED,
     }
 }

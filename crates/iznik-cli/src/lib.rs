@@ -128,7 +128,9 @@ pub fn holding(
     let manager = HostManager::new(ManagerOptions::new(artifacts, paths))
         .map_err(|source| (CLIENT_LAYER, source.to_string()))?;
     let events = manager.events();
-    manager.add_host(alias);
+    manager
+        .add_host(alias)
+        .map_err(|source| (CLIENT_LAYER, source.to_string()))?;
     let expires = std::time::Instant::now()
         .checked_add(BOOTSTRAP_DEADLINE)
         .ok_or((CLIENT_LAYER, "no clock".to_owned()))?;

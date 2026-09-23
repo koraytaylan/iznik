@@ -340,7 +340,9 @@ void iznik_set_event_callback(iznik_client *client, iznik_event_callback callbac
 /**
  * Begins holding a host, and connecting to it.
  *
- * Returns at once; what happens next arrives on the callback.
+ * Returns at once; what happens next arrives on the callback. An empty
+ * alias, or one beginning with `-`, is refused with
+ * `IZNIK_INVALID_ARGUMENT`: `ssh` would read it as an option.
  *
  * **Obligation:** `alias` is a null-terminated UTF-8 string, and may be freed
  * as soon as this returns.

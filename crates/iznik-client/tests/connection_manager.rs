@@ -18,7 +18,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 use iznik_client::host::identity::{GlobalPaneId, HostId};
-use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
+use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::{BackoffPolicy, HostState};
 use iznik_client::model::ClientModel;
 use iznik_client::reduce::Notification;
@@ -367,8 +367,8 @@ fn connection_manager_holds_two_hosts_apart() {
         let manager = manager(&held)?;
         let events = manager.events();
         let (work, build) = (alias(first.socket()), alias(second.socket()));
-        manager.add_host(&work);
-        manager.add_host(&build);
+        manager.add_host(&work)?;
+        manager.add_host(&build)?;
         await_connected(&events, &[&work, &build])?;
         let here = make_a_session(&manager, &events, &work, "here")?;
         let there = make_a_session(&manager, &events, &build, "there")?;
@@ -422,8 +422,8 @@ fn connection_manager_keeps_a_stuck_host_to_itself() {
         let manager = manager(&held)?;
         let events = manager.events();
         let (work, silent) = (alias(healthy.socket()), alias(&stuck));
-        manager.add_host(&silent);
-        manager.add_host(&work);
+        manager.add_host(&silent)?;
+        manager.add_host(&work)?;
         await_connected(&events, &[&work])?;
         let session = make_a_session(&manager, &events, &work, "work")?;
         // Everything about the healthy host must go on being quick while the
@@ -474,7 +474,7 @@ fn connection_manager_resumes_a_pane_where_it_left_off() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&carried.socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         let _session = make_a_session(&manager, &events, &host, "work")?;
         manager.subscribe(&host, PANE)?;
@@ -578,7 +578,7 @@ fn connection_manager_shows_a_rename_before_the_host_agrees() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(stack.socket());
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         let session = make_a_session(&manager, &events, &host, "before")?;
         let submission = manager.command(
@@ -669,7 +669,7 @@ fn connection_manager_gives_up_on_a_host_that_never_answers() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(&carried.socket);
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         await_connected(&events, &[&host])?;
         let session = make_a_session(&manager, &events, &host, "before")?;
         // The link stops carrying, and a command goes into it.
@@ -722,7 +722,7 @@ fn connection_manager_does_not_let_four_hosts_retry_at_once() {
         let events = manager.events();
         let started = Instant::now();
         for index in 0..4_usize {
-            manager.add_host(&alias(&held.path.join(format!("gone-{index}.sock"))));
+            manager.add_host(&alias(&held.path.join(format!("gone-{index}.sock"))))?;
         }
         let mut moments = std::collections::BTreeMap::new();
         while moments.len() < 4 {
@@ -777,7 +777,7 @@ fn connection_manager_reports_every_state_in_order() {
         let manager = manager(&held)?;
         let events = manager.events();
         let host = alias(stack.socket());
-        manager.add_host(&host);
+        manager.add_host(&host)?;
         let mut seen = Vec::new();
         let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
         while Instant::now() < expires {
@@ -808,6 +808,35 @@ fn connection_manager_reports_every_state_in_order() {
         );
         drop(manager);
         drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When an alias `ssh` would read as one of its own options, or no alias at
+/// all, is held as a host.
+#[test]
+fn connection_manager_refuses_an_alias_that_is_an_option() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("dashed")?;
+        let manager = manager(&held)?;
+        for refused in ["-oProxyCommand=touch /tmp/iznik-owned", "-v", ""] {
+            let answer = manager.add_host(refused);
+            assert!(
+                matches!(answer, Err(ManagerError::Alias { .. })),
+                "{refused:?} is not a host: {answer:?}"
+            );
+            assert!(
+                manager.model().host(&HostId(refused.to_owned())).is_none(),
+                "and nothing is held for it"
+            );
+        }
+        assert!(
+            HostId::admit("host-with-a-dash-inside").is_ok(),
+            "while a dash inside a name is only a name"
+        );
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
