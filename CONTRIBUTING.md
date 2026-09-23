@@ -2,9 +2,12 @@
 
 > These are the rules every line in this repository is held to, and the gates
 > that hold them. They apply to people and to the agents that execute the
-> plans under `docs/plans/` alike. There are no exceptions: a rule that is
-> wrong for this codebase is changed for everyone, in its own commit, with the
-> reason written here — it is never waived at one site.
+> plans under `docs/plans/` alike. A rule that is wrong for this codebase is
+> changed for everyone, in its own commit, with the reason written here — it
+> is never waived quietly at one site. The places where a rule does not hold
+> today are listed, each with its reason, in
+> [section 3.11](#311-listed-exceptions); an exception that is not listed
+> there is a bug.
 
 ## 1. Prerequisites
 
@@ -267,6 +270,49 @@ These are not gateable and they are what review is for:
   explicitly manual display measurements visible without inventing a platform
   or counting a document check as evidence of GPU behavior. It does not apply
   to CPU budgets, emulator behavior, transport or other automated proofs.
+
+### 3.11 Listed exceptions
+
+Every place the rules above do not hold, found by searching the tree rather
+than remembered. Adding to this list is a reviewed change like adding a word
+to the lexicon; removing an entry is always welcome.
+
+- **Abbreviations the lexicon admits.** Section 3.1 bans `max`, `min`,
+  `config`, `err`, `len`, `tx`, `rx`, `fmt`, `cfg` and `str`, yet each is in
+  a file under `policy/lexicon/`, because an identifier the workspace
+  declares still uses it:
+  - `fmt`, `len`, `from_str` and `Err` are names the standard library gives
+    trait methods and variants that an implementation must use as written.
+  - `max` and `min` are in `MAX_FONT_SIZE`, `MIN_FONT_SIZE`,
+    `MAX_LINE_HEIGHT` and `MIN_LINE_HEIGHT` in `iznik-app`; `config` is in
+    `CARGO_CONFIG` and `CONFIG_NAME` (the files `.cargo/config.toml` and
+    `~/.ssh/config` are named that) and in `ssh_config.rs`; `cfg` is in
+    `CFG_TEST_RULE`, the policy that names Rust's `cfg` attribute; `str` is in
+    `required_str`; `tx` and `rx` are in the channel ends `closed_tx`,
+    `closed_rx`, `ready_tx`, `reply_rx` and their like in
+    `crates/iznik-server/src/pane.rs`.
+
+  These last are ordinary abbreviations that slipped through. They are to be
+  renamed — `maximum_font_size`, `closed_sender` — and the words dropped from
+  the lexicon when nothing uses them; until then this entry is the record.
+- **Build noise silenced in `.cargo/config.toml`.** `-A linker_messages` is
+  passed for the two musl targets, because Zig's `zig cc` reports the `-O1`
+  rustc hands the linker as deprecated while honouring it, and nothing in
+  this workspace can act on that. `[future-incompat-report] frequency =
+  "never"` stops cargo printing, after every build, that `block v0.1.6`
+  (reached through `gpui-kit`'s `cocoa`) will be rejected by a future rustc;
+  the report is still written, and `cargo report future-incompatibilities`
+  reads it. Both hide a warning; neither hides one about this workspace's
+  own code.
+- **Blocking in the asynchronous crates.** `crates/iznik-server/src/pty/streams.rs`
+  is exempt by name from the blocking policy of section 3.6, because it is
+  where the pseudoterminal's blocking descriptor becomes async streams on two
+  threads per pane. The policy does not check `std::fs` or `std::net` at all:
+  both crates make short synchronous `std::fs` calls on local paths (the lock
+  file, the runtime directory, the log, the upload's artifact listing), and
+  the Windows daemon binds its listener through `std::net` before handing it
+  to the runtime. The child's `waitpid` runs through `spawn_blocking`, which
+  the policy permits.
 
 ## 4. Working on a task
 
