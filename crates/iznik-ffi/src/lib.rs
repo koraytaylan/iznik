@@ -1,6 +1,7 @@
 //! The C ABI over `iznik-client`: the entry points the application calls, the error, the events, and the pane byte pipe.
 #![doc = include_str!("../README.md")]
 
+mod delivery;
 pub mod error;
 pub mod model;
 pub mod pane;
@@ -8,23 +9,21 @@ mod shape;
 
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::BTreeMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{JoinHandle, ThreadId};
 
 use iznik_client::bootstrap::launch::{Stage, UpgradeError};
 use iznik_client::host::identity::HostId;
-use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
-use iznik_client::reduce::Notification;
+use iznik_client::host::manager::{HostManager, ManagerError, ManagerOptions};
 use iznik_client::transport::ClientRuntimePaths;
 use iznik_client::transport::ssh::SshOptions;
 use iznik_protocol::identity::PaneId;
-use iznik_protocol::message::{ToClient, encode_to_client};
 
+use crate::delivery::{Attached, Carried, Deliveries, Listener, deliver};
 use crate::error::{Error, INVALID_ARGUMENT, Layer, OK, REFUSED, UNKNOWN_HOST};
-use crate::model::{Event, EventCallback};
+use crate::model::EventCallback;
 use crate::pane::PaneCallbacks;
 
 /// The directory artifacts are looked for in when the application names none.
@@ -32,28 +31,6 @@ const ARTIFACTS_DIRECTORY: &str = "artifacts";
 
 /// What every call answers when it did what it was asked.
 const DONE: c_int = OK;
-
-/// A pointer the application gave and iznik carries back to it untouched.
-///
-/// The application decides what it means; this only has to hold it and hand
-/// it to the one thread that calls the callback.
-#[derive(Clone, Copy, Debug)]
-struct Carried(*mut c_void);
-
-// SAFETY: what is carried is opaque here — nothing in this library reads or
-// writes through it. The application's obligation, stated in the header, is
-// that whatever it points at may be used from the callback thread; moving the
-// pointer to that thread is what this promises and all it promises.
-unsafe impl Send for Carried {}
-
-/// What the application asked to be told, and what to tell it with.
-#[derive(Debug)]
-struct Listener {
-    /// What to call.
-    callback: EventCallback,
-    /// What to pass it.
-    context: Carried,
-}
 
 /// The client the application holds a pointer to.
 ///
@@ -82,69 +59,68 @@ pub struct Client {
     delivers: ThreadId,
     /// The one thread every callback arrives on.
     pump: Option<JoinHandle<()>>,
+    /// The calls under way, and whether the client is being freed.
+    calls: Calls,
 }
 
-/// One pane an application is watching.
-#[derive(Clone, Copy, Debug)]
-struct Attached {
-    /// What to call.
-    callbacks: PaneCallbacks,
-    /// What to pass it.
-    context: Carried,
-}
-
-/// How many callbacks have begun, and how many of those have returned.
+/// How many calls are under way, and whether the client is ending.
 ///
-/// Counted rather than locked: a lock held while a callback runs is a lock an
-/// application's own thread waits on while the handler waits on the
-/// application's lock, and neither ever moves again. A callback is counted
-/// as begun in the same breath as what it will be given is looked up, under
-/// the lock that guards what it looks up — so anything taken away after that
-/// lock is let go is never handed to a callback that begins afterwards, and
-/// one that had already begun is counted in what a wait waits for.
+/// Freeing a client waits for the calls already inside it — one a handler
+/// made from the callback thread among them — and refuses any that arrive
+/// once it has begun, so no call is ever left holding a share of an engine
+/// that is being taken apart.
 #[derive(Debug, Default)]
-struct Deliveries {
-    /// The two counts.
-    counts: Mutex<Counts>,
-    /// Signalled whenever a callback returns.
-    returned: Condvar,
+struct Calls {
+    /// The two.
+    state: Mutex<CallState>,
+    /// Signalled whenever a call leaves.
+    left: Condvar,
 }
 
-/// The counts [`Deliveries`] keeps.
+/// What [`Calls`] keeps.
 #[derive(Debug, Default)]
-struct Counts {
-    /// Callbacks that have begun.
-    begun: u64,
-    /// Callbacks that have returned.
-    ended: u64,
+struct CallState {
+    /// How many calls are inside.
+    inside: usize,
+    /// Whether the client is being freed.
+    ending: bool,
 }
 
-impl Deliveries {
-    /// Says one callback is about to be made.
-    fn begin(&self) {
-        if let Ok(mut held) = self.counts.lock() {
-            held.begun = held.begun.saturating_add(1);
+/// One call under way; it leaves when this is dropped.
+#[derive(Debug)]
+struct Call<'client> {
+    /// Whose calls it is counted among.
+    calls: &'client Calls,
+}
+
+impl Drop for Call<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut held) = self.calls.state.lock() {
+            held.inside = held.inside.saturating_sub(1);
         }
+        self.calls.left.notify_all();
+    }
+}
+
+impl Calls {
+    /// Counts one call in, unless the client is ending.
+    fn enter(&self) -> Option<Call<'_>> {
+        let mut held = self.state.lock().ok()?;
+        if held.ending {
+            return None;
+        }
+        held.inside = held.inside.saturating_add(1);
+        Some(Call { calls: self })
     }
 
-    /// Says it has returned.
-    fn end(&self) {
-        if let Ok(mut held) = self.counts.lock() {
-            held.ended = held.ended.saturating_add(1);
-        }
-        self.returned.notify_all();
-    }
-
-    /// Waits until every callback that had begun when this was called has
-    /// returned.
-    fn wait(&self) {
-        let Ok(held) = self.counts.lock() else {
+    /// Refuses every call from now on, and waits for the ones inside to
+    /// leave.
+    fn close(&self) {
+        let Ok(mut held) = self.state.lock() else {
             return;
         };
-        let target = held.begun;
-        let _done = self
-            .returned
-            .wait_while(held, |counts| counts.ended < target);
+        held.ending = true;
+        let _left = self.left.wait_while(held, |state| state.inside > 0);
     }
 }
 
@@ -156,6 +132,11 @@ impl Client {
             return;
         }
         self.deliveries.wait();
+    }
+
+    /// Counts one call of the application's in, unless the client is ending.
+    fn enter(&self) -> Option<Call<'_>> {
+        self.calls.enter()
     }
 
     /// A share of the engine, while there is one.
@@ -213,7 +194,20 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        // The manager first, and dropped rather than merely taken: closing the
+        // No call begins from here on, and no callback: what a callback would
+        // be given is taken away, and a wait for callbacks is let go, because
+        // the one it would be waiting for may be the one freeing this.
+        self.deliveries.close();
+        if let Ok(mut listening) = self.listening.lock() {
+            listening.callback = None;
+        }
+        if let Ok(mut attached) = self.attached.lock() {
+            attached.clear();
+        }
+        // Every call already inside — from any thread, a handler's among them
+        // — finishes with the share of the engine it took.
+        self.calls.close();
+        // The manager next, and dropped rather than merely taken: closing the
         // stream the thread below is reading is what lets that thread end, and
         // a binding that held it to the end of this block would have the join
         // wait for a thread waiting for it.
@@ -223,7 +217,13 @@ impl Drop for Client {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take(),
         );
-        if let Some(pump) = self.pump.take() {
+        let Some(pump) = self.pump.take() else {
+            return;
+        };
+        // Freed from inside a callback, the thread to wait for is this one:
+        // it is let go instead, and ends by itself once the handler returns,
+        // with nothing left to call and nothing left to read.
+        if std::thread::current().id() != self.delivers {
             let _joined = pump.join();
         }
     }
@@ -387,207 +387,8 @@ fn started(manager: HostManager) -> Client {
         deliveries,
         delivers,
         pump: Some(pump),
+        calls: Calls::default(),
     }
-}
-
-/// Reads every event and hands it to the application, on this one thread.
-///
-/// Nothing of this crate's is held while a callback runs: what to call is read
-/// under its lock, the callback is counted as begun under that same lock, and
-/// the lock is let go before the call. So a handler may call straight back in,
-/// and an application thread that takes a context away never waits for a
-/// handler — which may itself be waiting for that thread.
-fn deliver(
-    listening: &Arc<Mutex<Listener>>,
-    attached: &Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
-    deliveries: &Deliveries,
-    events: &Receiver<ManagerEvent>,
-) {
-    while let Ok(event) = events.recv() {
-        // A pane somebody is watching is handed its own bytes, and not handed
-        // them twice: an application that attached to a pane reads it there.
-        if handed(attached, deliveries, &event) {
-            continue;
-        }
-        let Some((callback, context)) = listened(listening, deliveries) else {
-            continue;
-        };
-        carry(callback, context, &event);
-        deliveries.end();
-    }
-}
-
-/// The event callback and its context, counted as begun, when there is one.
-fn listened(
-    listening: &Arc<Mutex<Listener>>,
-    deliveries: &Deliveries,
-) -> Option<(extern "C" fn(*const Event, *mut c_void), Carried)> {
-    let held = listening.lock().ok()?;
-    let callback = held.callback?;
-    deliveries.begin();
-    Some((callback, held.context))
-}
-
-/// Hands one event to the pane it is about, when somebody is watching that
-/// pane with a handler for it, and says whether it did.
-///
-/// Looked up, and counted as begun, under the lock a detachment takes: a pane
-/// let go before this looked is never handed anything again, and one let go
-/// after is waited for by whoever waits for callbacks.
-fn handed(
-    attached: &Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
-    deliveries: &Deliveries,
-    event: &ManagerEvent,
-) -> bool {
-    let Some((host, pane)) = about(event) else {
-        return false;
-    };
-    let Ok(held) = attached.lock() else {
-        return false;
-    };
-    let Some(watching) = held.get(&(host, pane)).copied() else {
-        return false;
-    };
-    if !handles(&watching, event) {
-        return false;
-    }
-    deliveries.begin();
-    drop(held);
-    let _taken = to_the_pane(&watching, event);
-    deliveries.end();
-    true
-}
-
-/// Whether a pane's handlers include one for this event.
-fn handles(watching: &Attached, event: &ManagerEvent) -> bool {
-    let callbacks = &watching.callbacks;
-    match event {
-        ManagerEvent::Bytes { .. } => callbacks.output.is_some(),
-        ManagerEvent::Screen { .. } => callbacks.screen.is_some(),
-        ManagerEvent::Detached { .. } => callbacks.detached.is_some(),
-        ManagerEvent::Notify(Notification::Mark { .. }) => callbacks.mark.is_some(),
-        _elsewhere => false,
-    }
-}
-
-/// Which host and pane an event is about, when it is about one.
-fn about(event: &ManagerEvent) -> Option<(HostId, PaneId)> {
-    match event {
-        ManagerEvent::Bytes { host, pane, .. }
-        | ManagerEvent::Screen { host, pane, .. }
-        | ManagerEvent::Detached { host, pane }
-        | ManagerEvent::Notify(Notification::Mark { host, pane, .. }) => {
-            Some((host.clone(), *pane))
-        }
-        _elsewhere => None,
-    }
-}
-
-/// Hands one event to a pane's own handlers, and says whether one took it.
-fn to_the_pane(watching: &Attached, event: &ManagerEvent) -> bool {
-    let context = watching.context.0;
-    match event {
-        ManagerEvent::Bytes { bytes, .. } => match watching.callbacks.output {
-            Some(output) => {
-                output(context, held_or_null(bytes), bytes.len());
-                true
-            }
-            None => false,
-        },
-        ManagerEvent::Screen {
-            sequence,
-            columns,
-            rows,
-            bytes,
-            ..
-        } => match watching.callbacks.screen {
-            Some(screen) => {
-                screen(
-                    context,
-                    sequence.0,
-                    *columns,
-                    *rows,
-                    held_or_null(bytes),
-                    bytes.len(),
-                );
-                true
-            }
-            None => false,
-        },
-        ManagerEvent::Detached { .. } => match watching.callbacks.detached {
-            Some(detached) => {
-                detached(context);
-                true
-            }
-            None => false,
-        },
-        ManagerEvent::Notify(notification) => marked(watching, notification, context),
-        _elsewhere => false,
-    }
-}
-
-/// Hands a shell-integration event to a pane's own handler.
-fn marked(watching: &Attached, notification: &Notification, context: *mut c_void) -> bool {
-    let Notification::Mark {
-        pane,
-        sequence,
-        kind,
-        ..
-    } = notification
-    else {
-        return false;
-    };
-    let Some(mark) = watching.callbacks.mark else {
-        return false;
-    };
-    let Ok(payload) = encode_to_client(&ToClient::Mark {
-        pane: *pane,
-        sequence: *sequence,
-        kind: kind.clone(),
-    }) else {
-        return false;
-    };
-    mark(context, sequence.0, held_or_null(&payload), payload.len());
-    true
-}
-
-/// Where some bytes begin, or null when there are none.
-///
-/// An empty `Vec` answers a pointer that is aligned and not null and not
-/// anything either — which a C caller testing `if (event->payload)` would take
-/// for bytes and read. No bytes is null, which is what that test is asking.
-fn held_or_null(bytes: &[u8]) -> *const u8 {
-    if bytes.is_empty() {
-        return core::ptr::null();
-    }
-    bytes.as_ptr()
-}
-
-/// Hands one event over, with every pointer in it alive for exactly the call.
-fn carry(
-    callback: extern "C" fn(*const Event, *mut c_void),
-    context: Carried,
-    event: &ManagerEvent,
-) {
-    let Some(shaped) = shape::shaped(event) else {
-        return;
-    };
-    let Ok(named) = CString::new(shaped.host) else {
-        return;
-    };
-    let held = Event {
-        kind: shaped.kind,
-        host: named.as_ptr(),
-        pane: shaped.pane,
-        sequence: shaped.sequence,
-        columns: shaped.columns,
-        rows: shaped.rows,
-        generation: shaped.generation,
-        command_id: shaped.command,
-        payload: held_or_null(&shaped.payload),
-        payload_length: shaped.payload.len(),
-    };
-    callback(&raw const held, context.0);
 }
 
 /// Which layer a refusal came from.
@@ -634,14 +435,20 @@ fn staged(stage: Stage) -> Layer {
 }
 
 /// Ends a client: every host let go, every task stopped, the callback thread
-/// joined.
+/// ended.
+///
+/// No callback begins once this has, and a call that arrives while it runs is
+/// refused. Calls already under way — on any thread, a handler's among them —
+/// are waited for, and so is a handler that is running, unless this is called
+/// from inside a handler: then it returns without waiting for the handler it
+/// is inside, no other callback is made, and the callback thread ends by
+/// itself once that handler returns.
 ///
 /// **Obligation:** the pointer came from [`iznik_client_new`], has not been
-/// freed, and is not used afterwards. A null pointer is nothing to free and
-/// is ignored. Not from inside a callback: this waits for the thread the
-/// callbacks arrive on, and a handler that called it would be waiting for
-/// itself. Letting a pane go and taking the event callback away may both be
-/// done from a handler; ending the client may not.
+/// freed, and is not used afterwards — by the handler that called this, when a
+/// handler did, as much as by anything else. A null pointer is nothing to free
+/// and is ignored. Not called while holding a lock that a handler takes: it
+/// waits for the handler that is running.
 ///
 /// # Safety
 ///
@@ -684,13 +491,14 @@ pub unsafe extern "C" fn iznik_set_event_callback(
     let Some(held) = (unsafe { borrowed(client) }) else {
         return;
     };
-    {
-        let Ok(mut listening) = held.listening.lock() else {
-            return;
-        };
-        listening.callback = callback;
-        listening.context = Carried(context);
-    }
+    let Some(_call) = held.calls.enter() else {
+        return;
+    };
+    let Ok(mut listening) = held.listening.lock() else {
+        return;
+    };
+    listening.callback = callback;
+    listening.context = Carried(context);
 }
 
 /// Waits until every callback that had begun when this was called has
@@ -715,6 +523,9 @@ pub unsafe extern "C" fn iznik_set_event_callback(
 pub unsafe extern "C" fn iznik_wait_for_callbacks(client: *mut Client) {
     // SAFETY: the caller's obligation, above.
     let Some(held) = (unsafe { borrowed(client) }) else {
+        return;
+    };
+    let Some(_call) = held.calls.enter() else {
         return;
     };
     held.quiesce();
@@ -876,7 +687,7 @@ pub unsafe extern "C" fn iznik_command(
             return INVALID_ARGUMENT;
         }
     };
-    let Some(manager) = held.manager() else {
+    let (Some(_call), Some(manager)) = (held.calls.enter(), held.manager()) else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
         return REFUSED;
@@ -934,7 +745,7 @@ unsafe fn with_host(
         unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
         return INVALID_ARGUMENT;
     };
-    let Some(manager) = held.manager() else {
+    let (Some(_call), Some(manager)) = (held.calls.enter(), held.manager()) else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
         return REFUSED;

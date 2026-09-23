@@ -38,8 +38,12 @@ Nothing of iznik's is held while a callback runs, so **a handler may call back
 into iznik.** It may attach, detach, credit, type, resize, focus, send a
 command, or replace the event callback.
 
-**The one call a handler may not make is `iznik_client_free`.** That waits for
-the callback thread, and a handler that called it would be waiting for itself.
+A handler may even end the client with `iznik_client_free`. It returns
+without waiting for the handler it is inside; no other callback is made after
+it, and the handler must not touch the client again. Called from any other
+thread, `iznik_client_free` waits for the calls already under way and for a
+handler that is running — so do not hold a lock your handlers take while you
+call it.
 
 Three calls take away something a callback is reading: `iznik_pane_detach`,
 `iznik_pane_attach` over an existing attachment, and `iznik_set_event_callback`.
@@ -85,7 +89,7 @@ around them is explanation.
 
 `iznik_client_free`:
 
-> **Obligation:** the pointer came from `iznik_client_new`, has not been freed, and is not used afterwards. A null pointer is nothing to free and is ignored. Not from inside a callback: this waits for the thread the callbacks arrive on, and a handler that called it would be waiting for itself. Letting a pane go and taking the event callback away may both be done from a handler; ending the client may not.
+> **Obligation:** the pointer came from `iznik_client_new`, has not been freed, and is not used afterwards — by the handler that called this, when a handler did, as much as by anything else. A null pointer is nothing to free and is ignored. Not called while holding a lock that a handler takes: it waits for the handler that is running.
 
 `iznik_set_event_callback`:
 
@@ -135,7 +139,7 @@ null for the default:
 
 It answers null when it cannot, having filled in the `iznik_error` you gave
 it. `iznik_client_free` ends everything: every host let go, every task
-stopped, the callback thread joined.
+stopped, the callback thread ended.
 
 ## Errors
 

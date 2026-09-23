@@ -308,14 +308,20 @@ iznik_client *iznik_client_new(const iznik_configuration *configuration, iznik_e
 
 /**
  * Ends a client: every host let go, every task stopped, the callback thread
- * joined.
+ * ended.
+ *
+ * No callback begins once this has, and a call that arrives while it runs is
+ * refused. Calls already under way — on any thread, a handler's among them —
+ * are waited for, and so is a handler that is running, unless this is called
+ * from inside a handler: then it returns without waiting for the handler it
+ * is inside, no other callback is made, and the callback thread ends by
+ * itself once that handler returns.
  *
  * **Obligation:** the pointer came from `iznik_client_new`, has not been
- * freed, and is not used afterwards. A null pointer is nothing to free and
- * is ignored. Not from inside a callback: this waits for the thread the
- * callbacks arrive on, and a handler that called it would be waiting for
- * itself. Letting a pane go and taking the event callback away may both be
- * done from a handler; ending the client may not.
+ * freed, and is not used afterwards — by the handler that called this, when a
+ * handler did, as much as by anything else. A null pointer is nothing to free
+ * and is ignored. Not called while holding a lock that a handler takes: it
+ * waits for the handler that is running.
  *
  * Safety:
  *

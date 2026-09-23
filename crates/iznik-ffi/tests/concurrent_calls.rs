@@ -465,3 +465,130 @@ fn concurrent_calls_take_a_callback_away_while_its_handler_waits() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// What the case that ends a client from inside a handler shares with it.
+struct Ending {
+    /// The client, which the first callback frees.
+    client: Shared,
+    /// How many callbacks have been made.
+    calls: Mutex<usize>,
+    /// Whether freeing it returned, inside the handler.
+    freed: AtomicBool,
+}
+
+/// An event handler that ends the client on the first call it gets.
+extern "C" fn ends(_event: *const Event, context: *mut c_void) {
+    if context.is_null() {
+        return;
+    }
+    // SAFETY: this case's own box, which it keeps until the case ends.
+    let ending = unsafe { &*context.cast::<Ending>() };
+    let first = ending.calls.lock().is_ok_and(|mut calls| {
+        *calls = calls.saturating_add(1);
+        *calls == 1
+    });
+    if !first {
+        return;
+    }
+    // SAFETY: the client is live and this is its one freeing; nothing touches
+    // it afterwards.
+    unsafe { iznik_client_free(ending.client.pointer()) };
+    ending.freed.store(true, Ordering::SeqCst);
+}
+
+/// # Panics
+///
+/// When ending a client from inside one of its own handlers does not return,
+/// or a callback is made after it.
+#[test]
+fn concurrent_calls_end_a_client_from_inside_a_handler() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("freed")?;
+        let made = client(&held)?;
+        let ending: *mut Ending = Box::into_raw(Box::new(Ending {
+            client: made,
+            calls: Mutex::new(0),
+            freed: AtomicBool::new(false),
+        }));
+        // SAFETY: the client is live and the context outlives it: the case
+        // keeps the box until the end.
+        unsafe { iznik_set_event_callback(made.pointer(), Some(ends), ending.cast::<c_void>()) };
+        // Two hosts, so that there is more to say than the one callback that
+        // ends it.
+        let mut error = blank();
+        for name in ["first.sock", "second.sock"] {
+            let nowhere = CString::new(format!("unix:{}", held.path.join(name).display()))?;
+            // SAFETY: the client is live and the alias null-terminated.
+            let added = unsafe { iznik_host_add(made.pointer(), nowhere.as_ptr(), &raw mut error) };
+            assert_eq!(added, OK, "{}", said(&error));
+        }
+        // SAFETY: this case's own box, alive here.
+        let shared = unsafe { &*ending };
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        while !shared.freed.load(Ordering::SeqCst) && Instant::now() < expires {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            shared.freed.load(Ordering::SeqCst),
+            "freeing it from its own handler returned"
+        );
+        std::thread::sleep(BRIEF);
+        assert_eq!(
+            shared.calls.lock().map(|calls| *calls).ok(),
+            Some(1),
+            "and no callback was made after it"
+        );
+        // SAFETY: the box this case made, taken back once nothing can call
+        // into it: the client that could is gone.
+        drop(unsafe { Box::from_raw(ending) });
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When ending a client returns while a call on another thread is still
+/// inside it.
+#[test]
+fn concurrent_calls_end_a_client_after_the_calls_inside_it() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("inside")?;
+        let made = client(&held)?;
+        let socket = held.path.join("silent.sock");
+        let listener = UnixListener::bind(&socket)?;
+        let stuck = alias(&socket)?;
+        let mut error = blank();
+        // SAFETY: the client is live and the alias null-terminated.
+        let added = unsafe { iznik_host_add(made.pointer(), stuck.as_ptr(), &raw mut error) };
+        assert_eq!(added, OK);
+        let (answered, _from) = listener.accept()?;
+        let finished = Arc::new(AtomicBool::new(false));
+        let noticing = Arc::clone(&finished);
+        let slow = std::thread::spawn(move || {
+            let mut refusal = blank();
+            // SAFETY: the client is live until the case frees it, which waits
+            // for this call.
+            let _gone =
+                unsafe { iznik_host_remove(made.pointer(), stuck.as_ptr(), &raw mut refusal) };
+            noticing.store(true, Ordering::SeqCst);
+        });
+        std::thread::sleep(UNDER_WAY);
+        let closing = std::thread::spawn(move || {
+            std::thread::sleep(UNDER_WAY);
+            drop(answered);
+        });
+        let started = Instant::now();
+        // SAFETY: it came from `iznik_client_new` and is freed once, here.
+        unsafe { iznik_client_free(made.pointer()) };
+        assert!(
+            started.elapsed() >= UNDER_WAY,
+            "ending it waited for the call inside it, which could not finish sooner"
+        );
+        slow.join().map_err(|_panicked| "the slow call panicked")?;
+        assert!(finished.load(Ordering::SeqCst), "and that call finished");
+        closing.join().map_err(|_panicked| "the release panicked")?;
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

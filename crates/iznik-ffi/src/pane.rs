@@ -261,6 +261,18 @@ unsafe fn with_pane(
         unsafe { crate::error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
         return INVALID_ARGUMENT;
     };
+    let Some(_call) = held.enter() else {
+        // SAFETY: the caller's obligation, above.
+        unsafe {
+            crate::error::fill(
+                error,
+                crate::error::REFUSED,
+                Layer::Client,
+                "the client is ending",
+            );
+        };
+        return crate::error::REFUSED;
+    };
     match doing(held, named) {
         Ok(()) => DONE,
         Err(refusal) => {
