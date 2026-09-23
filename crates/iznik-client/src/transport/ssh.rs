@@ -8,7 +8,8 @@
 //! interesting. What iznik adds is the four options it owns — a persistent
 //! master so the second command is fast, a control path under its own runtime
 //! directory, keepalives so a dead link is noticed in seconds, and a connect
-//! timeout — and a test asserts the argument vector against that list.
+//! timeout — plus the three overrides below, and a test asserts the argument
+//! vector against that list.
 //!
 //! Three of the six options iznik does pass are ones a person could also have
 //! written, and a command-line `-o` beats `~/.ssh/config`: a user with
@@ -17,6 +18,16 @@
 //! architecture owns those three deliberately — a link iznik cannot notice
 //! dying is a session that hangs — and this note is here so the trade is a
 //! decision on the record rather than a surprise.
+//!
+//! Three more are overrides rather than settings, and they exist because a
+//! person's configuration can break iznik's own commands without being wrong
+//! for anything else: `RequestTTY=no`, because a terminal allocated for a
+//! `RequestTTY yes` host would mangle the binary protocol and echo the upload
+//! back; `RemoteCommand=none`, because a `RemoteCommand` in a `Host` block
+//! would run instead of the command iznik asked for; and
+//! `ClearAllForwardings=yes`, because a `LocalForward` that cannot bind fails
+//! the connection, and one that can would be held open by every probe and
+//! relay iznik starts. None of them changes how the host is reached.
 //!
 //! The other half is the classification. "Connection failed" tells a person
 //! nothing, and a changed host key demands an alarming, specific message,
@@ -66,6 +77,15 @@ const PROGRAM: &str = "ssh";
 pub fn master_is_available() -> bool {
     cfg!(unix)
 }
+
+/// What iznik's own commands need whatever a person configured: no terminal,
+/// no command of the configuration's instead of iznik's, and no forwarding.
+/// The module documentation says why each.
+pub const OVERRIDES: &[&str] = &[
+    "RequestTTY=no",
+    "RemoteCommand=none",
+    "ClearAllForwardings=yes",
+];
 
 /// The flag every option is given with.
 const OPTION_FLAG: &str = "-o";
@@ -335,6 +355,7 @@ impl SshTransport {
             "ConnectTimeout={}",
             seconds(self.options.connect_timeout)
         ));
+        options.extend(OVERRIDES.iter().map(|forced| (*forced).to_owned()));
         options
             .into_iter()
             .flat_map(|option| vec![OPTION_FLAG.to_owned(), option])

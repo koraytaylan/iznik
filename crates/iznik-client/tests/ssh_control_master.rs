@@ -106,6 +106,9 @@ fn ssh_passes_what_it_owns_and_nothing_a_person_configured() {
             format!("ServerAliveInterval={}", SERVER_ALIVE_INTERVAL.as_secs()),
             format!("ServerAliveCountMax={SERVER_ALIVE_COUNT_MAXIMUM}"),
             format!("ConnectTimeout={}", CONNECT_TIMEOUT.as_secs()),
+            "RequestTTY=no".to_owned(),
+            "RemoteCommand=none".to_owned(),
+            "ClearAllForwardings=yes".to_owned(),
         ] {
             assert!(
                 arguments.contains(&wanted),
@@ -169,6 +172,9 @@ fn windows_ssh_skips_control_master() {
             format!("ServerAliveInterval={}", SERVER_ALIVE_INTERVAL.as_secs()),
             format!("ServerAliveCountMax={SERVER_ALIVE_COUNT_MAXIMUM}"),
             format!("ConnectTimeout={}", CONNECT_TIMEOUT.as_secs()),
+            "RequestTTY=no".to_owned(),
+            "RemoteCommand=none".to_owned(),
+            "ClearAllForwardings=yes".to_owned(),
         ] {
             assert!(arguments.contains(&wanted), "{wanted} missing from {line}");
         }
