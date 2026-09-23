@@ -71,6 +71,9 @@ fn macos_layout_is_versioned() -> std::io::Result<()> {
     let plist = fs::read_to_string(output.join("Contents/Info.plist"))?;
     assert!(plist.contains("org.iznik.client"));
     assert!(plist.contains(env!("CARGO_PKG_VERSION")));
+    assert!(plist.contains("<key>CFBundleExecutable</key><string>iznik</string>"));
+    assert!(plist.contains("<key>CFBundlePackageType</key><string>APPL</string>"));
+    assert!(plist.contains("<key>NSHighResolutionCapable</key><true/>"));
     carried(&output.join("Contents/Resources/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())

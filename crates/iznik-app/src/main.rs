@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
@@ -33,7 +34,7 @@ const OUTPUT_ARGUMENT: usize = 3;
 const VERSION_ARGUMENT: usize = 4;
 /// Positional argument containing the directory of servers to carry.
 const SERVERS_ARGUMENT: usize = 5;
-/// Directory names used for this process's private runtime resources.
+/// The name of the empty servers directory a build that carries none reads.
 const ARTIFACT_DIRECTORY: &str = "iznik-app-artifacts";
 /// Names the directory of servers the application may install on a host,
 /// laid out as `<triple>/iznik-server`: the same variable the `iznik` command
@@ -129,37 +130,58 @@ fn usage() -> ExitCode {
 }
 
 /// Starts the application: one window, the kit's layers initialized, and a
-/// window the platform refuses reported with the reason it carried.
+/// window that cannot be opened reported with the reason it carried, the
+/// application quit, and failure returned rather than a process left running
+/// with no window.
 fn run() -> ExitCode {
+    let failed = Rc::new(Cell::new(false));
+    let failing = Rc::clone(&failed);
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
-        .run(|app| {
+        .run(move |app| {
             gpui_kit::init(app);
             iznik_app::menu::install(app);
             if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
                 let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
             }
-            app.spawn(async move |app_context| open_window(app_context))
-                .detach();
+            app.spawn(async move |app_context| {
+                if let Err(refusal) = open_window(app_context) {
+                    let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
+                    failing.set(true);
+                    app_context.update(|application| application.quit());
+                }
+            })
+            .detach();
         });
-    ExitCode::SUCCESS
+    if failed.get() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// Opens the one window, from inside the application's own spawn so that the
 /// platform is ready for it.
-fn open_window(app_context: &mut gpui_kit::AsyncApp) {
-    let directory = std::env::temp_dir().join(format!("iznik-app-{}", std::process::id()));
+///
+/// # Errors
+///
+/// Returns why the engine, the emulator thread or the window would not start.
+fn open_window(app_context: &mut gpui_kit::AsyncApp) -> Result<(), Box<dyn std::error::Error>> {
     // The variable, then the servers the bundle carries, then an empty
     // directory: a build with none still reaches `unix:` sockets and hosts
-    // that already run this version.
-    let artifacts = std::env::var_os(ARTIFACTS_VARIABLE)
+    // that already run this version. The empty one is this process's own and
+    // is removed once the engine has read it, so no launch leaves one behind.
+    let found = std::env::var_os(ARTIFACTS_VARIABLE)
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|executable| iznik_app::bundle::bundled_servers(&executable))
-        })
-        .unwrap_or_else(|| directory.join(ARTIFACT_DIRECTORY));
+        });
+    let empty = found
+        .is_none()
+        .then(|| std::env::temp_dir().join(format!("{ARTIFACT_DIRECTORY}-{}", std::process::id())));
+    let artifacts = found.or_else(|| empty.clone()).unwrap_or_default();
     if !artifacts.is_dir() {
         let _written = writeln!(
             std::io::stderr(),
@@ -171,7 +193,11 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
     let result = (|| -> Result<_, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&artifacts)?;
         let runtime_paths = ClientRuntimePaths::resolve()?;
-        let bridge = EngineBridge::start(artifacts, runtime_paths)?;
+        let started = EngineBridge::start(artifacts, runtime_paths);
+        if let Some(empty) = &empty {
+            let _removed = std::fs::remove_dir(empty);
+        }
+        let bridge = started?;
         let settings_path = iznik_app::settings::default_path();
         // The history budget sizes each emulator as it is made, so it is read
         // here, before the thread exists; a bad file is reported by the shell.
@@ -212,7 +238,5 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
         });
         Ok(window)
     })();
-    if let Err(refusal) = result {
-        let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
-    }
+    result.map(|_window| ())
 }

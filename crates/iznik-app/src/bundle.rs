@@ -83,7 +83,7 @@ pub fn write_macos(binary: &Path, servers: &Path, output: &Path, version: &str) 
     let _bytes = fs::copy(binary, contents.join("MacOS").join(APPLICATION_NAME))?;
     copy_servers(servers, &joined(&contents, MACOS_SERVERS))?;
     let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist><dict><key>CFBundleIdentifier</key><string>{APPLICATION_IDENTIFIER}</string><key>CFBundleShortVersionString</key><string>{version}</string><key>CFBundleName</key><string>{APPLICATION_NAME}</string></dict></plist>\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist><dict><key>CFBundleIdentifier</key><string>{APPLICATION_IDENTIFIER}</string><key>CFBundleShortVersionString</key><string>{version}</string><key>CFBundleName</key><string>{APPLICATION_NAME}</string><key>CFBundleExecutable</key><string>{APPLICATION_NAME}</string><key>CFBundlePackageType</key><string>APPL</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n"
     );
     fs::write(contents.join("Info.plist"), plist)
 }
