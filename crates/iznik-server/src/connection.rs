@@ -438,19 +438,17 @@ async fn dispatch(
 ) -> Result<(), ConnectionError> {
     let signal = registry.read().await.signal();
     // Whether the last round still had something to send. While it has, the
-    // loop takes a request only if one is already waiting: pumping to
-    // exhaustion instead would let a flooding pane whose client keeps
-    // returning credit starve every request, and a keystroke would wait for
-    // the flood to end. One round per turn is what the scheduler's own promise
-    // means — a keystroke waits behind at most one frame per active pane.
+    // loop takes only the requests already waiting: pumping to exhaustion
+    // instead would let a flooding pane whose client keeps returning credit
+    // starve every request, and a keystroke would wait for the flood to end.
+    // One round per turn is what the scheduler's own promise means — a
+    // keystroke waits behind at most one frame per active pane — and every
+    // request already waiting is answered each turn, keystrokes first, so a
+    // keystroke never queues behind a line of credits that arrived with it.
     let mut sending = false;
     loop {
-        if sending {
-            match asked.try_recv() {
-                Ok(request) => answer(&mut multiplexer, &registry, request).await?,
-                Err(mpsc::error::TryRecvError::Disconnected) => return Ok(()),
-                Err(mpsc::error::TryRecvError::Empty) => {}
-            }
+        let first = if sending {
+            None
         } else {
             let woken = tokio::select! {
                 biased;
@@ -460,11 +458,16 @@ async fn dispatch(
             };
             match woken {
                 Woken::Asked(None) => return Ok(()),
-                Woken::Asked(Some(request)) => {
-                    answer(&mut multiplexer, &registry, request).await?;
-                }
-                Woken::Ready => {}
+                Woken::Asked(Some(request)) => Some(request),
+                Woken::Ready => None,
             }
+        };
+        let (waiting, gone) = waiting_requests(&mut asked, first);
+        for request in waiting {
+            answer(&mut multiplexer, &registry, request).await?;
+        }
+        if gone {
+            return Ok(());
         }
         // Nothing else turns what the panes have reported into deltas, and a
         // client's own `Resize` must reach it as a `PaneResized` like any
@@ -472,6 +475,27 @@ async fn dispatch(
         registry.write().await.ingest();
         sending = multiplexer.pump().await?;
     }
+}
+
+/// `first`, if any, and every request already waiting behind it, input
+/// first and otherwise in the order they came; and whether the reader has
+/// gone, which is said only once every request it sent has been taken.
+fn waiting_requests(
+    asked: &mut mpsc::Receiver<ToServer>,
+    first: Option<ToServer>,
+) -> (Vec<ToServer>, bool) {
+    let mut waiting: Vec<ToServer> = first.into_iter().collect();
+    let gone = loop {
+        match asked.try_recv() {
+            Ok(request) => waiting.push(request),
+            Err(mpsc::error::TryRecvError::Empty) => break false,
+            Err(mpsc::error::TryRecvError::Disconnected) => break true,
+        }
+    };
+    // A stable sort: keystrokes keep their order among themselves, and so
+    // does everything else.
+    waiting.sort_by_key(|request| !matches!(request, ToServer::Input { .. }));
+    (waiting, gone)
 }
 
 /// Answers a refusal the client can act on with an `Error` and leaves the
