@@ -6,11 +6,10 @@ use gpui_kit::component::setting::{
 };
 use gpui_kit::component::{Root, Theme, ThemeRegistry, TitleBar};
 use gpui_kit::{
-    App, AppContext as _, Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    App, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement, Render,
     SharedString, Styled, TestSupportExt, WeakEntity, Window, WindowBounds, WindowOptions, div, px,
     size,
 };
-use libghostty_vt::style::RgbColor;
 
 use crate::actions::INVENTORY;
 use crate::theme::AppTheme;
@@ -251,8 +250,8 @@ fn select_theme(shell: &WeakEntity<WindowShell>, name: &SharedString, app: &mut 
     }
     let colors = Theme::global(app).colors;
     edit_theme(shell, app, |theme| {
-        theme.foreground = rgb_color(colors.foreground);
-        theme.background = rgb_color(colors.background);
+        theme.foreground = crate::theme::rgb_color(colors.foreground);
+        theme.background = crate::theme::rgb_color(colors.background);
     });
 }
 
@@ -278,28 +277,4 @@ fn keybindings_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
             .disabled(true)
         },
     )))
-}
-
-/// Bit position of a `0xRRGGBBAA` color's red channel.
-const RED_SHIFT: u32 = 24;
-/// Bit position of a `0xRRGGBBAA` color's green channel.
-const GREEN_SHIFT: u32 = 16;
-/// Bit position of a `0xRRGGBBAA` color's blue channel.
-const BLUE_SHIFT: u32 = 8;
-/// Mask isolating one byte of a color channel.
-const CHANNEL_MASK: u32 = 0xFF;
-
-/// Convert a kit `Hsla` color into the terminal's `RgbColor` byte triple.
-fn rgb_color(color: Hsla) -> RgbColor {
-    let value = u32::from(color.to_rgb());
-    RgbColor {
-        r: channel(value, RED_SHIFT),
-        g: channel(value, GREEN_SHIFT),
-        b: channel(value, BLUE_SHIFT),
-    }
-}
-
-/// One byte of a `0xRRGGBBAA` color, shifted into place.
-fn channel(value: u32, shift: u32) -> u8 {
-    u8::try_from((value >> shift) & CHANNEL_MASK).unwrap_or(u8::MAX)
 }

@@ -1,10 +1,12 @@
 adventure
 alduin
+ansi
 appearance
 application
 asciinema
 aurora
 ayu
+bright
 catppuccin
 classic
 collision
@@ -22,10 +24,12 @@ flexoki
 generic
 gruvbox
 harper
+hues
 hybrid
 invalid
 jellybeans
 kibble
+kit
 leftovers
 malformed
 max

@@ -1,7 +1,8 @@
 //! Shared application theme values for GPUI and the terminal emulator.
 
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
-use gpui_kit::{App, Pixels, SharedString};
+use gpui_kit::component::{Theme, ThemeColor, ThemeMode, ThemeRegistry};
+use gpui_kit::{App, Hsla, Pixels, SharedString};
+use libghostty_vt::style::Palette;
 
 use crate::vt::TerminalTheme;
 
@@ -144,14 +145,99 @@ pub fn terminal_font(requested: &str, installed: &[String]) -> String {
         .map_or_else(|| requested.to_owned(), |family| (*family).to_owned())
 }
 
-/// Convert the application theme into the emulator's source of truth.
+/// Convert the application theme into the emulator's source of truth, with
+/// the emulator's own palette and the light or dark scheme its background is.
 #[must_use]
 pub fn terminal_theme(theme: &AppTheme) -> TerminalTheme {
     TerminalTheme {
         foreground: theme.foreground,
         background: theme.background,
+        scheme: crate::vt::scheme_for(theme.background),
         ..TerminalTheme::default()
     }
+}
+
+/// The same, with the sixteen ANSI colors taken from a kit theme's colors, so
+/// a program's red is the theme's red.
+#[must_use]
+pub fn terminal_theme_from(theme: &AppTheme, colors: &ThemeColor) -> TerminalTheme {
+    TerminalTheme {
+        palette: Some(ansi_palette(colors)),
+        ..terminal_theme(theme)
+    }
+}
+
+/// The terminal theme for `theme` under the kit theme active in `app`, or
+/// with the emulator's own palette when no kit theme is installed.
+#[must_use]
+pub fn terminal_theme_in(theme: &AppTheme, app: &App) -> TerminalTheme {
+    if app.has_global::<Theme>() {
+        terminal_theme_from(theme, &Theme::global(app).colors)
+    } else {
+        terminal_theme(theme)
+    }
+}
+
+/// Ghostty's 256-color palette with the six hues and their bright forms —
+/// indexes one to six and nine to fourteen — replaced by the kit theme's own.
+/// A theme's light variant is used for the bright form only when it is
+/// opaque, since some themes make it a translucent tint for backgrounds.
+/// Black, white and the grays keep Ghostty's values.
+#[must_use]
+pub fn ansi_palette(colors: &ThemeColor) -> Palette {
+    let mut palette = Palette::default();
+    let hues = [
+        (colors.red, colors.red_light),
+        (colors.green, colors.green_light),
+        (colors.yellow, colors.yellow_light),
+        (colors.blue, colors.blue_light),
+        (colors.magenta, colors.magenta_light),
+        (colors.cyan, colors.cyan_light),
+    ];
+    for (offset, (base, light)) in hues.into_iter().enumerate() {
+        let bright = if light.a >= 1.0 { light } else { base };
+        if let Some(slot) = offset
+            .checked_add(1)
+            .and_then(|index| palette.0.get_mut(index))
+        {
+            *slot = rgb_color(base);
+        }
+        if let Some(slot) = offset
+            .checked_add(BRIGHT_RED)
+            .and_then(|index| palette.0.get_mut(index))
+        {
+            *slot = rgb_color(bright);
+        }
+    }
+    palette
+}
+
+/// Palette index of bright red, the first bright hue.
+const BRIGHT_RED: usize = 9;
+
+/// Bit position of a `0xRRGGBBAA` color's red channel.
+const RED_SHIFT: u32 = 24;
+/// Bit position of a `0xRRGGBBAA` color's green channel.
+const GREEN_SHIFT: u32 = 16;
+/// Bit position of a `0xRRGGBBAA` color's blue channel.
+const BLUE_SHIFT: u32 = 8;
+/// Mask isolating one byte of a color channel.
+const CHANNEL_MASK: u32 = 0xFF;
+
+/// Convert a kit `Hsla` color into the terminal's `RgbColor` byte triple.
+#[must_use]
+pub fn rgb_color(color: Hsla) -> RgbColor {
+    let value = u32::from(color.to_rgb());
+    RgbColor {
+        r: channel(value, RED_SHIFT),
+        g: channel(value, GREEN_SHIFT),
+        b: channel(value, BLUE_SHIFT),
+    }
+}
+
+/// One byte of a `0xRRGGBBAA` color, shifted into place.
+fn channel(value: u32, shift: u32) -> u8 {
+    u8::try_from((value >> shift) & CHANNEL_MASK).unwrap_or(u8::MAX)
 }
 
 /// Make a registered theme the active one, dark or light as that theme is.

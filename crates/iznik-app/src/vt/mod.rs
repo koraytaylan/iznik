@@ -89,8 +89,34 @@ impl Default for TerminalTheme {
             background: BACKGROUND,
             cursor: None,
             palette: None,
-            scheme: ColorScheme::Dark,
+            scheme: scheme_for(BACKGROUND),
         }
+    }
+}
+
+/// Weight of red in relative luminance (ITU-R BT.709).
+const RED_LUMINANCE: f32 = 0.2126;
+/// Weight of green in relative luminance.
+const GREEN_LUMINANCE: f32 = 0.7152;
+/// Weight of blue in relative luminance.
+const BLUE_LUMINANCE: f32 = 0.0722;
+/// The largest channel value, which scales a byte to a fraction.
+const CHANNEL_MAXIMUM: f32 = 255.0;
+/// Relative luminance above which a background reads as light.
+const LIGHT_THRESHOLD: f32 = 0.5;
+
+/// The scheme a program is told when it asks whether the terminal is light
+/// or dark: light when the background's luminance is over half.
+#[must_use]
+pub fn scheme_for(background: RgbColor) -> ColorScheme {
+    let luminance = (RED_LUMINANCE * f32::from(background.r)
+        + GREEN_LUMINANCE * f32::from(background.g)
+        + BLUE_LUMINANCE * f32::from(background.b))
+        / CHANNEL_MAXIMUM;
+    if luminance > LIGHT_THRESHOLD {
+        ColorScheme::Light
+    } else {
+        ColorScheme::Dark
     }
 }
 

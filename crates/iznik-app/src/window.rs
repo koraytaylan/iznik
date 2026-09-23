@@ -29,7 +29,7 @@ use crate::splits;
 use crate::status;
 use crate::surface::{PaneSurface, PasteConfirmation, SurfaceFailure};
 use crate::tab_label::DEFAULT_TAB_NAME;
-use crate::theme::{self, AppTheme, terminal_theme};
+use crate::theme::{self, AppTheme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
 
 /// The pump's slow fallback: owners wake the window when they queue work, so
@@ -410,7 +410,7 @@ impl WindowShell {
     /// first, so no setting can blank the panes or stall their output.
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
         let theme = &crate::settings::drawable(theme);
-        let terminal = terminal_theme(theme);
+        let terminal = theme::terminal_theme_in(theme, context);
         self.options.theme = terminal.clone();
         let installed = context.text_system().all_font_names();
         let font = SharedString::from(theme::terminal_font(&theme.font_family, &installed));
