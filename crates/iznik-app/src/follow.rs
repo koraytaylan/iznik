@@ -18,6 +18,7 @@ use crate::actions::ActionId;
 use crate::bars::{self, TabPlace};
 use crate::bridge::EngineError;
 use crate::host_ui::EngineState;
+use crate::session_tabs::{self, SessionTabs};
 use crate::status::Remedy;
 use crate::vt::PaneKey;
 use crate::window::{SessionKey, TabKey, WindowShell};
@@ -59,6 +60,8 @@ pub struct Following {
     /// The tab last shown in each session. Returning to a session opens this
     /// tab while it still exists.
     pub session_tab: BTreeMap<SessionKey, TabId>,
+    /// The tab that was on screen. The next launch opens it while it exists.
+    pub open: Option<TabKey>,
 }
 
 /// Every tab a host holds.
@@ -137,6 +140,19 @@ pub fn arrived_pane(
         .find(|pane| !known.contains(pane))
 }
 
+/// The following a record leaves, or an empty one when there is no file.
+#[must_use]
+pub fn loaded(path: Option<&std::path::Path>) -> Following {
+    let mut following = Following::default();
+    let Some(path) = path else {
+        return following;
+    };
+    let record = session_tabs::load(path);
+    following.open = record.open;
+    following.session_tab = record.shown;
+    following
+}
+
 /// The hosts added from this window that are connected, have sent their
 /// model, and hold no session.
 #[must_use]
@@ -156,7 +172,8 @@ pub fn ready_to_start<'following>(
 }
 
 impl WindowShell {
-    /// Remember the tab now shown, so a later return to its session opens it.
+    /// Remember the tab now shown, so a later return to its session opens it,
+    /// including after this window has quit and a new one has read the record.
     pub(crate) fn remember_shown(&mut self, key: &TabKey) {
         self.following.session_tab.insert(
             SessionKey {
@@ -165,10 +182,26 @@ impl WindowShell {
             },
             key.tab,
         );
+        self.following.open = Some(key.clone());
+        self.write_session_tabs();
+    }
+
+    /// Write the tabs this window has shown. A record that cannot be written
+    /// leaves the selection as it is: the window still changes tabs.
+    fn write_session_tabs(&self) {
+        let Some(path) = &self.options.selection_path else {
+            return;
+        };
+        let record = SessionTabs {
+            open: self.following.open.clone(),
+            shown: self.following.session_tab.clone(),
+        };
+        let _ignored = session_tabs::write(path, &record);
     }
 
     /// Keep the current tab when the model still holds it. When that tab has
     /// gone, open the one that follows the close, and remember what is shown.
+    /// With nothing selected yet, open the tab the record left on screen.
     pub(crate) fn settle_selection(&mut self, place: Option<&TabPlace>) {
         if self
             .selected
@@ -177,14 +210,49 @@ impl WindowShell {
         {
             return;
         }
+        let kept = if place.is_none() {
+            self.remembered_open()
+        } else {
+            None
+        };
         if let Some(chosen) = place
             .and_then(|held| bars::tab_after_close(self.hosts().state(), held))
+            .or(kept)
             .or_else(|| bars::first_tab(self.hosts().state()))
         {
             self.set_selected(chosen);
         } else {
             self.selected = None;
         }
+    }
+
+    /// The tab the record left on screen, while its session still exists.
+    ///
+    /// The recorded tab wins while it is still in the session. Otherwise the
+    /// session's first remaining tab does, the same way a tab closed while
+    /// the window was elsewhere does.
+    fn remembered_open(&self) -> Option<TabKey> {
+        let open = self.following.open.as_ref()?;
+        let key = SessionKey {
+            host: open.host.clone(),
+            session: open.session,
+        };
+        let session = self.session(&key)?;
+        let tab = if session
+            .tabs
+            .iter()
+            .any(|candidate| candidate.id == open.tab)
+        {
+            open.tab
+        } else {
+            let remembered = self.following.session_tab.get(&key).copied();
+            bars::shown_tab(self.hosts().state(), &open.host, session, remembered)?
+        };
+        Some(TabKey {
+            host: open.host.clone(),
+            session: open.session,
+            tab,
+        })
     }
 
     /// Begin holding a host from this window: the stage follows it, and it

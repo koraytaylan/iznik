@@ -87,6 +87,13 @@ new session, rename, moves and the same three close entries, the moves of a
 session needing the `ReorderSessions` command the wire carries alongside
 `ReorderTabs`.
 
+The tab on screen, and the tab each other session was left on, are written to
+`~/.config/iznik/session-tabs` (`$XDG_CONFIG_HOME/iznik/session-tabs` when that
+variable is set). Quitting and opening the application again shows that tab,
+and choosing another session shows the tab it was left on, while those tabs
+still exist. A recorded tab the host no longer holds yields that session's
+first remaining tab.
+
 ## A host older than the app
 
 A host is reached with whatever server it has, and an older one is connected
@@ -119,6 +126,7 @@ rather than ending the connection.
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |
 | `follow` | What the window follows after a person asks: the added host's first session, the created tab's selection and the visible pane's keyboard focus. |
+| `session_tabs` | The file that records the tab each session was left on, so the next launch opens it. |
 | `prompt` | The palette's argument step: names, host aliases, destinations and arrangements an action needs before it is sent. |
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |

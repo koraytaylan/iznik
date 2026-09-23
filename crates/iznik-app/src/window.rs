@@ -65,6 +65,9 @@ pub struct ShellOptions {
     /// for `$HOME`, so a shell a case builds touches no file this machine
     /// holds, and one given no path reads and writes nothing.
     pub ssh_config_path: Option<PathBuf>,
+    /// The file that records the tab each session was left on. Resolved like
+    /// [`Self::ssh_config_path`]: absent reads and writes nothing.
+    pub selection_path: Option<PathBuf>,
 }
 
 impl Default for ShellOptions {
@@ -76,6 +79,7 @@ impl Default for ShellOptions {
             theme: TerminalTheme::default(),
             settings_path: None,
             ssh_config_path: None,
+            selection_path: None,
         }
     }
 }
@@ -202,6 +206,7 @@ impl WindowShell {
         let settings_watcher = options.settings_path.clone().map(Watcher::new);
         let focus_handle = context.focus_handle();
         let ssh_config_path = options.ssh_config_path.clone();
+        let following = follow::loaded(options.selection_path.as_deref());
         window.focus(&focus_handle, context);
         let mut shell = Self {
             hosts: HostUi::new(bridge),
@@ -219,7 +224,7 @@ impl WindowShell {
             menu: None,
             ssh_config_path,
             focus_handle,
-            following: Following::default(),
+            following,
             upgrade_notices: BTreeSet::new(),
             banner_count: 0,
         };
@@ -688,7 +693,7 @@ impl WindowShell {
             .find(|tab| tab.id == key.tab)
     }
     /// Find a session only in the engine's reconciled model.
-    fn session(&self, key: &SessionKey) -> Option<&Session> {
+    pub(crate) fn session(&self, key: &SessionKey) -> Option<&Session> {
         self.hosts
             .state()
             .model()

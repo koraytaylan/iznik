@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod menu;
 pub mod palette;
 pub mod prompt;
+pub mod session_tabs;
 pub mod settings;
 pub mod settings_window;
 pub mod splits;

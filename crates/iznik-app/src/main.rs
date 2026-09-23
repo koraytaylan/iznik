@@ -176,8 +176,10 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
         // The person's own ssh configuration, resolved here and not by the
         // shell, so the shell a case builds reads no file this machine holds.
         let ssh_config_path = iznik_app::ssh_config::default_path();
+        let selection_path = iznik_app::session_tabs::default_path();
         let options = ShellOptions {
             ssh_config_path,
+            selection_path,
             ..ShellOptions::default()
         };
         let window =

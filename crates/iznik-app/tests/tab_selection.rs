@@ -1,10 +1,13 @@
 //! Closing a tab keeps the window on that session, and switching sessions
 //! returns to the tab each session was left on.
 
+use std::collections::BTreeMap;
+
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, TestAppContext, WindowHandle};
+use iznik_app::session_tabs::{self, SessionTabs};
 use iznik_app::vt::{VtOptions, VtThread};
-use iznik_app::window::{ShellOptions, TabKey, WindowShell};
+use iznik_app::window::{SessionKey, ShellOptions, TabKey, WindowShell};
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_protocol::delta::{Delta, encode_delta};
@@ -32,6 +35,11 @@ fn returning_to_a_session_shows_the_tab_it_was_left_on(context: &mut TestAppCont
     check(&returns_to_the_tab(context));
 }
 
+#[gpui_kit::test]
+fn a_new_window_shows_the_tab_each_session_was_left_on(context: &mut TestAppContext) {
+    check(&a_new_window_reads_the_record(context));
+}
+
 /// Leave a session on a later tab and come back to it by clicking its chip.
 ///
 /// # Errors
@@ -44,7 +52,11 @@ fn returns_to_the_tab(context: &mut TestAppContext) -> Result<(), Failed> {
     let (handle, _directory) = open(context)?;
     choose(context, handle, 2, 5)?;
     click_session(context, handle, 1)?;
-    assert_eq!(shown(context, handle)?, (SessionId(1), TabId(1)));
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(1), TabId(1)),
+        "leaving session 2 shows session 1"
+    );
     click_session(context, handle, 2)?;
     assert_eq!(
         shown(context, handle)?,
@@ -67,7 +79,11 @@ fn returns_to_the_tab(context: &mut TestAppContext) -> Result<(), Failed> {
     );
     click_session(context, handle, 1)?;
     remove(context, handle, 5, 2)?;
-    assert_eq!(shown(context, handle)?, (SessionId(1), TabId(1)));
+    assert_eq!(
+        shown(context, handle)?,
+        (SessionId(1), TabId(1)),
+        "closing a tab in another session leaves this one on screen"
+    );
     click_session(context, handle, 2)?;
     assert_eq!(
         shown(context, handle)?,
@@ -147,6 +163,94 @@ fn stays(context: &mut TestAppContext) -> Result<(), Failed> {
     Ok(())
 }
 
+/// Leave two sessions on later tabs, then open a new window on the same record.
+///
+/// # Errors
+/// Propagates fixture, encoding and window failures.
+///
+/// # Panics
+/// Fails when the new window opens a first tab, or when a recorded tab the
+/// model no longer holds does not yield that session's first remaining tab.
+fn a_new_window_reads_the_record(context: &mut TestAppContext) -> Result<(), Failed> {
+    let directory = scratch()?;
+    let path = directory.0.join("session-tabs");
+    let (handle, _held) = open_with(context, "record", Some(path.clone()), &three_sessions())?;
+    choose(context, handle, 2, 5)?;
+    choose(context, handle, 3, 8)?;
+    let (again, _held_again) = open_with(context, "again", Some(path.clone()), &three_sessions())?;
+    assert_eq!(
+        shown(context, again)?,
+        (SessionId(3), TabId(8)),
+        "the new window opens the tab that was on screen"
+    );
+    click_session(context, again, 2)?;
+    assert_eq!(
+        shown(context, again)?,
+        (SessionId(2), TabId(5)),
+        "session 2 opens the tab it was left on"
+    );
+    click_session(context, again, 1)?;
+    assert_eq!(
+        shown(context, again)?,
+        (SessionId(1), TabId(1)),
+        "a session the record does not name shows its first tab"
+    );
+    let gone = directory.0.join("gone");
+    let mut shown_tabs = BTreeMap::new();
+    shown_tabs.insert(session_key(2), TabId(5));
+    session_tabs::write(
+        &gone,
+        &SessionTabs {
+            open: Some(key(2, 5)),
+            shown: shown_tabs,
+        },
+    )?;
+    let (kept, _held_kept) = open_with(context, "kept", Some(gone), &without_tab(5))?;
+    assert_eq!(
+        shown(context, kept)?,
+        (SessionId(2), TabId(4)),
+        "a recorded tab the model no longer holds yields the session's first tab"
+    );
+    Ok(())
+}
+
+/// A scratch directory for one test's record, removed when dropped.
+///
+/// # Errors
+///
+/// Returns the operating system's error when the directory cannot be created.
+fn scratch() -> Result<Scratch, Failed> {
+    let path = std::env::temp_dir().join(format!("iznik-tab-selection-{}", std::process::id()));
+    std::fs::create_dir_all(&path)?;
+    Ok(Scratch(path))
+}
+
+/// Removes its directory on drop.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _removed = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The fixture's host-qualified session.
+fn session_key(session: u64) -> SessionKey {
+    SessionKey {
+        host: host(),
+        session: SessionId(session),
+    }
+}
+
+/// The fixture model without one tab.
+fn without_tab(tab: u64) -> HostModel {
+    let mut model = three_sessions();
+    for session in &mut model.sessions {
+        session.tabs.retain(|candidate| candidate.id != TabId(tab));
+    }
+    model
+}
+
 /// Open a shell whose model is three sessions of three tabs.
 ///
 /// # Errors
@@ -154,8 +258,21 @@ fn stays(context: &mut TestAppContext) -> Result<(), Failed> {
 fn open(
     context: &mut TestAppContext,
 ) -> Result<(WindowHandle<WindowShell>, engine::Directory), Failed> {
+    open_with(context, "tab-selection", None, &three_sessions())
+}
+
+/// Open a shell on `model`, reading and writing `selection` when it is set.
+///
+/// # Errors
+/// Propagates fixture, encoding and window failures.
+fn open_with(
+    context: &mut TestAppContext,
+    name: &str,
+    selection: Option<std::path::PathBuf>,
+    model: &HostModel,
+) -> Result<(WindowHandle<WindowShell>, engine::Directory), Failed> {
     context.update(gpui_kit::init);
-    let (bridge, directory) = engine::start("tab-selection")?;
+    let (bridge, directory) = engine::start(name)?;
     let thread = std::rc::Rc::new(VtThread::start(VtOptions::default())?);
     let handle = context.add_window(|window, context| {
         WindowShell::new(
@@ -163,20 +280,20 @@ fn open(
             thread,
             ShellOptions {
                 update_interval: None,
+                selection_path: selection,
                 ..ShellOptions::default()
             },
             window,
             context,
         )
     });
-    let model = three_sessions();
     absorb(
         context,
         handle,
         ManagerEvent::Snapshot {
             host: host(),
             generation: model.generation,
-            payload: encode_host_model(&model)?,
+            payload: encode_host_model(model)?,
         },
     )?;
     Ok((handle, directory))

@@ -96,6 +96,12 @@ test = "iznik-app::tab_selection::returning_to_a_session_shows_the_tab_it_was_le
 because = "per-session tab memory is the headless production shell's own selection; no container is required"
 
 [[claim]]
+id = "window-session-tab-survives"
+statement = "A new window reading the selection record the previous window wrote opens the tab that was on screen, and another session opens the tab it was left on. A recorded tab the model no longer holds yields that session's first remaining tab."
+test = "iznik-app::tab_selection::a_new_window_shows_the_tab_each_session_was_left_on"
+because = "the record is a file the headless shell writes and a second shell reads; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"
