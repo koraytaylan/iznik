@@ -164,7 +164,7 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `grid::link` | Which OSC 8 targets a Command-click hands to the platform: web and mail addresses, and local files that are not programs, scripts or application bundles; never a `file:` target on another host. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
 | `grid::draw` | Row draw lists built from snapshot cells, and which rows a new snapshot actually changes. |
-| `grid::selection` | Selection held in retained rows, and the part of it a viewport shows. |
+| `grid::selection` | Selection held in retained rows, numbered so a full history letting rows go moves nothing, and the part of it a viewport shows. |
 | `grid::shapes` | Box drawing, block elements and powerline separators drawn as rectangles and paths inside their cells. |
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
 | `grid::paint` | GPUI shaping, cell fills, text decorations, cursor painting, and cached row entities. |
@@ -187,6 +187,7 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |
 | `vt` | One `LocalSet` thread owning client emulators, sequence-checked pane feeds, theme-aware query answers, and owned cell snapshots with damage and credit. |
+| `vt::eviction` | How many rows a full history has let go of from its top, counted from a tracked reference on the emulator's last row, so row numbers that include them never move. |
 | `vt::batch` | Commands the emulator thread finds queued together: a pane's output fed before one snapshot that carries every chunk's credit and receipt. |
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
@@ -322,10 +323,14 @@ Pointer events include a frame identity and local gesture. The VT owner returns
 never becomes selection or history accidentally. The window applies those
 replies with `TerminalGrid::apply_pointer`. Shift drag and Shift-wheel explicitly
 choose local behavior. A selection is held in retained rows — history and
-screen counted from the oldest row — so output that scrolls the viewport
-during a drag neither cancels it nor moves its anchor, a drag can cross a
-scroll, and `copy_selection` serializes the text it covers even when part of
-it is out of view; only a width change refuses it. Wheel expansion is bounded by `VtOptions`, with oversized
+screen counted from the first row the emulator ever held, which is its own
+numbering plus the rows a full history has let go of — so output that scrolls
+the viewport during a drag neither cancels it nor moves its anchor, a drag can
+cross a scroll, and `copy_selection` serializes the text it covers even when
+part of it is out of view; only a width change refuses it. The emulator counts
+the rows it lets go of with a tracked reference on its last row, so a full
+history renumbers nothing, and a selection whose rows were let go of is
+dropped rather than moved onto the text that took their place. Wheel expansion is bounded by `VtOptions`, with oversized
 tracked bursts returned as input errors rather than truncated silently.
 
 Delivery receipts accompany engine output through the bridge, native snapshot

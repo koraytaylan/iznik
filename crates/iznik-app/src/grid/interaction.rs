@@ -155,8 +155,10 @@ impl TerminalGrid {
                 row: u16::try_from(position.row.saturating_sub(start.row)).unwrap_or(u16::MAX),
                 column: position.column,
             };
-            // The frame's viewport names the selection's first row, so its
-            // rows are counted from there however far it scrolled.
+            // The frame's viewport names the selection's first row, counted
+            // from the first row the emulator ever held, so its rows are
+            // counted from there however far it scrolled; the emulator takes
+            // off the rows its history has let go of since.
             let mut frame = InputFrame::from(snapshot);
             frame.viewport.offset = start.row;
             self.emit_input(

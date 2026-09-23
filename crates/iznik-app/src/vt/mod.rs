@@ -2,6 +2,7 @@
 //! and commands cross its channel; no terminal handle leaves the thread.
 
 mod batch;
+mod eviction;
 
 use crate::input::{InputEncoder, TerminalInput};
 
@@ -174,6 +175,10 @@ pub struct Viewport {
     pub offset: u64,
     /// Number of visible rows.
     pub rows: u64,
+    /// Rows the emulator has let go of from the top of its history since it
+    /// began, so that `evicted + offset` numbers a row the same way however
+    /// many are let go after it.
+    pub evicted: u64,
 }
 
 impl Viewport {
@@ -182,6 +187,13 @@ impl Viewport {
     pub fn at_bottom(self) -> bool {
         // Saturating arithmetic also treats an out-of-range offset as bottom.
         self.offset.saturating_add(self.rows) >= self.total
+    }
+
+    /// The top row shown, counted from the first row the emulator ever held
+    /// rather than from the oldest it still holds.
+    #[must_use]
+    pub fn top(self) -> u64 {
+        self.evicted.saturating_add(self.offset)
     }
 }
 
@@ -501,6 +513,8 @@ struct PaneTerminal {
     published: Vec<Arc<[CellSnapshot]>>,
     /// Viewport of the last snapshot; a different one reads every row again.
     published_viewport: Option<Viewport>,
+    /// How many rows the history has let go of, for numbering that holds.
+    eviction: eviction::Eviction,
 }
 
 impl PaneTerminal {
@@ -558,6 +572,7 @@ impl PaneTerminal {
             sequence: None,
             published: Vec::new(),
             published_viewport: None,
+            eviction: eviction::Eviction::default(),
         };
         pane.theme(theme)?;
         Ok(pane)
@@ -609,6 +624,7 @@ impl PaneTerminal {
             total: scrollbar.total,
             offset: scrollbar.offset,
             rows: scrollbar.len,
+            evicted: self.eviction.evicted(),
         })
     }
 
@@ -618,14 +634,27 @@ impl PaneTerminal {
     /// Returns a missing authoritative screen, stale selection or encoder error.
     fn input(&mut self, key: &PaneKey, input: &TerminalInput) -> Result<VtOutput, VtError> {
         self.sequence.ok_or(VtError::NeedsScreen)?;
-        // A copy names retained rows, which output does not move: only
-        // another pane or a width change makes it describe other text.
-        if let TerminalInput::Copy(copy) = input
-            && (copy.frame.key != *key || copy.frame.columns != self.terminal.cols()?)
-        {
-            return Err(VtError::Input(
-                "selection no longer matches the displayed frame",
-            ));
+        // A copy names rows counted from the first the emulator ever held,
+        // which neither output nor a full history letting rows go moves:
+        // only another pane or a width change makes it describe other text,
+        // and rows that have been let go cannot be copied at all.
+        if let TerminalInput::Copy(copy) = input {
+            if copy.frame.key != *key || copy.frame.columns != self.terminal.cols()? {
+                return Err(VtError::Input(
+                    "selection no longer matches the displayed frame",
+                ));
+            }
+            let evicted = self.eviction.observe(&mut self.terminal)?;
+            let mut held = copy.clone();
+            held.frame.viewport.offset = copy
+                .frame
+                .viewport
+                .offset
+                .checked_sub(evicted)
+                .ok_or(VtError::Input("the selection's rows have left the history"))?;
+            return self
+                .input
+                .encode(&self.terminal, &TerminalInput::Copy(held));
         }
         self.input.encode(&self.terminal, input)
     }
@@ -636,6 +665,7 @@ impl PaneTerminal {
     /// Propagates emulator reads, or `NeedsScreen` after a gap.
     fn snapshot(&mut self, key: PaneKey, consumed_bytes: u32) -> Result<TerminalSnapshot, VtError> {
         let sequence = self.sequence.ok_or(VtError::NeedsScreen)?;
+        let _evicted = self.eviction.observe(&mut self.terminal)?;
         let viewport = self.viewport()?;
         let snapshot = self.render.update(&self.terminal)?;
         let colors = snapshot.colors()?;

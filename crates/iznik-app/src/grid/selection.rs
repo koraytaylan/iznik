@@ -1,9 +1,12 @@
 //! Selection anchored to the pane's retained rows rather than to the viewport.
 //!
-//! A row number counts from the oldest row the emulator retains, history and
-//! screen together — the emulator's own screen coordinates. Output that
-//! scrolls the viewport therefore moves what a selection covers on screen,
-//! not which text it covers, and a drag that scrolls keeps its anchor.
+//! A row number counts from the first row the emulator ever held, history and
+//! screen together: the emulator's own screen coordinates plus the rows its
+//! full history has let go of since. Output that scrolls the viewport
+//! therefore moves what a selection covers on screen, not which text it
+//! covers, and a drag that scrolls keeps its anchor. Rows let go of do not
+//! renumber the rest, so a selection stays on its text until that text itself
+//! is let go of, and is then dropped rather than moved onto other rows.
 
 use crate::vt::Viewport;
 
@@ -12,7 +15,7 @@ use super::{GridPosition, GridSelection};
 /// A cell among the pane's retained rows, ordered in reading order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetainedPosition {
-    /// Row counted from the oldest retained row.
+    /// Row counted from the first row the emulator ever held.
     pub row: u64,
     /// Zero-based column; an end position may be just past the row.
     pub column: u16,
@@ -23,7 +26,7 @@ impl RetainedPosition {
     #[must_use]
     pub fn from_viewport(position: GridPosition, viewport: Viewport) -> Self {
         Self {
-            row: viewport.offset.saturating_add(u64::from(position.row)),
+            row: viewport.top().saturating_add(u64::from(position.row)),
             column: position.column,
         }
     }
@@ -55,12 +58,13 @@ impl RetainedSelection {
         let start = self.anchor.min(self.head);
         let end = self.anchor.max(self.head);
         let rows = viewport.rows.min(u64::from(u16::MAX));
-        let bottom = viewport.offset.checked_add(rows)?;
-        if end.row < viewport.offset || start.row >= bottom || start == end {
+        let top_row = viewport.top();
+        let bottom = top_row.checked_add(rows)?;
+        if end.row < top_row || start.row >= bottom || start == end {
             return None;
         }
         let top = RetainedPosition {
-            row: viewport.offset,
+            row: top_row,
             column: 0,
         };
         let last = RetainedPosition {
@@ -71,7 +75,7 @@ impl RetainedSelection {
         let end = end.min(last);
         let shown = |position: RetainedPosition| {
             Some(GridPosition {
-                row: u16::try_from(position.row.checked_sub(viewport.offset)?).ok()?,
+                row: u16::try_from(position.row.checked_sub(top_row)?).ok()?,
                 column: position.column,
             })
         };
@@ -79,5 +83,12 @@ impl RetainedSelection {
             anchor: shown(start)?,
             head: shown(end)?,
         })
+    }
+
+    /// Whether any of the rows this selection covers has been let go of by
+    /// a history showing `viewport`.
+    #[must_use]
+    pub fn evicted(self, viewport: Viewport) -> bool {
+        self.anchor.min(self.head).row < viewport.evicted
     }
 }

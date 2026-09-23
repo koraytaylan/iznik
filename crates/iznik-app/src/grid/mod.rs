@@ -377,8 +377,16 @@ impl TerminalGrid {
             return Err(GridError::Pane);
         }
         let previous = self.snapshot.as_ref().filter(|_| !self.stale);
-        if snapshot.reset {
-            // A new emulator numbers its rows afresh.
+        let evicted = self
+            .selection
+            .is_some_and(|selected| selected.evicted(snapshot.viewport))
+            || self
+                .selection_anchor
+                .is_some_and(|anchor| anchor.row < snapshot.viewport.evicted);
+        if snapshot.reset || evicted {
+            // A new emulator numbers its rows afresh, and text the history
+            // let go of is not there to select: either way no row the
+            // selection names holds what it held.
             self.selection = None;
             self.selection_anchor = None;
         }
