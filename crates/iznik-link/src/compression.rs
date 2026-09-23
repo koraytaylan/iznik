@@ -14,6 +14,7 @@
 //! throughput for perceptible keystroke latency would be a bad bargain, and
 //! the second number is what would catch it.
 
+use std::hash::{DefaultHasher, Hasher};
 use std::io::{self, IoSlice};
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
@@ -87,7 +88,8 @@ fn bounded_decoder() -> io::Result<Decoder<'static>> {
 ///
 /// A `Pending` write is retried with the bytes it was given, as
 /// [`tokio::io::AsyncWriteExt`] does, so the compressor never sees the same
-/// bytes twice.
+/// bytes twice — recognised by what the bytes are, not by where they are or
+/// how many, and not forgotten by a flush in between.
 pub struct ZstdStream<Stream> {
     /// The stream underneath, carrying compressed bytes.
     stream: Stream,
@@ -107,13 +109,11 @@ pub struct ZstdStream<Stream> {
     plain: Vec<u8>,
     /// How much of `plain` has been handed out.
     taken: usize,
-    /// What a write took from its caller and has not yet reported, held
-    /// across a `Pending` so a retry does not compress the same bytes twice.
-    /// It carries the length it took, so that a retry of a *different* write —
-    /// which means the first was abandoned, and `FramedLink::send` says what
-    /// that costs — is compressed rather than silently answered with the
-    /// abandoned write's count.
-    accepted: Option<usize>,
+    /// The [`fingerprint`] of the write that was compressed and answered
+    /// `Pending`, held until a retry of it is answered — so a retry does not
+    /// compress the same bytes twice, and a different write is not answered
+    /// with its count.
+    accepted: Option<u64>,
     /// Whether the zstd frame has been finished; finishing twice is not
     /// something the encoder is asked to survive.
     finished: bool,
@@ -147,6 +147,28 @@ impl<Stream> core::fmt::Debug for ZstdStream<Stream> {
             .field("finished", &self.finished)
             .finish_non_exhaustive()
     }
+}
+
+/// What a write offers, reduced to what a retry of it is recognised by: a
+/// hash of its bytes and of how many there are.
+///
+/// Not where they were: a caller retrying a write may hand the same bytes in
+/// another buffer, and a caller that has abandoned one may hand different
+/// bytes of the same length. Only the same bytes are the retry, which is
+/// answered with their count and not compressed again; anything else is a new
+/// write, and the abandoned one — already compressed, so already part of the
+/// stream — goes out whole ahead of it rather than torn. Computed only when a
+/// write has to wait, so the common write, one the stream takes at once,
+/// hashes nothing.
+fn fingerprint(slices: &[IoSlice<'_>]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let mut length: usize = 0;
+    for slice in slices {
+        hasher.write(slice);
+        length = length.saturating_add(slice.len());
+    }
+    hasher.write_usize(length);
+    hasher.finish()
 }
 
 /// The least a buffer must have given up before its remainder is moved down.
@@ -356,27 +378,35 @@ impl<Stream: AsyncWrite + Unpin> ZstdStream<Stream> {
         let offered = slices
             .iter()
             .fold(0_usize, |total, slice| total.saturating_add(slice.len()));
-        if self.accepted != Some(offered) {
-            // Either nothing is pending, or what is pending was a different
-            // write and so was abandoned — which `FramedLink::send` documents
-            // as leaving a torn frame. Better a torn frame than this one
-            // silently answered with the abandoned one's count.
+        let retried = self
+            .accepted
+            .is_some_and(|held| held == fingerprint(slices));
+        if !retried {
+            // Nothing is waiting, or what is waiting was a different write
+            // that its caller abandoned. That one is compressed already, so it
+            // is part of the stream and goes out whole ahead of this one.
             for slice in slices {
                 self.feed(slice)?;
             }
             self.flush_encoder()?;
-            self.accepted = Some(offered);
+            self.accepted = None;
         }
         match self.poll_drain(context) {
-            Poll::Pending => return Poll::Pending,
+            Poll::Pending => {
+                if self.accepted.is_none() {
+                    self.accepted = Some(fingerprint(slices));
+                }
+                Poll::Pending
+            }
             Poll::Ready(Err(error)) => {
                 self.accepted = None;
-                return Poll::Ready(Err(error));
+                Poll::Ready(Err(error))
             }
-            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Ok(())) => {
+                self.accepted = None;
+                Poll::Ready(Ok(offered))
+            }
         }
-        self.accepted = None;
-        Poll::Ready(Ok(offered))
     }
 }
 
@@ -404,8 +434,10 @@ impl<Stream: AsyncWrite + Unpin> AsyncWrite for ZstdStream<Stream> {
     }
 
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // A write still waiting for its retry stays waiting: draining its
+        // bytes here does not answer it, and forgetting it would have the
+        // retry compressed and sent a second time.
         let this = self.get_mut();
-        this.accepted = None;
         this.flush_encoder()?;
         ready!(this.poll_drain(context))?;
         Pin::new(&mut this.stream).poll_flush(context)
@@ -413,7 +445,6 @@ impl<Stream: AsyncWrite + Unpin> AsyncWrite for ZstdStream<Stream> {
 
     fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        this.accepted = None;
         this.finish_encoder()?;
         ready!(this.poll_drain(context))?;
         Pin::new(&mut this.stream).poll_shutdown(context)

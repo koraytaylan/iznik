@@ -4,10 +4,12 @@ arrived
 buffered
 buffers
 bulk
+cancelled
 compressed
 downstream
 earns
 encoder
+fingerprint
 flushed
 here
 incoming

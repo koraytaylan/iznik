@@ -473,3 +473,61 @@ async fn compression_refuses_a_window_wider_than_its_own() {
         .await
         .expect("the window case finishes");
 }
+
+/// How much the pipe under the cancellation case holds: far less than one
+/// compressed flood, so a write of one waits for the reader.
+const NARROW_PIPE: usize = 256;
+
+/// How long the cancelled write is given before it is abandoned.
+const ABANDONED_AFTER: Duration = Duration::from_millis(20);
+
+/// What is written once the retried write has gone.
+const AFTER: &[u8] = b"after the retry";
+
+/// A write cancelled while it waits, a flush, and then the same write again:
+/// the bytes arrive once, and what follows arrives after them.
+///
+/// # Panics
+///
+/// When the retried write is compressed and sent a second time, or what
+/// follows is lost or torn.
+#[tokio::test]
+async fn compression_a_cancelled_write_retried_after_a_flush_arrives_once() {
+    let case = async {
+        let flood = corpus::generated(FLOOD_SEED, SMALL_FLOOD);
+        let expected_length = flood.len().saturating_add(AFTER.len());
+        let (here, there) = duplex(NARROW_PIPE);
+        let mut sender = ZstdStream::new(here, Vec::new()).expect("compressed sender");
+        let mut receiver = ZstdStream::new(there, Vec::new()).expect("compressed receiver");
+        let written = tokio::time::timeout(ABANDONED_AFTER, sender.write(&flood)).await;
+        assert!(written.is_err(), "the write waits on the narrow pipe");
+        let reading = tokio::spawn(async move {
+            let mut arrived = vec![0; expected_length];
+            receiver
+                .read_exact(&mut arrived)
+                .await
+                .map(|_count| arrived)
+        });
+        sender
+            .flush()
+            .await
+            .expect("the flush drains what was compressed");
+        let retried = sender.write(&flood).await.expect("the retry is answered");
+        assert_eq!(retried, flood.len(), "all of it, once");
+        sender.write_all(AFTER).await.expect("what follows goes");
+        sender.flush().await.expect("and is flushed");
+        let arrived = reading
+            .await
+            .expect("the reader ends")
+            .expect("everything arrives");
+        let mut wanted = flood.clone();
+        wanted.extend_from_slice(AFTER);
+        assert!(
+            arrived == wanted,
+            "the flood arrives once and what follows right after it"
+        );
+    };
+    tokio::time::timeout(DEADLINE, case)
+        .await
+        .expect("the cancellation case finishes");
+}
