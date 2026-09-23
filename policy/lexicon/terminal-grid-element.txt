@@ -1,8 +1,11 @@
+align
 anchor
 average
+begins
 bottom
 braille
 category
+combining
 dash
 decoration
 decorations
@@ -17,6 +20,7 @@ faint
 finite
 font
 geometry
+glyphs
 grid
 inspector
 inverse
@@ -30,11 +34,13 @@ overlays
 paint
 painted
 paints
+positions
 prepaint
 rectangle
 repaints
 scroll
 scrollbar
+snap
 strike
 stroke
 support

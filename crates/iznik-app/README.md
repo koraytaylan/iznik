@@ -238,7 +238,9 @@ screen replaces it; no output is guessed across a discontinuity.
 `TerminalGrid` consumes owned `TerminalSnapshot` values. Equal row draw lists
 reuse GPUI's cached paint subtrees, including when sibling rows change.
 Narrow text runs retain font ligatures; wide graphemes are anchored at their
-own terminal columns so fallback glyph advances cannot shift following text.
+own terminal columns, and after shaping every cell's glyphs are moved to that
+cell's column, so a fallback glyph whose advance is not one cell cannot shift
+the text after it. Combining marks keep their offset from their base.
 Braille patterns are drawn as a dot grid inside each cell, on whole display
 pixels of that cell so every dot in a chart is the same size and none of them
 cross into the next column. Fallback fonts draw

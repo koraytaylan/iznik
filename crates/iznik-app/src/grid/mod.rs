@@ -6,6 +6,7 @@ mod ime;
 mod interaction;
 pub mod keyboard;
 mod paint;
+pub use paint::align_glyphs;
 pub(crate) use paint::color as terminal_color;
 
 use iznik_client::host::manager::credit::CreditReceipt;
@@ -113,6 +114,9 @@ pub struct CellRun {
     pub columns: u16,
     /// Text passed to GPUI shaping as a single run, retaining ligatures.
     pub text: String,
+    /// Byte offset in `text` where each cell's grapheme begins, in column
+    /// order; painting puts every cell's glyphs at that cell's column.
+    pub starts: Vec<usize>,
     /// Complete emulator style, including decorations and inverse video.
     pub style: Style,
     /// Effective foreground after palette resolution.

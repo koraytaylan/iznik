@@ -147,6 +147,7 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
         if let Some(last) = runs.last_mut()
             && continues_run(last, cell, wide, previous_wide, same_kind)
         {
+            last.starts.push(last.text.len());
             last.text.push_str(&text);
             last.columns = last.columns.saturating_add(1);
         } else {
@@ -154,6 +155,7 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
                 column,
                 columns: if wide { WIDE_COLUMNS } else { 1 },
                 text,
+                starts: vec![0],
                 style: cell.style,
                 foreground: cell.foreground,
                 background: cell.background,

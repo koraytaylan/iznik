@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use gpui_kit::{
     App, Bounds, ContentMask, Context, Element, ElementId, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, ShapedLine,
-    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, font, point, px,
-    rgb, size,
+    InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels, Point, Render, ShapedLine,
+    ShapedRun, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, font,
+    point, px, rgb, size,
 };
 use libghostty_vt::render::CursorVisualStyle;
 use libghostty_vt::style::{RgbColor, Underline};
@@ -295,19 +295,63 @@ fn shape(drawing: &RowDrawing, metrics: &GridMetrics, window: &Window) -> Vec<Gl
                 underline,
                 strikethrough: strike,
             };
+            let center = is_symbol_text(&run.text);
+            let mut line = window.text_system().shape_line(
+                run.text.clone().into(),
+                metrics.font_size,
+                &[text_run],
+                None,
+            );
+            if !center {
+                snap_line(&mut line, &run.starts, metrics.cell_width);
+            }
             GlyphRun {
                 column: run.column,
                 columns: run.columns,
-                center: is_symbol_text(&run.text),
-                line: window.text_system().shape_line(
-                    run.text.clone().into(),
-                    metrics.font_size,
-                    &[text_run],
-                    None,
-                ),
+                center,
+                line,
             }
         })
         .collect()
+}
+
+/// Put every cell's glyphs of a shaped line at that cell's column.
+fn snap_line(line: &mut ShapedLine, starts: &[usize], cell_width: Pixels) {
+    let layout: &mut Arc<LineLayout> = line;
+    let mut runs = layout.runs.clone();
+    align_glyphs(&mut runs, starts, cell_width);
+    *layout = Arc::new(LineLayout {
+        font_size: layout.font_size,
+        width: layout.width,
+        ascent: layout.ascent,
+        descent: layout.descent,
+        runs,
+        len: layout.len,
+    });
+}
+
+/// Move each cell's glyphs so the first of them starts at the cell's column,
+/// `starts` being the byte offset of each cell's text in the shaped line.
+///
+/// Shaping advances by glyph widths, and a glyph from a fallback font is
+/// rarely one cell wide, so without this every glyph after it drifts off its
+/// column. A cell's later glyphs — combining marks — keep their offset from
+/// its first, and a ligature, whose glyph starts at its first cell, still
+/// spans the cells after it.
+pub fn align_glyphs(runs: &mut [ShapedRun], starts: &[usize], cell_width: Pixels) {
+    let mut current = None;
+    let mut shift = px(0.0);
+    for glyph in runs.iter_mut().flat_map(|run| run.glyphs.iter_mut()) {
+        let cell = starts
+            .partition_point(|start| *start <= glyph.index)
+            .saturating_sub(1);
+        if current != Some(cell) {
+            current = Some(cell);
+            let column = f32::from(u16::try_from(cell).unwrap_or(u16::MAX));
+            shift = distance(scale(cell_width, column), glyph.position.x);
+        }
+        glyph.position.x = offset(glyph.position.x, shift);
+    }
 }
 
 /// Effective text color, including inverse video and faint rendition.
