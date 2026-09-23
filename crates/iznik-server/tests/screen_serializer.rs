@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use iznik_protocol::identity::Sequence;
 use iznik_server::terminal::mirror::Mirror;
-use iznik_server::terminal::screen::{MAXIMUM_SCREEN_BYTES, ScreenState, serialize};
+use iznik_server::terminal::screen::{
+    CLEARED_SCREEN, MAXIMUM_SCREEN_BYTES, ScreenState, serialize,
+};
 use iznik_testkit::corpus::constructs;
 use iznik_testkit::vt::Vt;
 
@@ -367,4 +369,83 @@ fn screen_serializer_keeps_a_pending_wrap() {
         layout(&oracle.snapshot().expect("an oracle snapshot")),
         "a filled line's pending wrap survives serialization"
     );
+}
+
+/// Rows of per-cell 24-bit color, each tagged with `tag` and its number, heavy
+/// enough that a few hundred of them overflow the bound.
+fn heavy_rows(mirror: &mut Mirror, tag: &str, rows: u32, columns: u32) {
+    for row in 0..rows {
+        let mut line = format!("{tag}{row:04}").into_bytes();
+        for column in 0..columns {
+            let red = column % 256;
+            let green = row % 256;
+            let blue = column.wrapping_add(row) % 256;
+            line.extend_from_slice(format!("\x1b[38;2;{red};{green};{blue}m.").as_bytes());
+        }
+        if row.saturating_add(1) < rows {
+            line.extend_from_slice(b"\r\n");
+        }
+        mirror.feed(&line);
+    }
+}
+
+/// A heavy primary remembered across a heavy alternate screen still makes a
+/// screen within the bound — the whole of it when the two fit together, the
+/// alternate alone when they do not — and never one that cannot be sent.
+///
+/// # Panics
+///
+/// When the combination exceeds the bound or the alternate is lost.
+#[test]
+fn screen_serializer_bounds_the_primary_and_alternate_together() {
+    let mut mirror = Mirror::new(240, 100).expect("a mirror");
+    let mut state = ScreenState::new();
+    heavy_rows(&mut mirror, "P", 300, 235);
+    let switch = b"\x1b[?1049h";
+    state
+        .entering_alternate(&mirror, switch)
+        .expect("the primary is remembered");
+    mirror.feed(switch);
+    mirror.feed(b"\x1b[H");
+    heavy_rows(&mut mirror, "A", 100, 235);
+    let combined = state
+        .serialize(&mirror, Sequence(0))
+        .expect("a serialization");
+    assert!(
+        combined.bytes.len() <= MAXIMUM_SCREEN_BYTES,
+        "within the bound: {} <= {MAXIMUM_SCREEN_BYTES}",
+        combined.bytes.len()
+    );
+    let mut reproduced = Vt::new(combined.columns, combined.rows).expect("a fresh oracle");
+    reproduced.feed(&combined.bytes);
+    assert!(
+        reproduced.in_alternate_screen().expect("a screen"),
+        "the reproduction is on the alternate screen"
+    );
+    assert!(
+        reproduced
+            .screen_text()
+            .expect("screen text")
+            .contains("A0099"),
+        "the alternate's newest row shows"
+    );
+}
+
+/// A visible screen that alone cannot fit the bound is sent cleared rather
+/// than as a screen no frame can carry.
+///
+/// # Panics
+///
+/// When the output exceeds the bound or is not the cleared screen.
+#[test]
+fn screen_serializer_clears_a_screen_too_large_to_send() {
+    let mut mirror = Mirror::new(600, 300).expect("a mirror");
+    heavy_rows(&mut mirror, "V", 300, 595);
+    let serialized = serialize(&mirror, Sequence(0)).expect("a serialization");
+    assert!(
+        serialized.bytes.len() <= MAXIMUM_SCREEN_BYTES,
+        "within the bound: {}",
+        serialized.bytes.len()
+    );
+    assert!(serialized.bytes.starts_with(CLEARED_SCREEN), "sent cleared");
 }

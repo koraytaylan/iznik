@@ -34,11 +34,22 @@ use libghostty_vt::terminal::{Point, PointCoordinate, Terminal};
 
 use crate::terminal::mirror::Mirror;
 
-/// The most bytes a serialized screen holds — below the frame maximum. A screen
-/// with scrollback is dropped to fit this; the bound is best-effort in two rare
-/// cases the drop cannot help: a visible screen that alone exceeds it, and
-/// [`ScreenState::serialize`]'s remembered-primary-plus-alternate concatenation.
+/// The most bytes a serialized screen holds — below the frame maximum, so a
+/// `Screen` always fits one frame. A screen with scrollback has its oldest rows
+/// dropped to fit; the primary remembered across an alternate screen is kept
+/// to half of it, and is left out when it and the alternate together still do
+/// not fit; a visible screen that alone does not fit is sent as a cleared one.
+/// A client is shown less, never disconnected.
 pub const MAXIMUM_SCREEN_BYTES: usize = 768 * 1024;
+
+/// What a screen too large to send at all is sent as: cleared, cursor home.
+/// The bytes that follow on the channel draw over it.
+pub const CLEARED_SCREEN: &[u8] = b"\x1b[H\x1b[2J";
+
+/// How much the primary screen remembered across an alternate one may take:
+/// half the budget, leaving the other half for the alternate screen that is
+/// sent after it.
+const PRIMARY_SCREEN_TARGET: usize = SCREEN_BYTES_TARGET / 2;
 
 /// How many codepoints a grapheme cluster is asked for in one go: enough for
 /// anything a terminal usually holds, and the engine says when it is not.
@@ -179,6 +190,7 @@ fn format_screen(
 fn fit_by_dropping(
     terminal: &Terminal<'static, 'static>,
     cap: usize,
+    target: usize,
 ) -> Result<(usize, Vec<u8>), ScreenError> {
     let mut low: usize = 0;
     let mut high = cap;
@@ -186,7 +198,7 @@ fn fit_by_dropping(
     while low.saturating_add(1) < high {
         let middle = low.midpoint(high);
         let candidate = format_screen(terminal, middle)?;
-        if candidate.len() <= SCREEN_BYTES_TARGET {
+        if candidate.len() <= target {
             high = middle;
             fitted = candidate;
         } else {
@@ -202,13 +214,36 @@ fn fit_by_dropping(
 ///
 /// [`ScreenError::Emulator`] when the emulator's formatter fails.
 pub fn serialize(mirror: &Mirror, sequence: Sequence) -> Result<SerializedScreen, ScreenError> {
+    serialize_within(mirror, sequence, SCREEN_BYTES_TARGET)
+}
+
+/// [`serialize`] into `target` bytes before the cursor is appended.
+///
+/// # Errors
+///
+/// [`ScreenError::Emulator`] when the emulator's formatter fails.
+fn serialize_within(
+    mirror: &Mirror,
+    sequence: Sequence,
+    target: usize,
+) -> Result<SerializedScreen, ScreenError> {
     let terminal = mirror.terminal();
     let whole = format_screen(terminal, 0)?;
-    let (dropped_rows, mut bytes) = if whole.len() <= SCREEN_BYTES_TARGET {
+    let (mut dropped_rows, mut bytes) = if whole.len() <= target {
         (0, whole)
     } else {
-        fit_by_dropping(terminal, mirror.scrollback_rows())?
+        fit_by_dropping(terminal, mirror.scrollback_rows(), target)?
     };
+    if bytes.len() > target {
+        // Every row of scrollback gone and the visible screen alone still
+        // does not fit: a cleared screen is what is left to send.
+        tracing::warn!(
+            length = bytes.len(),
+            "a visible screen was too large to send and was sent cleared"
+        );
+        bytes = CLEARED_SCREEN.to_vec();
+        dropped_rows = mirror.scrollback_rows();
+    }
     append_cursor(terminal, &mut bytes)?;
     Ok(SerializedScreen {
         sequence,
@@ -348,7 +383,7 @@ impl ScreenState {
         mirror: &Mirror,
         switch: &[u8],
     ) -> Result<(), ScreenError> {
-        let primary = serialize(mirror, Sequence(0))?;
+        let primary = serialize_within(mirror, Sequence(0), PRIMARY_SCREEN_TARGET)?;
         self.primary_at_switch = Some(PrimarySnapshot {
             bytes: primary.bytes,
             switch: switch.to_vec(),
@@ -378,6 +413,22 @@ impl ScreenState {
         let active = serialize(mirror, sequence)?;
         match &self.primary_at_switch {
             None => Ok(active),
+            // The remembered primary has had its oldest rows dropped already;
+            // when it and the alternate still do not fit together it is the
+            // thing left out, so the client is shown what the program on the
+            // alternate screen is drawing now.
+            Some(snapshot)
+                if snapshot
+                    .bytes
+                    .len()
+                    .saturating_add(snapshot.switch.len())
+                    .saturating_add(active.bytes.len())
+                    > MAXIMUM_SCREEN_BYTES =>
+            {
+                let mut bytes = snapshot.switch.clone();
+                bytes.extend_from_slice(&active.bytes);
+                Ok(SerializedScreen { bytes, ..active })
+            }
             Some(snapshot) => {
                 let mut bytes = snapshot.bytes.clone();
                 bytes.extend_from_slice(&snapshot.switch);

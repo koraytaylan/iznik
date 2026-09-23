@@ -43,6 +43,7 @@ use crate::pane::{Pane, Subscription};
 use crate::resume::{StartPlan, StartRequest, plan_start};
 use crate::session::registry::{Numbered, Registry};
 use crate::terminal::marks::MarkEvent;
+use crate::terminal::screen::{CLEARED_SCREEN, SerializedScreen};
 
 /// What a keystroke's round trip through the multiplexer must stay under at
 /// the ninety-ninth percentile while another pane floods.
@@ -176,6 +177,46 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         Ok(())
     }
 
+    /// Sends a pane's screen. One that will not fit a frame is sent cleared
+    /// instead: a screen is a picture to start drawing on, and a client shown
+    /// less than all of it keeps its connection — and every other pane on it —
+    /// where one refused would lose them all and come straight back for the
+    /// same screen.
+    ///
+    /// # Errors
+    ///
+    /// As [`Multiplexer::tell`].
+    async fn tell_screen(
+        &mut self,
+        pane: PaneId,
+        screen: SerializedScreen,
+    ) -> Result<(), MultiplexerError> {
+        let message = ToClient::Screen {
+            pane,
+            sequence: screen.sequence,
+            columns: screen.columns,
+            rows: screen.rows,
+            bytes: screen.bytes,
+        };
+        match encode_to_client(&message) {
+            Ok(payload) => {
+                self.sink.send(CHANNEL_CONTROL, &payload).await?;
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(pane = pane.0, %error, "a screen was sent cleared");
+                self.tell(&ToClient::Screen {
+                    pane,
+                    sequence: screen.sequence,
+                    columns: screen.columns,
+                    rows: screen.rows,
+                    bytes: CLEARED_SCREEN.to_vec(),
+                })
+                .await
+            }
+        }
+    }
+
     /// Sends the whole model, which is what a client gets instead of deltas it
     /// has missed.
     ///
@@ -293,15 +334,9 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
                     sequence: screen.sequence,
                 })
                 .await?;
-                self.tell(&ToClient::Screen {
-                    pane,
-                    sequence: screen.sequence,
-                    columns: screen.columns,
-                    rows: screen.rows,
-                    bytes: screen.bytes,
-                })
-                .await?;
-                screen.sequence
+                let sequence = screen.sequence;
+                self.tell_screen(pane, screen).await?;
+                sequence
             }
         };
         let mut cursor = Cursor::new(pane, channel, sequence);
@@ -760,16 +795,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             sequence: screen.sequence,
         })
         .await?;
-        self.tell(&ToClient::Screen {
-            pane,
-            sequence: screen.sequence,
-            columns: screen.columns,
-            rows: screen.rows,
-            bytes: screen.bytes,
-        })
-        .await?;
+        let sequence = screen.sequence;
+        self.tell_screen(pane, screen).await?;
         if let Some(cursor) = self.cursors.get_mut(&pane) {
-            cursor.sequence = screen.sequence;
+            cursor.sequence = sequence;
             cursor.stale = false;
         }
         Ok(())
