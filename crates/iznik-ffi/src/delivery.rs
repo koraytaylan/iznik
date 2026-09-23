@@ -227,7 +227,12 @@ pub(crate) fn to_the_pane(watching: &Attached, event: &ManagerEvent) -> bool {
     match event {
         ManagerEvent::Bytes { bytes, .. } => match watching.callbacks.output {
             Some(output) => {
-                output(context, held_or_null(bytes), bytes.len());
+                output(
+                    context,
+                    held_or_null(bytes),
+                    bytes.len(),
+                    shape::answered_of(event),
+                );
                 true
             }
             None => false,
@@ -328,6 +333,7 @@ pub(crate) fn carry(
         command_id: shaped.command,
         payload: held_or_null(&shaped.payload),
         payload_length: shaped.payload.len(),
+        answered_length: shaped.answered,
     };
     callback(&raw const held, context.0);
 }

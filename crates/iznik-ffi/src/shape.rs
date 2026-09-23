@@ -6,7 +6,7 @@
 //! and which command. Nothing here touches a pointer — the crate root puts
 //! what this decides into the C struct and makes the call.
 
-use iznik_client::host::manager::ManagerEvent;
+use iznik_client::host::manager::{ManagerEvent, answered_length};
 use iznik_client::reduce::Notification;
 use iznik_protocol::message::{ToClient, encode_to_client};
 
@@ -33,6 +33,9 @@ pub(crate) struct Shaped {
     pub generation: u64,
     /// The command it answers, or zero.
     pub command: u64,
+    /// How many leading bytes of a pane's output carry queries the host
+    /// already answered, or zero.
+    pub answered: usize,
 }
 
 /// Everything one event carries, or nothing when it is not one to hand over.
@@ -48,7 +51,22 @@ pub(crate) fn shaped(event: &ManagerEvent) -> Option<Shaped> {
         rows: sized(event).1,
         generation: generation_of(event),
         command: command_of(event),
+        answered: answered_of(event),
     })
+}
+
+/// How many leading bytes of a pane's output the host already answered the
+/// queries of; zero for every other event.
+pub(crate) fn answered_of(event: &ManagerEvent) -> usize {
+    match event {
+        ManagerEvent::Bytes {
+            sequence,
+            answered_through,
+            bytes,
+            ..
+        } => answered_length(*sequence, *answered_through, bytes.len()),
+        _otherwise => 0,
+    }
 }
 
 /// What kind an event is, whose host it is about, and the bytes it carries.

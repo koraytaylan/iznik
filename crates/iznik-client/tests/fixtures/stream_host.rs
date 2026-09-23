@@ -131,6 +131,7 @@ async fn deliver(
             pane,
             channel,
             sequence,
+            answered_through: None,
         },
     )
     .await?;

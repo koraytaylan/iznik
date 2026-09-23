@@ -259,6 +259,10 @@ fn to_client(value: &Value) -> Result<ToClient, Failure> {
             pane: PaneId(integer_field(&fields, "pane")?),
             channel: narrow_field(&fields, "channel")?,
             sequence: Sequence(integer_field(&fields, "sequence")?),
+            answered_through: fields
+                .get("answered_through")
+                .map(|_present| integer_field(&fields, "answered_through").map(Sequence))
+                .transpose()?,
         },
         "PaneDetached" => ToClient::PaneDetached {
             pane: PaneId(integer_field(&fields, "pane")?),

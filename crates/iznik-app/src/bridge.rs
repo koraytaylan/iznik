@@ -496,6 +496,7 @@ impl EngineBridge {
                 sequence,
                 bytes,
                 receipt,
+                ..
             } => VtCommand::Feed {
                 key: PaneKey {
                     host: host.clone(),

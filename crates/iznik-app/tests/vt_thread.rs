@@ -300,6 +300,7 @@ fn hosts_keep_independent_sequences_and_screen_replay_has_no_effects() {
             host: key().host,
             pane: key().pane,
             sequence: Sequence(50),
+            answered_through: Sequence(0),
             bytes: b"first".to_vec(),
             receipt: None,
         },

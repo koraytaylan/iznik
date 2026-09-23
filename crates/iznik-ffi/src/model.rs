@@ -182,6 +182,13 @@ pub struct Event {
     pub payload: *const u8,
     /// How many of them there are.
     pub payload_length: usize,
+    /// For `PaneBytes`, how many of the payload's leading bytes carry
+    /// terminal queries the host has already answered; zero otherwise.
+    ///
+    /// **Obligation:** feed them to your emulator like the rest, but do not
+    /// send the answers it produces from them — the program has had them
+    /// once, and a second answer arrives as input it never asked for.
+    pub answered_length: usize,
 }
 
 /// What iznik calls when something happens.

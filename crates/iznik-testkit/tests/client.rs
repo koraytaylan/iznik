@@ -329,6 +329,7 @@ async fn it_records_pane_bytes_and_deltas_in_order() {
             pane: PANE,
             channel,
             sequence: Sequence(0),
+            answered_through: None,
         };
         server
             .send(CHANNEL_CONTROL, &encode_to_client(&announcement)?)
@@ -466,6 +467,7 @@ async fn it_returns_credit_and_acknowledges_detachment_when_asked() {
                 pane: PANE,
                 channel,
                 sequence: Sequence(0),
+                answered_through: None,
             };
             server
                 .send(CHANNEL_CONTROL, &encode_to_client(&announcement)?)
@@ -646,6 +648,7 @@ async fn it_keeps_each_channel_to_the_pane_it_was_told_of() {
             pane: PANE,
             channel,
             sequence,
+            answered_through: None,
         };
 
         server

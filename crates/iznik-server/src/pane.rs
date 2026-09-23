@@ -13,6 +13,13 @@
 //! program's terminal queries only while no client is subscribed, because an
 //! attached client's own emulator answers; the task writes those answers back to
 //! the child's input after each fed chunk.
+//!
+//! Which side answers is decided per byte, at the moment the mirror is fed it,
+//! and the task remembers how far the mirror has answered: every byte before
+//! that sequence had its queries answered here. A subscription is told that
+//! sequence at the very instant it begins — in the same turn of the task, with
+//! the screen when one is asked for — so a client that is then sent older
+//! bytes knows its own answers to them would be second ones.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -163,8 +170,15 @@ enum Request {
         /// The new height in rows.
         rows: u16,
     },
-    /// A client subscribed, so the mirror stops answering the child's queries.
-    Subscribe,
+    /// A client subscribed, so the mirror stops answering the child's queries;
+    /// answered with where the mirror's own answering stopped and, when asked
+    /// for, the screen at that same instant.
+    Subscribe {
+        /// Whether to serialize the screen in the same turn.
+        screen: bool,
+        /// Where the answer goes.
+        reply: oneshot::Sender<Result<Begun, ScreenError>>,
+    },
     /// A client unsubscribed.
     Unsubscribe,
 }
@@ -182,6 +196,31 @@ impl Drop for Subscription {
     fn drop(&mut self) {
         let _sent = self.requests.send(Request::Unsubscribe);
     }
+}
+
+/// What the VT task says when a subscription begins.
+#[derive(Debug)]
+struct Begun {
+    /// Every byte before this had its queries answered by the mirror.
+    answered_through: Sequence,
+    /// The screen at the same instant, when it was asked for.
+    screen: Option<SerializedScreen>,
+}
+
+/// A subscription that has begun: the guard that keeps it, how far the mirror
+/// had answered the child's queries when it began, and the screen at that
+/// instant when one was asked for.
+#[derive(Debug)]
+pub struct Attachment {
+    /// Held for as long as the client watches the pane.
+    pub subscription: Subscription,
+    /// The mirror answered every terminal query in the bytes before this
+    /// sequence, and answers none after it while the subscription lives. A
+    /// client sent bytes from before it must not answer their queries again.
+    pub answered_through: Sequence,
+    /// The screen, exact at the moment the subscription began — so no chunk
+    /// the mirror was fed silently falls between the two.
+    pub screen: Option<SerializedScreen>,
 }
 
 /// A pane: a pseudoterminal with a login shell, mirrored and observed, its
@@ -432,12 +471,36 @@ impl Pane {
     }
 
     /// Registers a client subscription, so the pane stops answering the child's
-    /// terminal queries itself until the subscription is dropped.
-    #[must_use]
-    pub fn subscribe(&self) -> Subscription {
-        let _sent = self.requests.send(Request::Subscribe);
-        Subscription {
+    /// terminal queries itself until the subscription is dropped, and says
+    /// how far it had answered them — with the screen at that same instant
+    /// when `screen` asks for it.
+    ///
+    /// # Errors
+    ///
+    /// [`PaneError::Screen`] when the screen was asked for and cannot be
+    /// serialized, and [`PaneError::Gone`] when the mirror thread has ended.
+    /// Either way nothing stays subscribed.
+    pub async fn subscribe(&self, screen: bool) -> Result<Attachment, PaneError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.requests
+            .send(Request::Subscribe {
+                screen,
+                reply: reply_tx,
+            })
+            .map_err(|_send| PaneError::Gone)?;
+        // Made before the answer is awaited: a caller that gives up, or an
+        // answer that is a refusal, drops it and takes the count back down.
+        let subscription = Subscription {
             requests: self.requests.clone(),
+        };
+        match reply_rx.await {
+            Ok(Ok(begun)) => Ok(Attachment {
+                subscription,
+                answered_through: begun.answered_through,
+                screen: begun.screen,
+            }),
+            Ok(Err(source)) => Err(PaneError::Screen(source)),
+            Err(_recv) => Err(PaneError::Gone),
         }
     }
 
@@ -627,6 +690,7 @@ impl VtTask {
         let mut screen_state = ScreenState::new();
         let mut prompts = 0_u64;
         let mut subscribers = 0_usize;
+        let mut answered_through = Sequence(0);
         let mut requests_open = true;
         let mut exit_open = true;
         let mut ending: Option<tokio::time::Instant> = None;
@@ -647,9 +711,11 @@ impl VtTask {
                         mirror.resize(width, height);
                         publish(state, &history, &mirror, false, prompts);
                     }
-                    Some(Request::Subscribe) => {
+                    Some(Request::Subscribe { screen, reply }) => {
                         subscribers = subscribers.saturating_add(1);
                         mirror.set_subscriber_count(subscribers);
+                        let begun = begin(&mirror, &screen_state, &history, screen, answered_through);
+                        let _sent = reply.send(begun);
                     }
                     Some(Request::Unsubscribe) => {
                         subscribers = subscribers.saturating_sub(1);
@@ -680,6 +746,9 @@ impl VtTask {
                             &responses,
                         );
                         prompts = prompts.saturating_add(prompted);
+                        if subscribers == 0 {
+                            answered_through = newest_of(&history);
+                        }
                         publish(state, &history, &mirror, false, prompts);
                     }
                     None => break,
@@ -698,6 +767,30 @@ impl Drop for EndsExited {
     fn drop(&mut self) {
         self.0.send_modify(|state| state.exited = true);
     }
+}
+
+/// What a subscription is told as it begins: how far the mirror answered,
+/// and the screen at this instant when it was asked for.
+///
+/// # Errors
+///
+/// The serializer's, when the screen was asked for and cannot be made.
+fn begin(
+    mirror: &Mirror,
+    screen_state: &ScreenState,
+    history: &Arc<Mutex<PaneHistory>>,
+    screen: bool,
+    answered_through: Sequence,
+) -> Result<Begun, ScreenError> {
+    let screen = if screen {
+        Some(screen_state.serialize(mirror, newest_of(history))?)
+    } else {
+        None
+    };
+    Ok(Begun {
+        answered_through,
+        screen,
+    })
 }
 
 /// The newest sequence the history holds.

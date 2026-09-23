@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use iznik_protocol::command::CommandOutcome;
+use iznik_protocol::identity::Sequence;
 use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client};
 
 use crate::commands::{abandoned, confirm, withdraw};
@@ -137,12 +138,16 @@ fn carried(
             return Err(detail);
         }
     };
+    let answered_through = model
+        .host(host)
+        .map_or(Sequence(0), |view| view.answered_through(pane));
     let _nothing = arrived(&mut model, host, received.channel, received.payload.len());
     drop(model);
     shared.publish(&ManagerEvent::Bytes {
         host: host.clone(),
         pane,
         sequence,
+        answered_through,
         bytes: received.payload.clone(),
         receipt: Some(receipt),
     });

@@ -183,8 +183,12 @@ pub fn reduce(model: &mut ClientModel, host: &HostId, message: &ToClient) -> Vec
             pane,
             channel,
             sequence,
+            answered_through,
         } => {
             let _opened = view.subscribe(*pane, *channel, *sequence);
+            let _before = view
+                .answered
+                .insert(*pane, answered_through.unwrap_or(Sequence(0)));
             Vec::new()
         }
         ToClient::PaneDetached { pane, channel } => {

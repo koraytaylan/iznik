@@ -140,6 +140,7 @@ async fn one_connection(
                     pane,
                     channel: CHANNEL,
                     sequence: Sequence(0),
+                    answered_through: None,
                 }]
             }
             _otherwise => Vec::new(),

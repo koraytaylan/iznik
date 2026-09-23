@@ -632,6 +632,7 @@ impl<Stream: Duplex> TestClient<Stream> {
                 pane,
                 channel,
                 sequence,
+                ..
             } => {
                 let _carried = self.channels.insert(*channel, *pane);
                 let _from = self.starts.insert(*pane, *sequence);

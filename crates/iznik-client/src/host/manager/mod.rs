@@ -189,6 +189,15 @@ pub enum ManagerEvent {
         pane: PaneId,
         /// The byte the first of these is.
         sequence: Sequence,
+        /// Every terminal query in the pane's bytes before this sequence was
+        /// already answered by the host's own emulator.
+        ///
+        /// An emulator fed these bytes must not send the answers it produces
+        /// from the ones before it — the first `answered_through − sequence`
+        /// of them, when that is positive — because the program has had them
+        /// once. It is only ever ahead of `sequence` for bytes a resume sends
+        /// again; a live stream starts at or past it.
+        answered_through: Sequence,
         /// What arrived.
         bytes: Vec<u8>,
         /// Delivery-bound credit for these bytes. Engine deliveries always carry it;
@@ -202,6 +211,15 @@ pub enum ManagerEvent {
         /// The host.
         host: HostId,
     },
+}
+
+/// How many of the `length` bytes starting at `sequence` come before
+/// `answered_through`: the leading bytes of a delivery whose terminal queries
+/// the host already answered, and whose answers an emulator must not send.
+#[must_use]
+pub fn answered_length(sequence: Sequence, answered_through: Sequence, length: usize) -> usize {
+    let before = answered_through.0.saturating_sub(sequence.0);
+    usize::try_from(before).map_or(length, |before| before.min(length))
 }
 
 /// What an operation asks a host's own task to do.

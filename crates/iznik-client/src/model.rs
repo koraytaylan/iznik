@@ -150,6 +150,13 @@ pub struct HostView {
     /// in one daemon's pane and in no other's: a connection that reaches a
     /// different instance resumes nothing.
     pub instance: Option<DaemonInstance>,
+    /// For each subscribed pane, the sequence before which the host's own
+    /// emulator answered every terminal query, as its latest `PaneChannel`
+    /// said — zero when the host did not say.
+    ///
+    /// Bytes before it may still be sent, on a resume; an emulator fed them
+    /// must not send its answers, because the program has had them once.
+    pub answered: BTreeMap<PaneId, Sequence>,
 }
 
 impl Default for HostView {
@@ -175,6 +182,7 @@ impl HostView {
             minted: CommandId(0),
             capabilities: Capabilities::from_bits(0),
             instance: None,
+            answered: BTreeMap::new(),
         }
     }
 
@@ -199,6 +207,7 @@ impl HostView {
             for held in self.subscriptions.values_mut() {
                 *held = Subscription::opened(NO_CHANNEL, Sequence(0));
             }
+            self.answered.clear();
         }
         changed
     }
@@ -283,10 +292,18 @@ impl HostView {
     /// Drops the subscription to `pane`, and says what it was.
     pub fn unsubscribe(&mut self, pane: PaneId) -> Option<Subscription> {
         let dropped = self.subscriptions.remove(&pane);
+        let _answered = self.answered.remove(&pane);
         if self.focus == Some(pane) {
             self.focus = None;
         }
         dropped
+    }
+
+    /// The sequence before which the host answered `pane`'s terminal queries
+    /// itself, as far as it has said: zero when it has not.
+    #[must_use]
+    pub fn answered_through(&self, pane: PaneId) -> Sequence {
+        self.answered.get(&pane).copied().unwrap_or(Sequence(0))
     }
 
     /// The pending command with this number.

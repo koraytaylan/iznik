@@ -48,6 +48,7 @@ fn deliver(thread: &VtThread, receipt: &CreditReceipt) -> Result<TerminalSnapsho
             sequence: Sequence(0),
             bytes: OUTPUT.to_vec(),
             receipt: Some(receipt.clone()),
+            answered_through: Sequence(0),
         },
         &TerminalTheme::default(),
     )?;

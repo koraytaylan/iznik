@@ -117,7 +117,11 @@ around them is explanation.
 
 The pane's `output` callback:
 
-> **Obligation:** the bytes are valid for this call only. Feed them to a surface before returning; do not keep the pointer.
+> **Obligation:** the bytes are valid for this call only. Feed them to a surface before returning; do not keep the pointer. Feed the first `answered` of them too, but do not send the answers your emulator produces from those: the program has had them once.
+
+The `answered_length` of an `IZNIK_EVENT_KIND_PANE_BYTES` event:
+
+> **Obligation:** feed them to your emulator like the rest, but do not send the answers it produces from them — the program has had them once, and a second answer arrives as input it never asked for.
 
 The pane's `screen` callback:
 
@@ -313,6 +317,22 @@ had typed it. That is what makes the answer describe *your* surface.
 When nobody is attached, the host's own emulator answers, so a program does
 not hang waiting for a reply that no one is there to give.
 
+**Never answer twice.** After a dropped link, iznik resumes a pane from the
+byte you hold, and the bytes it sends again may include queries the host
+already answered while nobody was attached. Each delivery says how many of its
+leading bytes those are: `answered` in the `output` callback, and
+`answered_length` in an `IZNIK_EVENT_KIND_PANE_BYTES` event. Feed them to your
+emulator like the rest — its screen must be right — but throw away the answers
+it produces while doing so, and forward only the answers it produces from the
+bytes after them. When `answered` is zero, which is almost always, there is
+nothing to split. Answer nothing your emulator produces while feeding a
+screen: a screen is a picture, not the program asking.
+
+In Rust, `ManagerEvent::Bytes` carries the same thing as `answered_through`, a
+sequence: the leading `answered_through − sequence` bytes, when that is
+positive, are the ones whose answers are not sent;
+`iznik_client::host::manager::answered_length` computes the count.
+
 ### Marks
 
 `IZNIK_EVENT_KIND_MARK` carries shell-integration events: a prompt beginning,
@@ -462,10 +482,15 @@ static void on_screen(void *context, uint64_t sequence, uint16_t columns,
     (void)sequence;
 }
 
-static void on_output(void *context, const uint8_t *bytes, size_t length) {
+static void on_output(void *context, const uint8_t *bytes, size_t length,
+                      size_t answered) {
     struct surface *held = context;
-    /* Valid for this call only. Feed it now; do not keep the pointer. */
-    surface_feed(held, bytes, length);
+    /* Valid for this call only. Feed it now; do not keep the pointer.
+     * The first `answered` bytes carry queries the host already answered:
+     * feed them, and throw away whatever your emulator answers to them. */
+    surface_feed(held, bytes, answered);
+    surface_discard_responses(held);
+    surface_feed(held, bytes + answered, length - answered);
 
     /* Your emulator may have produced an answer to a query the program
      * asked. Forward it as if the person had typed it. */

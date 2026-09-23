@@ -57,6 +57,13 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
                 .any(|window| window == needle))
 }
 
+/// Where `needle` first begins in `haystack`, if it does.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 /// The next mark whose kind matches, within [`DEADLINE`], or `None` if the
 /// deadline passes or the stream closes first.
 async fn wait_kind(
@@ -275,14 +282,33 @@ async fn pane_answers_queries_only_without_subscribers() {
         .await
         .expect("it finishes");
 
-    let subscription = pane.subscribe();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let attachment = pane.subscribe(false).await.expect("the pane subscribes");
+    let first_query = find(
+        &pane.read_history(Sequence(0)).expect("history"),
+        b"<<first:",
+    )
+    .expect("the first probe printed");
+    assert!(
+        attachment.answered_through.0 >= u64::try_from(first_query).expect("fits"),
+        "the subscription is told the mirror answered the first probe's query"
+    );
+    assert!(attachment.screen.is_none(), "no screen was asked for");
     pane.input(b"probe second\n".to_vec())
         .expect("the second probe runs");
     wait_kind(&mut marks, is_finished)
         .await
         .expect("it finishes");
-    drop(subscription);
+    let second = pane.subscribe(true).await.expect("a second subscriber");
+    assert_eq!(
+        second.answered_through, attachment.answered_through,
+        "nothing fed while a client was subscribed counts as answered by the mirror"
+    );
+    assert!(
+        second.screen.is_some(),
+        "the screen asked for comes with it"
+    );
+    drop(second);
+    drop(attachment.subscription);
 
     let history = pane.read_history(Sequence(0)).expect("history from zero");
     assert!(

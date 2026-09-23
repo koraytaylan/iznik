@@ -53,7 +53,8 @@ const CAPABILITIES: Capabilities = Capabilities::from_bits(
     Capabilities::ZSTD.bits()
         | Capabilities::RESUME.bits()
         | Capabilities::REORDER_SESSIONS.bits()
-        | Capabilities::INSTANCE.bits(),
+        | Capabilities::INSTANCE.bits()
+        | Capabilities::ANSWERED.bits(),
 );
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
@@ -284,20 +285,18 @@ where
             spoken: protocol_version,
         });
     }
-    // The instance goes only to a client that said it can read it: an older
-    // one refuses a `Hello` longer than the fields it knows, and would never
-    // connect. Such a client is told the capability is absent too, so what it
-    // was sent and what it was told agree.
-    let named = capabilities.contains(Capabilities::INSTANCE);
+    // A field a capability appends goes only to a client that said it can
+    // read it: an older one refuses a message longer than the fields it
+    // knows, and would never connect. Such a client is told the capability is
+    // absent too, so what it is sent and what it was told agree.
+    let unreadable = Capabilities::APPENDED.bits() & !capabilities.bits();
     let reply = ToClient::Hello {
         protocol_version: PROTOCOL_VERSION,
         server_version: SERVER_VERSION.to_owned(),
-        capabilities: if named {
-            CAPABILITIES
-        } else {
-            Capabilities::from_bits(CAPABILITIES.bits() & !Capabilities::INSTANCE.bits())
-        },
-        instance: named.then_some(instance),
+        capabilities: Capabilities::from_bits(CAPABILITIES.bits() & !unreadable),
+        instance: capabilities
+            .contains(Capabilities::INSTANCE)
+            .then_some(instance),
     };
     link.send(CHANNEL_CONTROL, &encode_to_client(&reply)?)
         .await?;
@@ -349,14 +348,15 @@ where
     else {
         return Ok(());
     };
+    let answering = greeted.capabilities.contains(Capabilities::ANSWERED);
     if offers_zstd(greeted.capabilities) && offers_zstd(CAPABILITIES) {
         let (plain, leftover) = greeted.link.into_parts();
         let link = compressed(plain, leftover).map_err(|error| ConnectionError::Compression {
             detail: error.to_string(),
         })?;
-        return run(link, registry).await;
+        return run(link, registry, answering).await;
     }
-    run(greeted.link, registry).await
+    run(greeted.link, registry, answering).await
 }
 
 /// The three tasks, running until the client goes.
@@ -367,6 +367,7 @@ where
 async fn run<Stream>(
     link: FramedLink<Stream>,
     registry: Arc<RwLock<Registry>>,
+    answering: bool,
 ) -> Result<(), ConnectionError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -378,7 +379,10 @@ where
         let held = registry.read().await;
         (held.deltas(), held.attach_client())
     };
-    let multiplexer = Multiplexer::new(Arc::clone(&registry), Handoff { frames }, deltas);
+    let mut multiplexer = Multiplexer::new(Arc::clone(&registry), Handoff { frames }, deltas);
+    if answering {
+        multiplexer.announce_answered();
+    }
     let writing: JoinHandle<Result<(), ConnectionError>> =
         tokio::spawn(write_frames(writer, queued));
     let pumping: JoinHandle<Result<(), ConnectionError>> =

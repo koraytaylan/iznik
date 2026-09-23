@@ -55,7 +55,7 @@ const WAITED: Duration = Duration::from_millis(100);
 struct Dawdling(Mutex<usize>);
 
 /// A handler that takes its time.
-extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize) {
+extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize, _answered: usize) {
     if context.is_null() {
         return;
     }
@@ -94,7 +94,7 @@ struct Left {
 /// The one call that must not wait for the call it is inside: waiting for a
 /// handler is what lets an application free what it gave, and a handler doing
 /// it to itself would wait for ever.
-extern "C" fn leaves(context: *mut c_void, _bytes: *const u8, _length: usize) {
+extern "C" fn leaves(context: *mut c_void, _bytes: *const u8, _length: usize, _answered: usize) {
     if context.is_null() {
         return;
     }

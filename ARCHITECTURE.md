@@ -257,6 +257,20 @@ left waiting; a subscribed client's emulator answers through `Input`, because
 only the real terminal knows its real colors and capabilities. When several
 clients subscribe to one pane, each answers; the contract documents that.
 
+Which side answers is decided per byte, as the mirror is fed it, and each
+query is answered once and in real time or not at all. The pane's task
+remembers how far its own answering went, and a subscription is told that
+sequence in the same turn it begins — with the screen, when it starts from
+one, so no chunk is folded silently into a screen between the two. The
+client is told it in `PaneChannel` and must not answer queries in bytes before
+it, which a resume after a dropped link sends again. A background channel that
+goes stale lets its pane go, so the mirror answers in real time until the
+catch-up subscribes again; bytes nobody live saw — skipped by a screen, or
+lost between falling behind and being let go — carry queries nobody answers,
+because an answer that arrives seconds late reaches the program as input it
+never asked for. [protocol.md](docs/notes/protocol.md) §10 states the rule for
+a second implementation.
+
 **Confirmed, not assumed.** How `libghostty-vt` 0.2.1 actually behaves — which
 queries it answers through `on_pty_write` and which through dedicated effects,
 that its `osc::Parser` panics on untrusted input so the observer parses OSC

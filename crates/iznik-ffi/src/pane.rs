@@ -28,11 +28,16 @@ use crate::{Client, DONE, borrowed, code_of, host_named, layer_of};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PaneCallbacks {
-    /// A pane's bytes, where they are.
+    /// A pane's bytes, where they are, and how many of the leading ones carry
+    /// terminal queries the host has already answered.
     ///
     /// **Obligation:** the bytes are valid for this call only. Feed them to a
-    /// surface before returning; do not keep the pointer.
-    pub output: Option<extern "C" fn(context: *mut c_void, bytes: *const u8, length: usize)>,
+    /// surface before returning; do not keep the pointer. Feed the first
+    /// `answered` of them too, but do not send the answers your emulator
+    /// produces from those: the program has had them once.
+    pub output: Option<
+        extern "C" fn(context: *mut c_void, bytes: *const u8, length: usize, answered: usize),
+    >,
     /// The pane's screen, as the bytes that reproduce it at `sequence`.
     ///
     /// **Obligation:** reset the surface to `columns` by `rows` and feed it

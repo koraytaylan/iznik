@@ -419,6 +419,7 @@ fn model_routing(context: &mut TestAppContext) -> Result<(), Failed> {
             sequence: Sequence(0),
             bytes: bytes.to_vec(),
             receipt: None,
+            answered_through: Sequence(0),
         },
     )?;
     let sequence = Sequence(u64::try_from(bytes.len())?);

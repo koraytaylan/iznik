@@ -266,6 +266,14 @@ pub enum ToClient {
         channel: u8,
         /// The sequence of the first byte the channel will carry.
         sequence: Sequence,
+        /// Every terminal query in the bytes before this sequence was answered
+        /// by the host's own emulator, when the client asked to be told.
+        ///
+        /// Appended after the sequence, and only for a client whose `Hello`
+        /// carried [`Capabilities::ANSWERED`]; a decoder reads it when eight
+        /// more bytes follow. A client that is sent bytes from before it must
+        /// not send its own emulator's answers to them.
+        answered_through: Option<Sequence>,
     },
     /// Output for the pane has stopped on that channel.
     PaneDetached {
@@ -643,10 +651,14 @@ fn put_to_client(sink: &mut dyn Sink, message: &ToClient) {
             pane,
             channel,
             sequence,
+            answered_through,
         } => {
             put_pane(sink, client_tag::PANE_CHANNEL, *pane);
             sink.put(&[*channel]);
             sink.put(&sequence.0.to_le_bytes());
+            if let Some(answered) = answered_through {
+                sink.put(&answered.0.to_le_bytes());
+            }
         }
         ToClient::PaneDetached { pane, channel } => {
             put_pane(sink, client_tag::PANE_DETACHED, *pane);
@@ -829,6 +841,11 @@ pub fn decode_to_client(payload: &[u8]) -> Result<ToClient, MessageError> {
             pane: PaneId(u64::from_le_bytes(reader.array()?)),
             channel: reader.byte()?,
             sequence: Sequence(u64::from_le_bytes(reader.array()?)),
+            answered_through: if reader.exhausted() {
+                None
+            } else {
+                Some(Sequence(u64::from_le_bytes(reader.array()?)))
+            },
         },
         client_tag::PANE_DETACHED => ToClient::PaneDetached {
             pane: PaneId(u64::from_le_bytes(reader.array()?)),

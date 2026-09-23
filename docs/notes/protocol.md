@@ -126,7 +126,7 @@ which the codec does not police".
 | `Snapshot` | `client_tag::SNAPSHOT` | 1 | `generation`, `bytes` payload (§7) |
 | `Delta` | `client_tag::DELTA` | 2 | `generation`, `bytes` payload (§8) |
 | `CommandResult` | `client_tag::COMMAND_RESULT` | 3 | `id` command id, `bytes` payload (§6.3) |
-| `PaneChannel` | `client_tag::PANE_CHANNEL` | 4 | `id` pane, `u8` channel, `sequence` first byte the channel carries |
+| `PaneChannel` | `client_tag::PANE_CHANNEL` | 4 | `id` pane, `u8` channel, `sequence` first byte the channel carries, then *(capability `ANSWERED`)* `sequence` before which the host answered every query |
 | `PaneDetached` | `client_tag::PANE_DETACHED` | 5 | `id` pane, `u8` channel |
 | `Screen` | `client_tag::SCREEN` | 6 | `id` pane, `sequence`, `u16` columns, `u16` rows, `bytes` VT bytes |
 | `Mark` | `client_tag::MARK` | 7 | `id` pane, `sequence`, mark kind (§5.2) |
@@ -134,7 +134,8 @@ which the codec does not police".
 | `Error` | `client_tag::ERROR` | 9 | `u8` error code (§5.1), `bytes` message |
 
 *Fixtures:* `message.jsonl`, "Hello reply with both known capabilities"
-through "Error with an empty message"; "a daemon instance cut short".
+through "Error with an empty message"; "a daemon instance cut short" and "an
+answered-through sequence cut short".
 
 ### 5.1 Error codes
 
@@ -400,6 +401,25 @@ bytes, it delivers truth instead. A `Screen` is VT bytes — feed them to a
 terminal emulator sized to the `columns` and `rows` it carries and it
 reproduces the pane, scrollback included.
 
+**Terminal queries are answered once, in real time, by whichever end is
+live.** A program asks its terminal things — the cursor's position, what it
+can do — and somebody must answer. The host's own emulator answers every query
+in the bytes it is fed while no client is subscribed to the pane, or while the
+only subscriber is a stale one the server has stopped streaming to; otherwise
+the subscribed client's emulator answers, with `Input`, because only it knows
+the real terminal. The host remembers how far its own answering went, and a
+client whose `Hello` carried `ANSWERED` is told, at the end of every
+`PaneChannel`, the sequence before which the host answered everything —
+decided in the same instant the subscription began, and together with the
+`Screen` when there is one, so no byte falls between the two. A client must
+not send the answers its emulator produces from bytes before that sequence: a
+`Resume` sends such bytes again after a link drop, and a second answer reaches
+the program as input it never asked for. Bytes that nobody live saw — the ones
+a client skipped by being sent a `Screen` it asked for, or by falling stale
+before the server let the pane go — carry queries nobody answers, which is
+better than an answer arriving late. A `Screen` is a reconstruction, never
+queries: a client answers nothing its emulator produces while feeding one.
+
 `Unsubscribe` is answered with `PaneDetached { pane, channel }`, and so is a
 subscribed pane whose child exits. **The channel number is not free until the
 client sends `ChannelReleased { channel }`**: a frame already in flight when
@@ -474,6 +494,7 @@ Capabilities are a `u32` bit set:
 | `RESUME` | 1 | 2 |
 | `REORDER_SESSIONS` | 2 | 4 |
 | `INSTANCE` | 4 | 16 |
+| `ANSWERED` | 5 | 32 |
 
 Bit 3 is unassigned.
 

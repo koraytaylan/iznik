@@ -113,6 +113,9 @@ pub struct Multiplexer<Sink: FrameSink> {
     turn: usize,
     /// The one frame's worth of pane bytes the pump owns.
     frame: Vec<u8>,
+    /// Whether the client asked to be told, in each `PaneChannel`, how far
+    /// the host answered a pane's terminal queries itself.
+    answering: bool,
 }
 
 impl<Sink: FrameSink> Drop for Multiplexer<Sink> {
@@ -148,6 +151,31 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             focused: None,
             turn: 0,
             frame: Vec::new(),
+            answering: false,
+        }
+    }
+
+    /// Tells the client, in every `PaneChannel` from now on, how far the host
+    /// answered the pane's terminal queries itself — what a client whose
+    /// `Hello` carried `ANSWERED` is owed, and one that did not cannot read.
+    pub fn announce_answered(&mut self) {
+        self.answering = true;
+    }
+
+    /// The `PaneChannel` that starts a stream at `sequence`, carrying how far
+    /// the host had answered when the subscription began if the client asked.
+    fn pane_channel(
+        &self,
+        pane: PaneId,
+        channel: u8,
+        sequence: Sequence,
+        answered_through: Sequence,
+    ) -> ToClient {
+        ToClient::PaneChannel {
+            pane,
+            channel,
+            sequence,
+            answered_through: self.answering.then_some(answered_through),
         }
     }
 
@@ -287,7 +315,18 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
 
         // Held before the first byte is read, so the pane stops answering a
         // program's terminal queries itself: this client's emulator answers.
-        self.subscriptions.insert(pane, held.subscribe());
+        // Begun in one turn of the pane's task with the screen, when there is
+        // one, so no chunk the mirror is fed silently falls between the two
+        // and is folded into the screen with nobody having answered it.
+        let attachment = held
+            .subscribe(matches!(plan, StartPlan::Screen { .. }))
+            .await
+            .map_err(|error| MultiplexerError::Pane {
+                pane,
+                detail: error.to_string(),
+            })?;
+        let answered_through = attachment.answered_through;
+        self.subscriptions.insert(pane, attachment.subscription);
         self.marks.insert(pane, held.marks());
         let mut changes = held.state_updates();
         let wake = Arc::clone(&self.wake);
@@ -303,36 +342,27 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             replaced.abort();
         }
 
-        let sequence = match plan {
-            StartPlan::Continue { from } => {
-                self.tell(&ToClient::PaneChannel {
-                    pane,
-                    channel,
-                    sequence: from,
-                })
-                .await?;
+        let sequence = match (plan, attachment.screen) {
+            (StartPlan::Continue { from }, _screen) => {
+                let announced = self.pane_channel(pane, channel, from, answered_through);
+                self.tell(&announced).await?;
                 from
             }
-            StartPlan::Screen { at: _asked } => {
-                // Serialized first: the mirror can advance between deciding
-                // and serializing, and what the channel announces has to be
-                // where the bytes that follow actually begin.
-                let screen = held
-                    .screen()
-                    .await
-                    .map_err(|error| MultiplexerError::Pane {
-                        pane,
-                        detail: error.to_string(),
-                    })?;
-                self.tell(&ToClient::PaneChannel {
-                    pane,
-                    channel,
-                    sequence: screen.sequence,
-                })
-                .await?;
+            // Serialized first: the mirror can advance between deciding and
+            // serializing, and what the channel announces has to be where the
+            // bytes that follow actually begin.
+            (StartPlan::Screen { at: _asked }, Some(screen)) => {
+                let announced = self.pane_channel(pane, channel, screen.sequence, answered_through);
+                self.tell(&announced).await?;
                 let sequence = screen.sequence;
                 self.tell_screen(pane, screen).await?;
                 sequence
+            }
+            (StartPlan::Screen { .. }, None) => {
+                return Err(MultiplexerError::Pane {
+                    pane,
+                    detail: "the pane began a subscription without the screen asked for".to_owned(),
+                });
             }
         };
         let mut cursor = Cursor::new(pane, channel, sequence);
@@ -740,6 +770,11 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             if let Some(marked) = self.cursors.get_mut(&pane) {
                 marked.stale = true;
             }
+            // A stale cursor is sent none of what the pane says until it is
+            // caught up with a screen, so nobody here would answer a query in
+            // it: the pane is let go, and its mirror answers in real time
+            // until the catch-up subscribes again.
+            let _released = self.subscriptions.remove(&pane);
             behind = true;
         }
         if behind {
@@ -791,19 +826,25 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         let Some(channel) = self.channels.channel_of(pane) else {
             return Err(MultiplexerError::NotSubscribed { pane });
         };
-        let screen = held
-            .screen()
+        // Subscribed again with the screen in one turn of the pane's task, so
+        // the mirror stops answering exactly where the screen is exact.
+        let attachment = held
+            .subscribe(true)
             .await
             .map_err(|error| MultiplexerError::Pane {
                 pane,
                 detail: error.to_string(),
             })?;
-        self.tell(&ToClient::PaneChannel {
-            pane,
-            channel,
-            sequence: screen.sequence,
-        })
-        .await?;
+        let Some(screen) = attachment.screen else {
+            return Err(MultiplexerError::Pane {
+                pane,
+                detail: "the pane began a subscription without the screen asked for".to_owned(),
+            });
+        };
+        let _replaced = self.subscriptions.insert(pane, attachment.subscription);
+        let announced =
+            self.pane_channel(pane, channel, screen.sequence, attachment.answered_through);
+        self.tell(&announced).await?;
         let sequence = screen.sequence;
         self.tell_screen(pane, screen).await?;
         let window = self.full_window(pane);

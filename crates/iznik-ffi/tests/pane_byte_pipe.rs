@@ -115,7 +115,7 @@ struct Watched {
 }
 
 /// The pane's own output, kept where it was handed over.
-extern "C" fn output(context: *mut c_void, bytes: *const u8, length: usize) {
+extern "C" fn output(context: *mut c_void, bytes: *const u8, length: usize, _answered: usize) {
     let Some(watched) = watching(context) else {
         return;
     };

@@ -269,6 +269,7 @@ fn printing() -> Result<Script, Failed> {
         pane: PANE,
         channel: PANE_CHANNEL,
         sequence: Sequence(0),
+        answered_through: None,
     })?;
     let mut on_subscribe = vec![(CHANNEL_CONTROL, announced)];
     on_subscribe.extend(PRINTED.iter().map(|bytes| (PANE_CHANNEL, bytes.to_vec())));
@@ -397,6 +398,7 @@ fn wire_orders_drop_a_host_that_sends_past_its_credit() {
             pane: PANE,
             channel: PANE_CHANNEL,
             sequence: Sequence(0),
+            answered_through: None,
         })?;
         let frame = vec![b'x'; usize::try_from(MAXIMUM_INPUT_LENGTH)?];
         let most = usize::try_from(MAXIMUM_UNRETURNED_BYTES)?;

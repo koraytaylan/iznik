@@ -144,6 +144,7 @@ pub(crate) fn carry_status(
         command_id: 0,
         payload: (&raw const kept.status).cast::<u8>(),
         payload_length: size_of::<HostStatus>(),
+        answered_length: 0,
     };
     callback(&raw const told, context);
 }

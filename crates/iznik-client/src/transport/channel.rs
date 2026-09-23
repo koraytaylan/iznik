@@ -373,11 +373,15 @@ fn offers_zstd(capabilities: Capabilities) -> bool {
     capabilities.bits() & Capabilities::ZSTD.bits() != 0
 }
 
-/// What this client asks for: compression, resuming where it left off, and to
-/// be told which run of the daemon it reached.
+/// What this client asks for: compression, resuming where it left off, to be
+/// told which run of the daemon it reached, and how far the host answered each
+/// pane's terminal queries itself.
 fn wanted() -> Capabilities {
     Capabilities::from_bits(
-        Capabilities::ZSTD.bits() | Capabilities::RESUME.bits() | Capabilities::INSTANCE.bits(),
+        Capabilities::ZSTD.bits()
+            | Capabilities::RESUME.bits()
+            | Capabilities::INSTANCE.bits()
+            | Capabilities::ANSWERED.bits(),
     )
 }
 

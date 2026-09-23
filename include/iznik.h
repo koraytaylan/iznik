@@ -340,6 +340,15 @@ typedef struct {
    * How many of them there are.
    */
   size_t payload_length;
+  /**
+   * For `PaneBytes`, how many of the payload's leading bytes carry
+   * terminal queries the host has already answered; zero otherwise.
+   *
+   * **Obligation:** feed them to your emulator like the rest, but do not
+   * send the answers it produces from them — the program has had them
+   * once, and a second answer arrives as input it never asked for.
+   */
+  size_t answered_length;
 } iznik_event;
 
 /**
@@ -365,12 +374,15 @@ typedef void (*iznik_event_callback)(const iznik_event *event, void *context);
  */
 typedef struct {
   /**
-   * A pane's bytes, where they are.
+   * A pane's bytes, where they are, and how many of the leading ones carry
+   * terminal queries the host has already answered.
    *
    * **Obligation:** the bytes are valid for this call only. Feed them to a
-   * surface before returning; do not keep the pointer.
+   * surface before returning; do not keep the pointer. Feed the first
+   * `answered` of them too, but do not send the answers your emulator
+   * produces from those: the program has had them once.
    */
-  void (*output)(void *context, const uint8_t *bytes, size_t length);
+  void (*output)(void *context, const uint8_t *bytes, size_t length, size_t answered);
   /**
    * The pane's screen, as the bytes that reproduce it at `sequence`.
    *

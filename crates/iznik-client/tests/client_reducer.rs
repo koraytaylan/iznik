@@ -12,6 +12,7 @@ use core::time::Duration;
 use std::time::Instant;
 
 use iznik_client::host::identity::HostId;
+use iznik_client::host::manager::answered_length;
 use iznik_client::model::{ClientModel, HostView, NO_CHANNEL};
 use iznik_client::reduce::{Effect, MAXIMUM_SCREEN_SIDE, Notification, arrived, reduce};
 use iznik_protocol::command::{CommandOutcome, Created, encode_command_outcome};
@@ -218,6 +219,7 @@ fn client_reducer_follows_a_pane_from_its_channel_to_its_screen() {
                 pane: PANE,
                 channel: CHANNEL,
                 sequence: FROM,
+                answered_through: None,
             },
         );
         assert!(opened.is_empty(), "an announcement asks for nothing");
@@ -322,6 +324,7 @@ fn client_reducer_routes_by_host_before_anything_else() {
                 pane: PANE,
                 channel: CHANNEL,
                 sequence: FROM,
+                answered_through: None,
             },
         );
         let _moved = arrived(&mut model, &work(), CHANNEL, ARRIVED);
@@ -471,6 +474,7 @@ fn client_reducer_gives_a_channel_to_one_pane_at_a_time() {
                     pane,
                     channel,
                     sequence: FROM,
+                    answered_through: None,
                 },
             );
         }
@@ -481,6 +485,7 @@ fn client_reducer_gives_a_channel_to_one_pane_at_a_time() {
                 pane: other,
                 channel: CHANNEL,
                 sequence: FROM,
+                answered_through: None,
             },
         );
         let _moved = arrived(&mut model, &host, CHANNEL, ARRIVED);
@@ -559,4 +564,54 @@ fn client_reducer_refuses_a_screen_no_terminal_is() {
         matches!(taken.as_slice(), [Effect::Screen { .. }]),
         "while the largest it allows is taken: {taken:?}"
     );
+}
+
+/// # Panics
+///
+/// When how far the host answered a pane's queries is not kept with its
+/// subscription, not forgotten with it, or not turned into the right count of
+/// leading bytes.
+#[test]
+fn client_reducer_keeps_how_far_the_host_answered() {
+    let case = || -> Result<(), Failed> {
+        let host = work();
+        let mut generator = ModelGenerator::new(SEED);
+        let mut model = knowing(&host, generator.model());
+        let answered = Sequence(FROM.0.saturating_add(10));
+        let _opened = reduce(
+            &mut model,
+            &host,
+            &ToClient::PaneChannel {
+                pane: PANE,
+                channel: CHANNEL,
+                sequence: FROM,
+                answered_through: Some(answered),
+            },
+        );
+        let view = model.host(&host).ok_or("the host is known")?;
+        assert_eq!(view.answered_through(PANE), answered);
+        assert_eq!(
+            answered_length(FROM, answered, ARRIVED),
+            10,
+            "the first ten bytes of a resume carry queries already answered"
+        );
+        assert_eq!(answered_length(answered, answered, ARRIVED), 0);
+        assert_eq!(answered_length(FROM, Sequence(u64::MAX), ARRIVED), ARRIVED);
+        let _detached = reduce(
+            &mut model,
+            &host,
+            &ToClient::PaneDetached {
+                pane: PANE,
+                channel: CHANNEL,
+            },
+        );
+        let after = model.host(&host).ok_or("the host is known")?;
+        assert_eq!(
+            after.answered_through(PANE),
+            Sequence(0),
+            "forgotten with the subscription"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
 }

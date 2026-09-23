@@ -446,6 +446,7 @@ async fn await_channel(
             channel: number,
             pane: named,
             sequence,
+            ..
         } = decode_to_client(&frame.payload)?
             && named == pane
         {

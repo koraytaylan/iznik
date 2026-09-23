@@ -36,11 +36,27 @@ impl Capabilities {
     /// [`DaemonInstance`]: crate::identity::DaemonInstance
     pub const INSTANCE: Capabilities = Capabilities { bits: 1 << 4 };
 
+    /// The server's `PaneChannel` ends with the sequence before which the
+    /// host's own emulator has already answered every terminal query.
+    ///
+    /// Sent, like [`Capabilities::INSTANCE`], only to a client whose `Hello`
+    /// carried the bit, because an older client refuses the longer message.
+    /// A client told it must not send the answers its emulator produces from
+    /// bytes before that sequence: the program has had them once.
+    pub const ANSWERED: Capabilities = Capabilities { bits: 1 << 5 };
+
+    /// The bits that append a field to a server message, and so are claimed
+    /// in the server's reply only when the client's `Hello` claimed them too.
+    pub const APPENDED: Capabilities = Capabilities {
+        bits: Capabilities::INSTANCE.bits | Capabilities::ANSWERED.bits,
+    };
+
     /// Every bit this version of the protocol knows.
     const KNOWN: u32 = Capabilities::ZSTD.bits
         | Capabilities::RESUME.bits
         | Capabilities::REORDER_SESSIONS.bits
-        | Capabilities::INSTANCE.bits;
+        | Capabilities::INSTANCE.bits
+        | Capabilities::ANSWERED.bits;
 
     /// The bits that gate something a person uses, as opposed to something an
     /// optimization is made of.
