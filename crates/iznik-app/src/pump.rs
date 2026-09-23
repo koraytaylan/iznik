@@ -89,6 +89,8 @@ impl WindowShell {
                 self.failure(&key.host, error.to_string(), context);
             }
         }
+        // A refusal's wait may have run out with nothing else said.
+        self.attach_visible(context);
         self.synchronize_sizes(context);
         self.poll_settings(context);
         self.write_session_tabs(false);

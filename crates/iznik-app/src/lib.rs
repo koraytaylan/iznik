@@ -28,6 +28,7 @@ pub mod splits;
 pub mod ssh_config;
 pub mod stage;
 pub mod status;
+pub mod subscription;
 pub mod surface;
 pub mod tab_actions;
 pub mod tab_label;

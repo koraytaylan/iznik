@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::{
@@ -12,6 +12,7 @@ use gpui_kit::{
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
+use iznik_client::reduce::Notification;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{SessionId, TabId};
 use iznik_protocol::model::{LayoutNode, Session, Tab};
@@ -27,6 +28,7 @@ use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
 use crate::splits;
 use crate::status;
+use crate::subscription::{self, Subscriptions};
 use crate::surface::{PaneSurface, PasteConfirmation, SurfaceFailure};
 use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme};
@@ -123,8 +125,6 @@ pub struct SessionKey {
 pub(crate) struct HeldPane {
     /// Retained while the pane exists, including transport loss and layout changes.
     pub(crate) surface: Entity<PaneSurface>,
-    /// Whether this window has successfully requested a subscription.
-    subscribed: bool,
     /// Last measured cell geometry successfully submitted to the engine.
     pub(crate) measured: Option<(u16, u16)>,
     /// Model geometry when a different size was submitted and the model has
@@ -145,6 +145,8 @@ pub struct WindowShell {
     pub(crate) thread: Rc<VtThread>,
     /// Stable pane entities, keyed by host as well as pane number.
     pub(crate) panes: BTreeMap<PaneKey, HeldPane>,
+    /// Which panes the hosts are carrying, as they have answered.
+    subscriptions: Subscriptions,
     /// The tab whose layout is currently visible.
     pub(crate) selected: Option<TabKey>,
     /// Latest authoritative tree for that tab.
@@ -163,7 +165,7 @@ pub struct WindowShell {
     /// emulators, so output must wait for them.
     pub(crate) sizes_pending: bool,
     /// When the settings file was last looked at; `None` before the first look.
-    pub(crate) settings_polled: Option<std::time::Instant>,
+    pub(crate) settings_polled: Option<Instant>,
     /// Latest local routing failure, dismissible without discarding host state.
     pub(crate) last_failure: Option<Notice>,
     /// Transient command palette state rendered over the shell.
@@ -218,6 +220,7 @@ impl WindowShell {
             hosts: HostUi::new(bridge),
             thread,
             panes: BTreeMap::new(),
+            subscriptions: Subscriptions::new(),
             selected: None,
             layout: None,
             revision: 0,
@@ -617,6 +620,7 @@ impl WindowShell {
             .as_ref()
             .and_then(|selected| bars::tab_place(self.hosts.state(), selected));
         if let EngineEvent::Said(said) = &event {
+            self.note_answer(said, context);
             let identity = match said {
                 ManagerEvent::Screen { host, pane, .. }
                 | ManagerEvent::Bytes { host, pane, .. } => Some(PaneKey {
@@ -705,30 +709,15 @@ impl WindowShell {
             self.revision = self.revision.saturating_add(1);
             context.notify();
         }
-        let wanted: BTreeSet<_> = self
-            .selected
-            .as_ref()
-            .and_then(|selected| {
-                self.layout.as_ref().map(|layout| {
-                    layout
-                        .leaves()
-                        .into_iter()
-                        .map(|pane| PaneKey {
-                            host: selected.host.clone(),
-                            pane,
-                        })
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
+        let wanted = self.shown_panes();
         for key in &wanted {
             if !self.panes.contains_key(key) {
                 let held = self.create_pane(key, window, context);
                 self.panes.insert(key.clone(), held);
             }
         }
-        self.attach_visible(&wanted, context);
         self.remove_missing(context);
+        self.attach_visible(context);
         self.follow_focus(window, context);
     }
     /// Build one cached surface and retain its focus/failure observers.
@@ -782,31 +771,61 @@ impl WindowShell {
         });
         HeldPane {
             surface,
-            subscribed: false,
             measured: None,
             awaiting_model: None,
             native_size: None,
             _subscriptions: vec![focus, failure, paste, left, shown],
         }
     }
-    /// Subscribe on appearance and unsubscribe on hiding, without repeating successful orders.
-    fn attach_visible(&mut self, wanted: &BTreeSet<PaneKey>, context: &mut Context<'_, Self>) {
-        let mut failures = Vec::new();
-        for (key, held) in &mut self.panes {
-            let visible = wanted.contains(key);
-            if held.subscribed == visible {
-                continue;
+    /// The panes of the selected tab's layout, keyed by its host.
+    pub(crate) fn shown_panes(&self) -> BTreeSet<PaneKey> {
+        let Some(selected) = self.selected.as_ref() else {
+            return BTreeSet::new();
+        };
+        self.visible_panes()
+            .into_iter()
+            .map(|pane| PaneKey {
+                host: selected.host.clone(),
+                pane,
+            })
+            .collect()
+    }
+    /// Ask the hosts to carry exactly the shown panes: subscribe what is not
+    /// carried yet or whose refusal has been waited out, and let go of the rest.
+    pub(crate) fn attach_visible(&mut self, context: &mut Context<'_, Self>) {
+        let shown = self.shown_panes();
+        let orders = self.subscriptions.plan(&shown, Instant::now());
+        self.send_orders(&orders, context);
+    }
+    /// Move each pane's standing on what a host said about carrying it.
+    fn note_answer(&mut self, said: &ManagerEvent, context: &mut Context<'_, Self>) {
+        match said {
+            ManagerEvent::Screen { host, pane, .. } => self.subscriptions.screen(&PaneKey {
+                host: host.clone(),
+                pane: *pane,
+            }),
+            ManagerEvent::Detached { host, pane } => self.subscriptions.detached(&PaneKey {
+                host: host.clone(),
+                pane: *pane,
+            }),
+            ManagerEvent::Notify(Notification::Refused { host, code, .. }) => {
+                let shown = self.shown_panes();
+                let orders = self
+                    .subscriptions
+                    .refused(host, *code, &shown, Instant::now());
+                self.send_orders(&orders, context);
             }
-            let result = if visible {
-                self.hosts.bridge().subscribe(&key.host.0, key.pane)
-            } else {
-                self.hosts.bridge().unsubscribe(&key.host.0, key.pane)
-            };
-            match result {
-                Ok(()) => held.subscribed = visible,
-                Err(error) => failures.push((key.host.clone(), error.to_string())),
-            }
+            _ => {}
         }
+    }
+    /// Hand subscription orders to the engine, reporting any it would not take.
+    fn send_orders(&mut self, orders: &[subscription::Order], context: &mut Context<'_, Self>) {
+        let failures = subscription::send(
+            &mut self.subscriptions,
+            self.hosts.bridge(),
+            orders,
+            Instant::now(),
+        );
         for (host, detail) in failures {
             self.failure(&host, detail, context);
         }
@@ -838,6 +857,7 @@ impl WindowShell {
             .collect();
         for key in removed {
             self.panes.remove(&key);
+            self.subscriptions.forget(&key);
             if let Err(error) = self.thread.send(VtCommand::Close(key.clone())) {
                 self.failure(&key.host, error.to_string(), context);
             }
