@@ -7,7 +7,7 @@ use gpui_kit::{
 use libghostty_vt::key::{Action, Key};
 use libghostty_vt::terminal::ScrollViewport;
 
-use super::keyboard::{keyboard, modifiers, produced_by_layout};
+use super::keyboard::{keyboard_as, modifiers, produced_by_layout};
 use super::{
     GridError, GridPosition, GridSelection, RetainedPosition, RetainedSelection, TerminalGrid,
     distance, scale,
@@ -29,11 +29,13 @@ impl TerminalGrid {
         } else {
             Action::Press
         };
-        let input = keyboard(&event.keystroke, action);
+        let input = keyboard_as(&event.keystroke, action, self.option_as_meta);
         // An unidentified key is platform text the input handler commits
         // once; only a character the layout produced under Alt is sent here,
         // because the platform reports that press as a chord.
-        if input.key == Key::Unidentified && !produced_by_layout(&event.keystroke, &input.text) {
+        if input.key == Key::Unidentified
+            && (self.option_as_meta || !produced_by_layout(&event.keystroke, &input.text))
+        {
             return;
         }
         self.pressed_keys

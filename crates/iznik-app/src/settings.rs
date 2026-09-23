@@ -46,6 +46,7 @@ const OWNED_FIELDS: &[&str] = &[
     "scrollback_bytes",
     "clipboard_write",
     "confirm_multiline_paste",
+    "option_as_meta",
 ];
 /// The prefix of a keybinding override's field.
 const KEYBINDING_PREFIX: &str = "keybinding.";
@@ -68,6 +69,9 @@ pub struct Settings {
     /// Whether a paste with line breaks into a program without bracketed
     /// paste waits for a person to confirm it.
     pub confirm_multiline_paste: bool,
+    /// Whether Option is sent as Meta rather than used by the keyboard
+    /// layout to type characters such as `@` on Turkish Q.
+    pub option_as_meta: bool,
     /// Lines of the file this version does not own — unknown fields, comments
     /// and blank lines — written back as they were.
     pub unowned: Vec<String>,
@@ -82,6 +86,7 @@ impl Default for Settings {
             scrollback_bytes: SCROLLBACK_BYTES,
             clipboard_write: true,
             confirm_multiline_paste: true,
+            option_as_meta: false,
             unowned: Vec::new(),
         }
     }
@@ -260,7 +265,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\nconfirm_multiline_paste={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\nconfirm_multiline_paste={}\noption_as_meta={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -274,7 +279,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme_name,
         settings.scrollback_bytes,
         settings.clipboard_write,
-        settings.confirm_multiline_paste
+        settings.confirm_multiline_paste,
+        settings.option_as_meta
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "{KEYBINDING_PREFIX}{action}={chord}");
@@ -384,6 +390,7 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             }
             "clipboard_write" => settings.clipboard_write = flag(field, value)?,
             "confirm_multiline_paste" => settings.confirm_multiline_paste = flag(field, value)?,
+            "option_as_meta" => settings.option_as_meta = flag(field, value)?,
             "scrollback_bytes" => {
                 settings.scrollback_bytes = value
                     .parse::<usize>()

@@ -270,6 +270,13 @@ The headless CPU budget and pending display measurements are recorded in
 
 `input` owns keyboard, paste and pointer requests and invokes the pinned native encoders on the VT thread, refreshing modes for every event. A paste with a line break, to a program that has not turned on bracketed paste, is not sent: the window asks in the palette first, because each line would run as a command as it arrives. The `confirm_multiline_paste` setting (on by default) turns the question off. Encoded input is forwarded by `bridge` independently of render snapshots.
 
+Copy and paste are Command-C and Command-V on a Mac and Control-Shift-C and
+Control-Shift-V on Linux and Windows, where Control-C and Control-V belong to
+the program. The `option_as_meta` setting, off by default, sends Option as
+Meta — Option+Q as Alt+Q — instead of the character the keyboard layout puts
+on it. Closing a tab whose panes run a program other than their shell asks
+first, whether from the palette or from Control-Shift-W.
+
 `GridInput` carries committed composition and clipboard paste to the VT owner.
 The platform can edit only the unsent draft; remote output is never exposed as
 editable text. Preedit updates send no bytes, an empty marked replacement

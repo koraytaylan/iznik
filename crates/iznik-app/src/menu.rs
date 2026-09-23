@@ -105,10 +105,30 @@ fn keybindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-c", Copy, Some("Terminal")),
         KeyBinding::new("cmd-v", Paste, Some("Terminal")),
+        // Control-C and Control-V belong to the program in a terminal, so
+        // Linux and Windows copy and paste with Shift added, as their own
+        // terminals do; Command is the Mac's modifier for both.
+        KeyBinding::new(COPY_CHORD, Copy, Some("Terminal")),
+        KeyBinding::new(PASTE_CHORD, Paste, Some("Terminal")),
         KeyBinding::new("tab", NoAction, Some("Terminal")),
         KeyBinding::new("shift-tab", NoAction, Some("Terminal")),
     ]
 }
+
+/// The copy chord beside Command-C: Control-Shift-C where Control is not the
+/// platform's own modifier. On a Mac, where it is only the terminal's, it is
+/// bound to Command-C a second time rather than taken from the program.
+const COPY_CHORD: &str = if cfg!(target_os = "macos") {
+    "cmd-c"
+} else {
+    "ctrl-shift-c"
+};
+/// The paste chord beside Command-V, chosen as [`COPY_CHORD`] is.
+const PASTE_CHORD: &str = if cfg!(target_os = "macos") {
+    "cmd-v"
+} else {
+    "ctrl-shift-v"
+};
 
 /// Attach the shell's handlers for the menu items that act on its state to an
 /// element in the window's own tree.

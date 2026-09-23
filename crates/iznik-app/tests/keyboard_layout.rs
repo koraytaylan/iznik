@@ -103,3 +103,26 @@ fn symbol_name_keeps_layout_text() {
     assert_eq!(input.text, "@");
     assert_eq!(input.modifiers, Mods::empty());
 }
+
+/// With Option as Meta, Option+Q is Alt+Q whatever the layout puts there.
+///
+/// # Panics
+/// Panics when the layout character wins over the Meta chord.
+#[test]
+fn option_as_meta_sends_the_chord() {
+    let input = iznik_app::grid::keyboard::keyboard_as(
+        &stroke(
+            "q",
+            Some("@"),
+            Modifiers {
+                alt: true,
+                ..Modifiers::default()
+            },
+        ),
+        Action::Press,
+        true,
+    );
+    assert_eq!(input.key, Key::Q);
+    assert_eq!(input.text, "q");
+    assert_eq!(input.modifiers, Mods::ALT);
+}

@@ -240,6 +240,8 @@ pub struct TerminalGrid {
     interaction_error: Option<String>,
     /// Selection the rows were last drawn with.
     drawn_selection: Option<GridSelection>,
+    /// Whether Option is sent as Meta rather than used by the keyboard layout.
+    option_as_meta: bool,
     /// A refused snapshot left rows behind what the emulator has; the next
     /// accepted one draws every row again rather than only its dirty ones.
     stale: bool,
@@ -275,8 +277,14 @@ impl TerminalGrid {
             pointer_override: false,
             interaction_error: None,
             drawn_selection: None,
+            option_as_meta: false,
             stale: false,
         }
+    }
+
+    /// Send Option as Meta, or leave it to the keyboard layout.
+    pub fn set_option_as_meta(&mut self, option_as_meta: bool) {
+        self.option_as_meta = option_as_meta;
     }
 
     /// Replace font and cell geometry, notifying every retained row so it

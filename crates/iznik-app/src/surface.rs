@@ -132,6 +132,13 @@ impl PaneSurface {
         });
     }
 
+    /// Send Option as Meta from this pane, or leave it to the keyboard layout.
+    pub fn set_option_as_meta(&mut self, option_as_meta: bool, context: &mut Context<'_, Self>) {
+        self.grid.update(context, |grid, _| {
+            grid.set_option_as_meta(option_as_meta);
+        });
+    }
+
     /// Consume a VT reply, forwarding process input before handling surface results.
     /// A program clipboard write on the snapshot is applied before the frame,
     /// when the window allows this pane's program to write the clipboard.

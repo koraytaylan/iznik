@@ -423,6 +423,7 @@ impl WindowShell {
         ) = measure_cell(context.text_system(), font.clone(), size, theme.line_height);
         theme::apply_chrome_font(context, font, size);
         let metrics = self.options.metrics.clone();
+        let option_as_meta = self.settings.option_as_meta;
         for key in self.panes.keys().cloned().collect::<Vec<_>>() {
             if let Err(error) = self.thread.send(VtCommand::Theme {
                 key: key.clone(),
@@ -433,6 +434,7 @@ impl WindowShell {
             if let Some(surface) = self.panes.get(&key).map(|held| held.surface.clone()) {
                 surface.update(context, |surface, context| {
                     surface.set_metrics(&metrics, context);
+                    surface.set_option_as_meta(option_as_meta, context);
                 });
             }
         }
@@ -732,12 +734,14 @@ impl WindowShell {
         context: &mut Context<'_, Self>,
     ) -> HeldPane {
         let surface = context.new(|context| {
-            PaneSurface::new(
+            let mut surface = PaneSurface::new(
                 key.clone(),
                 self.options.metrics.clone(),
                 Rc::clone(&self.thread),
                 context,
-            )
+            );
+            surface.set_option_as_meta(self.settings.option_as_meta, context);
+            surface
         });
         let focus_key = key.clone();
         let focus = context.on_focus_in(

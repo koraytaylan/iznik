@@ -148,6 +148,14 @@ pub(super) fn modifiers(value: Modifiers) -> Mods {
 /// omitted so extended keyboard reporting cannot turn `@` back into Alt+Q.
 #[must_use]
 pub fn keyboard(stroke: &Keystroke, action: Action) -> KeyInput {
+    keyboard_as(stroke, action, false)
+}
+
+/// The same, with Option as Meta when `option_as_meta` holds: Alt is then a
+/// chord on the key itself — Option+Q is Alt+Q, not the character the layout
+/// puts there — which is what a shell's Meta bindings expect.
+#[must_use]
+pub fn keyboard_as(stroke: &Keystroke, action: Action, option_as_meta: bool) -> KeyInput {
     let key = NAMED_KEYS
         .iter()
         .find_map(|(name, key)| (*name == stroke.key).then_some(*key))
@@ -155,7 +163,9 @@ pub fn keyboard(stroke: &Keystroke, action: Action) -> KeyInput {
     let mut characters = stroke.key.chars();
     let first = characters.next();
     let unshifted = first.filter(|_| characters.next().is_none());
-    let text = stroke.key_char.clone().unwrap_or_else(|| {
+    let meta = option_as_meta && stroke.modifiers.alt;
+    let layout_character = stroke.key_char.clone().filter(|_| !meta);
+    let text = layout_character.unwrap_or_else(|| {
         if stroke.key == "space" {
             return " ".into();
         }
@@ -167,7 +177,7 @@ pub fn keyboard(stroke: &Keystroke, action: Action) -> KeyInput {
             }
         })
     });
-    let layout_text = produced_by_layout(stroke, &text);
+    let layout_text = !meta && produced_by_layout(stroke, &text);
     KeyInput {
         key: if layout_text { Key::Unidentified } else { key },
         action,

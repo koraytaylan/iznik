@@ -183,7 +183,49 @@ pub fn begin_with(
     if action == ActionId::ReorderSessions {
         return session_reorder_step(state, selected).map(Step::Ask);
     }
+    if action == ActionId::CloseTab {
+        return close_tab_step(state, selected?).map(Step::Ask);
+    }
     ask(action, state, selected).map(Step::Ask)
+}
+
+/// Ask before closing a tab whose panes are running a program other than
+/// their shell, because closing it ends those programs. A tab of idle shells
+/// needs no question, and `None` lets it close at once.
+fn close_tab_step(state: &EngineState, selected: &TabKey) -> Option<Prompt> {
+    let tab = state
+        .model()
+        .host(&selected.host)?
+        .model
+        .sessions
+        .iter()
+        .find(|session| session.id == selected.session)?
+        .tabs
+        .iter()
+        .find(|tab| tab.id == selected.tab)?;
+    let running: Vec<&str> = tab
+        .panes
+        .iter()
+        .filter_map(|pane| iznik_protocol::program::program_label(&pane.title))
+        .collect();
+    if running.is_empty() {
+        return None;
+    }
+    Some(Prompt {
+        action: Some(ActionId::CloseTab),
+        question: format!(
+            "Close this tab? It is running {}, which will end.",
+            running.join(", ")
+        ),
+        initial: String::new(),
+        expected: Expected::Choice(vec![Choice {
+            label: "Close tab".to_owned(),
+            answer: Answer::Command {
+                host: selected.host.clone(),
+                command: crate::bars::close_tab(selected.tab),
+            },
+        }]),
+    })
 }
 
 /// The prompt for reordering the host's sessions: each other position the
