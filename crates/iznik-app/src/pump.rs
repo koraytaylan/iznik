@@ -13,6 +13,7 @@ use std::time::Duration;
 use gpui_kit::{Context, Focusable as _, Task, Window};
 
 use crate::bridge::EngineBridge;
+use crate::host_ui::NoticeKind;
 use crate::vt::VtThread;
 use crate::wake;
 use crate::window::WindowShell;
@@ -66,6 +67,7 @@ impl WindowShell {
             self.absorb(event, window, context);
             engine_events = engine_events.saturating_add(1);
         }
+        self.show_failures(context);
         let mut terminal_events = 0_usize;
         let shown = self.shown_panes();
         while terminal_events < cap {
@@ -99,5 +101,19 @@ impl WindowShell {
         crate::settings::poll(self, self.options.settings_interval, context);
         self.write_session_tabs(false);
         engine_events >= cap || terminal_events >= cap
+    }
+
+    /// Take what the engine said since the last drain, showing its failures.
+    ///
+    /// Everything else it said is state the window already draws — a host's
+    /// connection, an offer, an applied command — so it is let go here rather
+    /// than kept: nothing else reads it, and kept it would grow for as long as
+    /// the window is open.
+    fn show_failures(&mut self, context: &mut Context<'_, Self>) {
+        for notice in self.hosts.take_notices() {
+            if notice.kind == NoticeKind::Failure {
+                self.failure(&notice.host, notice.detail, context);
+            }
+        }
     }
 }
