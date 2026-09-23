@@ -46,12 +46,10 @@ pub const DELTA_BROADCAST_CAPACITY: usize = 1024;
 /// waited for for ever.
 const ENDING_LOOK_INTERVAL: Duration = Duration::from_millis(10);
 
-/// How many such looks: two offered for every one [`Registry::ingest`] needs
-/// before it gives up on a status. Not one, because a notification that lands
-/// on a permit already there is a look nobody takes; not five, because every
-/// look costs whoever is waiting a write lock and a session of thirty panes
-/// closing pays for all of them.
-const ENDING_LOOKS: usize = 2 * ingest::EXIT_STATUS_ATTEMPTS;
+/// How long such looks are offered: twice as long as [`Registry::ingest`]
+/// waits for a status before it gives up, so the look that finds the deadline
+/// passed is always offered.
+const ENDING_LOOKS: Duration = ingest::EXIT_STATUS_DEADLINE.saturating_mul(2);
 
 /// The weight each side of a new split gets: equal; the client decides.
 const EVEN_WEIGHT: u32 = 1;
@@ -97,8 +95,8 @@ struct Watching {
     size: (u16, u16),
     /// Whether its exit has already become deltas.
     ended: bool,
-    /// How many times its end has been seen with no status to report it by.
-    unexplained: usize,
+    /// When its end was first seen with no status to report it by.
+    unexplained: Option<tokio::time::Instant>,
 }
 
 /// The authoritative host model, the panes behind it, and the deltas every
@@ -299,12 +297,13 @@ impl Registry {
             // the one change that matters most — a pane going — would be the
             // one nobody was ever told to ingest.
             //
-            // Both ways of notifying, and far more looks than the attempts
-            // `ingest_state` needs: a stored permit reaches a waiter that is
+            // Both ways of notifying, and for longer than `ingest_state`
+            // waits for a status: a stored permit reaches a waiter that is
             // between registrations, waking the waiters reaches all of them at
             // once rather than one, and the headroom is because a permit that
             // lands on an existing one is a look nobody takes.
-            for _look in 0..ENDING_LOOKS {
+            let looking = tokio::time::Instant::now();
+            while looking.elapsed() < ENDING_LOOKS {
                 signal.notify_waiters();
                 signal.notify_one();
                 tokio::time::sleep(ENDING_LOOK_INTERVAL).await;
@@ -317,7 +316,7 @@ impl Registry {
                 state: pane.state_updates(),
                 size: (columns, rows),
                 ended: false,
-                unexplained: 0,
+                unexplained: None,
             },
         );
         let pane = Arc::new(pane);

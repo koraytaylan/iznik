@@ -114,14 +114,40 @@ pub enum Signal {
     Kill,
 }
 
-/// How a child ended: a code it chose, or the signal that ended it — never a
-/// fake code standing in for a signal.
+/// `SIGHUP`'s number, the same on every system POSIX describes.
+const HANGUP_NUMBER: i32 = 1;
+
+/// `SIGKILL`'s number, likewise fixed.
+const KILL_NUMBER: i32 = 9;
+
+/// `SIGTERM`'s number, likewise fixed.
+const TERMINATE_NUMBER: i32 = 15;
+
+/// The highest signal number any supported system has: Linux's real-time
+/// signals end at 64, and the others stop well short of it.
+#[cfg(unix)]
+const HIGHEST_SIGNAL: i32 = 64;
+
+impl Signal {
+    /// The signal's number, which is what a client is told a pane died of.
+    #[must_use]
+    pub fn number(self) -> i32 {
+        match self {
+            Signal::Hangup => HANGUP_NUMBER,
+            Signal::Kill => KILL_NUMBER,
+            Signal::Terminate => TERMINATE_NUMBER,
+        }
+    }
+}
+
+/// How a child ended: a code it chose, or the number of the signal that ended
+/// it — whichever signal that was, and never a fake code standing in for one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitStatus {
     /// It exited with this code.
     Exited(i32),
-    /// A signal ended it.
-    Signalled(Signal),
+    /// The signal with this number ended it.
+    Signalled(i32),
 }
 
 /// Why a pseudoterminal operation failed.
@@ -438,7 +464,7 @@ impl ProcessReaper {
             match status {
                 WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
                 WaitStatus::Signaled(_pid, signal, _dumped) => {
-                    Ok(ExitStatus::Signalled(signal_of(signal)))
+                    Ok(ExitStatus::Signalled(number_of(signal)))
                 }
                 other => Err(PtyError::Wait {
                     source: format!("unexpected wait status: {other:?}").into(),
@@ -460,7 +486,7 @@ impl ProcessReaper {
             })?;
             self.reaped.store(true, Ordering::Release);
             if status.signal().is_some() {
-                Ok(ExitStatus::Signalled(Signal::Terminate))
+                Ok(ExitStatus::Signalled(Signal::Terminate.number()))
             } else {
                 Ok(ExitStatus::Exited(
                     i32::try_from(status.exit_code()).unwrap_or(i32::MAX),
@@ -586,16 +612,16 @@ fn program_name(program: &Program) -> String {
     }
 }
 
-/// The signal a reported death carries. `Signal` is closed to the three the
-/// server sends, so an unexpected death — a Ctrl-C's `SIGINT`, a crash's
-/// `SIGSEGV` — is surfaced as `Terminate`: a signal death still, never a code.
+/// The number of the signal a reported death carries — a Ctrl-C's `SIGINT`
+/// and a crash's `SIGSEGV` as faithfully as the three the server sends. Found
+/// by asking which number names it rather than by a cast, which this
+/// workspace does not write; one no number names, which cannot happen, is
+/// reported as `SIGTERM`, a signal death still and never a code.
 #[cfg(unix)]
-fn signal_of(signal: NixSignal) -> Signal {
-    match signal {
-        NixSignal::SIGHUP => Signal::Hangup,
-        NixSignal::SIGKILL => Signal::Kill,
-        _ => Signal::Terminate,
-    }
+fn number_of(signal: NixSignal) -> i32 {
+    (1..=HIGHEST_SIGNAL)
+        .find(|number| NixSignal::try_from(*number) == Ok(signal))
+        .unwrap_or(TERMINATE_NUMBER)
 }
 
 /// The `nix` signal for one the server sends.

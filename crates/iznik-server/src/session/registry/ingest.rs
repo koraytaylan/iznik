@@ -4,24 +4,18 @@
 use iznik_protocol::delta::{Delta, ExitStatus as EndedAs, RemovalReason};
 use iznik_protocol::identity::PaneId;
 use iznik_protocol::message::MarkKind;
+use std::time::Duration;
+
 use tokio::sync::broadcast;
 
 use super::Registry;
-use crate::pty::spawn::{ExitStatus, Signal};
+use crate::pty::spawn::ExitStatus;
 
-/// How many looks for a pane's exit status before it is reported as simply
-/// gone. The reaper records it a moment after the stream closes.
-pub(super) const EXIT_STATUS_ATTEMPTS: usize = 100;
-
-/// `SIGHUP`'s number, which is what a client is told when a pane's child was
-/// hung up rather than exiting on its own.
-const HANGUP_SIGNAL: i32 = 1;
-
-/// `SIGKILL`'s number.
-const KILL_SIGNAL: i32 = 9;
-
-/// `SIGTERM`'s number.
-const TERMINATE_SIGNAL: i32 = 15;
+/// How long after a pane's end is first seen its exit status is waited for
+/// before the pane is reported as simply gone. The reaper records it within
+/// milliseconds; a time rather than a count of looks, because how often
+/// [`Registry::ingest`] is called says nothing about how long it has been.
+pub(super) const EXIT_STATUS_DEADLINE: Duration = Duration::from_secs(1);
 
 impl Registry {
     /// Turns everything the panes have reported since the last call into
@@ -116,11 +110,16 @@ impl Registry {
         let reason = if let Some(status) = status {
             RemovalReason::Exited(ended_as(status))
         } else {
-            let looks = self.watching.get_mut(&pane).map_or(usize::MAX, |recorded| {
-                recorded.unexplained = recorded.unexplained.saturating_add(1);
-                recorded.unexplained
-            });
-            if looks < EXIT_STATUS_ATTEMPTS {
+            let waited = self
+                .watching
+                .get_mut(&pane)
+                .map_or(Duration::MAX, |recorded| {
+                    recorded
+                        .unexplained
+                        .get_or_insert_with(tokio::time::Instant::now)
+                        .elapsed()
+                });
+            if waited < EXIT_STATUS_DEADLINE {
                 return;
             }
             // A reaper that cannot say how a child ended — one already reaped
@@ -145,8 +144,6 @@ impl Registry {
 fn ended_as(status: ExitStatus) -> EndedAs {
     match status {
         ExitStatus::Exited(code) => EndedAs::Exited(code),
-        ExitStatus::Signalled(Signal::Hangup) => EndedAs::Signalled(HANGUP_SIGNAL),
-        ExitStatus::Signalled(Signal::Kill) => EndedAs::Signalled(KILL_SIGNAL),
-        ExitStatus::Signalled(Signal::Terminate) => EndedAs::Signalled(TERMINATE_SIGNAL),
+        ExitStatus::Signalled(number) => EndedAs::Signalled(number),
     }
 }

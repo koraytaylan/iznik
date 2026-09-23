@@ -374,7 +374,7 @@ fn pty_spawn_exit_statuses_tell_the_truth() {
         .expect("the kill is sent");
     assert_eq!(
         killed.process.wait().expect("waited"),
-        ExitStatus::Signalled(Signal::Kill)
+        ExitStatus::Signalled(Signal::Kill.number())
     );
 
     let mut hung_up = Session::start(&sh("exec sleep 10")).expect("sh starts");
@@ -384,8 +384,19 @@ fn pty_spawn_exit_statuses_tell_the_truth() {
         .expect("the hangup is sent");
     assert_eq!(
         hung_up.process.wait().expect("waited"),
-        ExitStatus::Signalled(Signal::Hangup)
+        ExitStatus::Signalled(Signal::Hangup.number())
     );
+
+    // A signal the server never sends is reported by its own number, not
+    // folded into one it does.
+    for (signal, number) in [("INT", 2), ("SEGV", 11)] {
+        let mut ended = Session::start(&sh(&format!("kill -{signal} $$; sleep 10"))).expect("sh");
+        assert_eq!(
+            ended.process.wait().expect("waited"),
+            ExitStatus::Signalled(number),
+            "SIG{signal} is reported as itself"
+        );
+    }
 }
 
 /// Dropping a process kills its child: after a `sleep 30` is dropped, no such
