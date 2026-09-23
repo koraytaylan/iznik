@@ -145,6 +145,9 @@ pub struct CursorDrawing {
     pub style: CursorVisualStyle,
     /// Effective cursor color.
     pub color: RgbColor,
+    /// Whether the pane has keyboard focus: a focused block fills its cell,
+    /// and an unfocused cursor of any shape is an outline.
+    pub focused: bool,
 }
 
 /// Draw list for a single row; equality is the invalidation rule.
@@ -202,6 +205,15 @@ pub struct GridInput {
     pub input: TerminalInput,
 }
 
+/// Whether a grid's pane has focus, and how its Option key is read.
+#[derive(Clone, Copy, Debug, Default)]
+struct PaneState {
+    /// Whether the pane has keyboard focus, which shapes its cursor.
+    focused: bool,
+    /// Whether Option is sent as Meta rather than used by the keyboard layout.
+    option_as_meta: bool,
+}
+
 /// Visible terminal rows, each a separately cached GPUI paint subtree.
 #[derive(Debug)]
 pub struct TerminalGrid {
@@ -240,8 +252,8 @@ pub struct TerminalGrid {
     interaction_error: Option<String>,
     /// Selection the rows were last drawn with.
     drawn_selection: Option<GridSelection>,
-    /// Whether Option is sent as Meta rather than used by the keyboard layout.
-    option_as_meta: bool,
+    /// Focus and keyboard choices that shape the cursor and key encoding.
+    pane_state: PaneState,
     /// A refused snapshot left rows behind what the emulator has; the next
     /// accepted one draws every row again rather than only its dirty ones.
     stale: bool,
@@ -277,14 +289,35 @@ impl TerminalGrid {
             pointer_override: false,
             interaction_error: None,
             drawn_selection: None,
-            option_as_meta: false,
+            pane_state: PaneState::default(),
             stale: false,
+        }
+    }
+
+    /// Record whether this pane has keyboard focus, redrawing its cursor row
+    /// when that changes.
+    ///
+    /// # Errors
+    /// Returns `Geometry` if the held snapshot is invalid.
+    pub fn set_focused(
+        &mut self,
+        focused: bool,
+        context: &mut Context<'_, Self>,
+    ) -> Result<usize, GridError> {
+        if self.pane_state.focused == focused {
+            return Ok(0);
+        }
+        self.pane_state.focused = focused;
+        self.stale = true;
+        match self.snapshot.clone() {
+            Some(snapshot) => self.apply(snapshot, context),
+            None => Ok(0),
         }
     }
 
     /// Send Option as Meta, or leave it to the keyboard layout.
     pub fn set_option_as_meta(&mut self, option_as_meta: bool) {
-        self.option_as_meta = option_as_meta;
+        self.pane_state.option_as_meta = option_as_meta;
     }
 
     /// Replace font and cell geometry, notifying every retained row so it
@@ -352,7 +385,13 @@ impl TerminalGrid {
         let shown = self
             .selection
             .and_then(|selected| selected.visible(snapshot.viewport, snapshot.columns));
-        let drawings = changed_rows(&snapshot, previous, self.drawn_selection, shown)?;
+        let drawings = changed_rows(
+            &snapshot,
+            previous,
+            self.drawn_selection,
+            shown,
+            self.pane_state.focused,
+        )?;
         let (pending_credit, received) = self.credit_after(&snapshot)?;
         let mut changed = 0_usize;
         let resized = snapshot.rows.len() != self.rows.len();

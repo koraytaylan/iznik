@@ -140,5 +140,5 @@ fn box_drawing_runs_are_kept_from_text() {
     let frame = snapshot(&thread).expect("snapshot");
     let rows = draw_list(&frame, None).expect("draw list");
     let texts: Vec<&str> = rows[0].runs.iter().map(|run| run.text.as_str()).collect();
-    assert_eq!(texts[..3], ["a", "\u{2500}\u{253C}\u{2500}", "b "], "runs");
+    assert_eq!(texts[..3], ["a", "\u{2500}\u{253C}\u{2500}", "b"], "runs");
 }

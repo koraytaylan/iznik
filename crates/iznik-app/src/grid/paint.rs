@@ -25,8 +25,6 @@ const FAINT_OPACITY: f32 = 0.5;
 const SELECTION_COLOR: u32 = 0x004c_7fbf;
 /// Selection opacity leaves inverse and colored cells legible.
 const SELECTION_OPACITY: f32 = 0.4;
-/// A block cursor is translucent so the grapheme under it remains visible.
-const CURSOR_OPACITY: f32 = 0.5;
 /// Logical pixel width for a bar, underline or hollow cursor stroke.
 const STROKE_WIDTH: f32 = 1.0;
 /// Double underlines leave one stroke of space between their rules.
@@ -760,13 +758,22 @@ pub(super) fn cell_bounds(
 }
 
 /// Draw the emulator's current cursor shape within its exact cell bounds.
+///
+/// A focused block is already drawn: its cell's run is filled with the cursor
+/// color and its character drawn in the cell's background. An unfocused
+/// pane's cursor, whatever its shape, is a hollow outline.
 fn cursor(drawing: &RowDrawing, metrics: &GridMetrics, origin: Point<Pixels>, window: &mut Window) {
     let Some(cursor) = &drawing.cursor else {
         return;
     };
     let mut bounds = cell_bounds(metrics, origin, cursor.column, cursor.columns);
-    let mut tint = color(cursor.color);
-    match cursor.style {
+    let tint = color(cursor.color);
+    let style = if cursor.focused {
+        cursor.style
+    } else {
+        CursorVisualStyle::BlockHollow
+    };
+    match style {
         CursorVisualStyle::Bar => bounds.size.width = px(STROKE_WIDTH),
         CursorVisualStyle::Underline => {
             bounds.origin.y = offset(
@@ -801,7 +808,7 @@ fn cursor(drawing: &RowDrawing, metrics: &GridMetrics, origin: Point<Pixels>, wi
             ));
             return;
         }
-        _ => tint.a = CURSOR_OPACITY,
+        _ => return,
     }
     window.paint_quad(fill(bounds, tint));
 }

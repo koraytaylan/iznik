@@ -50,6 +50,7 @@ navigation
 offsets
 opacity
 opposite
+outline
 overlays
 paint
 painted
@@ -83,5 +84,6 @@ thickness
 thin
 tint
 tip
+unfocused
 viewport
 wheel

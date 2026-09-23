@@ -762,6 +762,18 @@ impl WindowShell {
                 }
             },
         );
+        let leaving_surface = surface.clone();
+        let left = context.on_focus_out(
+            &surface.read(context).focus_handle(context),
+            window,
+            move |_, _, _, context| show_focus(&leaving_surface, false, context),
+        );
+        let focus_surface = surface.clone();
+        let shown = context.on_focus_in(
+            &surface.read(context).focus_handle(context),
+            window,
+            move |_, _, context| show_focus(&focus_surface, true, context),
+        );
         let failure = context.subscribe(&surface, |shell, _, failure: &SurfaceFailure, context| {
             shell.failure(&failure.key.host, failure.detail.clone(), context);
         });
@@ -774,7 +786,7 @@ impl WindowShell {
             measured: None,
             awaiting_model: None,
             native_size: None,
-            _subscriptions: vec![focus, failure, paste],
+            _subscriptions: vec![focus, failure, paste, left, shown],
         }
     }
     /// Subscribe on appearance and unsubscribe on hiding, without repeating successful orders.
@@ -849,6 +861,11 @@ impl WindowShell {
             context.notify();
         }
     }
+}
+/// Draw a pane's cursor as focused or not.
+fn show_focus(surface: &Entity<PaneSurface>, focused: bool, context: &mut App) {
+    let grid = surface.read(context).grid().clone();
+    let _redrawn = grid.update(context, |grid, context| grid.set_focused(focused, context));
 }
 impl gpui_kit::EventEmitter<Notice> for WindowShell {}
 impl Drop for WindowShell {

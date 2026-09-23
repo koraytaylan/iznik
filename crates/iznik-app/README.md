@@ -265,7 +265,10 @@ Box drawing (U+2500–U+257F), block elements (U+2580–U+259F) and the powerlin
 separators U+E0B0–U+E0B3 are not left to a font at all: they are drawn as
 rectangles, triangles and strokes inside the cell rectangle, so the lines of
 a frame and the bars of a chart meet their neighbours without seams.
-Selection and cursor geometry use the same cell metrics as row layout.
+Selection and cursor geometry use the same cell metrics as row layout. The focused pane's block cursor fills its cell, and the character under it is
+redrawn in the cell's background so it stays legible; bar and underline
+cursors are drawn as the program asks. An unfocused pane's cursor, whatever
+its shape, is an outline of its cell.
 
 The grid emits `GridScroll` for wheel and Shift-PageUp/PageDown/Home/End
 navigation. The window routes these requests as `VtCommand::Scroll` and

@@ -29,12 +29,13 @@ impl TerminalGrid {
         } else {
             Action::Press
         };
-        let input = keyboard_as(&event.keystroke, action, self.option_as_meta);
+        let input = keyboard_as(&event.keystroke, action, self.pane_state.option_as_meta);
         // An unidentified key is platform text the input handler commits
         // once; only a character the layout produced under Alt is sent here,
         // because the platform reports that press as a chord.
         if input.key == Key::Unidentified
-            && (self.option_as_meta || !produced_by_layout(&event.keystroke, &input.text))
+            && (self.pane_state.option_as_meta
+                || !produced_by_layout(&event.keystroke, &input.text))
         {
             return;
         }

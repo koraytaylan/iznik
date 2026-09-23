@@ -1,7 +1,7 @@
 //! Row draw lists built from owned snapshot cells: text runs, cursor and
 //! selection per row, and which rows a new snapshot actually changes.
 
-use libghostty_vt::render::Colors;
+use libghostty_vt::render::{Colors, CursorVisualStyle};
 use libghostty_vt::screen::CellWide;
 use libghostty_vt::style::{RgbColor, StyleColor};
 
@@ -18,7 +18,7 @@ pub fn draw_list(
 ) -> Result<Vec<RowDrawing>, GridError> {
     check_geometry(snapshot)?;
     (0..snapshot.rows.len())
-        .map(|row| row_drawing(snapshot, row, selection))
+        .map(|row| row_drawing(snapshot, row, selection, true))
         .collect()
 }
 
@@ -38,6 +38,7 @@ pub fn changed_rows(
     previous: Option<&TerminalSnapshot>,
     previous_selection: Option<GridSelection>,
     selection: Option<GridSelection>,
+    focused: bool,
 ) -> Result<Vec<(usize, RowDrawing)>, GridError> {
     check_geometry(snapshot)?;
     let every_row = previous.is_none_or(|held| {
@@ -57,7 +58,7 @@ pub fn changed_rows(
             || previous_selection.and_then(|selected| selected.row(index, snapshot.columns))
                 != selection.and_then(|selected| selected.row(index, snapshot.columns));
         if redraw {
-            changed.push((row, row_drawing(snapshot, row, selection)?));
+            changed.push((row, row_drawing(snapshot, row, selection, focused)?));
         }
     }
     Ok(changed)
@@ -85,19 +86,86 @@ fn row_drawing(
     snapshot: &TerminalSnapshot,
     row: usize,
     selection: Option<GridSelection>,
+    focused: bool,
 ) -> Result<RowDrawing, GridError> {
     let cells = snapshot.rows.get(row).ok_or(GridError::Geometry)?;
     if cells.len() != usize::from(snapshot.columns) {
         return Err(GridError::Geometry);
     }
     let row = u16::try_from(row).map_err(|_large| GridError::Geometry)?;
+    let cursor = cursor(snapshot, row, focused);
+    let mut runs = cell_runs(cells, &snapshot.colors);
+    if let Some(block) = cursor
+        .as_ref()
+        .filter(|drawn| drawn.focused && drawn.style == CursorVisualStyle::Block)
+    {
+        runs = under_block(runs, block);
+    }
     Ok(RowDrawing {
         columns: snapshot.columns,
         background: snapshot.colors.background,
-        runs: cell_runs(cells, &snapshot.colors),
-        cursor: cursor(snapshot, row),
+        runs,
+        cursor,
         selection: selection.and_then(|selected| selected.row(row, snapshot.columns)),
     })
+}
+
+/// The runs with the cell under a focused block cursor split into a run of
+/// its own, filled with the cursor color and drawn in the cell's background,
+/// so the character stays legible under the block.
+fn under_block(runs: Vec<CellRun>, block: &CursorDrawing) -> Vec<CellRun> {
+    let mut drawn = Vec::with_capacity(runs.len());
+    for run in runs {
+        let end = run.column.saturating_add(run.columns);
+        if block.column < run.column || block.column >= end {
+            drawn.push(run);
+            continue;
+        }
+        let cell = usize::from(block.column.saturating_sub(run.column));
+        let start = run.starts.get(cell).copied().unwrap_or(0);
+        let stop = run
+            .starts
+            .get(cell.saturating_add(1))
+            .copied()
+            .unwrap_or(run.text.len());
+        let piece = |from: usize, to: usize, first: usize, last: usize| {
+            let text = run.text.get(from..to)?.to_owned();
+            let starts: Vec<usize> = run
+                .starts
+                .get(first..last)?
+                .iter()
+                .map(|offset| offset.saturating_sub(from))
+                .collect();
+            let column = run.column.saturating_add(u16::try_from(first).ok()?);
+            let columns = u16::try_from(last.saturating_sub(first)).ok()?;
+            (!text.is_empty()).then(|| CellRun {
+                column,
+                columns,
+                text,
+                starts,
+                ..run.clone()
+            })
+        };
+        let cells = run.starts.len();
+        let before = piece(0, start, 0, cell);
+        let after = piece(stop, run.text.len(), cell.saturating_add(1), cells);
+        let mut under =
+            piece(start, stop, cell, cell.saturating_add(1)).unwrap_or_else(|| run.clone());
+        if run.starts.len() == 1 {
+            under.columns = run.columns;
+        }
+        under.foreground = if run.style.inverse {
+            run.foreground
+        } else {
+            run.background
+        };
+        under.background = block.color;
+        under.style.inverse = false;
+        drawn.extend(before);
+        drawn.push(under);
+        drawn.extend(after);
+    }
+    drawn
 }
 
 /// Unicode braille patterns occupy U+2800 through U+28FF. The low eight bits
@@ -279,7 +347,7 @@ fn underline_color(cell: &CellSnapshot, colors: &Colors) -> RgbColor {
 }
 
 /// Locate the cursor in its row, preserving the width of wide graphemes.
-fn cursor(snapshot: &TerminalSnapshot, row: u16) -> Option<CursorDrawing> {
+fn cursor(snapshot: &TerminalSnapshot, row: u16, focused: bool) -> Option<CursorDrawing> {
     let cursor = snapshot.cursor.as_ref().filter(|cursor| cursor.y == row)?;
     let column = if cursor.at_wide_tail {
         cursor.x.saturating_sub(1)
@@ -297,5 +365,6 @@ fn cursor(snapshot: &TerminalSnapshot, row: u16) -> Option<CursorDrawing> {
         columns: if wide { WIDE_COLUMNS } else { 1 },
         style: snapshot.cursor_style,
         color: snapshot.colors.cursor.unwrap_or(snapshot.colors.foreground),
+        focused,
     })
 }

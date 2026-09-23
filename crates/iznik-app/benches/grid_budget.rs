@@ -184,7 +184,8 @@ fn flood(thread: &VtThread, start: Sequence) -> Result<(Duration, usize, Sequenc
     let mut snapshots = 0_usize;
     loop {
         let current = support::snapshot(thread)?;
-        let rows = std::hint::black_box(changed_rows(&current, previous.as_ref(), None, None)?);
+        let rows =
+            std::hint::black_box(changed_rows(&current, previous.as_ref(), None, None, true)?);
         assert!(rows.len() <= usize::from(ROWS), "visible row count");
         snapshots = snapshots.checked_add(1).ok_or("snapshot count overflow")?;
         let done = current.sequence == Sequence(sequence);
