@@ -20,6 +20,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `daemon::idle` | The idle interval after which a daemon with no panes and no clients exits. | `daemon-lifecycle` (plan 0004) |
 | `daemon::lock` | The exclusive non-blocking lock that enforces a single daemon instance and names the holder. | `daemon-lifecycle` (plan 0004) |
 | `daemon::logging` | A size-capped rotating log file behind `tracing-subscriber`, because a full disk is worse than no logs. | `daemon-lifecycle` (plan 0004) |
+| `daemon::paths` | Where a daemon's files live — the runtime directory, used only when it is a real directory this user owns, and the socket, lock, log and agent link in it — and the terminfo the bootstrap installed beside its binary. | `daemon-lifecycle` (plan 0004) |
 | `daemon::socket` | The unix socket the daemon listens on: a stale file removed and rebound once the lock is held. | `daemon-lifecycle` (plan 0004) |
 | `daemon::stop` | How a daemon is asked to end: `SIGTERM` on Unix, and a forced end of the process on Windows. | `windows-host` |
 | `history` | Per-pane history rings indexed by absolute sequence, and the shared budget that evicts from the least recently focused pane first. | `history-ring` (plan 0002) |

@@ -644,3 +644,36 @@ async fn a_lock_on_a_removed_file_is_not_kept() {
     lock.release();
     let _removed = std::fs::remove_dir_all(&directory);
 }
+
+/// # Panics
+///
+/// When a runtime directory planted as a link to somewhere else is used, or
+/// the place it points at is restricted as if it were the daemon's own.
+#[test]
+fn a_planted_link_is_not_a_runtime_directory() {
+    let base = std::env::temp_dir().join(format!("iznik-planted-{}", std::process::id()));
+    let _stale = std::fs::remove_dir_all(&base);
+    let elsewhere = base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("the planter's directory");
+    std::fs::set_permissions(
+        &elsewhere,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .expect("an open mode");
+    let planted = base.join("iznik-planted");
+    std::os::unix::fs::symlink(&elsewhere, &planted).expect("the planted link");
+    let refused = iznik_server::daemon::RuntimePaths::under(&planted);
+    assert!(
+        matches!(
+            refused,
+            Err(iznik_server::daemon::PathsError::NotOurs { .. })
+        ),
+        "the link is refused: {refused:?}"
+    );
+    assert_eq!(
+        mode_of(&elsewhere).expect("its mode"),
+        0o755,
+        "and what it points at is left alone"
+    );
+    let _removed = std::fs::remove_dir_all(&base);
+}

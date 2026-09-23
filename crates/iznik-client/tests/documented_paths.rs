@@ -73,12 +73,12 @@ const PROMISES: &[Promise] = &[
     },
     Promise {
         documented: "`<runtime>/server.lock`",
-        source: "crates/iznik-server/src/daemon/mod.rs",
+        source: "crates/iznik-server/src/daemon/paths.rs",
         named: "const LOCK_NAME: &str = \"server.lock\";",
     },
     Promise {
         documented: "`<runtime>/server.log`",
-        source: "crates/iznik-server/src/daemon/mod.rs",
+        source: "crates/iznik-server/src/daemon/paths.rs",
         named: "const LOG_NAME: &str = \"server.log\";",
     },
     Promise {
