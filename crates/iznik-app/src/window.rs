@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gpui_kit::StatefulInteractiveElement as _;
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, SharedString, Styled, Subscription, Task, TestSupportExt,
-    Window, div, px,
+    KeyDownEvent, ParentElement, Render, Role, SharedString, Styled, Subscription, Task,
+    TestSupportExt, Window, div, px,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
@@ -926,6 +927,8 @@ impl Render for WindowShell {
             div()
                 .id("window-shell")
                 .test_support()
+                .role(Role::Application)
+                .aria_label("iznik")
                 .track_focus(&self.focus_handle)
                 .relative()
                 .size_full()
@@ -950,6 +953,8 @@ impl Render for WindowShell {
                     div()
                         .id("pane-area")
                         .test_support()
+                        .role(Role::Group)
+                        .aria_label("Panes")
                         .relative()
                         .flex_1()
                         .min_h_0()

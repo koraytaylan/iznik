@@ -2,7 +2,7 @@
 
 use gpui_kit::component::Theme;
 use gpui_kit::{
-    AnyElement, AppContext as _, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    AnyElement, AppContext as _, InteractiveElement, IntoElement, MouseButton, ParentElement, Role,
     StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, div,
 };
 use iznik_client::host::identity::HostId;
@@ -280,6 +280,8 @@ fn tab_bar_container(
     let strip = div()
         .id("tab-bar")
         .test_support()
+        .role(Role::TabList)
+        .aria_label("Tabs")
         .flex()
         .items_center()
         .gap_2()
@@ -309,6 +311,8 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
     div()
         .id("session-bar")
         .test_support()
+        .role(Role::TabList)
+        .aria_label("Sessions")
         .flex()
         .items_center()
         .gap_2()
@@ -356,6 +360,8 @@ fn session_entry(
         .bg(background)
         .text_color(foreground)
         .hover(|style| style.bg(theme.tab_active))
+        .role(Role::Tab)
+        .aria_selected(is_selected)
         .aria_label(shown.to_owned())
         .child(shown.to_owned())
         .child(session_close(theme, shell, host, session.id));
@@ -521,6 +527,8 @@ fn tab_entry(
         .on_mouse_down(MouseButton::Left, |_event, _window, application| {
             application.stop_propagation();
         })
+        .role(Role::Tab)
+        .aria_selected(selected)
         .aria_label(format!("{shown}{marker}"))
         .child(format!("{shown}{marker}"))
         .child(tab_close(theme, shell, &key.host, tab.id));

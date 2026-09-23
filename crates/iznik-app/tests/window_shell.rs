@@ -825,6 +825,25 @@ fn pane_height_after_banner(context: &mut TestAppContext) -> Result<(), Failed> 
     context.simulate_window_resize(handle.into(), size(px(WIDTH), px(HEIGHT)));
     let clear = pane_size(context, handle, "terminal-canvas-1")?;
     let upper_clear = pane_size(context, handle, "terminal-bounds-2")?;
+    context.update_window(handle.into(), |_, window, _| {
+        let pane = window.find("terminal-bounds-2");
+        assert_eq!(
+            pane.role(),
+            Some(gpui_kit::Role::Terminal),
+            "a pane is a terminal to assistive technology"
+        );
+        assert!(
+            pane.label()
+                .is_some_and(|label| label.starts_with("Terminal")),
+            "a pane is named: {:?}",
+            pane.label()
+        );
+        assert_eq!(
+            window.find("tab-bar").role(),
+            Some(gpui_kit::Role::TabList),
+            "the tab bar is a tab list"
+        );
+    })?;
     absorb(
         context,
         handle,

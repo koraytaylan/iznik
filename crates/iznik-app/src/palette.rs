@@ -4,7 +4,8 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Theme, WindowExt};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, Keystroke, ParentElement,
-    ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window, div,
+    Role, ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window,
+    div,
 };
 use iznik_client::commands::Submission;
 use iznik_client::host::identity::HostId;
@@ -345,6 +346,8 @@ pub fn render(
     let mut panel = div()
         .id("command-palette-panel")
         .test_support()
+        .role(Role::Dialog)
+        .aria_label("Command palette")
         .flex()
         .flex_col()
         .w_128()
@@ -379,6 +382,8 @@ pub fn render(
     );
     let mut list = div()
         .id("command-palette-rows")
+        .role(Role::ListBox)
+        .aria_label("Commands")
         .flex()
         .flex_col()
         .min_h_0()

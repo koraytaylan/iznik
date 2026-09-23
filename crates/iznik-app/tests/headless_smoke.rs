@@ -87,6 +87,18 @@ fn assert_the_drawn_surface(context: &mut TestAppContext, window_handle: AnyWind
         window.draw(app_context).clear(app_context);
         assert!(window.find("window-shell").visible(), "the shell is drawn");
         assert!(window.find("pane-area").visible(), "the pane area is drawn");
+        let shell = window.find("window-shell");
+        assert_eq!(
+            shell.role(),
+            Some(gpui_kit::Role::Application),
+            "the shell is an application to assistive technology"
+        );
+        assert_eq!(shell.label(), Some("iznik"), "named for the application");
+        assert_eq!(
+            window.find("pane-area").label(),
+            Some("Panes"),
+            "the pane area is named"
+        );
     });
     assert!(
         updated.is_ok(),

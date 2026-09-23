@@ -104,6 +104,20 @@ fn opens_settings_window(context: &mut TestAppContext) -> Result<(), Failed> {
     });
     let main_handle = main.window_handle();
     main.simulate_keystrokes("ctrl-shift-p");
+    main.update(|window, application| {
+        window.draw(application).clear(application);
+        let panel = window.find("command-palette-panel");
+        assert_eq!(
+            panel.role(),
+            Some(gpui_kit::Role::Dialog),
+            "the palette is a dialog to assistive technology"
+        );
+        assert_eq!(
+            panel.label(),
+            Some("Command palette"),
+            "and says what it is"
+        );
+    });
     main.simulate_keystrokes(TYPE_SETTINGS);
     main.simulate_keystrokes("enter");
     main.update(|window, _application| {

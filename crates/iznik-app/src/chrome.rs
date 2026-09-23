@@ -6,11 +6,12 @@
 //! the one thing that writes back — a pane's measured size — goes through the
 //! shell's own `measured`, which submits against the authoritative geometry.
 
+use gpui_kit::StatefulInteractiveElement as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
-    Size, Styled, TestSupportExt, WeakEntity, canvas, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, Role,
+    SharedString, Size, Styled, TestSupportExt, WeakEntity, canvas, div, px,
 };
 
 use crate::grid::{self, cells};
@@ -21,6 +22,21 @@ use crate::vt::{PaneKey, VtCommand};
 use crate::window::{TERMINAL_PADDING, WindowShell};
 
 impl WindowShell {
+    /// What assistive technology calls a pane: the program or title its
+    /// host reports, and the host it runs on.
+    pub(crate) fn pane_label(&self, key: &PaneKey) -> String {
+        let title = self
+            .selected
+            .as_ref()
+            .and_then(|selected| self.tab(selected))
+            .and_then(|tab| tab.panes.iter().find(|pane| pane.id == key.pane))
+            .map(|pane| pane.title.trim())
+            .filter(|title| !title.is_empty());
+        match title {
+            Some(title) => format!("Terminal: {title}, on {}", key.host),
+            None => format!("Terminal on {}", key.host),
+        }
+    }
     /// The body under the bars: the visible tab's pane grid, or the stage
     /// describing the next step while no tab is visible.
     pub(crate) fn body(
@@ -41,6 +57,7 @@ impl WindowShell {
                         return div().into_any_element();
                     };
                     let entity = entity.clone();
+                    let label = self.pane_label(&key);
                     // The padding is outside the measured box, so the columns
                     // and rows sent to the host are the ones that fit inside it.
                     div()
@@ -51,6 +68,8 @@ impl WindowShell {
                             div()
                                 .id(SharedString::from(format!("terminal-bounds-{}", pane.0)))
                                 .test_support()
+                                .role(Role::Terminal)
+                                .aria_label(label)
                                 .size_full()
                                 .overflow_hidden()
                                 .child(held.surface.clone())

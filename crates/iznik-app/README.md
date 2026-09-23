@@ -130,6 +130,22 @@ panes. A command the connected server cannot decode is refused before it is
 sent, and a tag a server does not know is answered with `UnknownCommand`
 rather than ending the connection.
 
+## Accessibility
+
+The window describes itself to assistive technology through GPUI's AccessKit
+tree: the shell is an application named iznik; the tab strip and the session
+strip are tab lists whose chips are tabs, the one on screen marked selected;
+the palette is a dialog whose rows are a list; the pane area is a group; and
+each pane is a terminal named for the program or title its host reports and
+the host it runs on.
+
+What a pane shows is not exposed. The grid paints its cells itself rather than
+through text elements, so a screen reader can find a pane and say which
+program it holds, but cannot read its lines, follow its cursor or announce new
+output. Exposing them means publishing each visible row as a text run under
+the pane's node and keeping that tree in step with every snapshot; until that
+is done, iznik is not usable with a screen reader for reading terminal output.
+
 ## Modules
 
 | Module | Holds |
