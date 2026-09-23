@@ -10,6 +10,7 @@ complaints
 dead
 deadline
 dial
+dialed
 dialing
 duplex
 engaged
@@ -30,6 +31,7 @@ prompt
 quotes
 refuses
 relay
+relayed
 remote
 resumed
 said
@@ -41,5 +43,7 @@ spaced
 stay
 stdin
 stdout
+themselves
+unreached
 version
 wire

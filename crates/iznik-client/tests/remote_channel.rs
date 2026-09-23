@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iznik_client::transport::channel::{
-    ChannelError, ChannelOptions, RemoteChannel, relay_command,
+    ChannelError, ChannelOptions, RemoteChannel, await_greeting, relay_command,
 };
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
@@ -505,5 +505,74 @@ fn a_channel_quotes_the_server_it_asks_for() {
     assert!(
         relay_command(None).contains("iznik-server"),
         "and a channel told nothing runs whatever the host's path finds"
+    );
+}
+
+/// How long the relay takes to say it has reached the daemon in the timing
+/// cases: `ssh` connecting and authenticating over a slow link.
+const SLOW_CONNECTION: Duration = Duration::from_millis(200);
+
+/// How long the server then takes to greet.
+const GREETED_AFTER: Duration = Duration::from_millis(50);
+
+/// The greeting deadline in those cases: shorter than the connection took,
+/// longer than the greeting itself.
+const SHORT_GREETING: Duration = Duration::from_millis(100);
+
+/// The opening deadline in those cases.
+const OPENING: Duration = Duration::from_secs(2);
+
+/// # Panics
+///
+/// When a greeting that comes promptly after a slow connection is reported as
+/// a server that said nothing.
+#[tokio::test]
+async fn a_slow_connection_is_not_a_silent_server() {
+    let relayed = tokio::sync::Notify::new();
+    let greeted = async {
+        tokio::time::sleep(SLOW_CONNECTION).await;
+        relayed.notify_one();
+        tokio::time::sleep(GREETED_AFTER).await;
+        Ok::<&str, ChannelError>("hello")
+    };
+    let said = await_greeting(greeted, Some(&relayed), "slow", OPENING, SHORT_GREETING).await;
+    assert!(
+        matches!(said, Ok("hello")),
+        "the greeting deadline runs from when the relay was up: {said:?}"
+    );
+}
+
+/// # Panics
+///
+/// When a link that never came up is called a silent server, or a server that
+/// never greeted once it was reached is called a link that never came up.
+#[tokio::test]
+async fn an_opening_and_a_greeting_fail_as_themselves() {
+    let never = tokio::sync::Notify::new();
+    let unreached = await_greeting(
+        core::future::pending::<Result<(), ChannelError>>(),
+        Some(&never),
+        "unreached",
+        SHORT_GREETING,
+        OPENING,
+    )
+    .await;
+    assert!(
+        matches!(unreached, Err(ChannelError::Deadline { .. })),
+        "a relay that never came up is the opening's failure: {unreached:?}"
+    );
+    let reached = tokio::sync::Notify::new();
+    reached.notify_one();
+    let silent = await_greeting(
+        core::future::pending::<Result<(), ChannelError>>(),
+        Some(&reached),
+        "silent",
+        OPENING,
+        SHORT_GREETING,
+    )
+    .await;
+    assert!(
+        matches!(silent, Err(ChannelError::Silent { .. })),
+        "a server reached and never greeting is silent: {silent:?}"
     );
 }

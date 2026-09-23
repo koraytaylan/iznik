@@ -13,6 +13,7 @@
 //! has heard nothing for the pong deadline says so.
 
 use core::fmt::{self, Display, Formatter};
+use core::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,13 +23,13 @@ use iznik_link::framed::{FrameReader, FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::identity::DaemonInstance;
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
+    CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, RELAY_READY, ToClient, ToServer,
     decode_to_client, encode_to_server,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(unix)]
 use tokio::net::UnixStream;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::transport::Transport;
@@ -90,13 +91,17 @@ pub struct ChannelOptions {
     pub ping_interval: Duration,
     /// How long silence may last before the link is dead.
     pub pong_deadline: Duration,
-    /// How long getting a link may take.
+    /// How long getting a link may take — over `ssh`, until the relay on the
+    /// host says it has reached the daemon, which covers `ssh` connecting and
+    /// authenticating and the daemon starting.
     pub open_deadline: Duration,
     /// How long the server has to greet once there is one.
     ///
     /// Its own, rather than whatever the opening did not spend: a dial that
     /// took most of its deadline would otherwise leave a healthy but slow
-    /// server no time at all, and be reported as one that said nothing.
+    /// server no time at all, and be reported as one that said nothing. Over
+    /// `ssh` it runs from the relay's [`RELAY_READY`] line, not from when
+    /// `ssh` was started.
     pub greeting_deadline: Duration,
 }
 
@@ -253,6 +258,65 @@ pub struct ServerHello {
     pub instance: Option<DaemonInstance>,
 }
 
+/// A stream to the server, before anything has been said on it.
+struct Dialed {
+    /// The link over it.
+    link: FramedLink<Wire>,
+    /// The `ssh` it goes through, when it goes through one.
+    child: Option<SshChild>,
+    /// What the remote says on its standard error, kept as it arrives.
+    complaints: Arc<Mutex<String>>,
+    /// Raised when the relay on the host says it has reached the daemon;
+    /// `None` for a socket on this machine, which is reached when it connects.
+    relayed: Option<Arc<Notify>>,
+}
+
+/// Waits for a server's greeting under the two deadlines an opening has.
+///
+/// With `relayed` — a link through `ssh` — the connection is still being made
+/// until the relay says it has reached the daemon: `ssh` connecting and
+/// authenticating, the daemon starting. That has `opening` to happen in, and
+/// running out of it is a link that never came up
+/// ([`ChannelError::Deadline`]), not a server that would not speak. Only once
+/// the relay is up does the server have `greeting` to answer in, and running
+/// out of that is [`ChannelError::Silent`]. A greeting that arrives before the
+/// relay says so — from a server built before it did — is taken as it comes.
+///
+/// # Errors
+///
+/// [`ChannelError::Deadline`] or [`ChannelError::Silent`] as above, and
+/// whatever `greeted` itself fails with.
+pub async fn await_greeting<Greeted>(
+    greeted: impl Future<Output = Result<Greeted, ChannelError>>,
+    relayed: Option<&Notify>,
+    host: &str,
+    opening: Duration,
+    greeting: Duration,
+) -> Result<Greeted, ChannelError> {
+    let greeted = core::pin::pin!(greeted);
+    let mut greeted = greeted;
+    if let Some(relayed) = relayed {
+        tokio::select! {
+            done = greeted.as_mut() => return done,
+            () = relayed.notified() => {}
+            () = tokio::time::sleep(opening) => {
+                return Err(ChannelError::Deadline {
+                    host: host.to_owned(),
+                    waited: opening,
+                });
+            }
+        }
+    }
+    tokio::time::timeout(greeting, greeted)
+        .await
+        .unwrap_or_else(|_elapsed| {
+            Err(ChannelError::Silent {
+                host: host.to_owned(),
+                waited: greeting,
+            })
+        })
+}
+
 /// One frame, owned, because the reader lends its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Received {
@@ -328,11 +392,17 @@ fn closed(host: &str, said: &str) -> ChannelError {
 }
 
 /// Reads the remote's standard error into `kept` until it ends, holding the
-/// first [`REMOTE_COMPLAINT_BYTES`] of it.
+/// first [`REMOTE_COMPLAINT_BYTES`] of it — and raises `relayed` when the
+/// relay's [`RELAY_READY`] line is among it, which is not a complaint and is
+/// taken out.
 ///
 /// The first bytes and not the last: what a remote says before it goes is the
 /// reason, and what it says afterwards is consequence.
-fn keep_complaints(errors: tokio::process::ChildStderr, kept: Arc<Mutex<String>>) {
+fn keep_complaints(
+    errors: tokio::process::ChildStderr,
+    kept: Arc<Mutex<String>>,
+    relayed: Arc<Notify>,
+) {
     tokio::spawn(async move {
         use tokio::io::AsyncReadExt as _;
         let mut errors = errors;
@@ -346,6 +416,11 @@ fn keep_complaints(errors: tokio::process::ChildStderr, kept: Arc<Mutex<String>>
                     if held.len() < REMOTE_COMPLAINT_BYTES {
                         let said = String::from_utf8_lossy(buffer.get(..count).unwrap_or_default());
                         held.push_str(&said);
+                    }
+                    let line = format!("{RELAY_READY}\n");
+                    if let Some(at) = held.find(&line) {
+                        held.replace_range(at..at.saturating_add(line.len()), "");
+                        relayed.notify_one();
                     }
                 }
             }
@@ -409,7 +484,7 @@ impl RemoteChannel {
         // up and then said nothing is a server that is there and will not
         // speak. One deadline over both could only ever report the second.
         let dialing = RemoteChannel::dial(transport, server, host.clone());
-        let (link, child, complaints) = tokio::time::timeout(options.open_deadline, dialing)
+        let dialed = tokio::time::timeout(options.open_deadline, dialing)
             .await
             .unwrap_or_else(|_elapsed| {
                 Err(ChannelError::Deadline {
@@ -417,10 +492,16 @@ impl RemoteChannel {
                     waited: options.open_deadline,
                 })
             })?;
-        let greeting = RemoteChannel::shake_hands(link, options, host.clone(), child, complaints);
-        tokio::time::timeout(waited, greeting)
-            .await
-            .unwrap_or_else(|_elapsed| Err(ChannelError::Silent { host, waited }))
+        let opening = options.open_deadline;
+        let relayed = dialed.relayed;
+        let greeting = RemoteChannel::shake_hands(
+            dialed.link,
+            options,
+            host.clone(),
+            dialed.child,
+            dialed.complaints,
+        );
+        await_greeting(greeting, relayed.as_deref(), &host, opening, waited).await
     }
 
     /// Connects to a daemon socket on this machine.
@@ -465,8 +546,9 @@ impl RemoteChannel {
         transport: &Transport,
         server: Option<&Path>,
         host: String,
-    ) -> Result<(FramedLink<Wire>, Option<SshChild>, Arc<Mutex<String>>), ChannelError> {
+    ) -> Result<Dialed, ChannelError> {
         let complaints = Arc::new(Mutex::new(String::new()));
+        let mut relayed = None;
         let (wire, child): (Wire, Option<SshChild>) = match transport {
             Transport::Ssh(ssh) => {
                 let command = relay_command(server);
@@ -482,13 +564,20 @@ impl RemoteChannel {
                     .take()
                     .ok_or_else(|| closed(&host, ""))?;
                 if let Some(errors) = spawned.child.stderr.take() {
-                    keep_complaints(errors, Arc::clone(&complaints));
+                    let ready = Arc::new(Notify::new());
+                    keep_complaints(errors, Arc::clone(&complaints), Arc::clone(&ready));
+                    relayed = Some(ready);
                 }
                 (Box::new(tokio::io::join(stdout, stdin)), Some(spawned))
             }
             Transport::Local { socket } => (Self::connect_local(socket, &host).await?, None),
         };
-        Ok((FramedLink::new(wire), child, complaints))
+        Ok(Dialed {
+            link: FramedLink::new(wire),
+            child,
+            complaints,
+            relayed,
+        })
     }
 
     /// Says hello, hears the answer, and puts compression under the link when

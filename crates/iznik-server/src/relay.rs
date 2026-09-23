@@ -7,12 +7,16 @@
 //! sockets: it runs one command over SSH and speaks `iznik/1` to it.
 //!
 //! It speaks nothing itself. Bytes go both ways untouched until either side
-//! closes, so a relay that is working is a relay that is invisible.
+//! closes, so a relay that is working is a relay that is invisible — save for
+//! one line on its standard error, [`RELAY_READY`], once the daemon is
+//! reached, which tells a client over `ssh` that the connection is made and
+//! only the server's greeting is left to wait for.
 
 use std::ffi::OsString;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use iznik_protocol::message::RELAY_READY;
 use tokio::io::AsyncWriteExt;
 
 use crate::daemon::agent;
@@ -150,6 +154,7 @@ pub async fn run(arguments: &[OsString]) -> ExitCode {
             return ExitCode::from(FAILED);
         }
     };
+    complain(RELAY_READY).await;
     match relay(stream).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(refusal) => {

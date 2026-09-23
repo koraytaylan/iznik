@@ -38,6 +38,17 @@ pub const NO_DISCRIMINANT: u8 = u8::MAX;
 /// decodes to that value; the handshake owns the refusal.
 pub const PROTOCOL_VERSION: u16 = 1;
 
+/// The line `iznik-server --stdio` writes on its standard error once it has
+/// reached the daemon and begun carrying bytes — the one thing it ever says
+/// outside the protocol, and only there.
+///
+/// Over `ssh`, everything before this line is the connection being made:
+/// `ssh` reaching the host, authenticating, and the relay reaching or
+/// starting the daemon. A client times that as the opening and only what
+/// comes after it as the server's greeting, so a slow network is not
+/// reported as a server that would not speak.
+pub const RELAY_READY: &str = "iznik-server: relay ready";
+
 /// What an `Input` message spends besides the keystrokes it carries: its
 /// one-byte tag, the eight-byte pane it names, and the four-byte length of
 /// what follows.

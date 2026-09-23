@@ -514,6 +514,17 @@ server is only ever replaced on purpose: a client must not send
 server refuses the unknown tag as garbage and ends the whole connection on it.
 A client sends the command only to a server that advertised this bit.
 
+**Over `ssh`, the relay says when it is up.** `iznik-server --stdio` speaks
+nothing of its own on its standard output, which is the protocol's; once it
+has reached the daemon — starting it if need be — it writes one line on its
+standard error, `iznik-server: relay ready` (`RELAY_READY`). Everything
+before that line is the connection being made: `ssh` reaching the host and
+authenticating, the daemon starting. A client gives that its opening deadline
+and only what follows the line its greeting deadline, so a slow network is
+reported as a link that did not come up rather than as a server that would
+not speak. A server built before the line existed never writes it; its
+greeting is taken whenever it arrives inside the opening deadline.
+
 **The daemon instance.** Pane, tab and session numbers begin again with every
 daemon, so after a restart the pane a client knew as 3 may be another pane
 entirely — and a `Resume` of it would splice the new pane's bytes onto the old
