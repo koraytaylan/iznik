@@ -5,7 +5,9 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use iznik_app::subscription::{FIRST_RETRY, LONGEST_RETRY, Order, Standing, Subscriptions};
+use iznik_app::subscription::{
+    FIRST_RETRY, HIDDEN_KEPT, LONGEST_RETRY, Order, Standing, Subscriptions,
+};
 use iznik_app::vt::PaneKey;
 use iznik_client::host::identity::HostId;
 use iznik_protocol::identity::PaneId;
@@ -223,5 +225,62 @@ fn other_refusals_leave_subscriptions_alone() {
         subscriptions.standing(&pane),
         Standing::Idle,
         "and stops waiting"
+    );
+}
+
+/// Going back to a tab finds its panes still carried, so no subscribe and no
+/// whole screen is asked for; only panes past the most recent few hidden ones
+/// are let go, the longest hidden first.
+///
+/// # Panics
+///
+/// When a recently hidden pane is subscribed again or an old one is kept.
+#[test]
+fn a_recently_hidden_pane_stays_carried() {
+    let first = key(HOST, 0);
+    let mut subscriptions = Subscriptions::new();
+    let mut now = Instant::now();
+    let _shown = subscriptions.plan(&shown(&[&first]), now);
+    subscriptions.screen(&first);
+    let mut panes = Vec::new();
+    for pane in 1..=HIDDEN_KEPT {
+        let next = key(HOST, u64::try_from(pane).unwrap_or(u64::MAX));
+        now += FIRST_RETRY;
+        let orders = subscriptions.plan(&shown(&[&next]), now);
+        assert_eq!(
+            orders,
+            vec![Order::Subscribe(next.clone())],
+            "switching tabs subscribes the new pane and keeps the old"
+        );
+        subscriptions.screen(&next);
+        panes.push(next);
+    }
+    assert_eq!(
+        subscriptions.standing(&first),
+        Standing::Carried,
+        "the first pane is still among the kept"
+    );
+    now += FIRST_RETRY;
+    let returned = subscriptions.plan(&shown(&[&first]), now);
+    assert!(
+        returned.is_empty(),
+        "going back to a kept pane asks for nothing: {returned:?}"
+    );
+    let newest = key(HOST, u64::MAX);
+    now += FIRST_RETRY;
+    let orders = subscriptions.plan(&shown(&[&newest]), now);
+    let oldest = panes.first().cloned().unwrap_or_else(|| first.clone());
+    assert_eq!(
+        orders,
+        vec![
+            Order::Subscribe(newest.clone()),
+            Order::Unsubscribe(oldest.clone())
+        ],
+        "one pane too many hidden lets go of the longest hidden"
+    );
+    assert_eq!(
+        subscriptions.standing(&first),
+        Standing::Carried,
+        "the pane shown a moment ago is kept"
     );
 }

@@ -14,6 +14,11 @@
 //! When channels run out, the panes that are not shown let theirs go, so the
 //! ones that are shown come first.
 //!
+//! A pane that stops being shown is not let go at once: the most recently
+//! shown hidden panes stay carried, so switching back to a tab finds its
+//! panes where they were rather than subscribing afresh and fetching every
+//! screen whole again.
+//!
 //! What is here is a value, with no engine in it: the window applies what it
 //! decides, and a case can establish what it decides without a host.
 
@@ -32,6 +37,10 @@ pub const FIRST_RETRY: Duration = Duration::from_millis(250);
 pub const LONGEST_RETRY: Duration = Duration::from_secs(8);
 /// How much longer each refusal in a row waits than the one before.
 const RETRY_GROWTH: u32 = 2;
+/// How many panes that are not shown stay carried, the most recently shown
+/// first, so going back to a tab finds its panes live instead of asking for
+/// their whole screens again. Far below the 255 channels a connection has.
+pub const HIDDEN_KEPT: usize = 32;
 
 /// Where one pane's carrying stands, as far as the host has said.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +77,8 @@ pub enum Order {
 pub struct Subscriptions {
     /// Each held pane's standing.
     panes: BTreeMap<PaneKey, Standing>,
+    /// When each pane was last shown, which decides the hidden ones kept.
+    last_shown: BTreeMap<PaneKey, Instant>,
 }
 
 impl Subscriptions {
@@ -86,6 +97,7 @@ impl Subscriptions {
     /// Forget a pane the model no longer holds.
     pub fn forget(&mut self, key: &PaneKey) {
         let _gone = self.panes.remove(key);
+        let _forgotten = self.last_shown.remove(key);
     }
 
     /// A screen arrived for a pane: whatever was asked for is being carried.
@@ -153,12 +165,14 @@ impl Subscriptions {
         }
     }
 
-    /// What to ask for so that exactly the shown panes are carried: every
-    /// shown pane that is idle, or whose wait after a refusal is over, is
-    /// subscribed, and every other pane that is carried or asked for is let go.
+    /// What to ask for so that every shown pane is carried: each shown pane
+    /// that is idle, or whose wait after a refusal is over, is subscribed.
+    /// Panes no longer shown stay carried, up to [`HIDDEN_KEPT`] of the most
+    /// recently shown, and the rest are let go.
     pub fn plan(&mut self, shown: &BTreeSet<PaneKey>, now: Instant) -> Vec<Order> {
         for key in shown {
             let _held = self.panes.entry(key.clone()).or_insert(Standing::Idle);
+            let _seen = self.last_shown.insert(key.clone(), now);
         }
         let mut orders = Vec::new();
         for (key, standing) in &mut self.panes {
@@ -173,15 +187,34 @@ impl Subscriptions {
                     orders.push(Order::Subscribe(key.clone()));
                 }
                 Standing::Refused { .. } if !visible => *standing = Standing::Idle,
-                Standing::Asked { .. } | Standing::Carried if !visible => {
-                    *standing = Standing::Idle;
-                    orders.push(Order::Unsubscribe(key.clone()));
-                }
                 Standing::Idle
                 | Standing::Asked { .. }
                 | Standing::Carried
                 | Standing::Refused { .. } => {}
             }
+        }
+        orders.extend(self.let_go_beyond_kept(shown));
+        orders
+    }
+
+    /// Let go of the hidden panes past the [`HIDDEN_KEPT`] most recently shown.
+    fn let_go_beyond_kept(&mut self, shown: &BTreeSet<PaneKey>) -> Vec<Order> {
+        let mut hidden: Vec<(Option<Instant>, PaneKey)> = self
+            .panes
+            .iter()
+            .filter(|(key, standing)| {
+                !shown.contains(*key)
+                    && matches!(standing, Standing::Asked { .. } | Standing::Carried)
+            })
+            .map(|(key, _standing)| (self.last_shown.get(key).copied(), key.clone()))
+            .collect();
+        hidden.sort_by(|left, right| right.cmp(left));
+        let mut orders = Vec::new();
+        for (_shown_at, key) in hidden.into_iter().skip(HIDDEN_KEPT) {
+            if let Some(standing) = self.panes.get_mut(&key) {
+                *standing = Standing::Idle;
+            }
+            orders.push(Order::Unsubscribe(key));
         }
         orders
     }
