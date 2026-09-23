@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use iznik_client::host::identity::HostId;
+use iznik_client::host::manager::answered_length;
 use iznik_client::host::manager::credit::CreditReceipt;
 use iznik_protocol::identity::{PaneId, Sequence};
 use libghostty_vt::render::{
@@ -298,6 +299,14 @@ pub enum VtCommand {
         /// Owned platform input, paste or pointer event.
         input: TerminalInput,
     },
+    /// Say how far the host already answered this pane's terminal queries:
+    /// the responses fed bytes before `through` produce are not sent again.
+    Answered {
+        /// Host-qualified pane identity.
+        key: PaneKey,
+        /// The stream position up to which queries were answered.
+        through: Sequence,
+    },
     /// Publish current state without feeding any bytes.
     Snapshot(PaneKey),
     /// Destroy a pane and its callbacks on their owning thread.
@@ -314,6 +323,7 @@ impl VtCommand {
             | Self::Theme { key, .. }
             | Self::Scroll { key, .. }
             | Self::Input { key, .. }
+            | Self::Answered { key, .. }
             | Self::Snapshot(key)
             | Self::Close(key) => key,
         }
@@ -515,6 +525,9 @@ struct PaneTerminal {
     published_viewport: Option<Viewport>,
     /// How many rows the history has let go of, for numbering that holds.
     eviction: eviction::Eviction,
+    /// Where the host's own answers to terminal queries end: responses to
+    /// bytes before it were already sent by the host and are not sent again.
+    answered: Sequence,
 }
 
 impl PaneTerminal {
@@ -573,6 +586,7 @@ impl PaneTerminal {
             published: Vec::new(),
             published_viewport: None,
             eviction: eviction::Eviction::default(),
+            answered: Sequence(0),
         };
         pane.theme(theme)?;
         Ok(pane)
@@ -606,7 +620,14 @@ impl PaneTerminal {
         let next = sequence.0.checked_add(length).ok_or(VtError::Overflow)?;
         let follow = self.viewport()?.at_bottom();
         self.scan.observe(bytes, &mut self.clipboard.borrow_mut());
-        self.terminal.vt_write(bytes);
+        let answered = answered_length(sequence, self.answered, bytes.len());
+        let (replayed, fresh) = bytes.split_at_checked(answered).unwrap_or((bytes, &[]));
+        // The host answered the queries in these bytes while nobody was
+        // attached; answering them again would type stray replies.
+        let kept = self.responses.borrow().len();
+        self.terminal.vt_write(replayed);
+        self.responses.borrow_mut().truncate(kept);
+        self.terminal.vt_write(fresh);
         if follow {
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
         }
@@ -853,6 +874,12 @@ fn apply(
         VtCommand::Input { input, .. } => {
             let pane = panes.get_mut(&key).ok_or(VtError::NeedsScreen)?;
             return pane.input(&key, &input).map(Some);
+        }
+        VtCommand::Answered { through, .. } => {
+            if let Some(pane) = panes.get_mut(&key) {
+                pane.answered = pane.answered.max(through);
+            }
+            return Ok(None);
         }
         VtCommand::Snapshot(_) => 0,
         VtCommand::Close(_) => {

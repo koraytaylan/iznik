@@ -496,16 +496,29 @@ impl EngineBridge {
                 sequence,
                 bytes,
                 receipt,
-                ..
-            } => VtCommand::Feed {
-                key: PaneKey {
-                    host: host.clone(),
-                    pane: *pane,
-                },
-                sequence: *sequence,
-                bytes: bytes.clone(),
-                receipt: receipt.clone(),
-            },
+                answered_through,
+            } => {
+                // Said first, so the feed that follows knows which of its
+                // bytes the host already answered queries in.
+                if answered_through > sequence {
+                    thread.send(VtCommand::Answered {
+                        key: PaneKey {
+                            host: host.clone(),
+                            pane: *pane,
+                        },
+                        through: *answered_through,
+                    })?;
+                }
+                VtCommand::Feed {
+                    key: PaneKey {
+                        host: host.clone(),
+                        pane: *pane,
+                    },
+                    sequence: *sequence,
+                    bytes: bytes.clone(),
+                    receipt: receipt.clone(),
+                }
+            }
             // A transport detachment can be followed by Resume, so its emulator
             // must survive; the window closes it when the pane itself is removed.
             _ => return Ok(()),
