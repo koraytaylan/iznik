@@ -32,11 +32,13 @@ actions = [
 # And the tail itself, interrupted the way a person interrupts it — the signal
 # sent to the command and its own status waited for, rather than through
 # something that reports its own. What the tail prints first is the pane as it
-# stands, which is what the daemon sends a client that has just attached.
+# stands, which is what the daemon sends a client that has just attached. The
+# interrupt is sent once that screen has arrived, not after a guessed pause,
+# so the tail is known to have attached before it is stopped.
 [[steps]]
 id = "tail-until-interrupted"
 container = "engine"
-run = "IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik tail host0 1 & tailed=$!; sleep 8; kill -INT $tailed; wait $tailed"
+run = "out=$(mktemp); IZNIK_ARTIFACTS_DIRECTORY=/iznik/distribution /iznik/bin/iznik tail host0 1 > $out & tailed=$!; tries=0; until grep -q '\"kind\":\"screen\"' $out; do tries=$((tries + 1)); if [ $tries -gt 400 ] || ! kill -0 $tailed 2>/dev/null; then kill -INT $tailed 2>/dev/null; cat $out; printf 'no screen arrived' >&2; exit 1; fi; sleep 0.1; done; kill -INT $tailed; wait $tailed; status=$?; cat $out; exit $status"
 timeout_seconds = 60
 
 [[expect]]

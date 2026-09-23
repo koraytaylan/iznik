@@ -17,6 +17,10 @@ files = []
 # The writer holds the pipe open after its half, because a writer that closed
 # it would give the upload an end of input and the digest check would run —
 # which is the opposite of the case being made.
+#
+# Nothing here waits on a clock: the start waits, under a bound, until the
+# half is in the partial file, and the cut waits until both processes are
+# gone, so each step's precondition held when the next one runs.
 [[steps]]
 id = "put-the-script-on-the-host"
 container = "host0"
@@ -28,7 +32,7 @@ emit = "/tmp/upload.sh"
 [[steps]]
 id = "start-an-upload-that-will-not-finish"
 container = "host0"
-run = "mkdir -p /home/iznik/.local/share/iznik/bin && rm -f /tmp/feed && mkfifo /tmp/feed && (IZNIK_PREFIX=/home/iznik/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh /tmp/upload.sh < /tmp/feed & echo $! > /tmp/uploader) && (sh -c 'printf \"the first half and no more\"; sleep 120' > /tmp/feed & echo $! > /tmp/writer) && sleep 2 && printf started"
+run = "mkdir -p /home/iznik/.local/share/iznik/bin && rm -f /tmp/feed && mkfifo /tmp/feed && (IZNIK_PREFIX=/home/iznik/.local/share/iznik IZNIK_DIGEST=0000000000000000000000000000000000000000000000000000000000000000 sh /tmp/upload.sh < /tmp/feed & echo $! > /tmp/uploader) && (sh -c 'printf \"the first half and no more\"; sleep 120' > /tmp/feed & echo $! > /tmp/writer) && tries=0 && until [ \"$(cat /home/iznik/.local/share/iznik/bin/.partial-* 2>/dev/null)\" = \"the first half and no more\" ]; do tries=$((tries + 1)); [ $tries -le 300 ] || { printf 'the half never reached the partial file'; exit 1; }; sleep 0.1; done && printf started"
 timeout_seconds = 40
 
 [[steps]]
@@ -40,7 +44,7 @@ timeout_seconds = 20
 [[steps]]
 id = "cut-it-off"
 container = "host0"
-run = "kill -KILL $(cat /tmp/uploader) 2>/dev/null; kill -KILL $(cat /tmp/writer) 2>/dev/null; rm -f /tmp/feed; sleep 1; printf cut"
+run = "u=$(cat /tmp/uploader); w=$(cat /tmp/writer); kill -KILL $u $w 2>/dev/null; tries=0; while kill -0 $u 2>/dev/null || kill -0 $w 2>/dev/null; do tries=$((tries + 1)); [ $tries -le 100 ] || { printf 'still running'; exit 1; }; sleep 0.1; done; rm -f /tmp/feed; printf cut"
 timeout_seconds = 20
 
 [[steps]]
