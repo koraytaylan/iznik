@@ -25,7 +25,7 @@ because = "the flood and the keystroke share one link inside the process; adding
 
 [[claim]]
 id = "baseline-throughput"
-statement = "One pane sustains at least fifty mebibytes a second through the socket, and eight panes together sustain at least nine tenths of what one does — which is what says the scheduler shares rather than serializes, since serializing them would leave the eight no more than an eighth. Nine tenths and not simply more, because both figures saturate the same socket and come out within a per cent of each other in either order: asking for strictly more would be asking which way a coin landed."
+statement = "One pane sustains at least fifty mebibytes a second through the socket; eight panes together sustain at least nine tenths of what one does; and the eight are served together rather than in turn: when the first of them has delivered its whole flood, the one furthest behind has delivered at least a quarter of its own. The aggregate rate alone cannot say that, because a scheduler draining one pane after another would hold the same rate."
 test = "iznik-server::regression_baseline::baseline_throughput_is_over_its_floor"
 profile = "regression"
 because = "a socket's throughput is the process's; a container's network would cap it below what is being asserted"
@@ -46,7 +46,7 @@ because = "it is one process starting; an image start would be measured with it"
 
 [[claim]]
 id = "baseline-notes-are-current"
-statement = "The committed table in `docs/notes/baseline.md` carries every figure the benchmark reports, so a figure that is added or renamed cannot leave the notes quietly stale."
+statement = "The committed table in `docs/notes/baseline.md` carries every figure the benchmark reports, with the ceilings the code asserts, and every committed number is a measurement in the benchmark's unit that is inside its own ceiling, so a figure or a ceiling that changes cannot leave the notes quietly stale."
 test = "iznik-server::regression_baseline::baseline_notes_carry_every_figure"
 profile = "regression"
 because = "it reads a file in this repository and compares it with the benchmark's own table"

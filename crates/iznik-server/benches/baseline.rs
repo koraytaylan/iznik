@@ -63,17 +63,30 @@ pub const AGGREGATE_PANES: usize = 8;
 /// What share of one pane's throughput eight of them together must hold, as a
 /// numerator over [`SHARED_OF`].
 ///
-/// Nine tenths. What is being asked is whether the scheduler shares or
-/// serializes: serializing eight panes would leave each of them an eighth,
-/// and the eight together no more than one. What they in fact do on this
-/// machine is saturate the same socket, so the two figures come out within a
-/// per cent of each other in either order — asking for strictly more than one
-/// pane's is asking which way a coin landed, and that is a measurement of the
-/// machine rather than of the scheduler.
+/// Nine tenths. This asks only that eight panes do not collapse the rate one
+/// pane gets: both saturate the same socket, so the two figures come out
+/// within a per cent of each other in either order, and asking for strictly
+/// more would be asking which way a coin landed. It says nothing about
+/// whether the panes are served together or one after another — a scheduler
+/// that drained each pane in turn would hold the same aggregate rate. That is
+/// what [`CONCURRENT`] asks.
 pub const SHARED: u64 = 9;
 
 /// The denominator of that share.
 pub const SHARED_OF: u64 = 10;
+
+/// How far, as a numerator over [`CONCURRENT_OF`], the pane furthest behind
+/// must have got through its flood when the first of the eight has finished.
+///
+/// A quarter. A scheduler that shares the link moves all eight forward
+/// together, so when the first is done the last is most of the way there. A
+/// scheduler that serializes them has sent the others nothing yet, beyond
+/// what fitted in a credit window. A quarter sits far from both, so neither
+/// the order the shells are started in nor a loaded machine decides it.
+pub const CONCURRENT: usize = 1;
+
+/// The denominator of that share.
+pub const CONCURRENT_OF: usize = 4;
 
 /// How many panes the second memory figure is taken with.
 pub const MANY_PANES: usize = 50;
@@ -295,7 +308,39 @@ pub async fn round_trips(
     Ok(trips)
 }
 
-/// The bytes a second `panes` sustain together through the socket.
+/// What several panes flooding at once did.
+#[derive(Clone, Copy, Debug)]
+pub struct Flow {
+    /// The bytes a second they sustained together through the socket.
+    pub rate: u64,
+    /// How many bytes each was asked for.
+    pub each_wanted: usize,
+    /// How many bytes the pane furthest behind had delivered at the moment
+    /// the first one delivered all it was asked for.
+    pub least_at_first_finish: usize,
+}
+
+/// How much each pane had delivered, and whether any has delivered all of
+/// what it was asked for.
+fn progress(
+    client: &TestClient<UnixStream>,
+    panes: &[PaneId],
+    each_wanted: usize,
+) -> (usize, usize, bool) {
+    let delivered: Vec<usize> = panes
+        .iter()
+        .map(|pane| client.bytes_of(*pane).len())
+        .collect();
+    let total = delivered
+        .iter()
+        .fold(0_usize, |held, bytes| held.saturating_add(*bytes));
+    let least = delivered.iter().copied().min().unwrap_or_default();
+    let finished = delivered.iter().any(|bytes| *bytes >= each_wanted);
+    (total, least, finished)
+}
+
+/// The bytes a second `panes` sustain together through the socket, and how
+/// evenly they progressed.
 ///
 /// # Errors
 ///
@@ -303,7 +348,7 @@ pub async fn round_trips(
 pub async fn throughput(
     client: &mut TestClient<UnixStream>,
     panes: &[PaneId],
-) -> Result<u64, Failed> {
+) -> Result<Flow, Failed> {
     client.auto_credit(true);
     for pane in panes {
         client.subscribe(*pane).await?;
@@ -313,11 +358,13 @@ pub async fn throughput(
     // arrived during the measurement, and counting them against a shorter
     // window would make eight panes look faster than they are.
     let started = Instant::now();
-    let mut wanted = 0_usize;
+    let mut each_wanted = 0_usize;
     for pane in panes {
-        wanted = wanted.saturating_add(flood(client, *pane, THROUGHPUT_MEBIBYTES).await?);
+        each_wanted = flood(client, *pane, THROUGHPUT_MEBIBYTES).await?;
     }
+    let wanted = each_wanted.saturating_mul(panes.len());
     let mut carried = 0_usize;
+    let mut least_at_first_finish = None;
     for _attempt in 0..READ_ATTEMPTS {
         if carried >= wanted {
             break;
@@ -325,9 +372,11 @@ pub async fn throughput(
         if client.next(PROMPT).await.is_err() {
             break;
         }
-        carried = panes.iter().fold(0, |held, pane| {
-            held.saturating_add(client.bytes_of(*pane).len())
-        });
+        let (total, least, finished) = progress(client, panes, each_wanted);
+        carried = total;
+        if finished && least_at_first_finish.is_none() {
+            least_at_first_finish = Some(least);
+        }
     }
     if carried < wanted {
         return Err(format!(
@@ -342,10 +391,14 @@ pub async fn throughput(
         .unwrap_or(u64::MAX)
         .max(1);
     let bytes = u64::try_from(carried).unwrap_or(u64::MAX);
-    Ok(bytes
-        .saturating_mul(MILLISECONDS_A_SECOND)
-        .checked_div(taken)
-        .unwrap_or_default())
+    Ok(Flow {
+        rate: bytes
+            .saturating_mul(MILLISECONDS_A_SECOND)
+            .checked_div(taken)
+            .unwrap_or_default(),
+        each_wanted,
+        least_at_first_finish: least_at_first_finish.unwrap_or(each_wanted),
+    })
 }
 
 /// The daemon's resident bytes once they have stopped moving.
@@ -434,12 +487,12 @@ pub async fn latency(alongside: usize) -> Result<Vec<Duration>, Failed> {
     round_trips(&mut client, typed, &beside).await
 }
 
-/// The bytes a second `count` panes sustain together.
+/// What `count` panes flooding together do.
 ///
 /// # Errors
 ///
 /// Whatever the measurement reports.
-pub async fn panes_throughput(count: usize) -> Result<u64, Failed> {
+pub async fn panes_throughput(count: usize) -> Result<Flow, Failed> {
     let (_stack, mut client) = attached().await?;
     let mut panes = Vec::with_capacity(count);
     for _pane in 0..count {
@@ -464,8 +517,8 @@ pub async fn measure() -> Result<Figures, Failed> {
         idle_tail: percentile(&idle, AT, OF),
         flood_middle: percentile(&flooded, MIDDLE, OF),
         flood_tail: percentile(&flooded, AT, OF),
-        single_throughput: single,
-        aggregate_throughput: aggregate,
+        single_throughput: single.rate,
+        aggregate_throughput: aggregate.rate,
         resting_memory: resting,
         many_pane_memory: holding,
         startup: startup().await?,
@@ -522,7 +575,7 @@ pub fn table(figures: &Figures) -> String {
         (
             "Eight panes' throughput together",
             rate(figures.aggregate_throughput),
-            String::from("more than one pane's"),
+            String::from("at least nine tenths of one pane's"),
         ),
         (
             "Resident memory at rest",

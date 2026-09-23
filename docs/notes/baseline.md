@@ -41,7 +41,7 @@ way.
 | Keystroke to echo, under a flood, median | 0.083 ms | none |
 | Keystroke to echo, under a flood, 99th percentile | 0.170 ms | 30.000 ms |
 | One pane's throughput | 89 MiB/s | at least 50 MiB/s |
-| Eight panes' throughput together | 212 MiB/s | more than one pane's |
+| Eight panes' throughput together | 212 MiB/s | at least nine tenths of one pane's |
 | Resident memory at rest | 6 MiB | 32 MiB |
 | Resident memory with fifty idle panes | 17 MiB | 256 MiB |
 | Startup to a socket that answers | 6.398 ms | 500.000 ms |
@@ -61,8 +61,23 @@ first request to the last byte at the client, with credit returned as it
 arrives. The clock starts before the first pane is asked, not after the last:
 counting bytes a pane produced during the setup against a shorter window is
 what would make eight panes look faster than they are. Eight together sustain
-212 MiB/s — more than twice one pane's 89, which is what says the scheduler
-shares rather than serializes.
+212 MiB/s against one pane's 89; the ceiling asks only for nine tenths of one
+pane's, because both saturate the same socket and the order they come out in
+is the machine's.
+
+That rate says nothing about *how* the eight were served: a scheduler that
+drained each pane in turn would hold it too. So the assertion also watches
+the panes' progress, and when the first of the eight has delivered all
+sixteen mebibytes, the one furthest behind must have delivered at least a
+quarter of its own. Served together, all eight are most of the way there;
+served in turn, the others have been sent next to nothing. That share is
+asserted and not tabled, because these figures were taken before it was
+recorded.
+
+`baseline_notes_carry_every_figure` holds this file to the benchmark: every
+figure is here, every ceiling is the one the code asserts, every measurement
+is a number in the benchmark's unit and inside its own ceiling, and the
+aggregate rate is at least nine tenths of the single-pane one.
 
 **Resident memory** is the daemon process's own, read from `/proc`, at rest and
 then holding fifty idle panes. Both are sampled once they have stopped moving:
