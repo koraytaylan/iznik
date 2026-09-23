@@ -28,6 +28,7 @@ use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{
     CommandOutcome, RejectionCode, decode_session_command, encode_command_outcome,
 };
+use iznik_protocol::identity::DaemonInstance;
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_server, encode_to_client,
@@ -49,7 +50,10 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// What this server can do.
 const CAPABILITIES: Capabilities = Capabilities::from_bits(
-    Capabilities::ZSTD.bits() | Capabilities::RESUME.bits() | Capabilities::REORDER_SESSIONS.bits(),
+    Capabilities::ZSTD.bits()
+        | Capabilities::RESUME.bits()
+        | Capabilities::REORDER_SESSIONS.bits()
+        | Capabilities::INSTANCE.bits(),
 );
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
@@ -240,6 +244,7 @@ struct Greeted<Stream: AsyncRead + AsyncWrite + Unpin> {
 async fn greet<Stream>(
     mut link: FramedLink<Stream>,
     deadline: Duration,
+    instance: DaemonInstance,
 ) -> Result<Option<Greeted<Stream>>, ConnectionError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
@@ -279,10 +284,20 @@ where
             spoken: protocol_version,
         });
     }
+    // The instance goes only to a client that said it can read it: an older
+    // one refuses a `Hello` longer than the fields it knows, and would never
+    // connect. Such a client is told the capability is absent too, so what it
+    // was sent and what it was told agree.
+    let named = capabilities.contains(Capabilities::INSTANCE);
     let reply = ToClient::Hello {
         protocol_version: PROTOCOL_VERSION,
         server_version: SERVER_VERSION.to_owned(),
-        capabilities: CAPABILITIES,
+        capabilities: if named {
+            CAPABILITIES
+        } else {
+            Capabilities::from_bits(CAPABILITIES.bits() & !Capabilities::INSTANCE.bits())
+        },
+        instance: named.then_some(instance),
     };
     link.send(CHANNEL_CONTROL, &encode_to_client(&reply)?)
         .await?;
@@ -329,7 +344,9 @@ pub async fn serve_with_options<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let Some(greeted) = greet(FramedLink::new(stream), options.greeting_deadline).await? else {
+    let instance = registry.read().await.instance();
+    let Some(greeted) = greet(FramedLink::new(stream), options.greeting_deadline, instance).await?
+    else {
         return Ok(());
     };
     if offers_zstd(greeted.capabilities) && offers_zstd(CAPABILITIES) {

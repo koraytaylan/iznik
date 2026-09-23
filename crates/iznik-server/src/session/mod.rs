@@ -14,6 +14,7 @@
 //! delta a client applies rather than a state it re-reads.
 
 pub mod commands;
+pub mod instance;
 pub mod registry;
 
 use iznik_protocol::identity::{PaneId, SessionId, TabId};

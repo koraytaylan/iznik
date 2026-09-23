@@ -34,6 +34,12 @@ A decoder refuses, rather than guesses:
 |---|---|
 | Truncated | A field ends before its bytes do. It names the discriminant it was reading, how many bytes it needed and how many were left. |
 | TrailingBytes | Bytes follow the last field of a message. A message is exactly its fields. |
+
+A field a capability added after a message was first pinned is appended at
+its end, marked *(capability)* in the tables below. A sender writes it only to
+a peer that advertised the capability (§12), because an older decoder refuses
+the extra bytes; a decoder reads it when bytes remain after the fields before
+it, and otherwise reports it absent.
 | UnknownDiscriminant | A tag no variant claims — a message, a mark kind, an error code, a layout node, a split direction, a delta, a removal reason, an exit status, a command, an outcome, a created thing or a rejection code. |
 | Utf8 | A string field is not UTF-8. |
 | Oversize | An encoding would exceed the maximum payload length. It is refused before anything is allocated. |
@@ -116,7 +122,7 @@ which the codec does not police".
 
 | Message | Constant | Value | Fields after the discriminant |
 |---|---|---|---|
-| `Hello` | `client_tag::HELLO` | 0 | `u16` protocol version, `bytes` server version, `u32` capability bits |
+| `Hello` | `client_tag::HELLO` | 0 | `u16` protocol version, `bytes` server version, `u32` capability bits, then *(capability `INSTANCE`)* 16 bytes: the daemon instance, a little-endian `u128` |
 | `Snapshot` | `client_tag::SNAPSHOT` | 1 | `generation`, `bytes` payload (§7) |
 | `Delta` | `client_tag::DELTA` | 2 | `generation`, `bytes` payload (§8) |
 | `CommandResult` | `client_tag::COMMAND_RESULT` | 3 | `id` command id, `bytes` payload (§6.3) |
@@ -128,7 +134,7 @@ which the codec does not police".
 | `Error` | `client_tag::ERROR` | 9 | `u8` error code (§5.1), `bytes` message |
 
 *Fixtures:* `message.jsonl`, "Hello reply with both known capabilities"
-through "Error with an empty message".
+through "Error with an empty message"; "a daemon instance cut short".
 
 ### 5.1 Error codes
 
@@ -467,6 +473,9 @@ Capabilities are a `u32` bit set:
 | `ZSTD` | 0 | 1 |
 | `RESUME` | 1 | 2 |
 | `REORDER_SESSIONS` | 2 | 4 |
+| `INSTANCE` | 4 | 16 |
+
+Bit 3 is unassigned.
 
 Unknown bits are preserved rather than dropped, so a newer peer round-trips
 its own advertisement intact and can tell what it advertised from what came
@@ -479,6 +488,19 @@ server is only ever replaced on purpose: a client must not send
 `ReorderSessions` to a server built before the command existed, because that
 server refuses the unknown tag as garbage and ends the whole connection on it.
 A client sends the command only to a server that advertised this bit.
+
+**The daemon instance.** Pane, tab and session numbers begin again with every
+daemon, so after a restart the pane a client knew as 3 may be another pane
+entirely — and a `Resume` of it would splice the new pane's bytes onto the old
+one's screen. A client that sets `INSTANCE` in its `Hello` is answered with the
+bit set and the daemon instance appended: sixteen bytes a daemon picks at
+random when it starts and never changes. A client compares it with the one its
+state came from; when they differ, the host is a fresh one — it resumes
+nothing, asks for every pane it still shows with a `Subscribe`, whose answer
+is a `Screen`, and forgets everything it held from the other daemon. A reply
+without the field is a daemon that cannot say, and a client can then only
+guess from the model's generation. *Fixtures:* `message.jsonl`, "Hello reply
+naming the daemon instance it comes from".
 
 When **both** `Hello`s carried `ZSTD`, everything after them is a single zstd
 stream in each direction — one context per connection, not per frame, so the

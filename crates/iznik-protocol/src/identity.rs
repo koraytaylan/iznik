@@ -26,3 +26,13 @@ pub struct Generation(pub u64);
 /// A byte position in a pane's output, counted from the pane's creation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Sequence(pub u64);
+
+/// One run of a host's daemon, chosen at random when it starts.
+///
+/// Pane, tab and session numbers begin again with every daemon, so a number a
+/// client holds names a pane only together with the daemon that minted it. A
+/// client compares this across connections: the same value is the same daemon
+/// and a resume can carry on, a different one is a host whose numbers mean
+/// something else now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DaemonInstance(pub u128);

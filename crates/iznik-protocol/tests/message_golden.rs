@@ -9,7 +9,7 @@ use std::path::Path;
 
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
-use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MAXIMUM_INPUT_LENGTH, MarkKind, MessageError, PROTOCOL_VERSION,
     ToClient, ToServer, decode_to_client, decode_to_server, encode_to_client, encode_to_server,
@@ -85,6 +85,22 @@ fn bytes_field(object: &Value, name: &str) -> Result<Vec<u8>, Failure> {
     let pattern = golden::bytes(&string_field(value, "repeat")?)?;
     let count: usize = narrow_field(value, "count")?;
     Ok(pattern.repeat(count))
+}
+
+/// An optional daemon instance: absent, or its sixteen wire bytes in hex,
+/// little-endian as they travel.
+///
+/// # Errors
+///
+/// When the field is present and not sixteen bytes.
+fn instance_field(object: &Value, name: &str) -> Result<Option<DaemonInstance>, Failure> {
+    if object.get(name).is_none() {
+        return Ok(None);
+    }
+    let bytes: [u8; 16] = bytes_field(object, name)?
+        .try_into()
+        .map_err(|_wrong| format!("`{name}` is not sixteen bytes"))?;
+    Ok(Some(DaemonInstance(u128::from_le_bytes(bytes))))
 }
 
 /// A variant: a bare name for a unit variant, or `{"Name": fields}`.
@@ -225,6 +241,7 @@ fn to_client(value: &Value) -> Result<ToClient, Failure> {
             protocol_version: narrow_field(&fields, "protocol_version")?,
             server_version: string_field(&fields, "server_version")?,
             capabilities: Capabilities::from_bits(narrow_field(&fields, "capabilities")?),
+            instance: instance_field(&fields, "instance")?,
         },
         "Snapshot" => ToClient::Snapshot {
             generation: Generation(integer_field(&fields, "generation")?),
@@ -468,6 +485,7 @@ fn message_golden_a_foreign_protocol_version_is_a_value() {
         protocol_version: 7,
         server_version: "iznik-server 9".to_owned(),
         capabilities: Capabilities::from_bits(0),
+        instance: None,
     };
     let wire = encode_to_client(&hello).expect("a Hello encodes");
     match decode_to_client(&wire) {

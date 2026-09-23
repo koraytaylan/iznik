@@ -136,6 +136,7 @@ fn scripted(
             protocol_version: version,
             server_version: "scripted".to_owned(),
             capabilities,
+            instance: None,
         }) else {
             return;
         };

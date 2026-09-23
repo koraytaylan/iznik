@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameReader, FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
+use iznik_protocol::identity::DaemonInstance;
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_client, encode_to_server,
@@ -245,6 +246,11 @@ pub struct ServerHello {
     pub server_version: String,
     /// What it can do.
     pub capabilities: Capabilities,
+    /// Which run of its daemon answered, when it says.
+    ///
+    /// A server that does not is one built before it could, and a client can
+    /// then only guess whether it is talking to the daemon it last spoke to.
+    pub instance: Option<DaemonInstance>,
 }
 
 /// One frame, owned, because the reader lends its own.
@@ -367,9 +373,12 @@ fn offers_zstd(capabilities: Capabilities) -> bool {
     capabilities.bits() & Capabilities::ZSTD.bits() != 0
 }
 
-/// What this client asks for: compression, and resuming where it left off.
+/// What this client asks for: compression, resuming where it left off, and to
+/// be told which run of the daemon it reached.
 fn wanted() -> Capabilities {
-    Capabilities::from_bits(Capabilities::ZSTD.bits() | Capabilities::RESUME.bits())
+    Capabilities::from_bits(
+        Capabilities::ZSTD.bits() | Capabilities::RESUME.bits() | Capabilities::INSTANCE.bits(),
+    )
 }
 
 impl RemoteChannel {
@@ -550,12 +559,13 @@ impl RemoteChannel {
             });
         }
         let message = decode_to_client(frame.payload).map_err(ChannelError::Message)?;
-        let (protocol_version, server_version, capabilities) = match message {
+        let (protocol_version, server_version, capabilities, instance) = match message {
             ToClient::Hello {
                 protocol_version,
                 server_version,
                 capabilities,
-            } => (protocol_version, server_version, capabilities),
+                instance,
+            } => (protocol_version, server_version, capabilities, instance),
             // What a server of another version answers a `Hello` with: its
             // refusal, which is the version mismatch this client exists to
             // report by name — not something unexpected.
@@ -586,6 +596,7 @@ impl RemoteChannel {
             protocol_version,
             server_version,
             capabilities,
+            instance,
         })
     }
 

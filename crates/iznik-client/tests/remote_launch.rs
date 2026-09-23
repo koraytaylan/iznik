@@ -260,6 +260,7 @@ async fn remote_launch_names_the_handshake_when_the_server_disagrees() {
                 protocol_version: OTHER_VERSION,
                 server_version: "scripted".to_owned(),
                 capabilities: Capabilities::from_bits(0),
+                instance: None,
             },
         )?;
         let transport = local(&held, &socket)?;

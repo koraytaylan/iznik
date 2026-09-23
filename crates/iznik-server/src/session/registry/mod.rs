@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use iznik_protocol::command::Placement;
 use iznik_protocol::delta::{Delta, RemovalReason};
-use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
+use iznik_protocol::identity::{DaemonInstance, Generation, PaneId, SessionId, TabId};
 use iznik_protocol::model;
 use iznik_protocol::model::{HostModel, LayoutNode, ModelError, Session, Tab, Weighted};
 use iznik_protocol::reconcile::{ReconcileError, apply};
@@ -30,6 +30,7 @@ use tokio::sync::{Notify, broadcast, watch};
 use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
 use crate::pane::{Pane, PaneState, bounded_size};
 use crate::pty::spawn::{Program, SpawnOptions};
+use crate::session::instance::fresh_instance;
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
 
@@ -133,6 +134,8 @@ pub struct Registry {
     /// Foreground program samples, when [`RegistryDefaults::program_interval`]
     /// is not zero.
     programs: Option<program::ProgramWatch>,
+    /// Which run of the daemon this is, picked when it was made.
+    instance: DaemonInstance,
 }
 
 impl Registry {
@@ -169,7 +172,16 @@ impl Registry {
             deltas,
             signal,
             programs,
+            instance: fresh_instance(),
         }
+    }
+
+    /// Which run of the daemon this registry belongs to: what a connection
+    /// announces, so a client can tell this daemon's pane numbers from the
+    /// last one's.
+    #[must_use]
+    pub fn instance(&self) -> DaemonInstance {
+        self.instance
     }
 
     /// Raised whenever a pane has something to report: a caller waits on it

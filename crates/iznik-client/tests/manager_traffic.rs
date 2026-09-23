@@ -493,6 +493,7 @@ fn skips_a_number(
                         protocol_version: PROTOCOL_VERSION,
                         server_version: "scripted".to_owned(),
                         capabilities: Capabilities::from_bits(0),
+                        instance: None,
                     }) else {
                         return;
                     };

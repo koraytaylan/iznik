@@ -9,7 +9,9 @@
 //! the bytes, an optional exit status a presence byte and then the value, a
 //! boolean one byte. A discriminant, error code, mark kind, presence or
 //! boolean byte no variant claims is refused as unknown; bytes missing or
-//! left over are refused as such. The session-model payloads are opaque here
+//! left over are refused as such. The one exception is a field a capability
+//! added after the message was first pinned: it is appended at the end, sent
+//! only to a peer that advertised the capability, and read when bytes remain. The session-model payloads are opaque here
 //! so plan 0003 can define them without moving a byte this golden pins, and
 //! their one refusal that is not a shape of these — a layout tree nested past
 //! what a model holds — is a [`MessageError`] like every other, because a
@@ -19,7 +21,7 @@ use core::fmt::{self, Display, Formatter};
 
 use crate::capabilities::Capabilities;
 use crate::frame::MAXIMUM_PAYLOAD_LENGTH;
-use crate::identity::{CommandId, Generation, PaneId, Sequence};
+use crate::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
 use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_pane, unknown};
 
 /// The channel control messages travel on; every other channel carries pane
@@ -227,6 +229,12 @@ pub enum ToClient {
         server_version: String,
         /// What the server can do.
         capabilities: Capabilities,
+        /// Which run of the daemon answered, when the client asked to be told.
+        ///
+        /// Appended after the capabilities, and only for a client whose own
+        /// `Hello` carried [`Capabilities::INSTANCE`]: a decoder reads it when
+        /// sixteen more bytes follow and reports `None` when none do.
+        instance: Option<DaemonInstance>,
     },
     /// The complete host model.
     Snapshot {
@@ -597,11 +605,15 @@ fn put_to_client(sink: &mut dyn Sink, message: &ToClient) {
             protocol_version,
             server_version,
             capabilities,
+            instance,
         } => {
             sink.put(&[client_tag::HELLO]);
             sink.put(&protocol_version.to_le_bytes());
             put_bytes(sink, server_version.as_bytes());
             sink.put(&capabilities.bits().to_le_bytes());
+            if let Some(instance) = instance {
+                sink.put(&instance.0.to_le_bytes());
+            }
         }
         ToClient::Snapshot {
             generation,
@@ -795,6 +807,11 @@ pub fn decode_to_client(payload: &[u8]) -> Result<ToClient, MessageError> {
             protocol_version: u16::from_le_bytes(reader.array()?),
             server_version: reader.string()?,
             capabilities: Capabilities::from_bits(u32::from_le_bytes(reader.array()?)),
+            instance: if reader.exhausted() {
+                None
+            } else {
+                Some(DaemonInstance(u128::from_le_bytes(reader.array()?)))
+            },
         },
         client_tag::SNAPSHOT => ToClient::Snapshot {
             generation: Generation(u64::from_le_bytes(reader.array()?)),

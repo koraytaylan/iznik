@@ -38,6 +38,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `resume` | The one place that decides what a subscription starts with, contiguous bytes from the ring or the screen as truth, as a pure function over what the ring holds. | `resume-and-replay` (plan 0003) |
 | `session` | The session registry: the authoritative host model, the panes behind it, and the numbered deltas every change emits. | `session-registry` (plan 0003) |
 | `session::commands` | Applying a session command to the registry: validation against the model first, then the operation, answered exactly once. | `session-commands` (plan 0003) |
+| `session::instance` | The daemon instance: a number picked at random when a registry is made and announced in `Hello`, so a client can tell this daemon's pane numbers from the last one's. | `server-review` |
 | `session::registry` | The registry's operations and their delta order, the ingestion of pane marks, sizes and exits, and the debug-only validation after every operation. | `session-registry` (plan 0003) |
 | `session::registry::ingest` | Marks, sizes and exits pulled into the model, plus a foreground-program sample when the daemon is naming tabs from one. | `session-registry` (plan 0003) |
 | `session::registry::program` | Sampling each pane's foreground program, while any client is attached, and publishing it as the pane title and directory. | `session-registry` (plan 0003) |

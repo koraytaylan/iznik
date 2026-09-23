@@ -53,6 +53,7 @@ pub(super) fn serve(
                     protocol_version: PROTOCOL_VERSION,
                     server_version: version.to_owned(),
                     capabilities,
+                    instance: None,
                 }),
                 Ok(ToServer::SnapshotRequest) => model_at(SETTLED),
                 // Answered, and then never announced: the window this client

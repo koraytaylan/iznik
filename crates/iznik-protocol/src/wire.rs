@@ -243,6 +243,13 @@ impl<'bytes> Reader<'bytes> {
         }
     }
 
+    /// Whether every byte has been read: what an optional field at the end of
+    /// a message is told apart by, since it is present exactly when bytes
+    /// follow the fields before it.
+    pub(crate) fn exhausted(&self) -> bool {
+        self.position >= self.bytes.len()
+    }
+
     /// Confirms nothing is left.
     ///
     /// # Errors

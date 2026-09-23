@@ -434,6 +434,7 @@ async fn shake(
         protocol_version: PROTOCOL_VERSION,
         server_version: "scripted".to_owned(),
         capabilities: offering,
+        instance: None,
     })?;
     server.send(CHANNEL_CONTROL, &reply).await?;
     let shaken = client.hello(Capabilities::ZSTD).await?;

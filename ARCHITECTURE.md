@@ -183,6 +183,13 @@ resynchronization mechanism.** There is no "desync" marker for the client to
 interpret: whenever the server cannot deliver contiguous bytes, it delivers
 truth instead.
 
+A position is a position in one daemon's pane. Pane numbers begin again with
+every daemon, so the server's `Hello` names the daemon instance it comes from
+— a number picked at random when the daemon starts — and a client that
+reaches another instance than its cursors came from resumes nothing: it
+subscribes to every pane it still shows afresh, and is answered with a
+`Screen`.
+
 ### 4.4 Geometry
 
 The client owns size. It sends `Resize`, the server sets the pseudoterminal

@@ -74,6 +74,7 @@ async fn serve(listener: UnixListener) -> Result<Grants, String> {
                         protocol_version: PROTOCOL_VERSION,
                         server_version: "scripted".to_owned(),
                         capabilities: Capabilities::from_bits(0),
+                        instance: None,
                     },
                 )
                 .await?;

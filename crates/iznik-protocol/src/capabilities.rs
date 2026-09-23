@@ -26,9 +26,21 @@ impl Capabilities {
     /// upgraded separately and a remote is only ever replaced on purpose.
     pub const REORDER_SESSIONS: Capabilities = Capabilities { bits: 1 << 2 };
 
+    /// The server's `Hello` ends with the [`DaemonInstance`] it comes from.
+    ///
+    /// A client that sets this bit in its own `Hello` can read the field, and
+    /// a server appends it only for such a client: an older client refuses a
+    /// `Hello` longer than the fields it knows. A server that sets it in its
+    /// reply is one whose reply carries the field.
+    ///
+    /// [`DaemonInstance`]: crate::identity::DaemonInstance
+    pub const INSTANCE: Capabilities = Capabilities { bits: 1 << 4 };
+
     /// Every bit this version of the protocol knows.
-    const KNOWN: u32 =
-        Capabilities::ZSTD.bits | Capabilities::RESUME.bits | Capabilities::REORDER_SESSIONS.bits;
+    const KNOWN: u32 = Capabilities::ZSTD.bits
+        | Capabilities::RESUME.bits
+        | Capabilities::REORDER_SESSIONS.bits
+        | Capabilities::INSTANCE.bits;
 
     /// The bits that gate something a person uses, as opposed to something an
     /// optimization is made of.

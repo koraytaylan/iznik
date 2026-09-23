@@ -25,6 +25,7 @@
 {"description": "Ping", "direction": "to_server", "message": "Ping", "hex": "0c"}
 {"description": "Hello reply with both known capabilities", "direction": "to_client", "message": {"Hello": {"protocol_version": 1, "server_version": "iznik-server 0.1.0", "capabilities": 3}}, "hex": "00010012000000697a6e696b2d73657276657220302e312e3003000000"}
 {"description": "Hello reply with unknown capability bits, preserved", "direction": "to_client", "message": {"Hello": {"protocol_version": 1, "server_version": "", "capabilities": 4026531843}}, "hex": "00010000000000030000f0"}
+{"description": "Hello reply naming the daemon instance it comes from", "direction": "to_client", "message": {"Hello": {"protocol_version": 1, "server_version": "iznik-server 0.1.0", "capabilities": 19, "instance": "00112233445566778899aabbccddeeff"}}, "hex": "00010012000000697a6e696b2d73657276657220302e312e301300000000112233445566778899aabbccddeeff"}
 {"description": "Snapshot at generation 0 with an empty opaque model", "direction": "to_client", "message": {"Snapshot": {"generation": 0, "payload": ""}}, "hex": "01000000000000000000000000"}
 {"description": "Snapshot at the largest generation with an opaque model", "direction": "to_client", "message": {"Snapshot": {"generation": 18446744073709551615, "payload": "deadbeef"}}, "hex": "01ffffffffffffffff04000000deadbeef"}
 {"description": "Delta at generation 1", "direction": "to_client", "message": {"Delta": {"generation": 1, "payload": "00"}}, "hex": "0201000000000000000100000000"}
@@ -73,6 +74,7 @@
 {"description": "a string cut short", "direction": "to_server", "hex": "0001000a000000616263", "error": {"Truncated": {"discriminant": 0, "needed": 10, "available": 3}}}
 {"description": "an opaque payload cut short", "direction": "to_client", "hex": "0101000000000000000500000000", "error": {"Truncated": {"discriminant": 1, "needed": 5, "available": 1}}}
 {"description": "an exit status cut short", "direction": "to_client", "hex": "070100000000000000010000000000000003010000", "error": {"Truncated": {"discriminant": 7, "needed": 4, "available": 2}}}
+{"description": "a daemon instance cut short", "direction": "to_client", "hex": "0001000000000013000000001122", "error": {"Truncated": {"discriminant": 0, "needed": 16, "available": 3}}}
 {"description": "a Ping followed by a byte", "direction": "to_server", "hex": "0c00", "error": {"TrailingBytes": {"discriminant": 12, "count": 1}}}
 {"description": "a Pong followed by two bytes", "direction": "to_client", "hex": "080000", "error": {"TrailingBytes": {"discriminant": 8, "count": 2}}}
 {"description": "a Subscribe followed by a byte", "direction": "to_server", "hex": "03010000000000000000", "error": {"TrailingBytes": {"discriminant": 3, "count": 1}}}

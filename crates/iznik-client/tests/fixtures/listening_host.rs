@@ -111,6 +111,7 @@ impl Serving {
                             .clone()
                             .unwrap_or_else(|| "scripted".to_owned()),
                         capabilities: Capabilities::from_bits(0),
+                        instance: None,
                     };
                     send(&mut link, &greeting).await?;
                     continue;

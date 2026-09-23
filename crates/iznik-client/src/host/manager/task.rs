@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::encode_session_command;
-use iznik_protocol::identity::{PaneId, Sequence};
+use iznik_protocol::identity::{DaemonInstance, PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -267,6 +267,8 @@ struct Reached {
     version: String,
     /// What its server advertised it can decode.
     capabilities: Capabilities,
+    /// Which run of the daemon answered, when it said.
+    instance: Option<DaemonInstance>,
     /// A newer one, when this build carries one.
     offer: Option<UpgradeOffer>,
 }
@@ -299,11 +301,13 @@ async fn reach(
         let offer = offer_for(greeting, &Decision::UpToDate);
         let version = greeting.server_version.clone();
         let capabilities = trusted_capabilities(greeting);
+        let instance = greeting.instance;
         return Ok(Reached {
             channel,
             snapshot,
             version,
             capabilities,
+            instance,
             offer,
         });
     }
@@ -316,11 +320,13 @@ async fn reach(
     let offer = offer_for(greeting, &connected.decision);
     let version = greeting.server_version.clone();
     let capabilities = trusted_capabilities(greeting);
+    let instance = greeting.instance;
     Ok(Reached {
         channel: connected.channel,
         snapshot: connected.snapshot,
         version,
         capabilities,
+        instance,
         offer,
     })
 }
@@ -404,6 +410,7 @@ async fn accept(
         snapshot,
         version,
         capabilities,
+        instance,
         offer,
     } = reached;
     // The snapshot a connection begins with is taken inside the launch, before
@@ -412,8 +419,13 @@ async fn accept(
     // model arrived with the connection or after it.
     told_the_model(host, shared, &snapshot);
     let mut given_up = Vec::new();
+    // Whether the daemon this reached is another one than the view's state
+    // came from: its pane numbers then name other panes, and nothing may be
+    // resumed from a byte of a pane that is gone.
+    let mut fresh = false;
     if let Ok(mut model) = shared.model.lock() {
         if let Some(view) = model.host_mut(host) {
+            fresh = view.reached(instance);
             // What the host says replaces what it said before, and
             // whatever is still in flight goes back on top: a command
             // whose answer was lost with the link is still this client's
@@ -429,6 +441,7 @@ async fn accept(
         } else {
             let mut view = HostView::of(snapshot);
             view.capabilities = capabilities;
+            view.instance = instance;
             let _first = model.insert(host.clone(), view);
         }
     }
@@ -443,8 +456,15 @@ async fn accept(
             upgrade: offer,
         },
     );
+    if fresh {
+        tracing::info!(
+            host = ?host.0,
+            "the host's daemon is another than the one this client last reached; \
+             every pane is asked for afresh rather than resumed"
+        );
+    }
     if taken.contains(&Action::Resume) {
-        resume(host, shared, &mut channel).await;
+        resume(host, shared, &mut channel, fresh).await;
     }
     channel
 }
@@ -458,13 +478,30 @@ async fn accept(
 /// new link starts with no pane preferred, and a person who has not moved
 /// since would otherwise have their pane share bandwidth with every other
 /// until they happened to click.
-async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel) {
+///
+/// Except when the daemon is `fresh` — another run than the one the cursors
+/// came from. A pane number there may name a different pane, and resuming it
+/// would splice that pane's bytes onto the old one's screen; so every pane the
+/// new model still holds is subscribed afresh, which the host answers with a
+/// screen, and every pane it does not is let go.
+async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel, fresh: bool) {
     let (held, focus): (Vec<(PaneId, Sequence)>, Option<PaneId>) = shared
         .model
         .lock()
         .ok()
-        .and_then(|model| {
-            model.host(host).map(|view| {
+        .and_then(|mut model| {
+            model.host_mut(host).map(|view| {
+                if fresh {
+                    let gone: Vec<PaneId> = view
+                        .subscriptions
+                        .keys()
+                        .copied()
+                        .filter(|pane| !holds(&view.settled, *pane))
+                        .collect();
+                    for pane in gone {
+                        let _dropped = view.unsubscribe(pane);
+                    }
+                }
                 let held = view
                     .subscriptions
                     .iter()
@@ -475,18 +512,29 @@ async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel
         })
         .unwrap_or_default();
     for (pane, from_sequence) in held {
-        let _sent = write(
-            channel,
-            &ToServer::Resume {
+        let asked = if fresh {
+            ToServer::Subscribe { pane }
+        } else {
+            ToServer::Resume {
                 pane,
                 from_sequence,
-            },
-        )
-        .await;
+            }
+        };
+        let _sent = write(channel, &asked).await;
     }
     if let Some(pane) = focus {
         let _sent = write(channel, &ToServer::Focus { pane }).await;
     }
+}
+
+/// Whether a host's model holds a pane.
+fn holds(model: &iznik_protocol::model::HostModel, pane: PaneId) -> bool {
+    model
+        .sessions
+        .iter()
+        .flat_map(|session| session.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .any(|held| held.id == pane)
 }
 
 /// Writes one message on the control channel.

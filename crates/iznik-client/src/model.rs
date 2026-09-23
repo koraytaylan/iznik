@@ -18,7 +18,7 @@ use core::fmt::{self, Display, Formatter};
 
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
 use iznik_protocol::model::{HostModel, ModelError};
 
 use crate::host::identity::HostId;
@@ -143,6 +143,13 @@ pub struct HostView {
     /// rather than sent to a server that would take the whole connection down
     /// on it.
     pub capabilities: Capabilities,
+    /// Which run of the host's daemon everything here came from, when its
+    /// server said.
+    ///
+    /// Pane numbers begin again with every daemon, so a cursor is a position
+    /// in one daemon's pane and in no other's: a connection that reaches a
+    /// different instance resumes nothing.
+    pub instance: Option<DaemonInstance>,
 }
 
 impl Default for HostView {
@@ -167,7 +174,33 @@ impl HostView {
             pending: Vec::new(),
             minted: CommandId(0),
             capabilities: Capabilities::from_bits(0),
+            instance: None,
         }
+    }
+
+    /// Takes in the instance a new connection reached, and says whether it is
+    /// another daemon than the one this view's state came from.
+    ///
+    /// Only a change both ends named counts: a server that does not say, or a
+    /// view that has never been told, leaves the question to the generation
+    /// heuristic [`HostView::settle`] applies. When it is another daemon, every
+    /// pane cursor is a position in a pane that no longer exists — its number
+    /// may now name another — so the channels are forgotten and each cursor is
+    /// put back to the start; the caller asks for every pane afresh.
+    pub fn reached(&mut self, instance: Option<DaemonInstance>) -> bool {
+        let changed = matches!(
+            (self.instance, instance),
+            (Some(before), Some(now)) if before != now
+        );
+        if instance.is_some() {
+            self.instance = instance;
+        }
+        if changed {
+            for held in self.subscriptions.values_mut() {
+                *held = Subscription::opened(NO_CHANNEL, Sequence(0));
+            }
+        }
+        changed
     }
 
     /// The next number to give a command on this host.

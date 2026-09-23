@@ -30,7 +30,7 @@ use iznik_protocol::command::{
     CommandOutcome, SessionCommand, decode_command_outcome, encode_session_command,
 };
 use iznik_protocol::delta::{Delta, decode_delta};
-use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_client, encode_to_server,
@@ -135,6 +135,8 @@ pub struct ServerHello {
     pub server_version: String,
     /// What the server can do.
     pub capabilities: Capabilities,
+    /// Which run of the daemon answered, when the client asked to be told.
+    pub instance: Option<DaemonInstance>,
 }
 
 /// One thing the server sent: a control message, or a pane's bytes with the
@@ -322,6 +324,7 @@ impl<Stream: Duplex> TestClient<Stream> {
             protocol_version,
             server_version,
             capabilities: theirs,
+            instance,
         } = message
         else {
             return Err(ClientError::Unexpected {
@@ -336,6 +339,7 @@ impl<Stream: Duplex> TestClient<Stream> {
             protocol_version,
             server_version,
             capabilities: theirs,
+            instance,
         })
     }
 
