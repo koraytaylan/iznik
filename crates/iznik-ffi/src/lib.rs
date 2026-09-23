@@ -29,6 +29,19 @@ use crate::pane::PaneCallbacks;
 /// The directory artifacts are looked for in when the application names none.
 const ARTIFACTS_DIRECTORY: &str = "artifacts";
 
+/// The version of the boundary this header describes.
+///
+/// It changes when anything an application built against the header relies
+/// on changes — a signature, a structure, the meaning of a code or of an
+/// obligation — and not when the library merely gets better. An application
+/// compares it with what [`iznik_abi_version`] says the library it loaded
+/// was built for, and refuses to run on a mismatch rather than calling into a
+/// library that means something else by the same names.
+pub const ABI_VERSION: u32 = 1;
+
+/// This library's own version, null-terminated, as [`iznik_version`] gives it.
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
+
 /// What every call answers when it did what it was asked.
 const DONE: c_int = OK;
 
@@ -245,20 +258,62 @@ pub struct Configuration {
     pub log_path: *const c_char,
 }
 
-/// One C string as text, when it is one.
+/// A C string that is not UTF-8, which nothing at this boundary accepts.
+#[derive(Clone, Copy, Debug)]
+struct NotText;
+
+/// One C string as text: nothing for a null, and a refusal for bytes that are
+/// not UTF-8 — never a quiet nothing, because a path or an alias that is not
+/// what it was given as is worse than one refused.
+///
+/// # Errors
+///
+/// [`NotText`] when the bytes are not UTF-8.
 ///
 /// # Safety
 ///
 /// `pointer` is null, or points at a null-terminated string that stays valid
 /// for the length of this call.
-unsafe fn text<'held>(pointer: *const c_char) -> Option<&'held str> {
+unsafe fn text<'held>(pointer: *const c_char) -> Result<Option<&'held str>, NotText> {
     if pointer.is_null() {
-        return None;
+        return Ok(None);
     }
     // SAFETY: the caller's obligation, above: not null, null-terminated, and
     // alive for this call, which is exactly what `from_ptr` asks for.
     let held = unsafe { CStr::from_ptr(pointer) };
-    held.to_str().ok()
+    held.to_str().map(Some).map_err(|_not_utf8| NotText)
+}
+
+/// A host's name, or the words that say why there is none.
+///
+/// # Errors
+///
+/// Those words, for a null and for bytes that are not UTF-8.
+///
+/// # Safety
+///
+/// As [`text`].
+unsafe fn host_named<'held>(pointer: *const c_char) -> Result<&'held str, &'static str> {
+    // SAFETY: the caller's obligation, above, which is `text`'s.
+    match unsafe { text(pointer) } {
+        Ok(Some(named)) => Ok(named),
+        Ok(None) => Err("no host named"),
+        Err(NotText) => Err("the host's name is not UTF-8"),
+    }
+}
+
+/// One of the configuration's strings, or the words that say it is not text.
+///
+/// # Errors
+///
+/// Those words, naming the field, when its bytes are not UTF-8.
+///
+/// # Safety
+///
+/// As [`text`].
+unsafe fn setting<'held>(pointer: *const c_char, what: &str) -> Result<Option<&'held str>, String> {
+    // SAFETY: the caller's obligation, above, which is `text`'s.
+    unsafe { text(pointer) }.map_err(|NotText| format!("the configuration's {what} is not UTF-8"))
 }
 
 /// The client a pointer names, when it names one.
@@ -338,16 +393,7 @@ pub unsafe extern "C" fn iznik_client_new(
         // `Configuration` that is valid for this call.
         Some(unsafe { &*configuration })
     };
-    // SAFETY: null or a null-terminated string of the caller's, which is
-    // `text`'s obligation.
-    let runtime = unsafe { said.and_then(|held| text(held.runtime_directory)) };
-    // SAFETY: the same obligation, for the next of them.
-    let artifacts = unsafe { said.and_then(|held| text(held.artifacts_directory)) };
-    // SAFETY: the same again.
-    let askpass = unsafe { said.and_then(|held| text(held.askpass_program)) };
-    // SAFETY: and the last of them.
-    let log = unsafe { said.and_then(|held| text(held.log_path)) };
-    let held = match options(runtime, artifacts, askpass, log) {
+    let held = match configured(said) {
         Ok(held) => held,
         Err(detail) => {
             // SAFETY: the caller's obligation, above.
@@ -364,6 +410,29 @@ pub unsafe extern "C" fn iznik_client_new(
         }
     };
     Box::into_raw(Box::new(started(manager)))
+}
+
+/// The options a configuration says, every string of it read as text.
+///
+/// # Errors
+///
+/// The words for a person when a string is not UTF-8 or the runtime paths
+/// cannot be made.
+fn configured(said: Option<&Configuration>) -> Result<ManagerOptions, String> {
+    let Some(held) = said else {
+        return options(None, None, None, None);
+    };
+    // SAFETY: the caller's obligation, stated on `iznik_client_new`: every
+    // string of the configuration is null or null-terminated and alive for
+    // the call, which is `setting`'s obligation.
+    let runtime = unsafe { setting(held.runtime_directory, "runtime_directory") }?;
+    // SAFETY: the same obligation, for the next of them.
+    let artifacts = unsafe { setting(held.artifacts_directory, "artifacts_directory") }?;
+    // SAFETY: the same again.
+    let askpass = unsafe { setting(held.askpass_program, "askpass_program") }?;
+    // SAFETY: and the last of them.
+    let log = unsafe { setting(held.log_path, "log_path") }?;
+    options(runtime, artifacts, askpass, log)
 }
 
 /// A client around a manager, with the one thread its callbacks arrive on.
@@ -476,7 +545,9 @@ pub unsafe extern "C" fn iznik_client_free(client: *mut Client) {
 ///
 /// **Obligation:** whatever `context` points at outlives every callback made
 /// with it: until the client is freed, or until the callback has been
-/// replaced or set to null and `iznik_wait_for_callbacks` has returned.
+/// replaced or set to null and `iznik_wait_for_callbacks` has returned. And it
+/// may be used from the thread the callbacks arrive on, which is iznik's own
+/// and not the one that called this.
 ///
 /// # Safety
 ///
@@ -499,6 +570,23 @@ pub unsafe extern "C" fn iznik_set_event_callback(
     };
     listening.callback = callback;
     listening.context = Carried(context);
+}
+
+/// The version of the boundary the library was built for, which an
+/// application compares with the `IZNIK_ABI_VERSION` of the header it was
+/// built against.
+#[unsafe(no_mangle)]
+pub extern "C" fn iznik_abi_version() -> u32 {
+    ABI_VERSION
+}
+
+/// This library's own version, for a log or an about box.
+///
+/// The string is iznik's, null-terminated, and valid for as long as the
+/// library is loaded; it is never freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn iznik_version() -> *const c_char {
+    VERSION.as_ptr().cast::<c_char>()
 }
 
 /// Waits until every callback that had begun when this was called has
@@ -658,10 +746,13 @@ pub unsafe extern "C" fn iznik_command(
         return INVALID_ARGUMENT;
     };
     // SAFETY: the caller's obligation, above.
-    let Some(named) = (unsafe { text(host) }) else {
-        // SAFETY: the caller's obligation, above.
-        unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
-        return INVALID_ARGUMENT;
+    let named = match unsafe { host_named(host) } {
+        Ok(named) => named,
+        Err(why) => {
+            // SAFETY: the caller's obligation, above.
+            unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, why) };
+            return INVALID_ARGUMENT;
+        }
     };
     if command.is_null() {
         // SAFETY: the caller's obligation, above.
@@ -740,10 +831,13 @@ unsafe fn with_host(
         return INVALID_ARGUMENT;
     };
     // SAFETY: the caller's obligation, above.
-    let Some(named) = (unsafe { text(alias) }) else {
-        // SAFETY: the caller's obligation, above.
-        unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
-        return INVALID_ARGUMENT;
+    let named = match unsafe { host_named(alias) } {
+        Ok(named) => named,
+        Err(why) => {
+            // SAFETY: the caller's obligation, above.
+            unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, why) };
+            return INVALID_ARGUMENT;
+        }
     };
     let (Some(_call), Some(manager)) = (held.calls.enter(), held.manager()) else {
         // SAFETY: the caller's obligation, above.

@@ -18,8 +18,8 @@ use iznik::error::{Error, INVALID_ARGUMENT, Layer, OK};
 use iznik::model::{Event, EventKind};
 use iznik::pane::{PaneCallbacks, iznik_pane_attach, iznik_pane_input};
 use iznik::{
-    Client, Configuration, iznik_client_free, iznik_client_new, iznik_command, iznik_host_add,
-    iznik_host_uninstall, iznik_set_event_callback,
+    ABI_VERSION, Client, Configuration, iznik_abi_version, iznik_client_free, iznik_client_new,
+    iznik_command, iznik_host_add, iznik_host_uninstall, iznik_set_event_callback, iznik_version,
 };
 use iznik_protocol::command::{SessionCommand, encode_session_command};
 use iznik_testkit::stack::{Stack, StackOptions};
@@ -746,6 +746,59 @@ fn ffi_surface_names_a_pane_and_the_size_its_screen_was_drawn_at() {
         // SAFETY: the box this case made, taken back once.
         drop(unsafe { Box::from_raw(seen) });
         drop(stack);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a configuration string or an alias that is not UTF-8 is taken for
+/// null rather than refused, or the versions a library answers are not the
+/// ones it was built with.
+#[test]
+fn ffi_surface_refuses_what_is_not_text_and_says_its_version() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("not-text")?;
+        let bad = CString::new(vec![b'/', 0xff, 0xfe])?;
+        let configuration = Configuration {
+            runtime_directory: bad.as_ptr(),
+            artifacts_directory: core::ptr::null(),
+            askpass_program: core::ptr::null(),
+            log_path: core::ptr::null(),
+        };
+        let mut error = blank();
+        // SAFETY: the configuration is alive for this call and its string is
+        // null-terminated.
+        let refused = unsafe { iznik_client_new(&raw const configuration, &raw mut error) };
+        assert!(
+            refused.is_null(),
+            "a runtime directory that is not text is refused"
+        );
+        assert_eq!(error.code, INVALID_ARGUMENT);
+        assert!(
+            said(&error).contains("runtime_directory"),
+            "naming the field: {}",
+            said(&error)
+        );
+        let made = client(&held)?;
+        // SAFETY: the client is live and the alias null-terminated.
+        let taken = unsafe { iznik_host_add(made, bad.as_ptr(), &raw mut error) };
+        assert_eq!(taken, INVALID_ARGUMENT, "and so is an alias");
+        assert!(
+            said(&error).contains("UTF-8"),
+            "saying why: {}",
+            said(&error)
+        );
+        // SAFETY: it came from `iznik_client_new` and is freed once, here.
+        unsafe { iznik_client_free(made) };
+        assert_eq!(
+            iznik_abi_version(),
+            ABI_VERSION,
+            "the boundary it was built for"
+        );
+        let version = named(iznik_version());
+        assert_eq!(version, env!("CARGO_PKG_VERSION"), "and its own version");
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

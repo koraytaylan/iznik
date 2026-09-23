@@ -19,7 +19,7 @@ use core::ffi::{c_char, c_int, c_void};
 use iznik_protocol::identity::PaneId;
 
 use crate::error::{Error, INVALID_ARGUMENT, Layer};
-use crate::{Client, DONE, borrowed, code_of, layer_of, text};
+use crate::{Client, DONE, borrowed, code_of, host_named, layer_of};
 
 /// What iznik calls a pane's own handler with.
 ///
@@ -60,7 +60,9 @@ pub struct PaneCallbacks {
 /// with it: until the client is freed, or until the pane has been detached or
 /// attached again and `iznik_wait_for_callbacks` has returned. Detaching and
 /// attaching again return at once — no callback begins with this context
-/// afterwards — and a handler already running may still be reading it.
+/// afterwards — and a handler already running may still be reading it. And it
+/// may be used from the thread the callbacks arrive on, which is iznik's own
+/// and not the one that called this.
 ///
 /// # Safety
 ///
@@ -256,10 +258,13 @@ unsafe fn with_pane(
         return INVALID_ARGUMENT;
     };
     // SAFETY: the caller's obligation, above.
-    let Some(named) = (unsafe { text(host) }) else {
-        // SAFETY: the caller's obligation, above.
-        unsafe { crate::error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
-        return INVALID_ARGUMENT;
+    let named = match unsafe { host_named(host) } {
+        Ok(named) => named,
+        Err(why) => {
+            // SAFETY: the caller's obligation, above.
+            unsafe { crate::error::fill(error, INVALID_ARGUMENT, Layer::Client, why) };
+            return INVALID_ARGUMENT;
+        }
     };
     let Some(_call) = held.enter() else {
         // SAFETY: the caller's obligation, above.

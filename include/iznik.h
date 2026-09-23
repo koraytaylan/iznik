@@ -10,6 +10,18 @@
 #include <stdint.h>
 
 /**
+ * The version of the boundary this header describes.
+ *
+ * It changes when anything an application built against the header relies
+ * on changes — a signature, a structure, the meaning of a code or of an
+ * obligation — and not when the library merely gets better. An application
+ * compares it with what `iznik_abi_version` says the library it loaded
+ * was built for, and refuses to run on a mismatch rather than calling into a
+ * library that means something else by the same names.
+ */
+#define IZNIK_ABI_VERSION 1
+
+/**
  * The code a call gives when nothing went wrong.
  */
 #define IZNIK_OK 0
@@ -341,13 +353,30 @@ void iznik_client_free(iznik_client *client);
  *
  * **Obligation:** whatever `context` points at outlives every callback made
  * with it: until the client is freed, or until the callback has been
- * replaced or set to null and `iznik_wait_for_callbacks` has returned.
+ * replaced or set to null and `iznik_wait_for_callbacks` has returned. And it
+ * may be used from the thread the callbacks arrive on, which is iznik's own
+ * and not the one that called this.
  *
  * Safety:
  *
  * `client` is a live client from `iznik_client_new`.
  */
 void iznik_set_event_callback(iznik_client *client, iznik_event_callback callback, void *context);
+
+/**
+ * The version of the boundary the library was built for, which an
+ * application compares with the `IZNIK_ABI_VERSION` of the header it was
+ * built against.
+ */
+uint32_t iznik_abi_version(void);
+
+/**
+ * This library's own version, for a log or an about box.
+ *
+ * The string is iznik's, null-terminated, and valid for as long as the
+ * library is loaded; it is never freed.
+ */
+const char *iznik_version(void);
 
 /**
  * Waits until every callback that had begun when this was called has
@@ -461,7 +490,9 @@ int iznik_command(iznik_client *client,
  * with it: until the client is freed, or until the pane has been detached or
  * attached again and `iznik_wait_for_callbacks` has returned. Detaching and
  * attaching again return at once — no callback begins with this context
- * afterwards — and a handler already running may still be reading it.
+ * afterwards — and a handler already running may still be reading it. And it
+ * may be used from the thread the callbacks arrive on, which is iznik's own
+ * and not the one that called this.
  *
  * Safety:
  *

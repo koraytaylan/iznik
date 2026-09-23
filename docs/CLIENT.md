@@ -93,7 +93,7 @@ around them is explanation.
 
 `iznik_set_event_callback`:
 
-> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the callback has been replaced or set to null and `iznik_wait_for_callbacks` has returned.
+> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the callback has been replaced or set to null and `iznik_wait_for_callbacks` has returned. And it may be used from the thread the callbacks arrive on, which is iznik's own and not the one that called this.
 
 `iznik_wait_for_callbacks`:
 
@@ -109,7 +109,7 @@ around them is explanation.
 
 `iznik_pane_attach`:
 
-> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the pane has been detached or attached again and `iznik_wait_for_callbacks` has returned. Detaching and attaching again return at once — no callback begins with this context afterwards — and a handler already running may still be reading it.
+> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the pane has been detached or attached again and `iznik_wait_for_callbacks` has returned. Detaching and attaching again return at once — no callback begins with this context afterwards — and a handler already running may still be reading it. And it may be used from the thread the callbacks arrive on, which is iznik's own and not the one that called this.
 
 `iznik_pane_input`:
 
@@ -125,6 +125,12 @@ The pane's `screen` callback:
 
 ## Making a client
 
+Before anything else, compare `iznik_abi_version()` — what the library you
+loaded was built for — with `IZNIK_ABI_VERSION`, what the header you compiled
+against describes, and refuse to go on if they differ: the same names would
+mean different things. `iznik_version()` is the library's own version, for a
+log or an about box.
+
 `iznik_client_new` takes an `iznik_configuration`, whose every field may be
 null for the default:
 
@@ -136,6 +142,9 @@ null for the default:
   log is settled once and outlives the client that asked for it, so a second
   client naming a different file is refused rather than quietly writing
   nowhere.
+
+Every string in it must be UTF-8: one that is not is refused with
+`IZNIK_INVALID_ARGUMENT` naming the field, never quietly taken for null.
 
 It answers null when it cannot, having filled in the `iznik_error` you gave
 it. `iznik_client_free` ends everything: every host let go, every task
@@ -376,8 +385,8 @@ exactly as it does today.
 
 ## The whole surface
 
-Functions: `iznik_client_new`, `iznik_client_free`, `iznik_set_event_callback`,
-`iznik_wait_for_callbacks`,
+Functions: `iznik_abi_version`, `iznik_version`, `iznik_client_new`,
+`iznik_client_free`, `iznik_set_event_callback`, `iznik_wait_for_callbacks`,
 `iznik_host_add`, `iznik_host_remove`, `iznik_host_reconnect`,
 `iznik_host_upgrade`, `iznik_host_uninstall`, `iznik_command`,
 `iznik_pane_attach`, `iznik_pane_detach`, `iznik_pane_credit`,
@@ -389,6 +398,8 @@ Types: `iznik_client`, `iznik_configuration`, `iznik_error`, `iznik_layer`,
 
 Codes: `IZNIK_OK`, `IZNIK_INVALID_ARGUMENT`, `IZNIK_UNKNOWN_HOST`,
 `IZNIK_REFUSED`.
+
+Versions: `IZNIK_ABI_VERSION`.
 
 ## A worked example
 

@@ -27,9 +27,11 @@ use crate::shape;
 pub(crate) struct Carried(pub(crate) *mut c_void);
 
 // SAFETY: what is carried is opaque here — nothing in this library reads or
-// writes through it. The application's obligation, stated in the header, is
-// that whatever it points at may be used from the callback thread; moving the
-// pointer to that thread is what this promises and all it promises.
+// writes through it; it is only handed back. The obligation the header states
+// on both `iznik_set_event_callback` and `iznik_pane_attach` — whatever
+// `context` points at "may be used from the thread the callbacks arrive on,
+// which is iznik's own and not the one that called this" — is what makes
+// moving the pointer to that thread sound, and that move is all this allows.
 unsafe impl Send for Carried {}
 
 /// What the application asked to be told, and what to tell it with.
