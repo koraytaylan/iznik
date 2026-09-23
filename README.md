@@ -235,9 +235,12 @@ rolling GitHub prerelease named `develop-snapshot`. The Linux archive, the two m
 Windows client zip are replaced in place, so the release URL stays stable
 while always pointing at the latest verified development build, and a
 `SHA256SUMS` beside them lists each archive's digest. The Windows
-zip is the application and the remote servers it can install, including a
-Windows server for a machine whose OpenSSH Server feature is turned on. A Mac
-host is reached the same way, through Remote Login. The zip is unsigned.
+zip is the application and the Linux and macOS servers it can install on a
+host; a Mac host is reached through Remote Login. The zip is unsigned. No
+Windows server is published, and `cargo xtask distribution` refuses the
+Windows triples: the daemon there listens on loopback TCP without
+authentication, so any local user could reach every shell, and the client
+cannot start it, because the command it sends is quoted for a POSIX shell.
 The workflow is [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml).
 
 ## License

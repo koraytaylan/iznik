@@ -31,6 +31,12 @@ jobs:
   # person connects to is rarely the kind they connect from: a Mac reaching
   # Linux servers is the common case. The servers are built once, here, and
   # downloaded by each bundling job.
+  #
+  # There is no Windows server. Its daemon listens on loopback TCP with no
+  # authentication, so any local user of the host could open a shell, and
+  # the client cannot start it there anyway: the relay command it sends is
+  # quoted for a POSIX shell. `xtask distribution` refuses the Windows
+  # triples for the same reasons.
   servers-linux:
     name: Linux servers
     needs: [check]
@@ -115,38 +121,9 @@ jobs:
           if-no-files-found: error
           path: target/distribution
 
-  servers-windows:
-    name: Windows server
-    needs: [check]
-    runs-on: windows-2022
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-
-      - name: Install the pinned toolchain
-        shell: bash
-        run: rustup toolchain install
-
-      - name: Install the pinned Zig toolchain
-        shell: bash
-        run: bash scripts/ci/install-zig.sh
-
-      - name: Build the Windows server
-        shell: pwsh
-        run: cargo xtask distribution --target x86_64-pc-windows-msvc
-
-      - name: Upload the Windows server
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: servers-windows
-          if-no-files-found: error
-          path: target/distribution
-
   linux:
     name: Linux application bundle
-    needs: [servers-linux, servers-darwin, servers-windows]
+    needs: [servers-linux, servers-darwin]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -192,7 +169,7 @@ jobs:
 
   darwin:
     name: macOS application bundles
-    needs: [servers-linux, servers-darwin, servers-windows]
+    needs: [servers-linux, servers-darwin]
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -245,7 +222,7 @@ jobs:
 
   windows:
     name: Windows application bundle
-    needs: [servers-linux, servers-darwin, servers-windows]
+    needs: [servers-linux, servers-darwin]
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
@@ -334,7 +311,7 @@ jobs:
           STAGING: ${{ runner.temp }}/snapshot
         run: |
           set -euo pipefail
-          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA, published after the gates in check.yml passed. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. SHA256SUMS lists the digest of every archive. The Windows client is a zip of the executable and the servers it can install on a remote host. It is unsigned, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
+          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA, published after the gates in check.yml passed. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. SHA256SUMS lists the digest of every archive. Each archive carries the Linux and macOS servers the application installs on a remote host; no Windows server is published. The Windows client is an unsigned zip, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
           if ! gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           fi

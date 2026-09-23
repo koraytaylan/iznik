@@ -317,12 +317,12 @@ pub fn protocol_version(root: &Path) -> Result<u16, DistributionError> {
         })
 }
 
-/// What this subcommand takes: the one triple to build for.
+/// What this subcommand takes: the one triple to build for. The Windows
+/// triples are recognized only to be refused, so they are not offered.
 fn usage_line() -> String {
     let triples: Vec<&str> = linux::TARGETS
         .iter()
         .chain(darwin::TARGETS)
-        .chain(windows::TARGETS)
         .copied()
         .collect();
     format!(
