@@ -13,6 +13,7 @@ use iznik_protocol::model::{Session, Tab};
 
 use crate::actions::ActionId;
 use crate::host_ui::EngineState;
+use crate::navigation::{self, ShortcutHint};
 use crate::status;
 use crate::tab_actions::{self, DragPreview, DraggedEntry};
 use crate::tab_label;
@@ -55,10 +56,19 @@ pub fn render(
     selected: Option<&TabKey>,
     shell: Option<&WeakEntity<WindowShell>>,
 ) -> Bars {
-    render_placed(theme, state, selected, shell, TabPlacement::Bar)
+    render_placed(
+        theme,
+        state,
+        selected,
+        shell,
+        TabPlacement::Bar,
+        ShortcutHint::None,
+    )
 }
 
 /// The same, with the tab strip drawn for `placement`.
+///
+/// `hint` leads the tab chips or the session chips with their shortcut number.
 #[must_use]
 pub fn render_placed(
     theme: &Theme,
@@ -66,98 +76,138 @@ pub fn render_placed(
     selected: Option<&TabKey>,
     shell: Option<&WeakEntity<WindowShell>>,
     placement: TabPlacement,
+    hint: ShortcutHint,
 ) -> Bars {
-    let mut tabs = tab_bar_container(theme, placement);
-    let mut sessions = session_bar_container(theme);
+    let mut tab_children = Vec::new();
+    let mut session_children = Vec::new();
     if state.hosts().next().is_none() && state.model().hosts.is_empty() {
-        sessions = sessions.child(
-            div()
-                .id("session-bar-empty")
-                .test_support()
-                .text_color(theme.muted_foreground)
-                .child("No hosts"),
-        );
+        session_children.push(empty_sessions(theme));
     }
     let aliases: std::collections::BTreeSet<&HostId> = state
         .hosts()
         .map(|(host, _)| host)
         .chain(state.model().hosts.keys())
         .collect();
+    let mut session_place = 1_usize;
     for host in aliases {
-        let connection = state.host(host).map(|report| &report.connection);
-        let connected = matches!(connection, Some(HostState::Connected { .. }));
-        sessions = sessions.child(host_label(theme, host, connection));
-        let Some(view) = state.model().host(host) else {
-            continue;
-        };
-        let session_order: Vec<SessionId> = view
-            .model
-            .sessions
-            .iter()
-            .map(|session| session.id)
-            .collect();
-        for session in &view.model.sessions {
-            let is_selected =
-                selected.is_some_and(|key| key.host == *host && key.session == session.id);
-            let show_tabs = is_selected
-                || selected.is_none() && visible_session(state, host) == Some(session.id);
-            sessions = sessions.child(session_entry(
-                theme,
-                shell,
-                host,
-                session,
-                &session_order,
-                is_selected,
-            ));
-            if !show_tabs {
-                continue;
-            }
-            let order: Vec<TabId> = session.tabs.iter().map(|tab| tab.id).collect();
-            for tab in &session.tabs {
-                let tab_key = TabKey {
-                    host: host.clone(),
-                    session: session.id,
-                    tab: tab.id,
-                };
-                let tab_selected = selected == Some(&tab_key);
-                let label = tab_label::shown_tab_name(tab, view.focus);
-                tabs = tabs.child(tab_entry(
-                    theme,
-                    shell,
-                    TabChip {
-                        key: tab_key,
-                        tab,
-                        label,
-                        order: &order,
-                        connected,
-                        selected: tab_selected,
-                    },
-                ));
-            }
-            if connected {
-                tabs = tabs.child(add_button(
-                    theme,
-                    shell,
-                    "tab-new".to_owned(),
-                    "New tab",
-                    None,
-                ));
-            }
-        }
-        if connected {
-            sessions = sessions.child(add_button(
-                theme,
-                shell,
-                format!("session-new-{}", host.0),
-                "New session",
-                Some(host.clone()),
-            ));
-        }
+        let (tabs, sessions, next_place) =
+            host_entries(theme, state, selected, shell, hint, host, session_place);
+        session_place = next_place;
+        tab_children.extend(tabs);
+        session_children.extend(sessions);
     }
     Bars {
-        top: tabs.into_any_element(),
-        bottom: sessions.into_any_element(),
+        top: tab_bar_container(theme, placement)
+            .children(tab_children)
+            .into_any_element(),
+        bottom: session_bar_container(theme)
+            .children(session_children)
+            .into_any_element(),
     }
+}
+
+/// The session strip's note when no host is held.
+fn empty_sessions(theme: &Theme) -> AnyElement {
+    div()
+        .id("session-bar-empty")
+        .test_support()
+        .text_color(theme.muted_foreground)
+        .child("No hosts")
+        .into_any_element()
+}
+
+/// One host's session chips and, for the session on screen, its tab chips.
+///
+/// The returned place is the next session's shortcut number.
+fn host_entries(
+    theme: &Theme,
+    state: &EngineState,
+    selected: Option<&TabKey>,
+    shell: Option<&WeakEntity<WindowShell>>,
+    hint: ShortcutHint,
+    host: &HostId,
+    mut session_place: usize,
+) -> (Vec<AnyElement>, Vec<AnyElement>, usize) {
+    let mut tabs = Vec::new();
+    let mut sessions = Vec::new();
+    let connection = state.host(host).map(|report| &report.connection);
+    let connected = matches!(connection, Some(HostState::Connected { .. }));
+    sessions.push(host_label(theme, host, connection));
+    let Some(view) = state.model().host(host) else {
+        return (tabs, sessions, session_place);
+    };
+    let session_order: Vec<SessionId> = view
+        .model
+        .sessions
+        .iter()
+        .map(|session| session.id)
+        .collect();
+    for session in &view.model.sessions {
+        let is_selected =
+            selected.is_some_and(|key| key.host == *host && key.session == session.id);
+        let show_tabs =
+            is_selected || selected.is_none() && visible_session(state, host) == Some(session.id);
+        let session_name =
+            navigation::shown_chip(hint, ShortcutHint::Sessions, session_place, &session.name);
+        session_place = session_place.saturating_add(1);
+        sessions.push(session_entry(
+            theme,
+            shell,
+            host,
+            session,
+            &session_order,
+            &session_name,
+            is_selected,
+        ));
+        if !show_tabs {
+            continue;
+        }
+        let order: Vec<TabId> = session.tabs.iter().map(|tab| tab.id).collect();
+        let mut tab_place = 1_usize;
+        for tab in &session.tabs {
+            let tab_key = TabKey {
+                host: host.clone(),
+                session: session.id,
+                tab: tab.id,
+            };
+            let tab_selected = selected == Some(&tab_key);
+            let label = tab_label::shown_tab_name(tab, view.focus);
+            let shown = navigation::shown_chip(hint, ShortcutHint::Tabs, tab_place, &label);
+            tab_place = tab_place.saturating_add(1);
+            tabs.push(tab_entry(
+                theme,
+                shell,
+                TabChip {
+                    key: tab_key,
+                    tab,
+                    label,
+                    shown,
+                    order: &order,
+                    connected,
+                    selected: tab_selected,
+                },
+            ));
+        }
+        if connected {
+            tabs.push(add_button(
+                theme,
+                shell,
+                "tab-new".to_owned(),
+                "New tab",
+                None,
+            ));
+        }
+    }
+    if connected {
+        sessions.push(add_button(
+            theme,
+            shell,
+            format!("session-new-{}", host.0),
+            "New session",
+            Some(host.clone()),
+        ));
+    }
+    (tabs, sessions, session_place)
 }
 
 /// A host's name in the session strip, led by a dot in its state's tone and
@@ -283,6 +333,7 @@ fn session_entry(
     host: &HostId,
     session: &Session,
     order: &[SessionId],
+    shown: &str,
     is_selected: bool,
 ) -> AnyElement {
     let (background, foreground) = if is_selected {
@@ -305,7 +356,8 @@ fn session_entry(
         .bg(background)
         .text_color(foreground)
         .hover(|style| style.bg(theme.tab_active))
-        .child(session.name.clone())
+        .aria_label(shown.to_owned())
+        .child(shown.to_owned())
         .child(session_close(theme, shell, host, session.id));
     let Some(target) = shell.cloned() else {
         return entry.into_any_element();
@@ -414,8 +466,10 @@ struct TabChip<'model> {
     /// The tab itself.
     tab: &'model Tab,
     /// The name the chip draws: a renamed tab's own name, otherwise the
-    /// foreground program or the directory.
+    /// foreground program or the directory. A drag keeps this name.
     label: String,
+    /// The text on the chip, including its shortcut number while Command is held.
+    shown: String,
     /// Its session's tabs, in order, for moves and drops.
     order: &'model [TabId],
     /// Whether its host is connected.
@@ -436,6 +490,7 @@ fn tab_entry(
         key,
         tab,
         label,
+        shown,
         order,
         connected,
         selected,
@@ -466,7 +521,8 @@ fn tab_entry(
         .on_mouse_down(MouseButton::Left, |_event, _window, application| {
             application.stop_propagation();
         })
-        .child(format!("{label}{marker}"))
+        .aria_label(format!("{shown}{marker}"))
+        .child(format!("{shown}{marker}"))
         .child(tab_close(theme, shell, &key.host, tab.id));
     let Some(target) = shell.cloned() else {
         return entry.into_any_element();

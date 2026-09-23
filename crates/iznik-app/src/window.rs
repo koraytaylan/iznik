@@ -22,6 +22,7 @@ use crate::bridge::{EngineBridge, EngineEvent};
 use crate::follow::{self, Following};
 use crate::grid::{GridMetrics, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
+use crate::navigation::{self, ShortcutHint};
 use crate::palette::{self, Palette};
 use crate::settings::{Settings, Watcher};
 use crate::splits;
@@ -171,6 +172,8 @@ pub struct WindowShell {
     pub(crate) upgrade_notices: BTreeSet<HostId>,
     /// How many connection and failure strips the previous frame drew.
     pub(crate) banner_count: usize,
+    /// Tabs or sessions numbered while Command is held.
+    pub(crate) shortcut_hint: ShortcutHint,
 }
 
 impl Focusable for WindowShell {
@@ -227,6 +230,7 @@ impl WindowShell {
             following,
             upgrade_notices: BTreeSet::new(),
             banner_count: 0,
+            shortcut_hint: ShortcutHint::None,
         };
         crate::settings::load_into(&mut shell, context);
         shell
@@ -938,6 +942,7 @@ impl Render for WindowShell {
             self.selected.as_ref(),
             Some(&entity),
             placement,
+            self.shortcut_hint,
         );
         let (title, tab_bar) = match placement {
             bars::TabPlacement::TitleBar => (bars.top, None),
@@ -958,11 +963,14 @@ impl Render for WindowShell {
                 .capture_key_down(context.listener(|shell, event, window, context| {
                     if palette::route_key(shell, event, window, context)
                         || shell.chord(&event.keystroke, window, context)
+                        || shell.shortcut_key(event, window, context)
                         || shell.bar_key(event, window, context)
                     {
                         context.stop_propagation();
                     }
+                    navigation::note(shell, event.keystroke.modifiers, context);
                 }))
+                .on_modifiers_changed(navigation::on_modifiers(context))
                 .bg(theme.background)
                 .text_color(theme.foreground)
                 .child(TitleBar::new().child(title))

@@ -94,6 +94,16 @@ and choosing another session shows the tab it was left on, while those tabs
 still exist. A recorded tab the host no longer holds yields that session's
 first remaining tab.
 
+Command and a digit opens that tab of the session on screen: Command-1 the
+first, through Command-9. Command-Option and a digit opens that session along
+the bottom bar, in the order the chips are drawn. Holding Command leads each
+tab chip with its number; holding Command and Option leads each session chip
+with its number instead. Command with Right or Up opens the next tab, and
+Command with Left or Down the previous one, wrapping at either end.
+Command-Option with those arrows does the same across sessions. On Linux and
+Windows that Command key is the Super key and Option is Alt, the same keys
+the menu's Command shortcuts already use.
+
 ## A host older than the app
 
 A host is reached with whatever server it has, and an older one is connected
@@ -123,6 +133,7 @@ rather than ending the connection.
 | `chrome` | The window's body and banners: the visible tab's pane grid, the stage that describes the next step, and the strips that say what is wrong. |
 | `clipboard` | OSC 52 clipboard writes decoded from pane output and carried on the terminal snapshot. |
 | `bars` | Model-driven tab and session bars rendered above the pane area. |
+| `navigation` | Command shortcuts that move between tabs and sessions, and the numbers those chips show while Command is held. |
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |
 | `follow` | What the window follows after a person asks: the added host's first session, the created tab's selection and the visible pane's keyboard focus. |

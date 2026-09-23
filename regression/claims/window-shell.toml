@@ -102,6 +102,12 @@ test = "iznik-app::tab_selection::a_new_window_shows_the_tab_each_session_was_le
 because = "the record is a file the headless shell writes and a second shell reads; no container is required"
 
 [[claim]]
+id = "window-command-shortcuts"
+statement = "Command and a digit opens that tab of the session on screen, and Command with Option and a digit opens that session. Command with Right or Up opens the next tab and Command with Left or Down the previous, wrapping; Command-Option with those arrows does the same for sessions. While Command is held the tab chips show those numbers, and while Command and Option are held the session chips do."
+test = "iznik-app::navigation::command_shortcut_moves_between_tabs_and_sessions"
+because = "the shortcuts and the numbered chips are the headless production shell's own key dispatch and rendering; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"

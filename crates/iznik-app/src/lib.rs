@@ -16,6 +16,7 @@ pub mod input;
 pub mod layout;
 pub mod lifecycle;
 pub mod menu;
+pub mod navigation;
 pub mod palette;
 pub mod prompt;
 pub mod session_tabs;
