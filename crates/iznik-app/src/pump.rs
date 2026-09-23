@@ -10,7 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{Context, Task, Window};
+use gpui_kit::{Context, Focusable as _, Task, Window};
 
 use crate::bridge::EngineBridge;
 use crate::vt::VtThread;
@@ -76,7 +76,13 @@ impl WindowShell {
                 continue;
             };
             let key = event.key.clone();
+            let focused = surface
+                .read(context)
+                .focus_handle(context)
+                .contains_focused(window, context);
+            let allowed = focused && self.settings.clipboard_write;
             let result = surface.update(context, |surface, surface_context| {
+                surface.allow_program_clipboard(allowed);
                 surface.receive(event, self.hosts().bridge(), surface_context)
             });
             if let Err(error) = result {

@@ -59,6 +59,9 @@ pub struct PaneSurface {
     grid: Entity<TerminalGrid>,
     /// Keep input and history event listeners alive as long as the surface.
     _subscriptions: Vec<Subscription>,
+    /// Whether a program's OSC 52 copy may reach the system clipboard: only
+    /// while this pane has focus and the `clipboard_write` setting allows it.
+    program_clipboard: bool,
 }
 
 impl PaneSurface {
@@ -95,6 +98,7 @@ impl PaneSurface {
             key,
             grid,
             _subscriptions: vec![input, scroll],
+            program_clipboard: false,
         }
     }
 
@@ -102,6 +106,13 @@ impl PaneSurface {
     #[must_use]
     pub fn grid(&self) -> &Entity<TerminalGrid> {
         &self.grid
+    }
+
+    /// Allow or refuse a program's clipboard writes from now on. The window
+    /// allows them for the focused pane alone, so a pane in the background
+    /// cannot replace what a person copied.
+    pub fn allow_program_clipboard(&mut self, allowed: bool) {
+        self.program_clipboard = allowed;
     }
 
     /// Apply changed font and cell geometry to the retained grid.
@@ -112,7 +123,8 @@ impl PaneSurface {
     }
 
     /// Consume a VT reply, forwarding process input before handling surface results.
-    /// A program clipboard write on the snapshot is applied before the frame.
+    /// A program clipboard write on the snapshot is applied before the frame,
+    /// when the window allows this pane's program to write the clipboard.
     /// Snapshot credit is returned only after the grid accepts the frame.
     ///
     /// # Errors
@@ -134,7 +146,9 @@ impl PaneSurface {
         match output {
             Some(VtOutput::Snapshot(mut snapshot)) => {
                 let copies = std::mem::take(&mut snapshot.clipboard);
-                deliver_program_clipboard(context, copies);
+                if self.program_clipboard {
+                    deliver_program_clipboard(context, copies);
+                }
                 self.grid
                     .update(context, |grid, context| grid.apply(*snapshot, context))
                     .map_err(SurfaceError::Grid)?;

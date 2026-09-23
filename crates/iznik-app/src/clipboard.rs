@@ -12,6 +12,10 @@ use std::mem::take;
 const ESCAPE: u8 = 0x1b;
 /// The second byte of a 7-bit OSC introducer, after [`ESCAPE`].
 const OSC_MARKER: u8 = b']';
+/// The second bytes of the 7-bit DCS, SOS, PM and APC introducers: strings
+/// whose payload is not terminal output and may carry an escaped OSC — a tmux
+/// passthrough does — that the emulator never runs.
+const STRING_MARKERS: &[u8] = b"PX^_";
 /// BEL, one of the two OSC terminators.
 const BELL: u8 = 0x07;
 /// The final byte of the string terminator ESC `\`.
@@ -64,6 +68,10 @@ enum ScanState {
     Discard,
     /// Saw ESC while discarding an oversized OSC.
     DiscardEscape,
+    /// Inside a DCS, SOS, PM or APC payload, which ends only at ESC `\`.
+    Skip,
+    /// Saw ESC inside such a payload.
+    SkipEscape,
 }
 
 /// Assembles OSC 52 clipboard writes that may be split across output batches.
@@ -101,6 +109,8 @@ impl ClipboardScan {
             ScanState::BodyEscape => self.body_escape(byte, copies),
             ScanState::Discard => self.discard(byte),
             ScanState::DiscardEscape => self.discard_escape(byte, copies),
+            ScanState::Skip => self.skip(byte),
+            ScanState::SkipEscape => self.skip_escape(byte),
         }
     }
 
@@ -116,6 +126,8 @@ impl ClipboardScan {
     fn escape(&mut self, byte: u8) {
         self.state = if byte == OSC_MARKER {
             ScanState::Body
+        } else if STRING_MARKERS.contains(&byte) {
+            ScanState::Skip
         } else if byte == ESCAPE {
             ScanState::Escape
         } else {
@@ -160,6 +172,25 @@ impl ClipboardScan {
         }
         self.cancel();
         self.byte(byte, copies);
+    }
+
+    /// A string payload byte. CAN and SUB abandon the string.
+    fn skip(&mut self, byte: u8) {
+        self.state = match byte {
+            ESCAPE => ScanState::SkipEscape,
+            CANCEL | SUBSTITUTE => ScanState::Ground,
+            _ => ScanState::Skip,
+        };
+    }
+
+    /// The byte after ESC in a string payload: `\` ends it, and anything
+    /// else — a doubled ESC, an escaped OSC — is still payload.
+    fn skip_escape(&mut self, byte: u8) {
+        self.state = match byte {
+            STRING_FINAL => ScanState::Ground,
+            ESCAPE => ScanState::SkipEscape,
+            _ => ScanState::Skip,
+        };
     }
 
     /// Keep one body byte, or start discarding once the body reaches its cap.

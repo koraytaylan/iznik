@@ -44,6 +44,7 @@ const OWNED_FIELDS: &[&str] = &[
     "tabs_in_title_bar",
     "theme_name",
     "scrollback_bytes",
+    "clipboard_write",
 ];
 /// The prefix of a keybinding override's field.
 const KEYBINDING_PREFIX: &str = "keybinding.";
@@ -60,6 +61,9 @@ pub struct Settings {
     /// Per-pane emulator history budget in bytes, read when the application
     /// starts; clamped between the emulator's minimum and maximum.
     pub scrollback_bytes: usize,
+    /// Whether a program in the focused pane may write the system clipboard
+    /// with OSC 52.
+    pub clipboard_write: bool,
     /// Lines of the file this version does not own — unknown fields, comments
     /// and blank lines — written back as they were.
     pub unowned: Vec<String>,
@@ -72,6 +76,7 @@ impl Default for Settings {
             theme_name: String::new(),
             keybindings: BTreeMap::new(),
             scrollback_bytes: SCROLLBACK_BYTES,
+            clipboard_write: true,
             unowned: Vec::new(),
         }
     }
@@ -250,7 +255,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -262,7 +267,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme.line_height,
         settings.theme.tabs_in_title_bar,
         settings.theme_name,
-        settings.scrollback_bytes
+        settings.scrollback_bytes,
+        settings.clipboard_write
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "{KEYBINDING_PREFIX}{action}={chord}");
@@ -373,6 +379,11 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             "line_height" => {
                 settings.theme.line_height =
                     bounded(field, value, (MINIMUM_LINE_HEIGHT, MAXIMUM_LINE_HEIGHT))?;
+            }
+            "clipboard_write" => {
+                settings.clipboard_write = value
+                    .parse()
+                    .map_err(|_parse_error| error(field, "not true or false"))?;
             }
             "scrollback_bytes" => {
                 settings.scrollback_bytes = value

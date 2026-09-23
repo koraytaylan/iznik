@@ -374,6 +374,9 @@ fn surface_applies_program_clipboard_writes(context: &mut TestAppContext) {
 /// Fails when the clipboard text differs from the program write.
 fn program_clipboard(context: &mut TestAppContext) -> Result<(), Failed> {
     let fixture = Fixture::new(context, "program-clipboard")?;
+    fixture.handle.update(context, |surface, _, _| {
+        surface.allow_program_clipboard(true);
+    })?;
     fixture.screen(context, b"ready")?;
     let mut sequence = Sequence(0);
     sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;aGVs")?;
@@ -394,11 +397,31 @@ fn program_clipboard(context: &mut TestAppContext) -> Result<(), Failed> {
         Some("primary".to_owned()),
         "a primary-selection write reaches the same clipboard"
     );
-    feed_output(&fixture, context, sequence, b"\x1b]52;c;\x07")?;
+    sequence = feed_output(&fixture, context, sequence, b"\x1b]52;c;\x07")?;
     assert_eq!(
         clipboard_text(context),
         None,
         "an empty program write clears the clipboard"
+    );
+    sequence = feed_output(
+        &fixture,
+        context,
+        sequence,
+        b"\x1bPtmux;\x1b\x1b]52;c;aGlkZGVu\x07\x1b\\",
+    )?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "an OSC inside a DCS payload is not a copy"
+    );
+    fixture.handle.update(context, |surface, _, _| {
+        surface.allow_program_clipboard(false);
+    })?;
+    feed_output(&fixture, context, sequence, b"\x1b]52;c;aGVsbG8=\x07")?;
+    assert_eq!(
+        clipboard_text(context),
+        None,
+        "a pane that may not write the clipboard does not"
     );
     show_screen(&fixture, context, b"replay\x1b]52;c;cmVwbGF5\x07")?;
     assert_eq!(

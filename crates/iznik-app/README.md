@@ -223,7 +223,10 @@ a fresh screen after a sequence gap. The grid consumes owned snapshots and
 returns their `consumed_bytes` through `EngineBridge::credit`. Screen replay
 consumes no stream credit and never replays historical query effects. A program
 clipboard write, such as OSC 52 from a text selection inside a full-screen
-application, is carried on the snapshot and applied to the system clipboard.
+application, is carried on the snapshot and applied to the system clipboard —
+only for the focused pane, and only while the `clipboard_write` setting (on by
+default) allows it. An OSC inside a DCS, SOS, PM or APC payload, such as a
+tmux passthrough, is not a copy.
 Screen replay drops those writes, so attaching again does not replace the clipboard.
 
 Snapshots retain graphemes, widths, styles, resolved colors, cursor state,
