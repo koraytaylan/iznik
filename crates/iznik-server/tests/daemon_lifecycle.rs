@@ -207,6 +207,10 @@ async fn the_runtime_directory_is_where_the_host_allows() {
             "with XDG_RUNTIME_DIR set the socket is under it"
         );
         assert_eq!(mode_of(&home.directory())?, 0o700, "and nobody else's");
+        for file in ["server.sock", "server.log", "server.lock"] {
+            let mode = mode_of(&home.directory().join(file))?;
+            assert_eq!(mode & 0o077, 0, "{file} is its owner's alone: {mode:o}");
+        }
 
         // Without it, under TMPDIR, in a directory of this user's own.
         let elsewhere = Home::new("paths-tmp")?;

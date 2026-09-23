@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 
 use core::fmt::{self, Display, Formatter, Write as _};
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -33,6 +36,17 @@ const DEFAULT_LEVEL: &str = "info";
 
 /// The suffix the one kept predecessor is renamed to.
 const PREDECESSOR: &str = "1";
+
+/// How many lines may wait for the task that writes the file. A daemon
+/// logging faster than a disk takes it — a flood of warnings from a pane in
+/// trouble — drops lines past this and counts them, rather than holding them
+/// all in memory until it has none left.
+pub const LOG_QUEUE_LINES: usize = 1024;
+
+/// The mode a log file is created with: the owner's, and nobody else's. It
+/// names panes, paths and errors, and it is bundled for a bug report.
+#[cfg(unix)]
+const OWNER_ONLY: u32 = 0o600;
 
 /// The field a `tracing` event's message arrives under.
 const MESSAGE_FIELD: &str = "message";
@@ -167,15 +181,14 @@ pub fn predecessor(path: &Path) -> PathBuf {
 ///
 /// [`LoggingError::Io`] when it cannot be opened.
 async fn append(path: &Path) -> Result<File, LoggingError> {
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .map_err(|source| LoggingError::Io {
-            path: path.to_path_buf(),
-            source,
-        })
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(OWNER_ONLY);
+    options.open(path).await.map_err(|source| LoggingError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The words of one event, gathered as it is visited.
@@ -203,7 +216,10 @@ impl Visit for Words {
 #[derive(Debug)]
 struct Lines {
     /// Where lines go.
-    lines: mpsc::UnboundedSender<String>,
+    lines: mpsc::Sender<String>,
+    /// How many lines were dropped because the queue was full, reported by
+    /// the writer with the next line that gets through.
+    dropped: Arc<AtomicU64>,
 }
 
 impl<Collector: tracing::Subscriber> Layer<Collector> for Lines {
@@ -225,7 +241,9 @@ impl<Collector: tracing::Subscriber> Layer<Collector> for Lines {
             metadata.target(),
             words.said
         );
-        let _sent = self.lines.send(line);
+        if self.lines.try_send(line).is_err() {
+            let _before = self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -243,11 +261,21 @@ impl<Collector: tracing::Subscriber> Layer<Collector> for Lines {
 /// Tokio runtime.
 pub async fn initialize(path: &Path) -> Result<(), LoggingError> {
     let mut sink = Sink::open(path, MAXIMUM_LOG_BYTES).await?;
-    let (lines, mut waiting) = mpsc::unbounded_channel::<String>();
+    let (lines, mut waiting) = mpsc::channel::<String>(LOG_QUEUE_LINES);
+    let dropped = Arc::new(AtomicU64::new(0));
+    let counted = Arc::clone(&dropped);
     let _writing = tokio::spawn(async move {
         while let Some(line) = waiting.recv().await {
             // A log that cannot be written is not worth ending a daemon for,
             // and there is nowhere left to say so.
+            let lost = counted.swap(0, Ordering::Relaxed);
+            if lost > 0 {
+                let _written = sink
+                    .write(&format!(
+                        "{lost} log lines were dropped: the log fell behind\n"
+                    ))
+                    .await;
+            }
             let _written = sink.write(&line).await;
         }
     });
@@ -255,7 +283,7 @@ pub async fn initialize(path: &Path) -> Result<(), LoggingError> {
         .unwrap_or_else(|_unset| EnvFilter::new(DEFAULT_LEVEL));
     tracing_subscriber::registry()
         .with(filter)
-        .with(Lines { lines })
+        .with(Lines { lines, dropped })
         .try_init()
         .map_err(|_installed| LoggingError::AlreadyInstalled)
 }

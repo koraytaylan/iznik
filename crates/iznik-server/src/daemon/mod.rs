@@ -435,7 +435,7 @@ pub async fn serve(
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), DaemonError> {
     let held = Lock::acquire(&paths.lock).await?;
-    let listener = socket::bind(&paths.socket)?;
+    let listener = owner_only(|| socket::bind(&paths.socket))?;
     let registry = Arc::new(RwLock::new(Registry::new(
         RegistryDefaults {
             program: options.program.clone(),
@@ -719,17 +719,66 @@ async fn foreground(arguments: &[OsString]) -> ExitCode {
     // After the options and the paths, so a command line this machine will not
     // take is refused before this process leaves the shell that ran it.
     #[cfg(unix)]
-    if let Err(error) = setsid() {
-        tracing::debug!(%error, "this process kept its caller's session");
+    let detached = setsid().map(|_session| ());
+    // Nor does it keep the directory it was started in: a daemon that lives
+    // for days would otherwise hold a mount point busy, or a directory its
+    // user has since removed.
+    #[cfg(unix)]
+    let moved = nix::unistd::chdir(ROOT);
+    serve_and_report(&paths, options, async || {
+        #[cfg(unix)]
+        {
+            if let Err(error) = detached {
+                tracing::info!(%error, "this process kept its caller's session");
+            }
+            if let Err(error) = moved {
+                tracing::warn!(%error, "this process kept its caller's directory");
+            }
+        }
+    })
+    .await
+}
+
+/// The directory a daemon moves to, which no unmount can take away.
+#[cfg(unix)]
+const ROOT: &str = "/";
+
+/// Runs `work` with the files this process creates restricted to its
+/// owner, then puts back the mask it replaced. The daemon's own files — its
+/// lock and its socket — are made under it; the mask a pane's shell starts
+/// with is the one the daemon was started with, because a shell that starts
+/// with `077` makes every file its user writes unreadable to their group.
+fn owner_only<Made>(work: impl FnOnce() -> Made) -> Made {
+    #[cfg(unix)]
+    {
+        // `077`: nothing for the group, nothing for anyone else.
+        let owner = nix::sys::stat::Mode::S_IRWXG | nix::sys::stat::Mode::S_IRWXO;
+        let given = nix::sys::stat::umask(owner);
+        let made = work();
+        let _owner = nix::sys::stat::umask(given);
+        made
     }
-    serve_and_report(&paths, options).await
+    #[cfg(windows)]
+    {
+        making()
+    }
 }
 
 /// Runs the daemon in this process and turns its outcome into a status,
 /// logging and saying what went wrong either way: the log is where a daemon
-/// started with its streams on `/dev/null` can be heard at all.
-async fn serve_and_report(paths: &RuntimePaths, options: DaemonOptions) -> ExitCode {
-    let _logging = logging::initialize(&paths.log).await;
+/// started with its streams on `/dev/null` can be heard at all. `logged` says
+/// what happened before there was a log to say it in.
+async fn serve_and_report(
+    paths: &RuntimePaths,
+    options: DaemonOptions,
+    logged: impl AsyncFnOnce(),
+) -> ExitCode {
+    if let Err(error) = logging::initialize(&paths.log).await {
+        // It runs without a log rather than not at all; a person running it
+        // in the foreground is told why there is none.
+        complain(&format!("the daemon runs without its log: {error}")).await;
+    }
+    logged().await;
     let (_asked, shutdown) = watch::channel(false);
     match serve(paths, options, shutdown).await {
         Ok(()) => ExitCode::SUCCESS,
