@@ -17,7 +17,7 @@ touches:
   - regression/claims/app-packaging.toml
   - xtask/src/distribution/app.rs
 status: done
-merged_as: "0502979"
+merged_as: ""
 ---
 # Package the app: .app bundle layout, icon, version stamping
 

@@ -15,7 +15,7 @@ touches:
   - policy/lexicon/command-palette-app.txt
   - regression/claims/command-palette.toml
 status: done
-merged_as: "6f2113e"
+merged_as: ""
 ---
 # Compose the command palette: fuzzy filter, explanations, dispatch
 

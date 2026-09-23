@@ -1,9 +1,10 @@
 # The iznik workspace.
 #
-# Every member, every module declaration and every dependency the six plans
-# under docs/plans/ need is declared by the scaffold (task workspace-scaffold);
-# no later task adds a member, a module or a dependency, so every task's
-# footprint stays disjoint and the dependency gate is an equality. The lint
+# The scaffold (task workspace-scaffold) declared every member and dependency
+# the first six plans needed. Later work has added to both — plan 0007 added
+# the `iznik-app` member and the GPUI Kit dependencies — each change landing
+# with its justification in policy/dependencies.md, which the dependency gate
+# holds equal to the resolved package set. The lint
 # table is CONTRIBUTING.md section 3 made executable, decided once here so that
 # no task ever edits it; its thresholds are in clippy.toml.
 

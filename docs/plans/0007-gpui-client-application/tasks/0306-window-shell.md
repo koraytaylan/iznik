@@ -30,7 +30,7 @@ touches:
   - policy/lexicon/window-shell.txt
   - regression/claims/window-shell.toml
 status: done
-merged_as: "04668c2"
+merged_as: ""
 ---
 # Assemble the window: pane grid from the layout tree, resize, focus, banners
 

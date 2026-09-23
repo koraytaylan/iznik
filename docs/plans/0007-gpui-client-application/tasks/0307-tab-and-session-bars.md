@@ -15,7 +15,7 @@ touches:
   - policy/lexicon/tab-bars.txt
   - regression/claims/tab-and-session-bars.toml
 status: done
-merged_as: "d4b01da"
+merged_as: ""
 ---
 # Render the two bars: tabs at the top, sessions at the bottom
 

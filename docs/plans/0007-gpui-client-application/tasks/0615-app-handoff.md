@@ -11,7 +11,7 @@ touches:
   - docs/notes/release-checklist.md
   - regression/claims/claims-registry.toml
 status: done
-merged_as: "1f91de5"
+merged_as: ""
 ---
 # Handoff: run the whole registry, record the deferred proofs
 

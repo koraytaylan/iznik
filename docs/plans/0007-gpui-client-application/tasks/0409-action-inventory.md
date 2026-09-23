@@ -17,7 +17,7 @@ touches:
   - policy/lexicon/action-inventory.txt
   - regression/claims/action-inventory.toml
 status: done
-merged_as: "9ea885c"
+merged_as: ""
 ---
 # Build the closed action inventory with explanations and keybindings
 

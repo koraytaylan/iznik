@@ -16,7 +16,7 @@ touches:
   - policy/lexicon/engine-bridge.txt
   - regression/claims/engine-bridge.toml
 status: done
-merged_as: "272123e46ec40eaddfe385361fb27806fd353725"
+merged_as: ""
 ---
 # Bridge the engine: HostManager on tokio, events into GPUI entities
 

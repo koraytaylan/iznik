@@ -18,7 +18,7 @@ touches:
   - policy/lexicon/settings-theme.txt
   - regression/claims/settings-and-theme.toml
 status: done
-merged_as: "521b574"
+merged_as: ""
 ---
 # Add settings and theme: one struct of colors, hot-applied
 

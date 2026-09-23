@@ -40,7 +40,7 @@ touches:
   - policy/lexicon/terminal-input-and-ime.txt
   - regression/claims/terminal-input-and-ime.toml
 status: done
-merged_as: "04668c2"
+merged_as: ""
 ---
 # Encode input from live terminal mode: keys, paste, mouse, IME, credit
 

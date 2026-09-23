@@ -13,7 +13,7 @@ touches:
   - docs/notes/app-render.md
   - regression/claims/app-end-to-end.toml
 status: done
-merged_as: "808dfe2"
+merged_as: ""
 ---
 # Prove the app end to end, headless, against the real stack
 

@@ -16,7 +16,9 @@ one keeps.
 
 ## Status
 
-All six plans have landed. **0001**, the foundations and the regression harness:
+Eight plans are written. Six have landed; the seventh has done every task
+and is still being integrated; the eighth is proposed. **0001**, the
+foundations and the regression harness:
 the rule-gated workspace, the golden-pinned wire primitives, the headless VT
 oracle, the pseudoterminal harness, and the two-container Podman suite whose
 scenarios are parallel nextest tests and whose claims registry gates every
@@ -41,7 +43,16 @@ say which of five layers is broken; [the contract](docs/CLIENT.md) an
 application is written against; and a soak that runs the whole stack for hours
 and refuses a run that measured nothing.
 
-The design is [`ARCHITECTURE.md`](ARCHITECTURE.md); the work was six
+**0007**, the client application, in progress: the GPUI application in
+`crates/iznik-app`, linking the client engine directly — the VT thread, the
+terminal grid element, input and IME, the window with its tab and session
+bars, splits, the command palette, settings, packaging and a headless end to
+end proof. All twenty of its tasks are done; the plan is not yet closed, and
+its two native display measurements are still to be taken.
+**0008**, session-preserving upgrade, is proposed and not started: replacing
+a host's server without ending the shells it holds.
+
+The design is [`ARCHITECTURE.md`](ARCHITECTURE.md); the work is eight
 executable plans under [`docs/plans/`](docs/plans/STATUS.md), run by
 [Makina](https://github.com/koraytaylan/makina).
 

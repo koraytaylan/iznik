@@ -16,7 +16,7 @@ touches:
   - policy/lexicon/split-chrome.txt
   - regression/claims/split-chrome.toml
 status: done
-merged_as: "4ac1957"
+merged_as: ""
 ---
 # Wire split chrome: divider drag to SetLayout, keyboard splits
 
