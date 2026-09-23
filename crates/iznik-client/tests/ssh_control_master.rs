@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use iznik_client::transport::ssh::{
     BATCH_MODE, CONNECT_TIMEOUT, CONTROL_PERSIST, END_OF_OPTIONS, SERVER_ALIVE_COUNT_MAXIMUM,
-    SERVER_ALIVE_INTERVAL, SshError, SshOptions, classify,
+    SERVER_ALIVE_INTERVAL, SshError, SshOptions, classify, control_path_option,
 };
 use iznik_client::transport::{
     ClientRuntimePaths, LOCAL_PREFIX, MINIMUM_CONTROL_NAME_LENGTH, Transport,
@@ -101,7 +101,10 @@ fn ssh_passes_what_it_owns_and_nothing_a_person_configured() {
         let line = arguments.join(" ");
         for wanted in [
             "ControlMaster=auto".to_owned(),
-            format!("ControlPath={}", transport.control_path().display()),
+            format!(
+                "ControlPath={}",
+                control_path_option(transport.control_path())
+            ),
             format!("ControlPersist={}", CONTROL_PERSIST.as_secs()),
             format!("ServerAliveInterval={}", SERVER_ALIVE_INTERVAL.as_secs()),
             format!("ServerAliveCountMax={SERVER_ALIVE_COUNT_MAXIMUM}"),
@@ -491,4 +494,18 @@ fn ssh_asks_nobody_without_an_askpass_program() {
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a control path with a space, a quote, a backslash or a `%` in it is
+/// not given to `ssh` as one quoted value that reads back as the same path.
+#[test]
+fn ssh_quotes_a_control_path_it_did_not_choose() {
+    let path = Path::new("/Users/Jane Doe/100% \"odd\"\\dir/control/abc");
+    assert_eq!(
+        control_path_option(path),
+        "\"/Users/Jane Doe/100%% \\\"odd\\\"\\\\dir/control/abc\"",
+        "quoted whole, with what ssh would read otherwise escaped"
+    );
 }

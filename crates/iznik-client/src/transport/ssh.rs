@@ -58,6 +58,13 @@ pub const SERVER_ALIVE_COUNT_MAXIMUM: u32 = 3;
 /// How long a connection may take to establish.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long ending a master may take before it is left to `ControlPersist`.
+///
+/// `ssh -O exit` talks to a socket on this machine and answers in
+/// milliseconds; a master that does not answer in two seconds is one that
+/// will be gone by itself when its persistence runs out.
+pub const CLOSE_DEADLINE: Duration = Duration::from_secs(2);
+
 /// The least any of these may be given to `ssh` as. Its options are whole
 /// seconds, and a zero is not "at once" to it but "never": `ControlPersist=0`
 /// keeps a master indefinitely, `ConnectTimeout=0` falls back to the system's
@@ -131,6 +138,8 @@ pub struct SshOptions {
     pub server_alive_count_maximum: u32,
     /// How long establishing a connection may take.
     pub connect_timeout: Duration,
+    /// How long ending a master may take.
+    pub close_deadline: Duration,
 }
 
 impl Default for SshOptions {
@@ -141,6 +150,7 @@ impl Default for SshOptions {
             server_alive_interval: SERVER_ALIVE_INTERVAL,
             server_alive_count_maximum: SERVER_ALIVE_COUNT_MAXIMUM,
             connect_timeout: CONNECT_TIMEOUT,
+            close_deadline: CLOSE_DEADLINE,
         }
     }
 }
@@ -370,7 +380,10 @@ impl SshTransport {
         let mut options = Vec::new();
         if master {
             options.push("ControlMaster=auto".to_owned());
-            options.push(format!("ControlPath={}", self.control_path.display()));
+            options.push(format!(
+                "ControlPath={}",
+                control_path_option(&self.control_path)
+            ));
             options.push(format!(
                 "ControlPersist={}",
                 seconds(self.options.control_persist)
@@ -438,6 +451,22 @@ impl SshTransport {
         })
     }
 
+    /// Ends the master for this host, if this machine's `ssh` keeps one, and
+    /// waits for `ssh` to finish — for at most the close deadline, past which
+    /// the master is left to go when its persistence runs out.
+    ///
+    /// Nothing to report: a host with no master running is already what this
+    /// asks for.
+    pub async fn end_master(&self) {
+        if !master_is_available() {
+            return;
+        }
+        let Ok(mut ending) = self.close_master() else {
+            return;
+        };
+        let _waited = tokio::time::timeout(self.options.close_deadline, ending.child.wait()).await;
+    }
+
     /// Ends the master for this host, so nothing outlives a client that has
     /// finished with it.
     ///
@@ -462,6 +491,43 @@ impl SshTransport {
         })
     }
 }
+
+/// A control path as `ssh` reads it back unchanged from an `-o` option.
+///
+/// `ssh` reads an option's value the way it reads a line of its own
+/// configuration: split at whitespace unless quoted, with `%` starting one of
+/// its own tokens. The path is under a runtime directory, and that is whatever
+/// `TMPDIR` or the application said — `/Users/Jane Doe/...` is a directory
+/// somebody has. So it is double-quoted, a quote or backslash in it is escaped
+/// the way `ssh`'s own argument splitting reads them, and a `%` is doubled.
+#[must_use]
+pub fn control_path_option(path: &std::path::Path) -> String {
+    let mut quoted = String::from(QUOTE);
+    for character in path.display().to_string().chars() {
+        match character {
+            QUOTE | ESCAPE => {
+                quoted.push(ESCAPE);
+                quoted.push(character);
+            }
+            TOKEN => {
+                quoted.push(TOKEN);
+                quoted.push(TOKEN);
+            }
+            other => quoted.push(other),
+        }
+    }
+    quoted.push(QUOTE);
+    quoted
+}
+
+/// What `ssh` quotes an option's value with.
+const QUOTE: char = '"';
+
+/// What it escapes a quote inside one with.
+const ESCAPE: char = '\\';
+
+/// What begins one of its own tokens in a path.
+const TOKEN: char = '%';
 
 /// A duration as the whole seconds `ssh` takes, never fewer than
 /// [`LEAST_SECONDS`].

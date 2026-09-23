@@ -27,6 +27,7 @@ ours
 owns
 persist
 person
+quote
 ran
 reachable
 remote

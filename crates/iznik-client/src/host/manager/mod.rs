@@ -563,6 +563,7 @@ impl HostManager {
         let host = HostId(alias.to_owned());
         let handle = self.take(&host)?;
         self.end(handle);
+        self.let_go(&host);
         if let Ok(mut credit) = self.shared.credit.lock() {
             credit.disconnect(&host);
         }
@@ -785,11 +786,23 @@ impl HostManager {
         // Only once it really came off. A host still holding a server and no
         // longer held here is one nobody can take it off, and the only way
         // back is to add it again.
+        self.let_go(&host);
         if let Ok(mut model) = self.shared.model.lock() {
             let _dropped = model.remove(&host);
         }
         self.shared.publish(&ManagerEvent::Removed { host });
         Ok(())
+    }
+
+    /// Ends the `ssh` master a host's commands shared, so nothing of this
+    /// client's stays connected to a host it no longer holds.
+    ///
+    /// `ControlPersist` would end it by itself, minutes later; a person who
+    /// removed a host, or took iznik off it, expects the connection to go now.
+    fn let_go(&self, host: &HostId) {
+        if let Transport::Ssh(ssh) = self.reach(host) {
+            self.runtime.block_on(ssh.end_master());
+        }
     }
 
     /// The transport that reaches a host.
@@ -855,13 +868,14 @@ impl HostManager {
 
 impl Drop for HostManager {
     fn drop(&mut self) {
-        let taken: Vec<HostHandle> = self
+        let taken: Vec<(HostId, HostHandle)> = self
             .hosts
             .lock()
-            .map(|mut held| std::mem::take(&mut *held).into_values().collect())
+            .map(|mut held| std::mem::take(&mut *held).into_iter().collect())
             .unwrap_or_default();
-        for handle in taken {
+        for (host, handle) in taken {
             self.end(handle);
+            self.let_go(&host);
         }
         self.sweeper.abort();
     }
