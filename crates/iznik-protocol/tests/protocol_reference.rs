@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use iznik_protocol::frame::{HEADER_LENGTH, MAXIMUM_PAYLOAD_LENGTH};
-use iznik_protocol::message::{CHANNEL_CONTROL, NO_DISCRIMINANT, PROTOCOL_VERSION};
+use iznik_protocol::message::{
+    CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, NO_DISCRIMINANT, PROTOCOL_VERSION,
+};
 use iznik_protocol::model::MAXIMUM_LAYOUT_DEPTH;
 
 /// Anything the reference or the source can fail on.
@@ -194,6 +196,7 @@ fn every_limit_in_the_reference_is_the_source_constant() {
         let limits = [
             ("MAXIMUM_PAYLOAD_LENGTH", u64::from(MAXIMUM_PAYLOAD_LENGTH)),
             ("HEADER_LENGTH", u64::try_from(HEADER_LENGTH)?),
+            ("MAXIMUM_INPUT_LENGTH", u64::from(MAXIMUM_INPUT_LENGTH)),
             ("MAXIMUM_LAYOUT_DEPTH", u64::try_from(MAXIMUM_LAYOUT_DEPTH)?),
             ("PROTOCOL_VERSION", u64::from(PROTOCOL_VERSION)),
             ("CHANNEL_CONTROL", u64::from(CHANNEL_CONTROL)),

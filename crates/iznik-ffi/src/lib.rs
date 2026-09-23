@@ -541,6 +541,7 @@ fn layer_of(refusal: &ManagerError) -> Layer {
         | ManagerError::UnknownHost { .. }
         | ManagerError::Gone { .. }
         | ManagerError::Unsupported { .. }
+        | ManagerError::Oversize { .. }
         | ManagerError::Poisoned { .. } => Layer::Client,
     }
 }
@@ -873,7 +874,7 @@ fn code_of(refusal: &ManagerError) -> c_int {
         ManagerError::UnknownHost { .. } => UNKNOWN_HOST,
         // A name no host may have is a mistake in the argument, not a host
         // that said no.
-        ManagerError::Alias { .. } => INVALID_ARGUMENT,
+        ManagerError::Alias { .. } | ManagerError::Oversize { .. } => INVALID_ARGUMENT,
         _otherwise => REFUSED,
     }
 }

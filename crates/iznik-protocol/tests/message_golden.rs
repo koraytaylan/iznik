@@ -11,8 +11,9 @@ use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, ErrorCode, MarkKind, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
-    decode_to_client, decode_to_server, encode_to_client, encode_to_server, pane_output,
+    CHANNEL_CONTROL, ErrorCode, MAXIMUM_INPUT_LENGTH, MarkKind, MessageError, PROTOCOL_VERSION,
+    ToClient, ToServer, decode_to_client, decode_to_server, encode_to_client, encode_to_server,
+    pane_output,
 };
 use iznik_testkit::golden;
 use serde_json::Value;
@@ -531,6 +532,11 @@ fn message_golden_an_encoding_fits_a_frame_or_is_refused() {
     let room = maximum
         .checked_sub(INPUT_OVERHEAD)
         .expect("the overhead is below the maximum");
+    assert_eq!(
+        Ok(room),
+        usize::try_from(MAXIMUM_INPUT_LENGTH),
+        "the most one Input carries is exactly what fits"
+    );
     let fitting = ToServer::Input {
         pane: PaneId(1),
         bytes: vec![0; room],

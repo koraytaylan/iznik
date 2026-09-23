@@ -36,6 +36,19 @@ pub const NO_DISCRIMINANT: u8 = u8::MAX;
 /// decodes to that value; the handshake owns the refusal.
 pub const PROTOCOL_VERSION: u16 = 1;
 
+/// What an `Input` message spends besides the keystrokes it carries: its
+/// one-byte tag, the eight-byte pane it names, and the four-byte length of
+/// what follows.
+const INPUT_OVERHEAD: u32 = 13;
+
+/// The most keystrokes one `Input` message can carry: the largest frame
+/// payload, less what the message spends on naming them.
+///
+/// Input longer than this — a paste of a large file — is carried as several
+/// `Input` messages to the same pane, in order; a pane reads a byte stream,
+/// so where it was cut is invisible to the program reading it.
+pub const MAXIMUM_INPUT_LENGTH: u32 = MAXIMUM_PAYLOAD_LENGTH.saturating_sub(INPUT_OVERHEAD);
+
 /// The discriminants of [`ToServer`], in table order.
 mod server_tag {
     /// `Hello`.

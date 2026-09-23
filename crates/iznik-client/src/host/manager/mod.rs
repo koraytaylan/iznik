@@ -18,18 +18,17 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use iznik_protocol::command::SessionCommand;
+use iznik_protocol::command::{SessionCommand, encode_session_command};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::message::{ToServer, encode_to_server};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use crate::bootstrap::launch::{
-    BOOTSTRAP_DEADLINE, BootstrapError, BootstrapOptions, UpgradeError,
-};
+use crate::bootstrap::launch::{BOOTSTRAP_DEADLINE, BootstrapOptions};
 use crate::bootstrap::uninstall;
-use crate::bootstrap::upload::{ArtifactSet, UploadError};
+use crate::bootstrap::upload::ArtifactSet;
 use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit, withdraw};
-use crate::host::identity::{AliasError, HostId};
+use crate::host::identity::HostId;
 use crate::host::manager::task::{give_up, serve};
 use crate::host::state::{BackoffPolicy, HostState};
 use crate::model::{ClientModel, HostView};
@@ -53,8 +52,11 @@ pub const EXPIRE_INTERVAL: Duration = Duration::from_millis(500);
 pub const ORDERS_PER_TURN: usize = 64;
 
 pub mod credit;
+mod error;
 mod task;
 mod waiting;
+
+pub use crate::host::manager::error::ManagerError;
 
 /// How long a caller waits for a host's task to end before it is cut short.
 ///
@@ -196,126 +198,6 @@ pub enum ManagerEvent {
         host: HostId,
     },
 }
-
-/// Why the manager could not do something.
-#[derive(Debug)]
-pub enum ManagerError {
-    /// Its runtime could not be built.
-    Runtime {
-        /// What the operating system said.
-        source: std::io::Error,
-    },
-    /// The artifacts could not be read from this machine.
-    Artifacts {
-        /// What went wrong.
-        source: UploadError,
-    },
-    /// The name is not one a host may be held under.
-    Alias {
-        /// Why.
-        source: AliasError,
-    },
-    /// No host of that name is held.
-    UnknownHost {
-        /// The name that was asked for.
-        host: HostId,
-    },
-    /// The host's task has ended and is not taking orders.
-    Gone {
-        /// The host.
-        host: HostId,
-    },
-    /// The log an application asked for will not be written.
-    ///
-    /// Refused rather than shrugged at: somebody who names a file wants what
-    /// went wrong written to it, and the one moment they would find out it
-    /// was never written is the moment they go looking for the reason
-    /// something failed.
-    Log {
-        /// The file that was asked for.
-        path: PathBuf,
-        /// Why it will not be.
-        detail: String,
-    },
-    /// The pane is not carrying anything just now.
-    ///
-    /// Its own refusal rather than an unknown host, which is what a held and
-    /// connected host would otherwise be called: between a reconnection and
-    /// the host re-announcing its panes, a pane can be left holding a number
-    /// that now belongs to another, and credit for it would go where no pane
-    /// would ever receive it. Nothing is wrong, and there is nothing to do
-    /// but wait for the screen that says where it went.
-    NotCarrying {
-        /// The host.
-        host: HostId,
-        /// The pane.
-        pane: PaneId,
-    },
-    /// A lock the manager holds was left broken by a panic under it.
-    ///
-    /// Its own error rather than an empty answer: a manager that reported no
-    /// hosts, or an unknown one, would have whoever is watching believe
-    /// something about the world instead of about this program.
-    Poisoned {
-        /// Which lock.
-        what: &'static str,
-    },
-    /// The connected server cannot decode the command, so it was not sent.
-    ///
-    /// A server built before a command existed refuses its frame as garbage
-    /// and ends the connection on it, so a client sends a command only when
-    /// the server advertised it can decode it. Upgrading the host is what
-    /// makes the command — and the feature that wants it — available.
-    Unsupported {
-        /// The host.
-        host: HostId,
-        /// What the command is called, for the words a person reads.
-        command: &'static str,
-    },
-    /// The host refused an upgrade, or could not be reached for one.
-    Upgrade {
-        /// What went wrong.
-        source: UpgradeError,
-    },
-    /// The host could not be taken off.
-    Uninstall {
-        /// What went wrong.
-        source: BootstrapError,
-    },
-}
-
-impl core::fmt::Display for ManagerError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            ManagerError::Runtime { source } => {
-                write!(formatter, "the manager's runtime: {source}")
-            }
-            ManagerError::Artifacts { source } => write!(formatter, "{source}"),
-            ManagerError::Alias { source } => write!(formatter, "{source}"),
-            ManagerError::Log { path, detail } => {
-                write!(formatter, "the log at {}: {detail}", path.display())
-            }
-            ManagerError::NotCarrying { host, pane } => write!(
-                formatter,
-                "pane {} on {host} is not carrying anything just now",
-                pane.0
-            ),
-            ManagerError::Poisoned { what } => {
-                write!(formatter, "the manager's {what} was left broken by a panic")
-            }
-            ManagerError::UnknownHost { host } => write!(formatter, "{host} is not held"),
-            ManagerError::Gone { host } => write!(formatter, "{host} is no longer running"),
-            ManagerError::Unsupported { host, command } => write!(
-                formatter,
-                "{host} is running a server too old for {command}; upgrade the host to use it"
-            ),
-            ManagerError::Upgrade { source } => write!(formatter, "{source}"),
-            ManagerError::Uninstall { source } => write!(formatter, "{source}"),
-        }
-    }
-}
-
-impl core::error::Error for ManagerError {}
 
 /// What an operation asks a host's own task to do.
 #[derive(Clone, Debug)]
@@ -766,7 +648,9 @@ impl HostManager {
     ///
     /// # Errors
     ///
-    /// [`ManagerError::UnknownHost`] or [`ManagerError::Gone`].
+    /// [`ManagerError::UnknownHost`] or [`ManagerError::Gone`],
+    /// [`ManagerError::Unsupported`] for a command the server cannot decode,
+    /// and [`ManagerError::Oversize`] for one too large to send.
     pub fn command(
         &self,
         alias: &str,
@@ -789,6 +673,17 @@ impl HostManager {
                 command: name,
             });
         }
+        // Refused here rather than where it would be written: a command that
+        // cannot be encoded fails as the caller's own mistake, with nothing
+        // shown, rather than as an order the host's task drops later.
+        let _fits = encode_session_command(&command)
+            .and_then(|payload| {
+                encode_to_server(&ToServer::Command {
+                    command_id: CommandId(u64::MAX),
+                    payload,
+                })
+            })
+            .map_err(|source| ManagerError::Oversize { source })?;
         let submission = self
             .shared
             .with(&host, |view| submit(view, asked, Instant::now()))

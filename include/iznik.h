@@ -471,7 +471,10 @@ int iznik_pane_credit(iznik_client *client,
  * query.
  *
  * One call is one message on the wire, so a bracketed paste arrives as a
- * paste rather than as the keys it happens to contain.
+ * paste rather than as the keys it happens to contain — up to the most one
+ * message carries, 1 048 563 bytes. A longer call is carried as several
+ * messages to the pane, back to back and in order, with no other input to
+ * that pane between them.
  *
  * **Obligation:** the bytes are read before this returns and may be freed as
  * soon as it does.

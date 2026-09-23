@@ -11,7 +11,9 @@ use std::time::Instant;
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{CommandOutcome, encode_session_command};
 use iznik_protocol::identity::{PaneId, Sequence};
-use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client, encode_to_server};
+use iznik_protocol::message::{
+    CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, decode_to_client, encode_to_server,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bootstrap::launch::{
@@ -201,8 +203,11 @@ async fn connect(
                 let standing = std::mem::take(kept);
                 let mut sent = 0_usize;
                 for order in &standing {
-                    if carry(&mut channel, order.clone(), shared).await.is_err() {
-                        break;
+                    match carry(&mut channel, order.clone(), shared).await {
+                        // One order this client could not even encode is that
+                        // order's failure, and the link is fine.
+                        Ok(()) | Err(ChannelError::Message(_)) => {}
+                        Err(_link) => break,
                     }
                     sent = sent.saturating_add(1);
                 }
@@ -526,7 +531,14 @@ async fn pump(
             }
             Turn::Ordered(Some(order)) => {
                 let holdable = keeps(&order).then(|| order.clone());
-                if carry(&mut channel, order, shared).await.is_err() {
+                let carrying = carry(&mut channel, order, shared).await;
+                if let Err(ChannelError::Message(refusal)) = &carrying {
+                    // Refused here, before a byte of it was written: the order
+                    // fails and the link, which never saw it, carries on.
+                    tracing::warn!(host = %host.0, %refusal, "an order could not be encoded");
+                    continue;
+                }
+                if carrying.is_err() {
                     // Held for the next connection, under the same rule as an
                     // order that arrived while there was none: what the link
                     // died holding was taken from the application, which was
@@ -837,6 +849,41 @@ fn settle(host: &HostId, shared: &Arc<Shared>, notification: &Notification) {
     let _confirmed = shared.with(host, |view| confirm(view, *command, &settled));
 }
 
+/// Writes keystrokes on the channel, as as many `Input` messages as they need.
+///
+/// A paste larger than one message can carry would otherwise fail to encode —
+/// and a link that died of it would take every pane on the host with it, and
+/// the paste too. A pane reads a byte stream, so where it is cut is invisible
+/// to the program reading it; what matters is that the pieces go in order,
+/// which one writer on one link guarantees.
+///
+/// # Errors
+///
+/// Whatever the channel says, when the link will not take a piece.
+async fn carry_input(
+    channel: &mut RemoteChannel,
+    pane: PaneId,
+    bytes: Vec<u8>,
+) -> Result<(), ChannelError> {
+    let most = usize::try_from(MAXIMUM_INPUT_LENGTH)
+        .unwrap_or(usize::MAX)
+        .max(1);
+    if bytes.len() <= most {
+        return write(channel, &ToServer::Input { pane, bytes }).await;
+    }
+    for piece in bytes.chunks(most) {
+        write(
+            channel,
+            &ToServer::Input {
+                pane,
+                bytes: piece.to_vec(),
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Writes one order on the channel.
 ///
 /// # Errors
@@ -851,7 +898,7 @@ async fn carry(
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
         Order::Unsubscribe { pane } => ToServer::Unsubscribe { pane },
-        Order::Input { pane, bytes } => ToServer::Input { pane, bytes },
+        Order::Input { pane, bytes } => return carry_input(channel, pane, bytes).await,
         Order::Resize {
             pane,
             columns,

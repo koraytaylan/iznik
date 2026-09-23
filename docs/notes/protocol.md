@@ -49,6 +49,7 @@ discriminant `NO_DISCRIMINANT` (255) rather than pretending to be message 0.
 |---|---|---|
 | `MAXIMUM_PAYLOAD_LENGTH` | 1 048 576 (1 MiB) | The largest frame payload. A longer length on the wire is a protocol error, not an allocation. |
 | `HEADER_LENGTH` | 5 | The frame header: 4 length bytes and 1 channel byte. |
+| `MAXIMUM_INPUT_LENGTH` | 1 048 563 | The most bytes one `Input` carries: `MAXIMUM_PAYLOAD_LENGTH` less its 1-byte tag, 8-byte pane and 4-byte length. Longer input is sent as several `Input` messages to the same pane, in order. |
 | `MAXIMUM_LAYOUT_DEPTH` | 64 | The deepest a layout tree may nest, refused by the decoder, the encoder and the validator alike. |
 | `PROTOCOL_VERSION` | 1 | The version this document describes. |
 | `CHANNEL_CONTROL` | 0 | The channel control messages travel on. |
