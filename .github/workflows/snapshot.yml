@@ -18,12 +18,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The gates, exactly as a pull request runs them. Nothing below starts until
+  # they pass, so what is published is a build the gates have verified.
+  check:
+    name: Gates
+    uses: ./.github/workflows/check.yml
+
   # Every application bundle carries every server, because the machine a
   # person connects to is rarely the kind they connect from: a Mac reaching
   # Linux servers is the common case. The servers are built once, here, and
   # downloaded by each bundling job.
   servers-linux:
     name: Linux servers
+    needs: [check]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -73,6 +80,7 @@ jobs:
 
   servers-darwin:
     name: macOS servers
+    needs: [check]
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -106,6 +114,7 @@ jobs:
 
   servers-windows:
     name: Windows server
+    needs: [check]
     runs-on: windows-2022
     timeout-minutes: 60
     steps:

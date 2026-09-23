@@ -1,0 +1,117 @@
+# The gates CONTRIBUTING.md section 2 names, run where nobody can skip them.
+#
+# `format`, `lint`, `documentation` and `test` run on Linux over the whole
+# workspace, exactly as `cargo xtask check` runs them. The fifth gate,
+# `claims`, needs the Podman fixture and is not run here; neither is any
+# ignored (`regression_`) test.
+#
+# The application's tests also run on macOS, the platform it is built for
+# first. The Windows job builds the client engine and the protocol, which is
+# what the Windows client zip is made of. It builds them under the workspace's
+# denied rustc lints, but it cannot run their tests: `iznik-testkit` and
+# `iznik-harness`, the development dependencies of every test binary in both
+# crates, use Unix sockets and signals and do not compile for Windows.
+#
+# `snapshot.yml` calls this workflow and publishes nothing unless it passes.
+name: check
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The test runner, pinned like every other tool the gates run.
+  NEXTEST_VERSION: 0.9.143
+
+jobs:
+  gates:
+    name: Gates (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # rustup reads rust-toolchain.toml: the pinned channel, clippy, rustfmt.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - name: Install the pinned Zig toolchain
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
+
+      # The application is a workspace member, so linting and documenting
+      # the workspace compiles GPUI, which links these.
+      - name: Install Linux UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+
+      - name: Install the pinned cargo-nextest
+        run: cargo install cargo-nextest --version "$NEXTEST_VERSION" --locked
+
+      - name: format
+        run: cargo fmt --all --check
+
+      - name: lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --document-private-items --locked
+
+      - name: test
+        run: cargo nextest run --workspace --locked
+
+  application-darwin:
+    name: Application tests (macOS)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - name: Install the pinned Zig toolchain
+        shell: bash
+        run: bash scripts/ci/install-zig.sh
+
+      - name: Install the pinned cargo-nextest
+        run: cargo install cargo-nextest --version "$NEXTEST_VERSION" --locked
+
+      - name: Point at the SDK
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+      - name: test
+        run: cargo nextest run --locked --package iznik-app
+
+  client-windows:
+    name: Client engine (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        shell: bash
+        run: rustup toolchain install
+
+      - name: Build
+        shell: bash
+        run: cargo build --locked --package iznik-client --package iznik-protocol

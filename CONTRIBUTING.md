@@ -42,6 +42,11 @@ The deadlines are what catch a hang, not what a run is allowed to take: a gate
 that is slow is a bug in the gate. `.makina/config.toml` runs the same five
 commands as Makina's quality gates, so a task that passes locally is a task
 that lands. `cargo xtask gate <name>` runs one of them.
+[`.github/workflows/check.yml`](.github/workflows/check.yml) runs the first
+four on every push to `develop` and `main` and on every pull request, and
+the application's tests on macOS as well; the `develop-snapshot` prerelease
+is published only after it passes. The `claims` gate needs the Podman fixture
+and is not run there.
 
 **Every command you run has a deadline.** Prefix anything that builds, tests,
 starts a container or opens a connection with `timeout <seconds>`; run
