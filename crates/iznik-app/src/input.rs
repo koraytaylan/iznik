@@ -146,7 +146,8 @@ impl InputEncoder {
     ) -> Result<VtOutput, VtError> {
         let bytes = match input {
             TerminalInput::Copy(input) => {
-                return copy_selection(terminal, input.selection).map(VtOutput::Clipboard);
+                return copy_selection(terminal, input.selection, input.frame.viewport.offset)
+                    .map(VtOutput::Clipboard);
             }
             TerminalInput::Key(input) => self.key(terminal, input)?,
             TerminalInput::Paste(text) => encode_paste(terminal, text)?,
@@ -268,26 +269,31 @@ fn encode_paste(terminal: &Terminal<'_, '_>, text: &str) -> Result<Vec<u8>, VtEr
     Ok(bytes)
 }
 
-/// Serialize half-open viewport cells with the native plain-text selection formatter.
+/// Serialize half-open cells with the native plain-text selection formatter.
+/// Rows count from `origin`, a row among the retained rows of history and
+/// screen, so a selection reaches text scrolled out of the viewport.
 ///
 /// # Errors
 /// Returns invalid coordinates, native selection errors or unexpected invalid UTF-8.
 fn copy_selection(
     terminal: &Terminal<'_, '_>,
     selection: GridSelection,
+    origin: u64,
 ) -> Result<String, VtError> {
     use libghostty_vt::fmt::Format;
     use libghostty_vt::selection::{FormatOptions, Selection};
     use libghostty_vt::terminal::{Point, PointCoordinate};
 
     let columns = terminal.cols()?;
-    let rows = terminal.rows()?;
+    let retained = terminal.scrollbar()?.total;
     let mut start = selection.anchor.min(selection.head);
     let end = selection.anchor.max(selection.head);
-    if start.column > columns || end.column > columns || start.row >= rows || end.row >= rows {
-        return Err(VtError::Input(
-            "selection is outside the displayed viewport",
-        ));
+    let row = |position: GridPosition| origin.checked_add(u64::from(position.row));
+    if start.column > columns
+        || end.column > columns
+        || row(end).is_none_or(|last| last >= retained)
+    {
+        return Err(VtError::Input("selection is outside the retained rows"));
     }
     if start == end {
         return Ok(String::new());
@@ -312,14 +318,17 @@ fn copy_selection(
             column: end.column.saturating_sub(1),
         }
     };
-    let start = terminal.grid_ref(Point::Viewport(PointCoordinate {
-        x: start.column,
-        y: u32::from(start.row),
-    }))?;
-    let end = terminal.grid_ref(Point::Viewport(PointCoordinate {
-        x: end.column,
-        y: u32::from(end.row),
-    }))?;
+    let screen = |position: GridPosition| -> Result<Point, VtError> {
+        let line = row(position)
+            .and_then(|absolute| u32::try_from(absolute).ok())
+            .ok_or(VtError::Overflow)?;
+        Ok(Point::Screen(PointCoordinate {
+            x: position.column,
+            y: line,
+        }))
+    };
+    let start = terminal.grid_ref(screen(start)?)?;
+    let end = terminal.grid_ref(screen(end)?)?;
     let native = Selection::new(start, end, false);
     let options = FormatOptions::new()
         .with_emit_format(Format::Plain)

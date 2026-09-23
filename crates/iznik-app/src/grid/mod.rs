@@ -6,6 +6,7 @@ mod ime;
 mod interaction;
 pub mod keyboard;
 mod paint;
+mod selection;
 mod shapes;
 pub use paint::align_glyphs;
 pub(crate) use paint::color as terminal_color;
@@ -31,6 +32,7 @@ use crate::vt::{PaneKey, TerminalSnapshot};
 use draw::{braille_mask, is_braille_run, is_drawn_run, is_symbol_text};
 pub use draw::{changed_rows, draw_list};
 use paint::RowView;
+pub use selection::{RetainedPosition, RetainedSelection};
 pub use shapes::{CellShape, cell_shapes};
 
 /// Initial font size in logical pixels; settings can replace it.
@@ -208,8 +210,9 @@ pub struct TerminalGrid {
     rows: Vec<Entity<RowView>>,
     /// Shared geometry for all rows and future IME/selection hit testing.
     metrics: GridMetrics,
-    /// Selection stays local to this surface.
-    selection: Option<GridSelection>,
+    /// Selection stays local to this surface, anchored to retained rows so
+    /// output that scrolls the viewport does not move or cancel it.
+    selection: Option<RetainedSelection>,
     /// Keyboard focus used by viewport navigation.
     focus: FocusHandle,
     /// Last accepted byte position used to avoid crediting duplicate snapshots.
@@ -227,7 +230,7 @@ pub struct TerminalGrid {
     /// Most recent laid-out surface, shared by pointer and composition geometry.
     bounds: Option<Bounds<Pixels>>,
     /// Cell where the currently accepted local selection drag began.
-    selection_anchor: Option<GridPosition>,
+    selection_anchor: Option<RetainedPosition>,
     /// Button whose press began on this surface, including drags outside its bounds.
     pointer_pressed: Option<MouseButton>,
     /// Shift at press time explicitly bypasses program mouse tracking for this drag.
@@ -332,7 +335,15 @@ impl TerminalGrid {
             return Err(GridError::Pane);
         }
         let previous = self.snapshot.as_ref().filter(|_| !self.stale);
-        let drawings = changed_rows(&snapshot, previous, self.drawn_selection, self.selection)?;
+        if snapshot.reset {
+            // A new emulator numbers its rows afresh.
+            self.selection = None;
+            self.selection_anchor = None;
+        }
+        let shown = self
+            .selection
+            .and_then(|selected| selected.visible(snapshot.viewport, snapshot.columns));
+        let drawings = changed_rows(&snapshot, previous, self.drawn_selection, shown)?;
         let (pending_credit, received) = self.credit_after(&snapshot)?;
         let mut changed = 0_usize;
         let resized = snapshot.rows.len() != self.rows.len();
@@ -353,7 +364,7 @@ impl TerminalGrid {
             }
         }
         self.rows.truncate(snapshot.rows.len());
-        self.drawn_selection = self.selection;
+        self.drawn_selection = shown;
         self.pending_credit = pending_credit;
         let receipts = std::mem::take(&mut snapshot.receipts);
         if received {
@@ -452,7 +463,8 @@ impl TerminalGrid {
         Ok(())
     }
 
-    /// Set local selection and invalidate only rows whose overlay changes.
+    /// Set local selection over the displayed viewport and invalidate only
+    /// rows whose overlay changes.
     ///
     /// # Errors
     /// Returns `Geometry` if the held snapshot is invalid.
@@ -461,11 +473,33 @@ impl TerminalGrid {
         selection: Option<GridSelection>,
         context: &mut Context<'_, Self>,
     ) -> Result<usize, GridError> {
+        let viewport = self.snapshot.as_ref().map(|held| held.viewport);
+        let retained = selection
+            .zip(viewport)
+            .map(|(selected, shown)| RetainedSelection::from_viewport(selected, shown));
+        self.select_retained(retained, context)
+    }
+
+    /// Set local selection over retained rows.
+    ///
+    /// # Errors
+    /// Returns `Geometry` if the held snapshot is invalid.
+    pub fn select_retained(
+        &mut self,
+        selection: Option<RetainedSelection>,
+        context: &mut Context<'_, Self>,
+    ) -> Result<usize, GridError> {
         self.selection = selection;
         match self.snapshot.clone() {
             Some(snapshot) => self.apply(snapshot, context),
             None => Ok(0),
         }
+    }
+
+    /// The current selection, over retained rows.
+    #[must_use]
+    pub fn selection(&self) -> Option<RetainedSelection> {
+        self.selection
     }
 
     /// Snapshot whose sequence and viewport the surface currently displays.

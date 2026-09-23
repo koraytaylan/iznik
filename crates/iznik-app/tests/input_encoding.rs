@@ -378,12 +378,14 @@ fn input_copy_serializes_selected_graphemes_without_styles() {
     );
 }
 
-/// Native formatting joins soft wraps and follows the exact historical viewport.
+/// Native formatting joins soft wraps, and a selection names retained rows:
+/// output and scrolling after it was made still copy the text it covered.
 ///
 /// # Panics
-/// Fails if wrapping adds a line break or a stale frame copies different visible text.
+/// Fails if wrapping adds a line break, output or scrolling changes what a
+/// selection copies, or a width change does not refuse it.
 #[test]
-fn input_copy_unwraps_and_rejects_a_changed_display_frame() {
+fn input_copy_unwraps_and_follows_retained_rows() {
     use iznik_app::grid::{GridPosition, GridSelection};
     use libghostty_vt::terminal::ScrollViewport;
     let thread = VtThread::start(VtOptions::default()).expect("thread");
@@ -414,9 +416,10 @@ fn input_copy_unwraps_and_rejects_a_changed_display_frame() {
         })
         .expect("history");
     support::snapshot(&thread).expect("snapshot");
-    assert!(
-        copied(&thread, &wrapped, selection).is_err(),
-        "output invalidates an old selection frame"
+    assert_eq!(
+        copied(&thread, &wrapped, selection).expect("copy after output"),
+        "abcdefgh",
+        "output that scrolls the text away does not change what is copied"
     );
     thread
         .send(VtCommand::Scroll {
@@ -436,9 +439,10 @@ fn input_copy_unwraps_and_rejects_a_changed_display_frame() {
         })
         .expect("bottom");
     let bottom = support::snapshot(&thread).expect("bottom frame");
-    assert!(
-        copied(&thread, &history, selection).is_err(),
-        "scrolling invalidates viewport coordinates"
+    assert_eq!(
+        copied(&thread, &history, selection).expect("copy after scrolling"),
+        "abcdefgh",
+        "scrolling the viewport does not change what is copied"
     );
     thread
         .send(VtCommand::Resize {

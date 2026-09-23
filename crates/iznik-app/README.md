@@ -142,6 +142,7 @@ rather than ending the connection.
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
 | `grid::draw` | Row draw lists built from snapshot cells, and which rows a new snapshot actually changes. |
+| `grid::selection` | Selection held in retained rows, and the part of it a viewport shows. |
 | `grid::shapes` | Box drawing, block elements and powerline separators drawn as rectangles and paths inside their cells. |
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
 | `grid::paint` | GPUI shaping, cell fills, text decorations, cursor painting, and cached row entities. |
@@ -276,8 +277,11 @@ Pointer events include a frame identity and local gesture. The VT owner returns
 `LocalPointer` only when live tracking is disabled; a filtered program event
 never becomes selection or history accidentally. The window applies those
 replies with `TerminalGrid::apply_pointer`. Shift drag and Shift-wheel explicitly
-choose local behavior. `copy_selection` requests native serialization with the
-same frame identity. Wheel expansion is bounded by `VtOptions`, with oversized
+choose local behavior. A selection is held in retained rows — history and
+screen counted from the oldest row — so output that scrolls the viewport
+during a drag neither cancels it nor moves its anchor, a drag can cross a
+scroll, and `copy_selection` serializes the text it covers even when part of
+it is out of view; only a width change refuses it. Wheel expansion is bounded by `VtOptions`, with oversized
 tracked bursts returned as input errors rather than truncated silently.
 
 Delivery receipts accompany engine output through the bridge, native snapshot

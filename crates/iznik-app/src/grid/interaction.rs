@@ -8,7 +8,10 @@ use libghostty_vt::key::{Action, Key};
 use libghostty_vt::terminal::ScrollViewport;
 
 use super::keyboard::{keyboard, modifiers, produced_by_layout};
-use super::{GridError, GridPosition, GridSelection, TerminalGrid, distance, scale};
+use super::{
+    GridError, GridPosition, GridSelection, RetainedPosition, RetainedSelection, TerminalGrid,
+    distance, scale,
+};
 use crate::input::{CopyInput, InputFrame, MouseInput, PointerAction, PointerInput, TerminalInput};
 
 impl TerminalGrid {
@@ -90,15 +93,16 @@ impl TerminalGrid {
         let Some(snapshot) = &self.snapshot else {
             return Ok(false);
         };
-        if snapshot.key != input.frame.key
-            || (matches!(input.local, Some(PointerAction::Select(_)))
-                && InputFrame::from(snapshot) != input.frame)
-        {
+        // Output may have moved the viewport since the gesture was made; the
+        // gesture's own frame says which retained row it pointed at, so only
+        // another pane or a width change refuses it.
+        if snapshot.key != input.frame.key || snapshot.columns != input.frame.columns {
             self.selection_anchor = None;
             return Ok(false);
         }
         match input.local {
             Some(PointerAction::Select(position)) => {
+                let position = RetainedPosition::from_viewport(position, input.frame.viewport);
                 match input.mouse.action {
                     libghostty_vt::mouse::Action::Press => self.selection_anchor = Some(position),
                     libghostty_vt::mouse::Action::Motion
@@ -120,8 +124,8 @@ impl TerminalGrid {
                             start.column = start.column.saturating_add(1);
                         }
                     }
-                    self.select(
-                        Some(GridSelection {
+                    self.select_retained(
+                        Some(RetainedSelection {
                             anchor: start,
                             head: end,
                         }),
@@ -138,13 +142,27 @@ impl TerminalGrid {
         Ok(true)
     }
 
-    /// Request native plain-text serialization of the currently displayed selection.
+    /// Request native plain-text serialization of the selection, including
+    /// the part of it scrolled out of view.
     pub fn copy_selection(&self, context: &mut Context<'_, Self>) {
         if let (Some(selection), Some(snapshot)) = (self.selection, &self.snapshot) {
+            let start = selection.anchor.min(selection.head);
+            let end = selection.anchor.max(selection.head);
+            let relative = |position: RetainedPosition| GridPosition {
+                row: u16::try_from(position.row.saturating_sub(start.row)).unwrap_or(u16::MAX),
+                column: position.column,
+            };
+            // The frame's viewport names the selection's first row, so its
+            // rows are counted from there however far it scrolled.
+            let mut frame = InputFrame::from(snapshot);
+            frame.viewport.offset = start.row;
             self.emit_input(
                 TerminalInput::Copy(CopyInput {
-                    selection,
-                    frame: InputFrame::from(snapshot),
+                    selection: GridSelection {
+                        anchor: relative(start),
+                        head: relative(end),
+                    },
+                    frame,
                 }),
                 context,
             );

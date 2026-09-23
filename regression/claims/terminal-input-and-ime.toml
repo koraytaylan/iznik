@@ -42,8 +42,8 @@ because = "the real owning thread and pinned emulator completely determine these
 
 [[claim]]
 id = "input-copy-frame"
-statement = "Native selection serialization joins soft wraps and copies the displayed history, rejecting stale output, viewport or resize coordinates."
-test = "iznik-app::input_encoding::input_copy_unwraps_and_rejects_a_changed_display_frame"
+statement = "Native selection serialization joins soft wraps and copies the retained rows a selection names, through later output and scrolling, rejecting a changed width."
+test = "iznik-app::input_encoding::input_copy_unwraps_and_follows_retained_rows"
 because = "the real owning thread and pinned emulator completely determine these bytes and results; a transport or display adds no encoding behavior"
 
 [[claim]]
@@ -120,8 +120,8 @@ because = "headless GPUI events and the real owning VT encoder determine this in
 
 [[claim]]
 id = "input-pointer-override"
-statement = "Shift at drag start retains local selection through release, stale fallback cannot start selection on a changed frame, and outside drags clamp to the displayed row edge."
-test = "iznik-app::ime::pointer_dispatch_retains_shift_override_and_rejects_stale_fallback"
+statement = "Shift at drag start retains local selection through release, output arriving during a drag neither cancels it nor moves its anchor, and outside drags clamp to the displayed row edge."
+test = "iznik-app::ime::pointer_dispatch_retains_shift_override_and_drags_across_output"
 because = "headless GPUI events and the real owning VT encoder determine this input seam; a transport or native display adds no behavior to the claimed routing and bytes"
 
 [[claim]]

@@ -712,19 +712,18 @@ fn pointer_tracking(context: &mut TestAppContext) -> Result<(), Failed> {
 }
 
 #[gpui_kit::test]
-fn pointer_dispatch_retains_shift_override_and_rejects_stale_fallback(
-    context: &mut TestAppContext,
-) {
+fn pointer_dispatch_retains_shift_override_and_drags_across_output(context: &mut TestAppContext) {
     check(&pointer_override(context));
 }
 
-/// Explicit Shift drag bypasses tracking, while delayed local replies cannot select new output.
+/// Explicit Shift drag bypasses tracking, and a drag survives output that
+/// arrives while it is held.
 ///
 /// # Errors
 /// Propagates fixture, pointer and copy failures.
 ///
 /// # Panics
-/// Fails when Shift release changes drag ownership or stale fallback selects new cells.
+/// Fails when Shift release changes drag ownership or output cancels a drag.
 fn pointer_override(context: &mut TestAppContext) -> Result<(), Failed> {
     use gpui_kit::{Modifiers, MouseButton, VisualTestContext};
     let fixture = Fixture::new(context)?;
@@ -760,9 +759,10 @@ fn pointer_override(context: &mut TestAppContext) -> Result<(), Failed> {
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
     fixture.pointers(context)?;
-    assert!(
-        fixture.copied(context)?.is_empty(),
-        "stale press cannot start a drag on the new frame"
+    assert_eq!(
+        fixture.copied(context)?,
+        "cha",
+        "output during a drag neither cancels it nor moves its anchor"
     );
     let outside = fixture.cell(context, COLUMNS, 0)?;
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());

@@ -582,12 +582,11 @@ impl PaneTerminal {
     /// # Errors
     /// Returns a missing authoritative screen, stale selection or encoder error.
     fn input(&mut self, key: &PaneKey, input: &TerminalInput) -> Result<VtOutput, VtError> {
-        let sequence = self.sequence.ok_or(VtError::NeedsScreen)?;
+        self.sequence.ok_or(VtError::NeedsScreen)?;
+        // A copy names retained rows, which output does not move: only
+        // another pane or a width change makes it describe other text.
         if let TerminalInput::Copy(copy) = input
-            && (copy.frame.key != *key
-                || copy.frame.sequence != sequence
-                || copy.frame.columns != self.terminal.cols()?
-                || copy.frame.viewport != self.viewport()?)
+            && (copy.frame.key != *key || copy.frame.columns != self.terminal.cols()?)
         {
             return Err(VtError::Input(
                 "selection no longer matches the displayed frame",
