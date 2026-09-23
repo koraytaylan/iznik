@@ -9,7 +9,7 @@
 
 [[claim]]
 id = "headless-smoke-draws-an-assertable-element-tree"
-statement = "A GPUI test context window draws the themed empty view on a machine with no display, and its observed element tree answers with the surface it was drawn with: the window is a real one, its surface carries the label the view was painted with, and the two observed elements report themselves."
+statement = "A GPUI test context window draws the production WindowShell — over a started engine bridge and emulator thread, inside the kit Root, as main opens it — on a machine with no display, and its observed element tree reports the shell and its pane area."
 test = "iznik-app::headless_smoke::headless_window_draws_its_element_tree"
 because = "GPUI's test context renders into a headless window inside the process, so the element tree is drawn and read with no display, and a container would add no display either"
 

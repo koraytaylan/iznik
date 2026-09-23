@@ -1,4 +1,4 @@
-//! The `iznik-app` binary: one GPUI window holding the crate's themed empty view.
+//! The `iznik-app` binary: one GPUI window holding the shell over the engine.
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
@@ -21,8 +21,8 @@ const HELP_FLAG: &str = "--help";
 /// The headless bundle writer command.
 const BUNDLE_FLAG: &str = "--bundle";
 
-/// The exit code of a command line the binary cannot act on: the only flag
-/// it knows is `--help`, and everything else is refused with this.
+/// The exit code of a command line the binary cannot act on: it knows
+/// `--help` and `--bundle`, and everything else is refused with this.
 const USAGE_EXIT_CODE: u8 = 2;
 /// Positional argument containing the target triple.
 const TARGET_ARGUMENT: usize = 1;
@@ -125,7 +125,10 @@ fn bundle(arguments: &[OsString]) -> ExitCode {
 /// A command line the program does not know: the usage line on standard
 /// error, and the refused status.
 fn usage() -> ExitCode {
-    let _written = writeln!(std::io::stderr(), "usage: iznik-app [--help]");
+    let _written = writeln!(
+        std::io::stderr(),
+        "usage: iznik-app [--help] | --bundle <target> <binary> <output> <version> <servers>"
+    );
     ExitCode::from(USAGE_EXIT_CODE)
 }
 

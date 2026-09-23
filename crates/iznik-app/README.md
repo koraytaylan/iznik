@@ -8,12 +8,15 @@ over everything. It links `iznik-client` as a Rust library and
 other front ends.
 
 What exists today is the window and the engine behind it. The binary opens
-one GPUI window holding the crate's themed `EmptyView`, answers `--help`
-without touching a display, and refuses no display at link time — a machine
-with no X11 or Wayland session is a condition the running application
-reports, not a build that fails. `EmptyView` paints its surface from the
-kit's active theme, background and foreground included, through the 0.3.5
-`gpui` line that `gpui-kit` 0.6.1 pins exact.
+one GPUI window holding the `WindowShell` — the stage or the visible tab's
+panes, the tab and session bars, the palette — over the engine bridge and the
+emulator thread; answers `--help` and writes a platform bundle for
+`--bundle` without touching a display; and refuses no display at link time —
+a machine with no X11 or Wayland session is a condition the running
+application reports, not a build that fails, and a window that cannot be
+opened ends the process with a failure status. The shell paints from the
+kit's active theme through the 0.3.5 `gpui` line that `gpui-kit` 0.6.1 pins
+exact.
 
 ## Servers it can install
 
@@ -210,8 +213,9 @@ implementations agreeing.
 
 GPUI's test context renders windows without a display, so this crate's tests
 run under nextest on the Linux gate machine like any other crate's:
-`cargo nextest run --package iznik-app`. The smoke test builds one themed
-window and asserts the element tree it produces; the bridge's cases drive the
+`cargo nextest run --package iznik-app`. The smoke test builds the window
+`main` opens — a `WindowShell` over a started engine and emulator thread,
+inside the kit's `Root` — and asserts the element tree it produces; the bridge's cases drive the
 engine against the `iznik-testkit` in-process stack over a `unix:` alias —
 add host, observe the state transitions, create a session by command, see it
 in the mirror, and see a refusal surface as a notice — with the whole of it
