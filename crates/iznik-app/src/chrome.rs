@@ -18,7 +18,7 @@ use crate::host_ui::Notice;
 use crate::stage;
 use crate::status;
 use crate::vt::{PaneKey, VtCommand};
-use crate::window::{HeldPane, TERMINAL_PADDING, WindowShell};
+use crate::window::{TERMINAL_PADDING, WindowShell};
 
 impl WindowShell {
     /// The body under the bars: the visible tab's pane grid, or the stage
@@ -107,18 +107,13 @@ impl WindowShell {
         }
     }
 
-    /// The connection and failure strips, forgetting submitted geometry when
-    /// the set of strips changes so a restored pane is measured again.
-    pub(crate) fn connection_strips(&mut self, context: &mut Context<'_, Self>) -> Vec<AnyElement> {
-        let strips = self.banners(context);
-        self.remember_strips(strips.len());
-        strips
+    /// The connection and failure strips, drawn over the pane area. Reading
+    /// them changes nothing: they do not resize the panes they lie over.
+    pub(crate) fn connection_strips(&self, context: &mut Context<'_, Self>) -> Vec<AnyElement> {
+        self.banners(context)
     }
 
     /// Submit changed visible geometry once; a remote resize does not cause a size fight.
-    ///
-    /// A size submitted while a strip is visible is remembered, so a late echo of
-    /// it can be told from a size somebody actually chose.
     pub(crate) fn measured(
         &mut self,
         key: &PaneKey,
@@ -142,7 +137,6 @@ impl WindowShell {
             .hosts()
             .bridge()
             .resize(&key.host.0, key.pane, columns, rows);
-        let showing_strip = self.banner_count > 0;
         let current = self.model_cells(key);
         let reported = {
             let Some(held) = self.panes.get_mut(key) else {
@@ -152,9 +146,6 @@ impl WindowShell {
                 Ok(()) => {
                     held.measured = Some((columns, rows));
                     held.awaiting_model = current.filter(|cells| *cells != (columns, rows));
-                    if showing_strip {
-                        held.banner_cells = Some((columns, rows));
-                    }
                     None
                 }
                 Err(error) => Some(error.to_string()),
@@ -195,25 +186,6 @@ impl WindowShell {
             .flat_map(|tab| &tab.panes)
             .find(|pane| pane.id == key.pane)
             .map(|pane| (pane.columns, pane.rows))
-    }
-
-    /// Drop remembered pane geometry when the strips appear or leave.
-    ///
-    /// While a strip is up the pane is shorter, and that shorter size is what
-    /// gets submitted. After the strip leaves, the pane is the window's size
-    /// again. Forgetting the submission makes the next frame send that size
-    /// even when it is the size from before the strip, and forgetting the
-    /// pending terminal resize lets a stale in-flight size stop blocking it.
-    fn remember_strips(&mut self, count: usize) {
-        if self.banner_count == count {
-            return;
-        }
-        self.banner_count = count;
-        for held in self.panes.values_mut() {
-            held.measured = None;
-            held.awaiting_model = None;
-            held.native_size = None;
-        }
     }
 
     /// A readable strip for every held host that is not connected and that
@@ -300,17 +272,6 @@ fn applied(native_size: Option<(u16, u16)>, wanted: (u16, u16), shown: (u16, u16
     }
 }
 
-/// The model size is on screen. A late echo of the size submitted while a
-/// strip was visible is not the pane's size any more: forget it so the next
-/// frame submits the restored pane, and only once.
-pub(crate) fn note_settled_size(held: &mut HeldPane, banner_count: usize, desired: (u16, u16)) {
-    held.native_size = None;
-    if banner_count == 0 && held.banner_cells == Some(desired) && held.measured != Some(desired) {
-        held.banner_cells = None;
-        held.measured = None;
-    }
-}
-
 /// One strip for the latest local failure, dismissible without discarding
 /// host state.
 ///
@@ -386,9 +347,7 @@ impl WindowShell {
                 );
                 held.awaiting_model = awaiting;
                 match action {
-                    LocalSize::Settled => {
-                        note_settled_size(held, self.banner_count, desired);
-                    }
+                    LocalSize::Settled => held.native_size = None,
                     LocalSize::Hold => {}
                     LocalSize::Apply(size) => {
                         match self.thread.send(VtCommand::Resize {

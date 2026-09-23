@@ -127,12 +127,6 @@ pub(crate) struct HeldPane {
     subscribed: bool,
     /// Last measured cell geometry successfully submitted to the engine.
     pub(crate) measured: Option<(u16, u16)>,
-    /// Cell geometry submitted while a connection or failure strip was visible.
-    ///
-    /// A late echo of this size, after the strip has gone, is the strip's size
-    /// and not the pane's. It is forgotten once the restored pane has been
-    /// submitted again.
-    pub(crate) banner_cells: Option<(u16, u16)>,
     /// Model geometry when a different size was submitted and the model has
     /// not moved since. The local terminal keeps the submission until then.
     pub(crate) awaiting_model: Option<(u16, u16)>,
@@ -188,8 +182,6 @@ pub struct WindowShell {
     /// upgrade, so the toast is raised once per host rather than on every
     /// state the engine says.
     pub(crate) upgrade_notices: BTreeSet<HostId>,
-    /// How many connection and failure strips the previous frame drew.
-    pub(crate) banner_count: usize,
     /// Tabs or sessions numbered while Command is held.
     pub(crate) shortcut_hint: ShortcutHint,
     /// The system's font families, listed once: listing them walks every
@@ -242,7 +234,6 @@ impl WindowShell {
             focus_handle,
             following,
             upgrade_notices: BTreeSet::new(),
-            banner_count: 0,
             shortcut_hint: ShortcutHint::None,
             installed_fonts: None,
             ssh_cache: std::cell::RefCell::default(),
@@ -781,7 +772,6 @@ impl WindowShell {
             surface,
             subscribed: false,
             measured: None,
-            banner_cells: None,
             awaiting_model: None,
             native_size: None,
             _subscriptions: vec![focus, failure, paste],
