@@ -90,6 +90,11 @@ pub(crate) const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 /// standing between a truncated download and an executable, so it fails closed
 /// rather than comparing against a value nothing computed.
 ///
+/// Once the server is in place it writes the digest it checked beside it, as
+/// `iznik-server.sha256`: the probe reads that rather than hashing the whole
+/// binary on every connection, and hashes only when the binary is newer than
+/// what was written about it.
+///
 /// It flushes the file rather than the machine. `sync` writes out every
 /// mounted filesystem, which on a busy host is a long wait for work that has
 /// nothing to do with iznik.
@@ -120,6 +125,7 @@ chmod 755 "$partial"
 dd if=/dev/null of="$partial" conv=notrunc,fsync 2>/dev/null || true
 mv "$partial" "$into/iznik-server"
 trap - EXIT
+printf '%s\n' "$got" > "$into/iznik-server.sha256"
 printf 'installed %s\n' "$into/iznik-server"
 "#;
 

@@ -295,6 +295,12 @@ reported to you, and `iznik_host_upgrade` acts on it. An upgrade is explicit
 because the daemon *is* the sessions: replacing it ends them. A daemon holding
 live panes refuses an upgrade and says how many, unless you force it.
 
+Which build a host has is decided by its bytes, not its version string: the
+probe reports the SHA-256 of the server installed there. A server of this
+build's version whose bytes are another build's has its binary replaced when
+the host is connected — which a running daemon does not notice, so no session
+ends — and an upgrade of such a host replaces the daemon too.
+
 `iznik_host_uninstall` takes everything iznik put on a host back off it. A
 tool that installs binaries on other people's machines owes them that.
 

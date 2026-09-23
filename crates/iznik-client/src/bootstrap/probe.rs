@@ -60,6 +60,12 @@ const PROTOCOL_WORD: &str = "protocol";
 /// is whether one is at the prefix it settled on. Only the first line of a
 /// version is taken, so a server that says more cannot append fields to this
 /// answer.
+///
+/// What says *which build* a server is, is its bytes: every build of one
+/// version answers `--version` alike. So each candidate also says the SHA-256
+/// of the server there — read from the `iznik-server.sha256` the upload wrote
+/// beside it when that is no older than the binary, so a reconnection does
+/// not hash a binary it has hashed before, and computed otherwise.
 pub const PROBE_SCRIPT: &str = r#"
 writable() {
   if [ -e "$1" ]; then
@@ -84,8 +90,20 @@ index=0
 for candidate in "$data/iznik" "$home/.local/share/iznik" "$runtime"
 do
   said=-
-  if [ -x "$candidate/bin/iznik-server" ] && [ -O "$candidate/bin/iznik-server" ]
-  then said=$("$candidate/bin/iznik-server" --version 2>/dev/null | head -n 1); fi
+  digest=-
+  server="$candidate/bin/iznik-server"
+  kept="$server.sha256"
+  if [ -x "$server" ] && [ -O "$server" ]
+  then said=$("$server" --version 2>/dev/null | head -n 1); fi
+  if [ -f "$server" ] && [ -O "$server" ]
+  then
+    if [ -f "$kept" ] && [ -O "$kept" ] && [ ! "$server" -nt "$kept" ]
+    then read -r digest < "$kept" || digest=-
+    elif command -v sha256sum >/dev/null 2>&1
+    then digest=$(sha256sum < "$server" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1
+    then digest=$(shasum -a 256 < "$server" | cut -d' ' -f1); fi
+  fi
   entry=no
   for compiled in "$candidate"/terminfo/*/xterm-ghostty
   do if [ -r "$compiled" ]; then entry=yes; fi; done
@@ -95,6 +113,8 @@ do
 ' "$index" "$said"
   printf 'candidate %s terminfo %s
 ' "$index" "$entry"
+  printf 'candidate %s digest %s
+' "$index" "${digest:--}"
   printf 'candidate %s path %s
 ' "$index" "$candidate"
   index=$((index + 1))
@@ -152,6 +172,9 @@ pub struct HostProbe {
     pub architecture: Architecture,
     /// The server already there, if there is one.
     pub server: Option<InstalledServer>,
+    /// The SHA-256 of that server's bytes, in lowercase hexadecimal, when the
+    /// host could say: what tells two builds of one version apart.
+    pub server_digest: Option<String>,
     /// Whether the terminfo iznik carries is already under one of the
     /// candidate prefixes.
     ///
@@ -406,6 +429,16 @@ fn installed(said: &str) -> Option<InstalledServer> {
     })
 }
 
+/// How many hexadecimal digits a SHA-256 is written in.
+const DIGEST_DIGITS: usize = 64;
+
+/// A digest line's value, when it is a SHA-256 and not a stranger's words.
+fn digest(said: &str) -> Option<String> {
+    let digits = said.trim().to_ascii_lowercase();
+    (digits.len() == DIGEST_DIGITS && digits.bytes().all(|digit| digit.is_ascii_hexdigit()))
+        .then_some(digits)
+}
+
 /// One prefix the host was asked about: where, whether it may be written, and
 /// what an iznik server there says it is.
 struct Candidate {
@@ -417,6 +450,8 @@ struct Candidate {
     terminfo: bool,
     /// The server installed *there*, if there is one this can read.
     server: Option<InstalledServer>,
+    /// The SHA-256 of the server *there*, if the host could say.
+    digest: Option<String>,
 }
 
 /// A candidate as its lines arrive, before it is known to be complete.
@@ -430,6 +465,8 @@ struct Building {
     terminfo: Option<bool>,
     /// Its `path` line.
     path: Option<PathBuf>,
+    /// Its `digest` line, which a host that predates it does not print.
+    digest: Option<String>,
 }
 
 /// One `candidate <n> <name> <value>` line, put where it belongs.
@@ -452,6 +489,7 @@ fn read_field(held: &mut BTreeMap<usize, Building>, line: &str) {
         "version" => building.version = Some(value.to_owned()),
         "terminfo" => building.terminfo = Some(value == YES),
         "path" => building.path = Some(PathBuf::from(value)),
+        "digest" => building.digest = digest(value),
         _other => {}
     }
 }
@@ -478,6 +516,7 @@ fn candidates(output: &str) -> Vec<Candidate> {
                 server: Some(said.as_str())
                     .filter(|named| *named != NOTHING)
                     .and_then(installed),
+                digest: building.digest,
             })
         })
         .collect()
@@ -527,6 +566,8 @@ pub fn parse(output: &str) -> Result<HostProbe, ProbeError> {
         // candidate: what the bootstrap will run is `<prefix>/bin/iznik-server`,
         // so a server anywhere else is not the one it is deciding about.
         server: chosen.server.clone(),
+        // And its bytes, for the same reason.
+        server_digest: chosen.digest.clone(),
         // The terminfo at the prefix that was chosen, for the same reason the
         // server is: what a pane will be told about is `<prefix>/terminfo`,
         // and an entry under a candidate this user cannot write is not it.

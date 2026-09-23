@@ -232,6 +232,7 @@ fn probed(tic_available: bool, terminfo_installed: bool) -> HostProbe {
         operating_system: OperatingSystem::Linux,
         architecture: Architecture::X86_64,
         server: None,
+        server_digest: None,
         terminfo_installed,
         tic_available,
         prefix: PathBuf::from(PREFIX),

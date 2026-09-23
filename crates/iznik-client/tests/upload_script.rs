@@ -216,6 +216,12 @@ fn upload_script_installs_what_matches_its_digest() {
             Vec::<String>::new(),
             "and nothing of its own left beside it"
         );
+        let kept = std::fs::read_to_string(held.prefix().join("bin").join("iznik-server.sha256"))?;
+        assert_eq!(
+            kept.trim(),
+            digest_of(ARTIFACT),
+            "but the digest it checked, for the probe to read rather than hash"
+        );
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
@@ -447,6 +453,73 @@ fn probe_command_is_read_by_any_login_shell() {
                 "under {shell} the probe answered: {printed}"
             );
         }
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Runs the probe with a prefix of the case's own as the first candidate.
+///
+/// # Errors
+///
+/// When `sh` is not here or the probe does not run.
+fn probe_under(data: &Path) -> Result<String, Failed> {
+    let mut command = Command::new(located("sh")?);
+    command
+        .arg("-c")
+        .arg(iznik_client::bootstrap::probe::PROBE_SCRIPT)
+        .env("XDG_DATA_HOME", data)
+        .env("HOME", data)
+        .stdin(Stdio::null());
+    let done = process::run(command, Deadline(RUN_DEADLINE), Output::Capture)?;
+    Ok(String::from_utf8_lossy(&done.stdout).into_owned())
+}
+
+/// # Panics
+///
+/// When the probe does not say the digest of an installed server — from what
+/// the upload wrote beside it while that is current, and from the bytes once
+/// the binary is newer than it.
+#[test]
+fn probe_script_says_which_bytes_a_server_is() {
+    let case = || -> Result<(), Failed> {
+        let (held, _payload) = scratch("digest")?;
+        let bin = held.path.join("iznik").join("bin");
+        std::fs::create_dir_all(&bin)?;
+        // Bytes, and not a program: what is asked about is what the file
+        // holds, and a case that ran a fresh executable would wait on
+        // whatever a system does before it lets one run the first time.
+        let server = bin.join(BINARY_NAME);
+        let bytes = b"a build of the server".to_vec();
+        std::fs::write(&server, &bytes)?;
+        let kept = "ab".repeat(32);
+        std::fs::write(bin.join("iznik-server.sha256"), format!("{kept}\n"))?;
+        let now = SystemTime::now();
+        let long_ago = now.checked_sub(LONG_AGO).ok_or("no clock")?;
+        File::options()
+            .write(true)
+            .open(&server)?
+            .set_times(FileTimes::new().set_modified(long_ago))?;
+        let said = parse(&probe_under(&held.path)?)?;
+        assert_eq!(
+            said.server_digest,
+            Some(kept),
+            "what the upload wrote, while the binary is no newer"
+        );
+        File::options()
+            .write(true)
+            .open(bin.join("iznik-server.sha256"))?
+            .set_times(FileTimes::new().set_modified(long_ago))?;
+        File::options()
+            .write(true)
+            .open(&server)?
+            .set_times(FileTimes::new().set_modified(now))?;
+        let fresh = parse(&probe_under(&held.path)?)?;
+        assert_eq!(
+            fresh.server_digest,
+            Some(digest_of(&bytes)),
+            "and the bytes themselves once the binary is newer"
+        );
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

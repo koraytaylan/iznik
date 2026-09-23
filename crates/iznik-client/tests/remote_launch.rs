@@ -15,7 +15,7 @@ use iznik_client::bootstrap::launch::{
     triple_of,
 };
 use iznik_client::bootstrap::probe::{Architecture, HostProbe, InstalledServer, OperatingSystem};
-use iznik_client::bootstrap::upload::{ArtifactSet, BINARY_NAME};
+use iznik_client::bootstrap::upload::{ArtifactSet, BINARY_NAME, hexadecimal};
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
@@ -84,6 +84,7 @@ fn probed(server: Option<InstalledServer>) -> HostProbe {
         operating_system: OperatingSystem::Linux,
         architecture: Architecture::X86_64,
         server,
+        server_digest: None,
         terminfo_installed: true,
         tic_available: true,
         prefix: PathBuf::from(PREFIX),
@@ -456,4 +457,39 @@ fn remote_launch_gives_each_stage_what_is_left_of_the_budget() {
         Duration::ZERO,
         "and a budget already spent leaves nothing"
     );
+}
+
+/// # Panics
+///
+/// When another build of this build's own version is taken for this build,
+/// or this build — or a server whose bytes the host could not say — is
+/// uploaded again.
+#[test]
+fn remote_launch_tells_builds_of_one_version_apart_by_their_bytes() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("digest", &[TRIPLE])?;
+        let artifacts = ArtifactSet::load(&held.path)?;
+        let ours = hexadecimal(&artifacts.for_triple(TRIPLE)?.digest);
+        let with = |digest: Option<String>| HostProbe {
+            server_digest: digest,
+            ..probed(Some(bundled()))
+        };
+        assert_eq!(
+            decide(&with(Some(ours.clone())), &artifacts, &bundled()),
+            Decision::UpToDate,
+            "the same bytes are left alone"
+        );
+        assert_eq!(
+            decide(&with(Some("0".repeat(ours.len()))), &artifacts, &bundled()),
+            Decision::Replace,
+            "other bytes under the same version are replaced"
+        );
+        assert_eq!(
+            decide(&with(None), &artifacts, &bundled()),
+            Decision::UpToDate,
+            "and a host that could not say is taken at its word"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
 }

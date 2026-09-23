@@ -18,7 +18,7 @@ use iznik_protocol::model::{HostModel, decode_host_model};
 use crate::bootstrap::probe::{
     Architecture, HostProbe, InstalledServer, OperatingSystem, PROBE_DEADLINE, ProbeError,
 };
-use crate::bootstrap::upload::{ArtifactSet, UPLOAD_DEADLINE, executable_name};
+use crate::bootstrap::upload::{ArtifactSet, UPLOAD_DEADLINE, executable_name, hexadecimal};
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, ChannelOptions, RemoteChannel};
 use crate::transport::ssh::SshError;
@@ -45,6 +45,11 @@ pub enum Decision {
     UpToDate,
     /// The host has no server this client may run.
     Install,
+    /// The host has this version's server, and its bytes are not this
+    /// build's: another build of the same version. The binary is replaced,
+    /// which a running daemon does not notice — its sessions go on — and the
+    /// relay and the next daemon to start are this build's.
+    Replace,
     /// The host has another version. The connection proceeds with the one
     /// that is there, and this is carried back so somebody can be asked.
     UpgradeAvailable {
@@ -65,6 +70,7 @@ impl Display for Decision {
         match self {
             Decision::UpToDate => formatter.write_str("up to date"),
             Decision::Install => formatter.write_str("install"),
+            Decision::Replace => formatter.write_str("replace"),
             Decision::UpgradeAvailable { installed, bundled } => write!(
                 formatter,
                 "upgrade available from {} to {}",
@@ -320,16 +326,21 @@ pub fn server_path(found: &HostProbe) -> PathBuf {
 #[must_use]
 pub fn decide(found: &HostProbe, artifacts: &ArtifactSet, carried: &InstalledServer) -> Decision {
     let triple = triple_of(found);
-    if artifacts.for_triple(&triple).is_err() {
+    let Ok(artifact) = artifacts.for_triple(&triple) else {
         return Decision::Unsupported { triple };
-    }
+    };
     let Some(installed) = found.server.clone() else {
         return Decision::Install;
     };
     if installed.crate_version == carried.crate_version
         && installed.protocol_version == carried.protocol_version
     {
-        return Decision::UpToDate;
+        // The version cannot tell two builds of it apart; the bytes can. A
+        // host that could not say what its bytes are is taken at its word.
+        return match &found.server_digest {
+            Some(there) if *there != hexadecimal(&artifact.digest) => Decision::Replace,
+            _same_or_unknown => Decision::UpToDate,
+        };
     }
     Decision::UpgradeAvailable {
         installed,

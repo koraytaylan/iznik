@@ -49,7 +49,7 @@ printf 'stopped %s\n' "$IZNIK_PREFIX"
 pub const REMOTE_UNINSTALL_SCRIPT: &str = r#"
 server="$IZNIK_PREFIX/bin/iznik-server"
 if [ -x "$server" ]; then "$server" --stop >/dev/null 2>&1 || true; fi
-rm -f "$server" "$IZNIK_PREFIX/bin"/.partial-* "$IZNIK_PREFIX"/.terminfo-*
+rm -f "$server" "$server.sha256" "$IZNIK_PREFIX/bin"/.partial-* "$IZNIK_PREFIX"/.terminfo-*
 rm -rf "$IZNIK_PREFIX/terminfo"
 if [ -n "${XDG_RUNTIME_DIR:-}" ]
 then runtime="$XDG_RUNTIME_DIR/iznik"
@@ -149,7 +149,7 @@ pub async fn bootstrap_watched(
     }
     // Where the server is, is where the host said it put it. The two agree,
     // and asking is cheaper than assuming they always will.
-    let installed = if decision == Decision::Install {
+    let installed = if matches!(decision, Decision::Install | Decision::Replace) {
         reached(Stage::Upload);
         install(
             transport,
@@ -300,10 +300,11 @@ pub async fn upgrade(
         }
         // Nothing is there to end, and nothing is holding panes.
         Decision::Install => {}
-        // A version this build does not carry, or a forced replacement of one
-        // it does: the running daemon is asked whether it may go, and then it
-        // is stopped before the new binary is put where it was.
-        Decision::UpgradeAvailable { .. } | Decision::UpToDate => {
+        // A version this build does not carry, another build of this one, or
+        // a forced replacement: the running daemon is asked whether it may
+        // go, and then it is stopped before the new binary is put where it
+        // was.
+        Decision::UpgradeAvailable { .. } | Decision::Replace | Decision::UpToDate => {
             may_replace(transport, &found, options, force, expires).await?;
             stop(transport, &found, left(expires, options.command_deadline)).await?;
         }

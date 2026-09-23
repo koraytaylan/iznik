@@ -128,6 +128,7 @@ fn host_probe_reads_an_ordinary_linux_host() {
             operating_system: OperatingSystem::Linux,
             architecture: Architecture::X86_64,
             server: None,
+            server_digest: None,
             terminfo_installed: false,
             tic_available: true,
             prefix: PathBuf::from("/data/me/iznik"),
@@ -693,4 +694,34 @@ async fn host_probe_asks_once_when_the_connection_is_refused() {
             "{refusal:?} is asked once"
         );
     }
+}
+
+/// # Panics
+///
+/// When the digest of the server at the chosen prefix is not read, is read
+/// from another candidate, or anything but a SHA-256 is taken for one.
+#[test]
+fn host_probe_reads_the_digest_of_the_chosen_server() {
+    let digest = "ab".repeat(32);
+    let said = format!(
+        "{}candidate 0 digest {}\ncandidate 1 digest {}\n",
+        linux("no", "yes", "yes", "iznik-server 0.0.0 protocol 1"),
+        "cd".repeat(32),
+        digest.to_uppercase()
+    );
+    let read = parse(&said).expect("a probe");
+    assert_eq!(
+        read.server_digest,
+        Some(digest),
+        "the chosen one's, lowered"
+    );
+    let stranger = format!(
+        "{}candidate 0 digest not-a-digest\n",
+        linux("yes", "yes", "yes", "-")
+    );
+    assert_eq!(
+        parse(&stranger).expect("a probe").server_digest,
+        None,
+        "and a line that is not one is nothing"
+    );
 }
