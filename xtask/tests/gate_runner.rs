@@ -42,6 +42,7 @@ const TOOL_SHIMS: &[(&str, &str)] = &[
     ("x86_64-linux-musl-gcc", "shim"),
     ("aarch64-linux-musl-gcc", "shim"),
     ("git", "git version shim"),
+    ("timeout", "timeout (GNU coreutils) shim"),
 ];
 
 /// The lines the `cargo` shim logs when every gate runs: the documentation

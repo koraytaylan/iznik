@@ -33,6 +33,7 @@ const EXPECTED_NAMES: &[&str] = &[
     "x86_64-linux-musl-gcc",
     "aarch64-linux-musl-gcc",
     "git",
+    "GNU timeout",
 ];
 
 /// The tools other than `cargo` the doctor probes, each shimmed to succeed
@@ -43,6 +44,7 @@ const TOOL_SHIMS: &[(&str, &str)] = &[
     ("x86_64-linux-musl-gcc", "shim"),
     ("aarch64-linux-musl-gcc", "shim"),
     ("git", "git version shim"),
+    ("timeout", "timeout (GNU coreutils) shim"),
 ];
 
 /// A directory of shims that is a `PATH` on its own, removed when dropped.
@@ -262,6 +264,43 @@ fn doctor_reports_a_tool_absent_from_the_path_with_its_install_hint() {
     );
     assert!(
         stderr.contains("install: install zig from https://ziglang.org/download/"),
+        "stderr carries the install command: {stderr}"
+    );
+}
+
+/// GNU `timeout` installed by Homebrew as `gtimeout` counts as present, and
+/// with neither name on the `PATH` it is reported with the Homebrew hint.
+///
+/// # Panics
+///
+/// When `gtimeout` is not accepted, or the absence of both is not reported.
+#[test]
+fn doctor_accepts_gtimeout_and_reports_neither() {
+    let shims = Shims::new("gtimeout").expect("the shims");
+    shims.remove("timeout").expect("timeout removed");
+    shims
+        .write(
+            "gtimeout",
+            "#!/bin/sh
+echo 'gtimeout (GNU coreutils)'
+",
+        )
+        .expect("a gtimeout");
+    let completed = run_doctor(&shims, &[]).expect("gtimeout answers for timeout");
+    assert!(
+        String::from_utf8_lossy(&completed.stdout).contains("ok: GNU timeout"),
+        "gtimeout counts"
+    );
+    shims.remove("gtimeout").expect("gtimeout removed");
+    let (status, stderr) = failure(run_doctor(&shims, &[])).expect("a failure");
+    assert_eq!(status, Some(1), "the failure status");
+    assert!(
+        stderr
+            .contains("missing: GNU timeout: `timeout` is not on PATH, and neither is `gtimeout`"),
+        "stderr names both: {stderr}"
+    );
+    assert!(
+        stderr.contains("brew install coreutils"),
         "stderr carries the install command: {stderr}"
     );
 }

@@ -30,6 +30,9 @@ pub struct Prerequisite {
     pub name: String,
     /// The program the probe runs.
     pub program: &'static str,
+    /// Other names the same program goes by, tried in order when `program`
+    /// is not on the `PATH`: Homebrew installs GNU `timeout` as `gtimeout`.
+    pub alternatives: &'static [&'static str],
     /// The arguments the probe hands it.
     pub arguments: &'static [&'static str],
     /// Text the probe's standard output must contain, when running is not
@@ -42,7 +45,12 @@ pub struct Prerequisite {
 impl Prerequisite {
     /// The probe as a command line, for messages.
     fn probe_line(&self) -> String {
-        std::iter::once(self.program)
+        self.probe_line_for(self.program)
+    }
+
+    /// The probe as a command line run through `program`, for messages.
+    fn probe_line_for(&self, program: &'static str) -> String {
+        std::iter::once(program)
             .chain(self.arguments.iter().copied())
             .collect::<Vec<&str>>()
             .join(" ")
@@ -135,6 +143,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: format!("rust toolchain {channel}"),
             program: "cargo",
             arguments: &["--version"],
+            alternatives: &[],
             expected_output: Some(channel.clone()),
             install: format!(
                 "rustup toolchain install {channel}; rustup does it on first use inside this repository"
@@ -144,6 +153,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "cargo-nextest".to_owned(),
             program: "cargo",
             arguments: &["nextest", "--version"],
+            alternatives: &[],
             expected_output: None,
             install: "cargo install cargo-nextest --locked".to_owned(),
         },
@@ -151,6 +161,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "podman with the netavark network backend".to_owned(),
             program: "podman",
             arguments: &["info", "--format", "{{.Host.NetworkBackend}}"],
+            alternatives: &[],
             expected_output: Some("netavark".to_owned()),
             install: "install podman and netavark from your distribution (Debian and Ubuntu: apt install podman netavark); if podman reports another backend, set network_backend = \"netavark\" in containers.conf".to_owned(),
         },
@@ -158,6 +169,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "zig".to_owned(),
             program: "zig",
             arguments: &["version"],
+            alternatives: &[],
             expected_output: None,
             install: "install zig from https://ziglang.org/download/ and put it on PATH".to_owned(),
         },
@@ -165,6 +177,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "x86_64-linux-musl-gcc".to_owned(),
             program: "x86_64-linux-musl-gcc",
             arguments: &["--version"],
+            alternatives: &[],
             expected_output: None,
             install: "install a musl cross-compiler under that name: a musl.cc toolchain, or a shim over `zig cc -target x86_64-linux-musl`".to_owned(),
         },
@@ -172,6 +185,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "aarch64-linux-musl-gcc".to_owned(),
             program: "aarch64-linux-musl-gcc",
             arguments: &["--version"],
+            alternatives: &[],
             expected_output: None,
             install: "install a musl cross-compiler under that name: a musl.cc toolchain, or a shim over `zig cc -target aarch64-linux-musl`".to_owned(),
         },
@@ -179,8 +193,17 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             name: "git".to_owned(),
             program: "git",
             arguments: &["--version"],
+            alternatives: &[],
             expected_output: None,
             install: "install git from your distribution (Debian and Ubuntu: apt install git)".to_owned(),
+        },
+        Prerequisite {
+            name: "GNU timeout".to_owned(),
+            program: "timeout",
+            arguments: &["--version"],
+            alternatives: &["gtimeout"],
+            expected_output: None,
+            install: "macOS: brew install coreutils, which installs it as gtimeout; Linux: it is part of coreutils".to_owned(),
         },
     ])
 }
@@ -230,16 +253,57 @@ fn describe(prerequisite: &Prerequisite, error: &ProcessError) -> String {
     }
 }
 
-/// Runs a prerequisite's probe and judges its output.
+/// Runs a prerequisite's probe and judges its output: through its program,
+/// or, when that is not on the `PATH`, through the first of its alternatives
+/// that is.
 ///
 /// # Errors
 ///
 /// Why the prerequisite is missing, in a person's words.
 fn probe(prerequisite: &Prerequisite) -> Result<(), String> {
-    let mut command = Command::new(prerequisite.program);
+    let mut first_failure = None;
+    for program in
+        std::iter::once(prerequisite.program).chain(prerequisite.alternatives.iter().copied())
+    {
+        match probe_through(prerequisite, program) {
+            Ok(()) => return Ok(()),
+            Err((reason, true)) => {
+                first_failure.get_or_insert(reason);
+            }
+            Err((reason, false)) => return Err(reason),
+        }
+    }
+    let reason = first_failure.unwrap_or_default();
+    if prerequisite.alternatives.is_empty() {
+        Err(reason)
+    } else {
+        Err(format!(
+            "{reason}, and neither is {}",
+            prerequisite
+                .alternatives
+                .iter()
+                .map(|alternative| format!("`{alternative}`"))
+                .collect::<Vec<String>>()
+                .join(" nor ")
+        ))
+    }
+}
+
+/// Runs a prerequisite's probe through one program and judges its output.
+///
+/// # Errors
+///
+/// Why it failed, in a person's words, and whether the program was simply
+/// not on the `PATH` — the one failure an alternative name can answer.
+fn probe_through(prerequisite: &Prerequisite, program: &'static str) -> Result<(), (String, bool)> {
+    let mut command = Command::new(program);
     command.args(prerequisite.arguments);
-    let completed = process::run(command, Deadline(PROBE_DEADLINE), Output::Capture)
-        .map_err(|error| describe(prerequisite, &error))?;
+    let completed = process::run(command, Deadline(PROBE_DEADLINE), Output::Capture).map_err(
+        |error| {
+            let absent = matches!(&error, ProcessError::Spawn { source, .. } if source.kind() == ErrorKind::NotFound);
+            (describe(prerequisite, &error), absent)
+        },
+    )?;
     let Some(expected) = &prerequisite.expected_output else {
         return Ok(());
     };
@@ -247,10 +311,13 @@ fn probe(prerequisite: &Prerequisite) -> Result<(), String> {
     if output.contains(expected.as_str()) {
         return Ok(());
     }
-    Err(format!(
-        "`{}` reports {} rather than {expected}",
-        prerequisite.probe_line(),
-        output.trim()
+    Err((
+        format!(
+            "`{}` reports {} rather than {expected}",
+            prerequisite.probe_line_for(program),
+            output.trim()
+        ),
+        false,
     ))
 }
 
