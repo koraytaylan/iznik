@@ -6,6 +6,7 @@ mod ime;
 mod interaction;
 pub mod keyboard;
 mod paint;
+mod shapes;
 pub use paint::align_glyphs;
 pub(crate) use paint::color as terminal_color;
 
@@ -27,9 +28,10 @@ use iznik_protocol::identity::Sequence;
 
 use crate::input::{KeyInput, TerminalInput};
 use crate::vt::{PaneKey, TerminalSnapshot};
-use draw::{braille_mask, is_braille_run, is_symbol_text};
+use draw::{braille_mask, is_braille_run, is_drawn_run, is_symbol_text};
 pub use draw::{changed_rows, draw_list};
 use paint::RowView;
+pub use shapes::{CellShape, cell_shapes};
 
 /// Initial font size in logical pixels; settings can replace it.
 const FONT_SIZE: f32 = 14.0;

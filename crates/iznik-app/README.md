@@ -142,6 +142,7 @@ rather than ending the connection.
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
 | `grid::draw` | Row draw lists built from snapshot cells, and which rows a new snapshot actually changes. |
+| `grid::shapes` | Box drawing, block elements and powerline separators drawn as rectangles and paths inside their cells. |
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
 | `grid::paint` | GPUI shaping, cell fills, text decorations, cursor painting, and cached row entities. |
 | `grid` | Custom GPUI row painting from owned snapshots, cached row damage, selection geometry, and viewport requests to the VT owner. |
@@ -248,6 +249,10 @@ those glyphs smaller than the cell and with a different advance, which lets a
 chart walk into the text beside it. Geometric symbols such as a spinner's
 squares are each centered in their own cell, so a row of them cannot collapse
 onto the first column.
+Box drawing (U+2500–U+257F), block elements (U+2580–U+259F) and the powerline
+separators U+E0B0–U+E0B3 are not left to a font at all: they are drawn as
+rectangles, triangles and strokes inside the cell rectangle, so the lines of
+a frame and the bars of a chart meet their neighbours without seams.
 Selection and cursor geometry use the same cell metrics as row layout.
 
 The grid emits `GridScroll` for wheel and Shift-PageUp/PageDown/Home/End

@@ -6,16 +6,17 @@ use std::sync::Arc;
 
 use gpui_kit::{
     App, Bounds, ContentMask, Context, Element, ElementId, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels, Point, Render, ShapedLine,
-    ShapedRun, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, font,
-    point, px, rgb, size,
+    InspectorElementId, IntoElement, LayoutId, LineLayout, PathBuilder, Pixels, Point, Render,
+    ShapedLine, ShapedRun, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window,
+    fill, font, point, px, rgb, size,
 };
 use libghostty_vt::render::CursorVisualStyle;
 use libghostty_vt::style::{RgbColor, Underline};
 
+use super::shapes::{CellShape, cell_shapes};
 use super::{
-    CellRun, GridMetrics, RowDrawing, braille_mask, distance, is_braille_run, is_symbol_text,
-    offset, scale,
+    CellRun, GridMetrics, RowDrawing, braille_mask, distance, is_braille_run, is_drawn_run,
+    is_symbol_text, offset, scale,
 };
 
 /// Half-opacity faint text, matching the common terminal faint rendition.
@@ -207,6 +208,7 @@ impl Element for GridElement {
                 }
             }
             braille(&self.drawing, &self.metrics, bounds.origin, window);
+            drawn(&self.drawing, &self.metrics, bounds.origin, window);
             decorations(&self.drawing, &self.metrics, bounds.origin, window);
             cursor(&self.drawing, &self.metrics, bounds.origin, window);
         });
@@ -268,7 +270,9 @@ fn shape(drawing: &RowDrawing, metrics: &GridMetrics, window: &Window) -> Vec<Gl
     drawing
         .runs
         .iter()
-        .filter(|run| !run.style.invisible && !is_braille_run(&run.text))
+        .filter(|run| {
+            !run.style.invisible && !is_braille_run(&run.text) && !is_drawn_run(&run.text)
+        })
         .map(|run| {
             let mut selected_font = font(metrics.font.clone());
             if run.style.bold {
@@ -365,6 +369,64 @@ fn run_foreground(run: &CellRun) -> Hsla {
         foreground.a *= FAINT_OPACITY;
     }
     foreground
+}
+
+/// Paint box drawing, block elements and powerline separators to their cells.
+fn drawn(drawing: &RowDrawing, metrics: &GridMetrics, origin: Point<Pixels>, window: &mut Window) {
+    for run in drawing
+        .runs
+        .iter()
+        .filter(|run| !run.style.invisible && is_drawn_run(&run.text))
+    {
+        let tint = run_foreground(run);
+        for (column, character) in (run.column..).zip(run.text.chars()) {
+            let cell = cell_bounds(metrics, origin, column, 1);
+            let Some(shapes) = cell_shapes(character, cell) else {
+                continue;
+            };
+            window.with_content_mask(Some(ContentMask { bounds: cell }), |window| {
+                for shape in shapes {
+                    paint_shape(window, shape, tint);
+                }
+            });
+        }
+    }
+}
+
+/// Paint one drawn shape in the run's color.
+fn paint_shape(window: &mut Window, shape: CellShape, tint: Hsla) {
+    let built = match shape {
+        CellShape::Fill { bounds, opacity } => {
+            let mut covered = tint;
+            covered.a *= opacity;
+            window.paint_quad(fill(bounds, covered));
+            return;
+        }
+        CellShape::Polygon(points) => {
+            let mut builder = PathBuilder::fill();
+            builder.add_polygon(&points, true);
+            builder.build()
+        }
+        CellShape::Stroke { points, width } => {
+            let mut builder = PathBuilder::stroke(width);
+            builder.add_polygon(&points, false);
+            builder.build()
+        }
+        CellShape::Curve {
+            from,
+            control,
+            to,
+            width,
+        } => {
+            let mut builder = PathBuilder::stroke(width);
+            builder.move_to(from);
+            builder.curve_to(to, control);
+            builder.build()
+        }
+    };
+    if let Ok(path) = built {
+        window.paint_path(path, tint);
+    }
 }
 
 /// One row's braille geometry in whole device pixels, shared by every column.

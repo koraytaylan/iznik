@@ -117,8 +117,7 @@ const SYMBOL_SPAN: [(u32, u32); SYMBOL_SPAN_COUNT] = [(0x25A0, 0x25FF), (0x2B00,
 fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
     let mut runs: Vec<CellRun> = Vec::new();
     let mut previous_wide = false;
-    let mut previous_braille = false;
-    let mut previous_symbol = false;
+    let mut previous_kind = Kind::Text;
     for (column, cell) in cells.iter().enumerate() {
         let Ok(column) = u16::try_from(column) else {
             break;
@@ -141,9 +140,8 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
                 })
                 .collect()
         };
-        let braille = is_braille_text(&text);
-        let symbol = is_symbol_text(&text);
-        let same_kind = braille == previous_braille && !symbol && !previous_symbol;
+        let kind = kind(&text);
+        let same_kind = kind == previous_kind && kind != Kind::Symbol;
         if let Some(last) = runs.last_mut()
             && continues_run(last, cell, wide, previous_wide, same_kind)
         {
@@ -164,8 +162,7 @@ fn cell_runs(cells: &[CellSnapshot], colors: &Colors) -> Vec<CellRun> {
             });
         }
         previous_wide = wide;
-        previous_braille = braille;
-        previous_symbol = symbol;
+        previous_kind = kind;
     }
     runs
 }
@@ -188,6 +185,37 @@ fn continues_run(
         && run.foreground == cell.foreground
         && run.background == cell.background
         && run.link == cell.link
+}
+
+/// How a cell's text is painted, which decides the runs it may share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// Shaped by the font with its neighbours.
+    Text,
+    /// A braille pattern, painted as a dot grid.
+    Braille,
+    /// Box drawing, a block element or a powerline separator, drawn to the cell.
+    Drawn,
+    /// A geometric symbol, shaped alone and centered in its cell.
+    Symbol,
+}
+
+/// The kind of one cell's text.
+fn kind(text: &str) -> Kind {
+    if is_braille_text(text) {
+        Kind::Braille
+    } else if is_drawn_run(text) {
+        Kind::Drawn
+    } else if is_symbol_text(text) {
+        Kind::Symbol
+    } else {
+        Kind::Text
+    }
+}
+
+/// Whether every scalar in a run is drawn to its cell. An empty run is not.
+pub(super) fn is_drawn_run(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(super::shapes::is_drawn)
 }
 
 /// Whether this cell is exactly one braille pattern.
