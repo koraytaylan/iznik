@@ -19,6 +19,7 @@ pub mod menu;
 pub mod navigation;
 pub mod palette;
 pub mod prompt;
+mod pump;
 pub mod session_tabs;
 pub mod settings;
 pub mod settings_window;
@@ -31,6 +32,7 @@ pub mod tab_actions;
 pub mod tab_label;
 pub mod theme;
 pub mod vt;
+pub mod wake;
 pub mod window;
 
 use gpui_kit::TestSupportExt;

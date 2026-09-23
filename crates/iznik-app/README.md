@@ -144,6 +144,8 @@ rather than ending the connection.
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
 | `grid::paint` | GPUI shaping, cell fills, text decorations, cursor painting, and cached row entities. |
 | `grid` | Custom GPUI row painting from owned snapshots, cached row damage, selection geometry, and viewport requests to the VT owner. |
+| `pump` | The window's event-driven update: it drains both owners' channels when either raises its wake signal, with a slow fallback timer that also paces the settings file poll. |
+| `wake` | The signal the engine bridge and the emulator thread raise after queueing something for the window. |
 | `window` | Model-driven pane lifetime, shared owner polling, focus/geometry submission, and kit host-state banners; transport lifecycle proofs and startup integration remain pending. |
 | `layout` | Model split directions and weights rendered through kit resizable panels with caller-owned leaf entities. |
 | `stage` | The body shown while no tab is visible: welcome, a host being reached or unreachable, or a connected host with no session. |
@@ -166,9 +168,9 @@ rather than ending the connection.
 
 `EngineBridge` builds the manager and starts two threads of its own: one that
 reads what the manager says and puts it on a channel, and one that performs
-the operations whose manager calls wait for a host's task to end. The
-window's thread drains the channel in its update cycle and never waits on any
-of it.
+the operations whose manager calls wait for a host's task to end. Both raise
+the bridge's wake signal after each event they queue; the window's thread
+drains the channel when that signal wakes it and never waits on any of it.
 
 The one rule is that the window's thread never calls the engine on a code
 path that waits on the engine's own tasks. `HostManager::remove_host`,

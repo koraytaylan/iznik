@@ -24,6 +24,7 @@ use libghostty_vt::terminal::{
 };
 
 use crate::clipboard::ClipboardScan;
+use crate::wake::WakeSignal;
 use tokio::runtime::Builder;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::LocalSet;
@@ -335,6 +336,8 @@ pub struct VtThread {
     events: Receiver<VtEvent>,
     /// Joined on application shutdown after closing the command channel.
     thread: Option<JoinHandle<()>>,
+    /// Raised after every result the thread publishes.
+    signal: WakeSignal,
 }
 
 impl VtThread {
@@ -349,6 +352,8 @@ impl VtThread {
             .map_err(VtError::Thread)?;
         let (commands, mut receiving) = unbounded_channel::<VtCommand>();
         let (sending, events) = mpsc::channel();
+        let signal = WakeSignal::new();
+        let raising = signal.clone();
         let thread = thread::Builder::new()
             .name("iznik-app-vt".to_owned())
             .spawn(move || {
@@ -358,7 +363,9 @@ impl VtThread {
                     while let Some(command) = receiving.recv().await {
                         let key = command.key().clone();
                         let result = apply(&mut panes, &mut pending_size, command, &options);
-                        if !publish(&sending, key, result) {
+                        let published = publish(&sending, key, result);
+                        raising.raise();
+                        if !published {
                             break;
                         }
                     }
@@ -369,6 +376,7 @@ impl VtThread {
             commands: Some(commands),
             events,
             thread: Some(thread),
+            signal,
         })
     }
 
@@ -388,6 +396,12 @@ impl VtThread {
     #[must_use]
     pub fn poll(&self) -> Option<VtEvent> {
         self.events.try_recv().ok()
+    }
+
+    /// The signal raised after every result the thread publishes.
+    #[must_use]
+    pub fn wake_signal(&self) -> WakeSignal {
+        self.signal.clone()
     }
 }
 

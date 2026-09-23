@@ -32,8 +32,12 @@ use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme, terminal_theme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
 
-/// A short main-thread update cadence reads owned channels without blocking drawing.
-const UPDATE_INTERVAL: Duration = Duration::from_millis(16);
+/// The pump's slow fallback: owners wake the window when they queue work, so
+/// this only bounds how late a missed wakeup or a settings poll can be.
+const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+/// How often the settings file is looked at for a change made outside the
+/// window. Each look is a file-system stat, so it is kept well apart.
+const SETTINGS_INTERVAL: Duration = Duration::from_secs(2);
 /// Bound each owner drain so continuous terminal output cannot monopolize a UI update.
 const MAXIMUM_EVENTS_PER_UPDATE: usize = 256;
 /// Default width used when the palette creates a new pane or session.
@@ -49,8 +53,11 @@ const DEFAULT_SESSION_NAME: &str = "session";
 /// Window options whose timing can be shortened or disabled by a headless caller.
 #[derive(Clone, Debug)]
 pub struct ShellOptions {
-    /// Channel polling cadence; `None` lets a host application call `update` itself.
+    /// Fallback cadence of the event-driven pump; `None` starts no pump, and
+    /// lets a host application call `update` itself.
     pub update_interval: Option<Duration>,
+    /// Least time between two looks at the settings file.
+    pub settings_interval: Duration,
     /// Maximum ready messages read from each owner in one update.
     pub maximum_events_per_update: usize,
     /// Initial terminal typography and cell geometry.
@@ -75,6 +82,7 @@ impl Default for ShellOptions {
     fn default() -> Self {
         Self {
             update_interval: Some(UPDATE_INTERVAL),
+            settings_interval: SETTINGS_INTERVAL,
             maximum_events_per_update: MAXIMUM_EVENTS_PER_UPDATE,
             metrics: GridMetrics::default(),
             theme: TerminalTheme::default(),
@@ -150,8 +158,10 @@ pub struct WindowShell {
     pub(crate) settings: Settings,
     /// Optional watcher for the configured settings file.
     pub(crate) settings_watcher: Option<Watcher>,
-    /// Periodic pump is cancelled when the shell drops.
+    /// Event-driven pump, cancelled when the shell drops.
     _update_task: Option<Task<()>>,
+    /// When the settings file was last looked at; `None` before the first look.
+    pub(crate) settings_polled: Option<std::time::Instant>,
     /// Latest local routing failure, dismissible without discarding host state.
     pub(crate) last_failure: Option<Notice>,
     /// Transient command palette state rendered over the shell.
@@ -191,21 +201,9 @@ impl WindowShell {
         window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> Self {
-        let update_task = options.update_interval.map(|interval| {
-            context.spawn_in(window, async move |shell, asynchronous| {
-                loop {
-                    asynchronous.background_executor().timer(interval).await;
-                    if shell
-                        .update_in(asynchronous, |shell, target_window, update_context| {
-                            shell.update(target_window, update_context);
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-        });
+        let update_task = options
+            .update_interval
+            .map(|interval| crate::pump::spawn(&bridge, &thread, interval, window, context));
         let settings_watcher = options.settings_path.clone().map(Watcher::new);
         let focus_handle = context.focus_handle();
         let ssh_config_path = options.ssh_config_path.clone();
@@ -222,6 +220,7 @@ impl WindowShell {
             settings: Settings::default(),
             settings_watcher,
             _update_task: update_task,
+            settings_polled: None,
             last_failure: None,
             palette: Palette::default(),
             menu: None,
@@ -450,20 +449,6 @@ impl WindowShell {
         }
         Ok(changed)
     }
-    /// Poll the configured settings file during the ordinary update cycle.
-    fn poll_settings(&mut self, context: &mut Context<'_, Self>) {
-        let outcome = {
-            let Some(watcher) = self.settings_watcher.as_mut() else {
-                return;
-            };
-            watcher.reload(&mut self.settings)
-        };
-        match outcome {
-            Ok(true) => crate::settings::apply_saved(self, context),
-            Ok(false) => {}
-            Err(refusal) => crate::settings::refuse(self, &refusal, context),
-        }
-    }
     /// A retained surface, also available while its host is reconnecting.
     #[must_use]
     pub fn surface(&self, key: &PaneKey) -> Option<&Entity<PaneSurface>> {
@@ -601,31 +586,6 @@ impl WindowShell {
         };
         let host = selected.host.0.clone();
         self.dispatch_command(&host, command).map(Some)
-    }
-    /// Drain ready messages on the GPUI thread without waiting on either owner.
-    pub fn update(&mut self, window: &mut Window, context: &mut Context<'_, Self>) {
-        for _event in 0..self.options.maximum_events_per_update {
-            let Some(event) = self.hosts.bridge().poll() else {
-                break;
-            };
-            self.absorb(event, window, context);
-        }
-        for _event in 0..self.options.maximum_events_per_update {
-            let Some(event) = self.thread.poll() else {
-                break;
-            };
-            if let Some(held) = self.panes.get(&event.key) {
-                let key = event.key.clone();
-                let result = held.surface.update(context, |surface, context| {
-                    surface.receive(event, self.hosts.bridge(), context)
-                });
-                if let Err(error) = result {
-                    self.failure(&key.host, error.to_string(), context);
-                }
-            }
-        }
-        self.synchronize_sizes(context);
-        self.poll_settings(context);
     }
     /// Route terminal payloads before applying their accompanying model/lifecycle event.
     /// This same entry point lets headless tests provide authoritative model messages.
@@ -846,7 +806,7 @@ impl WindowShell {
         }
     }
     /// Apply authoritative model dimensions on the VT owner after its initial screen exists.
-    fn synchronize_sizes(&mut self, context: &mut Context<'_, Self>) {
+    pub(crate) fn synchronize_sizes(&mut self, context: &mut Context<'_, Self>) {
         let mut failures = Vec::new();
         for (host, view) in &self.hosts.state().model().hosts {
             for pane in view

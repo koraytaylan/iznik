@@ -48,6 +48,7 @@ use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::PaneId;
 
 use crate::vt::{TerminalTheme, VtCommand, VtError, VtEvent, VtOutput, VtThread};
+use crate::wake::WakeSignal;
 
 /// The name the thread that reads what the manager says is given, so that a
 /// person reading a process's threads can tell what each of them is for.
@@ -195,6 +196,8 @@ pub struct EngineBridge {
     forwarding: Option<JoinHandle<()>>,
     /// The thread that performs the operations.
     operations: Option<JoinHandle<()>>,
+    /// Raised by both threads after each event they put on the channel.
+    signal: WakeSignal,
 }
 
 impl EngineBridge {
@@ -227,9 +230,13 @@ impl EngineBridge {
     pub fn under(options: ManagerOptions) -> Result<EngineBridge, EngineError> {
         let manager = Arc::new(HostManager::new(options).map_err(EngineError::Manager)?);
         let (sender, events) = channel();
+        let signal = WakeSignal::new();
         let listening = manager.events();
         let forwarding = {
-            let sending = sender.clone();
+            let sending = Outbox {
+                sender: sender.clone(),
+                signal: signal.clone(),
+            };
             thread::Builder::new()
                 .name(FORWARDING_THREAD_NAME.to_owned())
                 .spawn(move || relay(&listening, &sending))
@@ -238,9 +245,13 @@ impl EngineBridge {
         let (orders, taking) = channel();
         let operations = {
             let holding = Arc::clone(&manager);
+            let sending = Outbox {
+                sender,
+                signal: signal.clone(),
+            };
             thread::Builder::new()
                 .name(OPERATIONS_THREAD_NAME.to_owned())
-                .spawn(move || serve_orders(&taking, &holding, &sender))
+                .spawn(move || serve_orders(&taking, &holding, &sending))
                 .map_err(|source| EngineError::Thread { source })?
         };
         Ok(EngineBridge {
@@ -249,6 +260,7 @@ impl EngineBridge {
             orders,
             forwarding: Some(forwarding),
             operations: Some(operations),
+            signal,
         })
     }
 
@@ -272,6 +284,13 @@ impl EngineBridge {
     #[must_use]
     pub fn poll(&self) -> Option<EngineEvent> {
         self.events.try_recv().ok()
+    }
+
+    /// The signal raised after every event the engine queues, which the
+    /// window awaits instead of looking at the channel on a timer.
+    #[must_use]
+    pub fn wake_signal(&self) -> WakeSignal {
+        self.signal.clone()
     }
 
     /// Begins holding a host, and connecting to it.
@@ -574,13 +593,30 @@ impl Drop for EngineBridge {
     }
 }
 
+/// The window's channel and the signal that wakes the window to read it.
+struct Outbox {
+    /// Where events go.
+    sender: Sender<EngineEvent>,
+    /// Raised after each event, once it is on the channel.
+    signal: WakeSignal,
+}
+
+impl Outbox {
+    /// Queue one event and wake the window. False when the window has gone.
+    fn send(&self, event: EngineEvent) -> bool {
+        let sent = self.sender.send(event).is_ok();
+        self.signal.raise();
+        sent
+    }
+}
+
 /// Reads everything the manager says and puts it on the window's channel.
 ///
 /// It ends when the manager does, or when the window has stopped reading and
 /// there is nowhere left to put what is said.
-fn relay(events: &Receiver<ManagerEvent>, sender: &Sender<EngineEvent>) {
+fn relay(events: &Receiver<ManagerEvent>, outbox: &Outbox) {
     while let Ok(event) = events.recv() {
-        if sender.send(EngineEvent::Said(event)).is_err() {
+        if !outbox.send(EngineEvent::Said(event)) {
             return;
         }
     }
@@ -593,21 +629,14 @@ fn relay(events: &Receiver<ManagerEvent>, sender: &Sender<EngineEvent>) {
 /// leaving drops its handle on the manager, and when the bridge has let go of
 /// its own, dropping the manager is what ends the runtime and the event
 /// stream.
-fn serve_orders(
-    orders: &Receiver<Option<Operation>>,
-    manager: &Arc<HostManager>,
-    sender: &Sender<EngineEvent>,
-) {
+fn serve_orders(orders: &Receiver<Option<Operation>>, manager: &Arc<HostManager>, outbox: &Outbox) {
     while let Ok(Some(operation)) = orders.recv() {
         let answer = match &operation {
             Operation::Remove { host } => manager.remove_host(&host.0),
             Operation::Upgrade { host, force } => manager.upgrade(&host.0, *force),
             Operation::Uninstall { host } => manager.uninstall(&host.0),
         };
-        if sender
-            .send(EngineEvent::Finished { operation, answer })
-            .is_err()
-        {
+        if !outbox.send(EngineEvent::Finished { operation, answer }) {
             return;
         }
     }
