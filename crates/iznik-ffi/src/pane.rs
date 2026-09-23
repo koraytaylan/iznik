@@ -28,15 +28,23 @@ use crate::{Client, DONE, borrowed, code_of, host_named, layer_of};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PaneCallbacks {
-    /// A pane's bytes, where they are, and how many of the leading ones carry
-    /// terminal queries the host has already answered.
+    /// A pane's bytes, where they are; how many of the leading ones carry
+    /// terminal queries the host has already answered; and the stream they
+    /// arrived on, which their credit is returned against.
     ///
     /// **Obligation:** the bytes are valid for this call only. Feed them to a
     /// surface before returning; do not keep the pointer. Feed the first
     /// `answered` of them too, but do not send the answers your emulator
-    /// produces from those: the program has had them once.
+    /// produces from those: the program has had them once. Return their
+    /// credit with this `stream`.
     pub output: Option<
-        extern "C" fn(context: *mut c_void, bytes: *const u8, length: usize, answered: usize),
+        extern "C" fn(
+            context: *mut c_void,
+            bytes: *const u8,
+            length: usize,
+            answered: usize,
+            stream: u64,
+        ),
     >,
     /// The pane's screen, as the bytes that reproduce it at `sequence`.
     ///
@@ -126,10 +134,16 @@ pub unsafe extern "C" fn iznik_pane_detach(
     }
 }
 
-/// Returns credit for what a surface has consumed.
+/// Returns credit for what a surface has consumed of the bytes a `stream`
+/// delivered.
 ///
 /// The host sends no more than it has been given, so an application that never
 /// calls this stalls its own pane and nothing else.
+///
+/// **Obligation:** `stream` is the one the bytes arrived with — the `output`
+/// callback's, or an event's `stream` — so that credit for bytes of a stream
+/// the host has since replaced is ignored rather than given to the new one,
+/// which never sent them. Zero means whichever stream is current.
 ///
 /// # Safety
 ///
@@ -139,14 +153,16 @@ pub unsafe extern "C" fn iznik_pane_credit(
     client: *mut Client,
     host: *const c_char,
     pane: u64,
+    stream: u64,
     bytes: u32,
     error: *mut Error,
 ) -> c_int {
     // SAFETY: the caller's obligations, as `iznik_pane_attach`'s.
     unsafe {
         with_pane(client, host, error, |held, named| {
-            held.manager()
-                .map_or(Ok(()), |manager| manager.credit(named, PaneId(pane), bytes))
+            held.manager().map_or(Ok(()), |manager| {
+                manager.credit_stream(named, PaneId(pane), stream, bytes)
+            })
         })
     }
 }

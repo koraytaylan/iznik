@@ -117,7 +117,11 @@ around them is explanation.
 
 The pane's `output` callback:
 
-> **Obligation:** the bytes are valid for this call only. Feed them to a surface before returning; do not keep the pointer. Feed the first `answered` of them too, but do not send the answers your emulator produces from those: the program has had them once.
+> **Obligation:** the bytes are valid for this call only. Feed them to a surface before returning; do not keep the pointer. Feed the first `answered` of them too, but do not send the answers your emulator produces from those: the program has had them once. Return their credit with this `stream`.
+
+`iznik_pane_credit`:
+
+> **Obligation:** `stream` is the one the bytes arrived with — the `output` callback's, or an event's `stream` — so that credit for bytes of a stream the host has since replaced is ignored rather than given to the new one, which never sent them. Zero means whichever stream is current.
 
 The `answered_length` of an `IZNIK_EVENT_KIND_PANE_BYTES` event:
 
@@ -291,7 +295,12 @@ gone.
 
 Flow control is yours to keep. The host sends you a window of bytes and stops
 until you say you have consumed them. `iznik_pane_credit` is how you say it,
-in bytes.
+in bytes, and naming the stream the bytes came on: every delivery carries it,
+as the `output` callback's `stream` or an event's `stream`. A pane's stream is
+replaced whenever the host starts it again — after a reconnection, or with a
+screen that catches it up — and credit you return late, for bytes of a
+stream that has gone, is ignored rather than handed to the new one, which
+never sent them and would otherwise be let run past its window.
 
 **An application that never returns credit stalls its own pane and nothing
 else** — no other pane, no other host, and not the daemon. This is on purpose:
@@ -490,7 +499,7 @@ static void on_screen(void *context, uint64_t sequence, uint16_t columns,
 }
 
 static void on_output(void *context, const uint8_t *bytes, size_t length,
-                      size_t answered) {
+                      size_t answered, uint64_t stream) {
     struct surface *held = context;
     /* Valid for this call only. Feed it now; do not keep the pointer.
      * The first `answered` bytes carry queries the host already answered:
@@ -509,7 +518,7 @@ static void on_output(void *context, const uint8_t *bytes, size_t length,
     }
 
     /* And say you have consumed them, or the pane stops. */
-    iznik_pane_credit(held->client, held->alias, held->pane,
+    iznik_pane_credit(held->client, held->alias, held->pane, stream,
                       (uint32_t)length, NULL);
 }
 

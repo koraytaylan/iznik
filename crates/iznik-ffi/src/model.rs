@@ -189,6 +189,9 @@ pub struct Event {
     /// send the answers it produces from them — the program has had them
     /// once, and a second answer arrives as input it never asked for.
     pub answered_length: usize,
+    /// For `PaneBytes`, the stream the bytes arrived on, which their credit
+    /// is returned against with `iznik_pane_credit`; zero otherwise.
+    pub stream: u64,
 }
 
 /// What iznik calls when something happens.

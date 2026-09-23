@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::host::identity::HostId;
 use iznik_protocol::identity::PaneId;
@@ -17,7 +17,14 @@ struct Stream {
     pane: PaneId,
     /// Nonzero wire channel announced for this incarnation.
     channel: u8,
+    /// A number no other incarnation in this process has had, which is how a
+    /// caller across a boundary that cannot hold a receipt names this one.
+    token: u64,
 }
+
+/// The next stream token to hand out. Never zero, which says "whichever
+/// stream is current".
+static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 /// One delivery's count and shared return state, retained by every receipt clone.
 #[derive(Debug)]
@@ -62,6 +69,17 @@ impl CreditReceipt {
     #[must_use]
     pub fn bytes(&self) -> u32 {
         self.0.bytes
+    }
+
+    /// The token of the stream that delivered the bytes: never zero, and
+    /// never another stream's in this process.
+    ///
+    /// For a caller that cannot hold the receipt itself — one across the C
+    /// boundary — and returns credit by naming the stream instead, with
+    /// [`super::HostManager::credit_stream`].
+    #[must_use]
+    pub fn stream_token(&self) -> u64 {
+        self.0.stream.token
     }
 }
 
@@ -127,6 +145,7 @@ impl CreditStreams {
                     host: host.clone(),
                     pane,
                     channel,
+                    token: NEXT_TOKEN.fetch_add(1, Ordering::Relaxed),
                 }),
             );
         }
@@ -190,6 +209,27 @@ impl CreditStreams {
             bytes,
             returned: AtomicBool::new(false),
         })))
+    }
+
+    /// A receipt for bytes of the stream `token` names, only while that stream
+    /// is the pane's current one; zero names whichever stream is current.
+    ///
+    /// A token of a stream that has since been replaced gives nothing: those
+    /// bytes were delivered on a stream the host has already forgotten, and
+    /// credit for them would be credit on the new one it never earned.
+    #[must_use]
+    pub fn receipt_for_stream(
+        &self,
+        host: &HostId,
+        pane: PaneId,
+        token: u64,
+        bytes: u32,
+    ) -> Option<CreditReceipt> {
+        let stream = self.streams.get(&(host.clone(), pane))?;
+        if token != 0 && stream.token != token {
+            return None;
+        }
+        self.receipt(host, pane, bytes)
     }
 
     /// Admit a receipt once, only while its exact stream incarnation remains current.
@@ -279,6 +319,38 @@ impl super::HostManager {
             .receipt(&host, pane, bytes)
             .ok_or(super::ManagerError::NotCarrying { host, pane })?;
         self.credit_receipt(&receipt)
+    }
+
+    /// Return credit for bytes of the stream `token` names — what a delivery
+    /// carried as [`CreditReceipt::stream_token`] — and ignore it when that
+    /// stream has since been replaced. Zero names whichever stream is current.
+    ///
+    /// For a caller that cannot hold the receipt itself. A stale token is not
+    /// an error: its bytes were delivered on a stream the host has forgotten,
+    /// and the credit simply has nothing left to go to.
+    ///
+    /// # Errors
+    /// Returns an unknown host, poisoned credit registry or closed order channel.
+    pub fn credit_stream(
+        &self,
+        alias: &str,
+        pane: PaneId,
+        token: u64,
+        bytes: u32,
+    ) -> Result<(), super::ManagerError> {
+        let host = HostId(alias.to_owned());
+        self.shared
+            .with(&host, |_| ())
+            .ok_or_else(|| super::ManagerError::UnknownHost { host: host.clone() })?;
+        let receipt = self
+            .shared
+            .credit
+            .lock()
+            .map_err(|_poisoned| super::ManagerError::Poisoned {
+                what: "credit registry",
+            })?
+            .receipt_for_stream(&host, pane, token, bytes);
+        receipt.map_or(Ok(()), |receipt| self.credit_receipt(&receipt))
     }
 
     /// Queue the exact credit earned by one consumed delivery.

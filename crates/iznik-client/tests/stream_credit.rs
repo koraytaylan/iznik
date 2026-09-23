@@ -203,3 +203,38 @@ fn stream_credit_refuses_a_host_past_its_window() {
         "while a pane with no stream is nobody's"
     );
 }
+
+/// # Panics
+///
+/// When credit named by a replaced stream's token is admitted to its
+/// successor, or credit named by the current one is not.
+#[test]
+fn a_stream_token_returns_credit_only_while_its_stream_is_current() {
+    let host = HostId("tokens".to_owned());
+    let pane = PaneId(1);
+    let mut streams = CreditStreams::default();
+    streams.open(&host, pane, 1);
+    let first = streams
+        .receipt(&host, pane, 10)
+        .expect("a stream is open")
+        .stream_token();
+    assert_ne!(first, 0, "a token is never zero");
+    assert!(
+        streams.receipt_for_stream(&host, pane, first, 10).is_some(),
+        "the current stream's token is honoured"
+    );
+    streams.open(&host, pane, 1);
+    let second = streams
+        .receipt(&host, pane, 10)
+        .expect("a stream is open")
+        .stream_token();
+    assert_ne!(first, second, "the same channel again is another stream");
+    assert!(
+        streams.receipt_for_stream(&host, pane, first, 10).is_none(),
+        "a replaced stream's token is ignored"
+    );
+    assert!(
+        streams.receipt_for_stream(&host, pane, 0, 10).is_some(),
+        "zero names whichever stream is current"
+    );
+}

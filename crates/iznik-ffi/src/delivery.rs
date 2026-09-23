@@ -232,6 +232,7 @@ pub(crate) fn to_the_pane(watching: &Attached, event: &ManagerEvent) -> bool {
                     held_or_null(bytes),
                     bytes.len(),
                     shape::answered_of(event),
+                    shape::stream_of(event),
                 );
                 true
             }
@@ -334,6 +335,7 @@ pub(crate) fn carry(
         payload: held_or_null(&shaped.payload),
         payload_length: shaped.payload.len(),
         answered_length: shaped.answered,
+        stream: shaped.stream,
     };
     callback(&raw const held, context.0);
 }

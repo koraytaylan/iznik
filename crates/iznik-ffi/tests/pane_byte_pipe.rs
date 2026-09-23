@@ -102,6 +102,9 @@ unsafe impl Sync for Reachable {}
 struct Watched {
     /// Every byte of output, in the order it arrived.
     output: Vec<u8>,
+    /// The stream the latest output arrived on, which its credit goes back
+    /// against.
+    stream: u64,
     /// The screens, as the bytes that reproduce them and the size they were
     /// sent at.
     screens: Vec<(u64, u16, u16, Vec<u8>)>,
@@ -115,7 +118,13 @@ struct Watched {
 }
 
 /// The pane's own output, kept where it was handed over.
-extern "C" fn output(context: *mut c_void, bytes: *const u8, length: usize, _answered: usize) {
+extern "C" fn output(
+    context: *mut c_void,
+    bytes: *const u8,
+    length: usize,
+    _answered: usize,
+    stream: u64,
+) {
     let Some(watched) = watching(context) else {
         return;
     };
@@ -125,6 +134,7 @@ extern "C" fn output(context: *mut c_void, bytes: *const u8, length: usize, _ans
     if held.screens.is_empty() {
         held.output_before_screen = true;
     }
+    held.stream = stream;
     if !bytes.is_null() {
         // SAFETY: iznik's own promise: `length` readable bytes, valid for this
         // call, which is where they are copied.
@@ -348,13 +358,14 @@ fn pane_byte_pipe_stops_a_pane_that_returns_no_credit() {
             kept.output.len() >= WINDOW
         })?;
         std::thread::sleep(BRIEF);
-        let stalled = {
+        let (stalled, stream) = {
             // SAFETY: this case's own box, alive here.
             let kept = unsafe { &*watched }
                 .lock()
                 .map_err(|_broken| "the record")?;
-            kept.output.len()
+            (kept.output.len(), kept.stream)
         };
+        assert_ne!(stream, 0, "every delivery names the stream it came on");
         assert!(
             stalled < FLOOD,
             "a pane that returned no credit stopped at {stalled} of {FLOOD}"
@@ -367,6 +378,7 @@ fn pane_byte_pipe_stops_a_pane_that_returns_no_credit() {
                 client,
                 alias.as_ptr(),
                 PANE,
+                stream,
                 u32::try_from(stalled).unwrap_or(u32::MAX),
                 &raw mut error,
             )

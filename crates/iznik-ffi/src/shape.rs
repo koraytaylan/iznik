@@ -36,6 +36,8 @@ pub(crate) struct Shaped {
     /// How many leading bytes of a pane's output carry queries the host
     /// already answered, or zero.
     pub answered: usize,
+    /// The stream a pane's output arrived on, or zero.
+    pub stream: u64,
 }
 
 /// Everything one event carries, or nothing when it is not one to hand over.
@@ -52,7 +54,20 @@ pub(crate) fn shaped(event: &ManagerEvent) -> Option<Shaped> {
         generation: generation_of(event),
         command: command_of(event),
         answered: answered_of(event),
+        stream: stream_of(event),
     })
+}
+
+/// The token of the stream a pane's output arrived on; zero for every other
+/// event, and for bytes that carried no receipt.
+pub(crate) fn stream_of(event: &ManagerEvent) -> u64 {
+    match event {
+        ManagerEvent::Bytes {
+            receipt: Some(receipt),
+            ..
+        } => receipt.stream_token(),
+        _otherwise => 0,
+    }
 }
 
 /// How many leading bytes of a pane's output the host already answered the
