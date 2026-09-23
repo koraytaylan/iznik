@@ -20,8 +20,8 @@ use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 /// How long a command that talks to a daemon on this machine may take.
 const PROMPT: Duration = Duration::from_mins(1);
 
-/// How long `tail` is left running before it is interrupted.
-const TAILING: Duration = Duration::from_secs(2);
+/// How often a case looks at what `tail` has printed so far.
+const TAILING: Duration = Duration::from_millis(50);
 
 /// The exit code a refused command line gives.
 const USAGE_EXIT_CODE: i32 = 2;
@@ -329,12 +329,13 @@ fn plumbing_tails_a_pane_until_it_is_interrupted() {
             rows: ROWS,
             working_directory: None,
         }))?;
-        let tailing = binary(&held, &["tail", &alias, "1"]).spawn()?;
-        // Something for the pane to say, typed after the tail has had a
-        // moment to attach.
-        std::thread::sleep(TAILING);
+        let mut tailing = binary(&held, &["tail", &alias, "1"]).spawn()?;
+        let heard = collect(tailing.stdout.take().ok_or("tail's standard output")?);
+        // Typed once the tail has drawn the pane, so it is attached and its
+        // interrupt handler is in place; a fixed pause raced a slow start.
+        wait_for(&heard, "\"kind\":\"screen\"")?;
         runtime.block_on(client.input(PANE, b"echo tailing-42\n".to_vec()))?;
-        std::thread::sleep(TAILING);
+        wait_for(&heard, "\"kind\":\"output\"")?;
         interrupt(tailing.id())?;
         let done = tailing.wait_with_output()?;
         assert_eq!(
@@ -343,7 +344,8 @@ fn plumbing_tails_a_pane_until_it_is_interrupted() {
             "an interruption is an ending: {}",
             String::from_utf8_lossy(&done.stderr)
         );
-        let printed = String::from_utf8_lossy(&done.stdout).into_owned();
+        let bytes = heard.1.join().map_err(|_panicked| "the reader panicked")?;
+        let printed = String::from_utf8_lossy(&bytes).into_owned();
         let said = objects(&printed)?;
         assert!(!said.is_empty(), "the pane said something: {printed:?}");
         let first = said.first().ok_or("the first line")?;
@@ -380,6 +382,61 @@ fn plumbing_tails_a_pane_until_it_is_interrupted() {
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Reads everything a child prints on a thread, keeping a copy that can be
+/// looked at while it is still running.
+fn collect(
+    mut stream: std::process::ChildStdout,
+) -> (
+    std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    std::thread::JoinHandle<Vec<u8>>,
+) {
+    use std::io::Read;
+
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = std::sync::Arc::clone(&shared);
+    let reader = std::thread::spawn(move || {
+        let mut chunk = [0_u8; 4096];
+        while let Ok(count) = stream.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            if let (Ok(mut held), Some(read)) = (writer.lock(), chunk.get(..count)) {
+                held.extend_from_slice(read);
+            }
+        }
+        writer.lock().map(|held| held.clone()).unwrap_or_default()
+    });
+    (shared, reader)
+}
+
+/// Waits until what `collect` has read so far contains `needle`.
+///
+/// # Errors
+///
+/// When it has not appeared within [`PROMPT`].
+fn wait_for(
+    heard: &(
+        std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+        std::thread::JoinHandle<Vec<u8>>,
+    ),
+    needle: &str,
+) -> Result<(), Failed> {
+    let started = Instant::now();
+    loop {
+        let seen = heard
+            .0
+            .lock()
+            .is_ok_and(|held| String::from_utf8_lossy(&held).contains(needle));
+        if seen {
+            return Ok(());
+        }
+        if started.elapsed() > PROMPT {
+            return Err(format!("tail never printed {needle}").into());
+        }
+        std::thread::sleep(TAILING);
+    }
 }
 
 /// Interrupts a child, the way a person at a terminal would.
