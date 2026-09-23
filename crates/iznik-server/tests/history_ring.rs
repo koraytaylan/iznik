@@ -297,3 +297,45 @@ fn history_ring_appends_do_not_allocate_in_steady_state() {
         "steady-state appends do not allocate: {allocations}"
     );
 }
+
+/// A ring never allocates past its capacity, however its bytes arrive, and a
+/// ring the budget shrinks gives the memory back rather than keeping room for
+/// bytes it may no longer hold.
+///
+/// # Panics
+///
+/// When a ring's allocation outgrows its capacity or outlives a shrink.
+#[test]
+fn history_ring_memory_stays_within_capacity() {
+    let capacity = 4096;
+    let mut ring = PaneHistory::new(capacity);
+    for length in [1, 7, 100, 1000, 3000, 5000] {
+        ring.append(&vec![1_u8; length]);
+        assert!(
+            ring.allocation() <= capacity,
+            "after a {length}-byte append: {} held",
+            ring.allocation()
+        );
+    }
+    assert_eq!(
+        ring.allocation(),
+        capacity,
+        "a full ring holds its capacity"
+    );
+
+    let mut budget = HistoryBudget::new(6000);
+    budget.insert(PaneId(1), capacity);
+    if let Some(history) = budget.history_mut(PaneId(1)) {
+        history.append(&vec![2_u8; capacity]);
+    }
+    budget.insert(PaneId(2), capacity);
+    let smaller = capacity_of(&budget, PaneId(1));
+    assert!(smaller < capacity, "the budget made the first ring smaller");
+    let held = budget
+        .history(PaneId(1))
+        .map_or(usize::MAX, PaneHistory::allocation);
+    assert!(
+        held <= smaller,
+        "a smaller ring gives its memory back: {held} for {smaller}"
+    );
+}

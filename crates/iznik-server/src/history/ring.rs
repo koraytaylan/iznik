@@ -12,6 +12,10 @@ use std::collections::VecDeque;
 
 use iznik_protocol::identity::Sequence;
 
+/// How much a growing ring's allocation is multiplied by each time it runs
+/// out of room, as a growing collection's is, so appends stay cheap.
+const GROWTH_FACTOR: usize = 2;
+
 /// A pane's recent output, indexed by absolute sequence and bounded to a
 /// capacity in bytes.
 #[derive(Clone, Debug)]
@@ -76,16 +80,47 @@ impl PaneHistory {
         } else {
             bytes
         };
+        // Room is made before the bytes go in, so the ring never holds —
+        // and never allocates for — more than its capacity, even for the
+        // moment between an append and its trim.
+        let over = self
+            .bytes
+            .len()
+            .saturating_add(effective.len())
+            .saturating_sub(self.capacity);
+        drop(self.bytes.drain(..over.min(self.bytes.len())));
+        self.reserve_room(effective.len());
         self.bytes.extend(effective);
-        self.trim();
         first
     }
 
-    /// Drops the oldest bytes until the ring is within its capacity.
+    /// Makes room for `more` bytes, doubling as a growing collection does so
+    /// appends stay cheap, but never past the ring's capacity: left to itself
+    /// a `VecDeque` doubles past it, and a four-mebibyte ring would hold an
+    /// eight-mebibyte allocation.
+    fn reserve_room(&mut self, more: usize) {
+        let needed = self.bytes.len().saturating_add(more);
+        if needed <= self.bytes.capacity() {
+            return;
+        }
+        let target = self
+            .bytes
+            .capacity()
+            .saturating_mul(GROWTH_FACTOR)
+            .max(needed)
+            .min(self.capacity);
+        self.bytes
+            .reserve_exact(target.saturating_sub(self.bytes.len()));
+    }
+
+    /// Drops the oldest bytes until the ring is within its capacity, and gives
+    /// back the memory they took: a ring the budget shrank holds only what it
+    /// is now allowed.
     fn trim(&mut self) {
-        while self.bytes.len() > self.capacity {
-            let excess = self.bytes.len().saturating_sub(self.capacity);
-            let _dropped = self.bytes.drain(..excess);
+        let excess = self.bytes.len().saturating_sub(self.capacity);
+        drop(self.bytes.drain(..excess));
+        if self.bytes.capacity() > self.capacity {
+            self.bytes.shrink_to(self.capacity);
         }
     }
 
@@ -94,6 +129,13 @@ impl PaneHistory {
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
         self.capacity = capacity;
         self.trim();
+    }
+
+    /// The bytes the ring has allocated room for, which is what it costs in
+    /// memory: never more than its capacity.
+    #[must_use]
+    pub fn allocation(&self) -> usize {
+        self.bytes.capacity()
     }
 
     /// The bytes from `from` to the newest, as at most two contiguous slices.
