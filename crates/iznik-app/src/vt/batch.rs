@@ -5,14 +5,22 @@
 //! is taken once per pane per batch, carrying the credit and the delivery
 //! receipt of every chunk it covers. Any other command for a pane first
 //! publishes that pane's pending snapshot, so what the window sees keeps the
-//! order in which commands were sent.
+//! order in which commands were sent. Keystrokes typed while a pane waits for
+//! a screen are kept and sent once it arrives.
 
 use std::collections::BTreeMap;
+
+use crate::input::TerminalInput;
 
 use iznik_client::host::manager::credit::CreditReceipt;
 use iznik_protocol::identity::Sequence;
 
 use super::{PaneKey, PaneTerminal, VtCommand, VtError, VtOptions, VtOutput, apply};
+
+/// Keystrokes and pastes held per pane while it waits for a screen: enough
+/// for a burst of typing, bounded so a pane that never recovers cannot grow
+/// without end.
+const MAXIMUM_QUEUED_INPUT: usize = 256;
 
 /// Results of one batch, in the order they are published.
 pub(super) type Results = Vec<(PaneKey, Result<Option<VtOutput>, VtError>)>;
@@ -34,6 +42,9 @@ pub(super) struct Owner {
     pending_size: BTreeMap<PaneKey, (u16, u16)>,
     /// Panes fed this batch whose snapshot has not been published yet.
     fed: BTreeMap<PaneKey, Fed>,
+    /// Keystrokes and pastes typed while a pane had no authoritative screen,
+    /// sent in order once its screen arrives.
+    queued: BTreeMap<PaneKey, Vec<TerminalInput>>,
     /// Limits shared by every pane.
     options: VtOptions,
 }
@@ -45,6 +56,7 @@ impl Owner {
             panes: BTreeMap::new(),
             pending_size: BTreeMap::new(),
             fed: BTreeMap::new(),
+            queued: BTreeMap::new(),
             options,
         }
     }
@@ -63,8 +75,18 @@ impl Owner {
                 bytes,
                 receipt,
             } => self.feed(key, sequence, bytes, receipt, results),
+            VtCommand::Input { key, input } if self.waiting(&key) && typed(&input) => {
+                self.flush(&key, results);
+                let queue = self.queued.entry(key.clone()).or_default();
+                if queue.len() < MAXIMUM_QUEUED_INPUT {
+                    queue.push(input);
+                }
+                results.push((key, Err(VtError::NeedsScreen)));
+            }
             other => {
                 let key = other.key().clone();
+                let screen = matches!(other, VtCommand::Screen { .. });
+                let closed = matches!(other, VtCommand::Close(_));
                 self.flush(&key, results);
                 let result = apply(
                     &mut self.panes,
@@ -72,8 +94,39 @@ impl Owner {
                     other,
                     &self.options,
                 );
-                results.push((key, result));
+                let replaced = screen && result.is_ok();
+                results.push((key.clone(), result));
+                if closed {
+                    self.queued.remove(&key);
+                }
+                if replaced {
+                    self.send_queued(&key, results);
+                }
             }
+        }
+    }
+
+    /// Whether `key` has no authoritative screen to encode input against.
+    fn waiting(&self, key: &PaneKey) -> bool {
+        self.panes
+            .get(key)
+            .is_none_or(|pane| pane.sequence.is_none())
+    }
+
+    /// Encode the input typed while `key` waited, now that its screen is here.
+    fn send_queued(&mut self, key: &PaneKey, results: &mut Results) {
+        for input in self.queued.remove(key).unwrap_or_default() {
+            let command = VtCommand::Input {
+                key: key.clone(),
+                input,
+            };
+            let result = apply(
+                &mut self.panes,
+                &mut self.pending_size,
+                command,
+                &self.options,
+            );
+            results.push((key.clone(), result));
         }
     }
 
@@ -157,4 +210,14 @@ impl Owner {
             });
         results.push((key.clone(), result));
     }
+}
+
+/// Whether `input` is something a person typed that must not be lost to a
+/// gap: a keystroke or a paste. Pointer gestures and copies name a frame that
+/// the new screen replaces, so they are not kept.
+fn typed(input: &TerminalInput) -> bool {
+    matches!(
+        input,
+        TerminalInput::Key(_) | TerminalInput::Paste(_) | TerminalInput::ConfirmedPaste(_)
+    )
 }

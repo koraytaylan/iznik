@@ -34,11 +34,14 @@
 //! what it waits for is bounded — a host's task is stopped under the manager's
 //! own deadline, and an upgrade or a taking-off under the bootstrap's.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use iznik_client::commands::Submission;
 use iznik_client::host::identity::HostId;
@@ -47,7 +50,7 @@ use iznik_client::transport::ClientRuntimePaths;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::PaneId;
 
-use crate::vt::{TerminalTheme, VtCommand, VtError, VtEvent, VtOutput, VtThread};
+use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtError, VtEvent, VtOutput, VtThread};
 use crate::wake::WakeSignal;
 
 /// The name the thread that reads what the manager says is given, so that a
@@ -56,6 +59,11 @@ const FORWARDING_THREAD_NAME: &str = "iznik-app-events";
 
 /// And the name the thread that performs the operations is given.
 const OPERATIONS_THREAD_NAME: &str = "iznik-app-orders";
+
+/// How long a requested screen is waited for before a gap may ask again: a
+/// screen normally arrives in one round trip, and a request lost with a
+/// dropped link must not leave the pane waiting for good.
+const SCREEN_RETRY: Duration = Duration::from_secs(2);
 
 /// One engine operation whose call waits on the engine's own tasks.
 ///
@@ -198,6 +206,9 @@ pub struct EngineBridge {
     operations: Option<JoinHandle<()>>,
     /// Raised by both threads after each event they put on the channel.
     signal: WakeSignal,
+    /// When each pane last asked for a screen it has not received: every
+    /// output chunk after a gap reports the gap, and one request answers all.
+    screens_requested: RefCell<BTreeMap<PaneKey, Instant>>,
 }
 
 impl EngineBridge {
@@ -261,6 +272,7 @@ impl EngineBridge {
             forwarding: Some(forwarding),
             operations: Some(operations),
             signal,
+            screens_requested: RefCell::new(BTreeMap::new()),
         })
     }
 
@@ -517,7 +529,9 @@ impl EngineBridge {
     }
 
     /// Forward emulator answers immediately, or request an authoritative screen
-    /// after a gap. The returned snapshot still carries credit for the grid.
+    /// after a gap — once per pane until it arrives or the retry interval
+    /// passes. A gap is then handled, not a failure. The returned snapshot
+    /// still carries credit for the grid.
     ///
     /// # Errors
     /// Returns engine failures; terminal failures other than gaps remain in the event.
@@ -529,6 +543,9 @@ impl EngineBridge {
         let pane = event.key.pane;
         match event.result {
             Ok(Some(VtOutput::Snapshot(mut snapshot))) => {
+                if snapshot.reset {
+                    self.screens_requested.borrow_mut().remove(&event.key);
+                }
                 if !snapshot.responses.is_empty() {
                     self.input(alias, pane, std::mem::take(&mut snapshot.responses))?;
                 }
@@ -541,10 +558,21 @@ impl EngineBridge {
                 Ok(Ok(None))
             }
             Err(VtError::NeedsScreen) => {
-                self.engine()?
-                    .screen(alias, pane)
-                    .map_err(EngineError::Manager)?;
-                Ok(Err(VtError::NeedsScreen))
+                let now = Instant::now();
+                let outstanding = self
+                    .screens_requested
+                    .borrow()
+                    .get(&event.key)
+                    .is_some_and(|asked| now.saturating_duration_since(*asked) < SCREEN_RETRY);
+                if !outstanding {
+                    self.engine()?
+                        .screen(alias, pane)
+                        .map_err(EngineError::Manager)?;
+                    self.screens_requested
+                        .borrow_mut()
+                        .insert(event.key.clone(), now);
+                }
+                Ok(Ok(None))
             }
             result => Ok(result),
         }

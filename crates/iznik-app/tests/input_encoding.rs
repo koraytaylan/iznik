@@ -283,10 +283,12 @@ fn input_mouse_tracks_only_requested_events_in_the_live_protocol() {
     }
 }
 
-/// Input cannot use mode state after a stream discontinuity.
+/// Input cannot use mode state after a stream discontinuity; it waits for the
+/// screen and is sent then, not dropped.
 ///
 /// # Panics
-/// Fails if a poisoned terminal encodes new input before an authoritative screen.
+/// Fails if a poisoned terminal encodes new input before an authoritative
+/// screen, or loses it.
 #[test]
 fn input_requires_an_authoritative_terminal_after_a_gap() {
     let thread = VtThread::start(VtOptions::default()).expect("thread");
@@ -313,6 +315,14 @@ fn input_requires_an_authoritative_terminal_after_a_gap() {
         support::receive(&thread).result,
         Err(VtError::NeedsScreen)
     ));
+    support::open(&thread, Sequence(3), 80, 24).expect("screen");
+    assert!(
+        matches!(
+            &support::receive(&thread).result,
+            Ok(Some(VtOutput::Input(bytes))) if bytes == b"text"
+        ),
+        "input typed during the gap is sent once the screen arrives"
+    );
 }
 
 /// Copy the requested displayed range through the owning-thread serializer.

@@ -808,14 +808,15 @@ fn window_restores_pane_height_after_banner(context: &mut TestAppContext) {
     check(&pane_height_after_banner(context));
 }
 
-/// The disconnected strip is in the column. Connecting removes it, and the pane
-/// area must take that space back and still follow a later window resize.
+/// The disconnected strip lies over the pane area without resizing its
+/// terminals. Connecting removes it, and the pane area still follows a later
+/// window resize.
 ///
 /// # Errors
 /// Propagates fixture, window and encoding failures.
 ///
 /// # Panics
-/// Fails when the pane area keeps the height it had while the strip was shown.
+/// Fails when the strip changes the pane area's height, or a resize does not.
 fn pane_height_after_banner(context: &mut TestAppContext) -> Result<(), Failed> {
     use iznik_client::host::manager::ManagerEvent;
     use iznik_client::host::state::HostState;
@@ -840,8 +841,8 @@ fn pane_height_after_banner(context: &mut TestAppContext) -> Result<(), Failed> 
         "a disconnected host shows the connection strip"
     );
     assert!(
-        f32::from(clear.height) > f32::from(with_banner.height) + TOLERANCE,
-        "showing the strip gives its height up from the pane area: clear {clear:?}, with {with_banner:?}"
+        (f32::from(clear.height) - f32::from(with_banner.height)).abs() <= TOLERANCE,
+        "the strip lies over the panes and does not resize them: clear {clear:?}, with {with_banner:?}"
     );
     absorb(
         context,

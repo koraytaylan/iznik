@@ -238,7 +238,11 @@ snapshot, which carries the credit and receipts of every chunk it covers, and
 only the rows the emulator marked dirty are read again — the rest are shared
 with the previous snapshot, and the grid redraws only the rows that changed. Themes change emulator defaults while
 preserving program OSC overrides. A gap invalidates the pane until a server
-screen replaces it; no output is guessed across a discontinuity.
+screen replaces it; no output is guessed across a discontinuity. Every chunk after a gap reports it, and the bridge asks for one screen per
+pane until it arrives, asking again only if none comes within two seconds.
+Keystrokes and pastes typed while a pane waits are kept and sent in order
+once its screen arrives. Connection and failure strips lie over the pane area
+rather than above it, so one appearing does not resize every terminal.
 
 ## Terminal grid
 

@@ -957,17 +957,27 @@ impl Render for WindowShell {
                 .bg(theme.background)
                 .text_color(theme.foreground)
                 .child(TitleBar::new().child(title))
-                .children(self.connection_strips(context))
                 .children(tab_bar)
                 .child(
                     div()
                         .id("pane-area")
                         .test_support()
+                        .relative()
                         .flex_1()
                         .min_h_0()
                         .w_full()
                         .bg(crate::chrome::painted_pane_color(&self.options.theme))
-                        .child(body),
+                        .child(body)
+                        // Over the panes, not above them: a strip that comes
+                        // and goes must not resize every terminal twice.
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .children(self.connection_strips(context)),
+                        ),
                 )
                 .child(bars.bottom)
                 .child(palette_overlay)
