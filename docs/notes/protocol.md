@@ -428,6 +428,12 @@ sizes is added when focus arrives and subtracted when it leaves, so what is
 outstanding at the client plus what may still be sent stays inside the
 ceiling.
 
+Every `PaneChannel` starts the window again, whole: a client begins a new
+stream on each one and returns credit only for bytes of the stream it is on,
+so credit spent before the announcement is never coming back. A `Focus` for
+the pane already focused gives that pane its whole focused window back too —
+at the ceiling, never past it.
+
 A channel at zero credit is skipped, never waited on. A background channel
 that falls further behind than the stale threshold stops being streamed
 altogether; its history is kept, and rather than the megabytes it missed it is

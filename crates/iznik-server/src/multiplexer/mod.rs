@@ -39,6 +39,7 @@ use tokio::sync::{Notify, RwLock, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::multiplexer::channel::{ChannelTable, Cursor, MultiplexerError, SinkError};
+use crate::multiplexer::credit::CreditWindow;
 use crate::pane::{Pane, Subscription};
 use crate::resume::{StartPlan, StartRequest, plan_start};
 use crate::session::registry::{Numbered, Registry};
@@ -283,11 +284,6 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         let state = held.state();
         let channel = self.channels.assign(pane)?;
         let plan = plan_start(&request, state.oldest, state.newest);
-        // A `ScreenRequest` arrives on a subscription that already has a
-        // window, and the client's outstanding credit is a property of the
-        // channel rather than of the request. Carrying it over is what keeps a
-        // screen request from handing out bytes the client never granted.
-        let granted = self.cursors.get(&pane).map(|cursor| cursor.credit);
 
         // Held before the first byte is read, so the pane stops answering a
         // program's terminal queries itself: this client's emulator answers.
@@ -340,16 +336,23 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             }
         };
         let mut cursor = Cursor::new(pane, channel, sequence);
-        match granted {
-            Some(window) => cursor.credit = window,
-            None => {
-                if self.focused == Some(pane) {
-                    cursor.credit.widen();
-                }
-            }
-        }
+        cursor.credit = self.full_window(pane);
         self.cursors.insert(pane, cursor);
         Ok(())
+    }
+
+    /// The whole window a pane's channel starts with: the focused one's when
+    /// it is the pane being looked at. Every `PaneChannel` starts a new
+    /// stream on the client, which returns credit only for bytes of the stream
+    /// it is on, so a window carried across an announcement is credit the
+    /// client will never give back — and a pane whose window leaks to nothing
+    /// is a pane that stops.
+    fn full_window(&self, pane: PaneId) -> CreditWindow {
+        if self.focused == Some(pane) {
+            CreditWindow::focused()
+        } else {
+            CreditWindow::background()
+        }
     }
 
     /// Stops delivering a pane's output and holds its channel back until the
@@ -461,8 +464,14 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         // Widening twice would add the increment twice, and a client that
         // says what it is already looking at — after a reconnect, or on every
         // window activation — would push the server past the ceiling the
-        // window exists to hold it to.
+        // window exists to hold it to. It is given its whole window back
+        // instead: a client saying so again is a client that may have lost
+        // track of what it owes, and a window at the ceiling cannot pass it.
         if self.focused == Some(pane) {
+            if let Some(cursor) = self.cursors.get_mut(&pane) {
+                cursor.credit = CreditWindow::focused();
+            }
+            self.wake.notify_one();
             return Ok(());
         }
         if let Some(left) = self.focused
@@ -797,8 +806,10 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         .await?;
         let sequence = screen.sequence;
         self.tell_screen(pane, screen).await?;
+        let window = self.full_window(pane);
         if let Some(cursor) = self.cursors.get_mut(&pane) {
             cursor.sequence = sequence;
+            cursor.credit = window;
             cursor.stale = false;
         }
         Ok(())
