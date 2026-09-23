@@ -11,10 +11,12 @@ use gpui_kit::{
     AnyElement, Context, Hsla, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, TestSupportExt, Window, div,
 };
+use std::collections::BTreeSet;
+
 use iznik_client::host::identity::HostId;
 use iznik_client::host::state::HostState;
 
-use crate::host_ui::EngineState;
+use crate::host_ui::{EngineState, Notice};
 use crate::window::WindowShell;
 
 /// The most lines of a host's error a strip shows before clipping it.
@@ -264,6 +266,38 @@ pub fn banner(
         .into_any_element()
 }
 
+/// What the window has told a person and not taken back: the latest local
+/// failure, shown until it is dismissed, and the hosts already told that an
+/// upgrade is on offer, so each is told once.
+#[derive(Debug, Default)]
+pub(crate) struct Notices {
+    /// The latest local failure.
+    failure: Option<Notice>,
+    /// Hosts already told about the upgrade they offer.
+    offers_told: BTreeSet<HostId>,
+}
+
+impl Notices {
+    /// The failure being shown, if any.
+    pub(crate) fn failure(&self) -> Option<&Notice> {
+        self.failure.as_ref()
+    }
+
+    /// Show `notice` as the failure; false when it is the one already shown.
+    pub(crate) fn fail(&mut self, notice: Notice) -> bool {
+        if self.failure.as_ref() == Some(&notice) {
+            return false;
+        }
+        self.failure = Some(notice);
+        true
+    }
+
+    /// Take the failure down.
+    pub(crate) fn dismiss(&mut self) {
+        self.failure = None;
+    }
+}
+
 /// Raise one toast per host whose connected server is offering an upgrade,
 /// saying why and that upgrading the host — which ends its sessions — is what
 /// fixes it.
@@ -292,7 +326,7 @@ pub fn notify_upgrades_on_offer(
         .hosts()
         .state()
         .hosts()
-        .filter(|(host, _report)| !shell.upgrade_notices.contains(*host))
+        .filter(|(host, _report)| !shell.notices.offers_told.contains(*host))
         .filter_map(|(host, report)| {
             let offer = report.upgrade.as_ref()?;
             Some((
@@ -313,21 +347,14 @@ pub fn notify_upgrades_on_offer(
         if has_root {
             window.push_notification(Notification::warning(message), context);
         }
-        let _noted = shell.upgrade_notices.insert(host);
+        let _noted = shell.notices.offers_told.insert(host);
     }
     // A host no longer on offer — upgraded, or gone — is forgotten, so a host
     // that comes back on offer is told about again.
-    let still_offering: Vec<HostId> = shell
-        .upgrade_notices
-        .iter()
-        .filter(|host| {
-            shell
-                .hosts()
-                .state()
-                .host(host)
-                .is_some_and(|report| report.upgrade.is_some())
-        })
-        .cloned()
-        .collect();
-    shell.upgrade_notices = still_offering.into_iter().collect();
+    let state = shell.hosts.state();
+    shell.notices.offers_told.retain(|host| {
+        state
+            .host(host)
+            .is_some_and(|report| report.upgrade.is_some())
+    });
 }

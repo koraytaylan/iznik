@@ -26,9 +26,10 @@ use crate::grid::{GridMetrics, measure_cell};
 use crate::host_ui::{HostUi, Notice, NoticeKind};
 use crate::navigation::{self, ShortcutHint};
 use crate::palette::{self, Palette};
-use crate::settings::{Settings, Watcher};
+use crate::settings::{Preferences, Settings, Watcher};
 use crate::splits;
-use crate::status;
+use crate::ssh_config::SshFiles;
+use crate::status::{self, Notices};
 use crate::subscription::{self, Subscriptions};
 use crate::surface::{PaneSurface, PasteConfirmation, SurfaceFailure};
 use crate::tab_label::DEFAULT_TAB_NAME;
@@ -149,49 +150,36 @@ pub struct WindowShell {
     /// Which panes the hosts are carrying, as they have answered.
     subscriptions: Subscriptions,
     /// The tab whose layout is currently visible.
-    pub(crate) selected: Option<TabKey>,
+    selected: Option<TabKey>,
     /// Latest authoritative tree for that tab.
-    pub(crate) layout: Option<LayoutNode>,
+    layout: Option<LayoutNode>,
     /// Changes only when the selected tree changes, resetting kit divider state.
-    pub(crate) revision: u64,
+    revision: u64,
     /// Terminal defaults and update cadence.
     pub(crate) options: ShellOptions,
-    /// Validated settings retained by this shell.
-    pub(crate) settings: Settings,
-    /// Optional watcher for the configured settings file.
-    pub(crate) settings_watcher: Option<Watcher>,
+    /// The settings, the file they are kept in, and when it was last read.
+    pub(crate) preferences: Preferences,
     /// Event-driven pump, cancelled when the shell drops.
     _update_task: Option<Task<()>>,
     /// Whether the model may have moved since sizes were last put on the
     /// emulators, so output must wait for them.
     pub(crate) sizes_pending: bool,
-    /// When the settings file was last looked at; `None` before the first look.
-    pub(crate) settings_polled: Option<Instant>,
-    /// Latest local routing failure, dismissible without discarding host state.
-    pub(crate) last_failure: Option<Notice>,
+    /// The failure being shown and the upgrade offers already told.
+    pub(crate) notices: Notices,
     /// Transient command palette state rendered over the shell.
     pub(crate) palette: Palette,
     /// The menu a right click opened, while it is open.
     pub(crate) menu: Option<crate::tab_actions::OpenMenu>,
-    /// Where the person's ssh configuration is read and written, so a test
-    /// points it at its own file instead of the developer's own.
-    pub(crate) ssh_config_path: Option<PathBuf>,
+    /// Where the person's ssh configuration is read and written, and the
+    /// aliases last read from it.
+    pub(crate) ssh: SshFiles,
     /// Baseline window focus, held until a pane claims it, so shortcuts such
     /// as opening the palette work before any session exists.
     focus_handle: FocusHandle,
     /// What the window is following on a person's behalf.
     pub(crate) following: Following,
-    /// The hosts this window has already told a person are offering a server
-    /// upgrade, so the toast is raised once per host rather than on every
-    /// state the engine says.
-    pub(crate) upgrade_notices: BTreeSet<HostId>,
     /// Tabs or sessions numbered while Command is held.
-    pub(crate) shortcut_hint: ShortcutHint,
-    /// The system's font families, listed once: listing them walks every
-    /// installed font, which is too slow to repeat for each theme change.
-    installed_fonts: Option<Vec<String>>,
-    /// The ssh aliases last read, with the files they were read from.
-    pub(crate) ssh_cache: std::cell::RefCell<crate::ssh_config::AliasCache>,
+    shortcut_hint: ShortcutHint,
 }
 
 impl Focusable for WindowShell {
@@ -212,9 +200,9 @@ impl WindowShell {
         let update_task = options
             .update_interval
             .map(|interval| crate::pump::spawn(&bridge, &thread, interval, window, context));
-        let settings_watcher = options.settings_path.clone().map(Watcher::new);
+        let preferences = Preferences::new(options.settings_path.clone());
         let focus_handle = context.focus_handle();
-        let ssh_config_path = options.ssh_config_path.clone();
+        let ssh = SshFiles::new(options.ssh_config_path.clone());
         let following = follow::loaded(options.selection_path.as_deref());
         window.focus(&focus_handle, context);
         let mut shell = Self {
@@ -226,21 +214,16 @@ impl WindowShell {
             layout: None,
             revision: 0,
             options,
-            settings: Settings::default(),
-            settings_watcher,
+            preferences,
             _update_task: update_task,
-            settings_polled: None,
             sizes_pending: true,
-            last_failure: None,
+            notices: Notices::default(),
             palette: Palette::default(),
             menu: None,
-            ssh_config_path,
+            ssh,
             focus_handle,
             following,
-            upgrade_notices: BTreeSet::new(),
             shortcut_hint: ShortcutHint::None,
-            installed_fonts: None,
-            ssh_cache: std::cell::RefCell::default(),
         };
         crate::settings::load_into(&mut shell, context);
         shell
@@ -399,6 +382,28 @@ impl WindowShell {
         self.remember_shown(&key);
         self.selected = Some(key);
     }
+    /// Show nothing: no tab of any host is left to show.
+    pub(crate) fn clear_selected(&mut self) {
+        self.selected = None;
+    }
+    /// The selected tab, the layout it shows, and the revision that layout
+    /// is at, while a tab is shown.
+    pub(crate) fn shown_layout(&self) -> Option<(&TabKey, &LayoutNode, u64)> {
+        Some((
+            self.selected.as_ref()?,
+            self.layout.as_ref()?,
+            self.revision,
+        ))
+    }
+    /// Number the tabs or sessions while Command is held; true when that
+    /// changed what the bars show.
+    pub(crate) fn show_shortcut_hint(&mut self, hint: ShortcutHint) -> bool {
+        if self.shortcut_hint == hint {
+            return false;
+        }
+        self.shortcut_hint = hint;
+        true
+    }
     /// The panes of the visible layout, in reading order.
     pub(crate) fn visible_panes(&self) -> Vec<iznik_protocol::identity::PaneId> {
         self.layout
@@ -409,7 +414,7 @@ impl WindowShell {
     /// Replace the shell's appearance settings and apply them everywhere.
     pub fn set_theme(&mut self, theme: AppTheme, context: &mut Context<'_, Self>) {
         self.apply_theme(&theme, context);
-        self.settings.theme = theme;
+        self.preferences.settings_mut().theme = theme;
         crate::settings::persist(self, context);
     }
     /// Apply application theme defaults to the shell and every retained emulator.
@@ -419,9 +424,10 @@ impl WindowShell {
         let theme = &crate::settings::drawable(theme);
         let terminal = theme::terminal_theme_in(theme, context);
         self.options.theme = terminal.clone();
+        let text_system = context.text_system().clone();
         let installed = self
-            .installed_fonts
-            .get_or_insert_with(|| context.text_system().all_font_names());
+            .preferences
+            .installed_fonts(|| text_system.all_font_names());
         let font = SharedString::from(theme::terminal_font(&theme.font_family, installed));
         let size = px(theme.font_size);
         self.options.metrics.font = font.clone();
@@ -432,7 +438,7 @@ impl WindowShell {
         ) = measure_cell(context.text_system(), font.clone(), size, theme.line_height);
         theme::apply_chrome_font(context, font, size);
         let metrics = self.options.metrics.clone();
-        let option_as_meta = self.settings.option_as_meta;
+        let option_as_meta = self.settings().option_as_meta;
         for key in self.panes.keys().cloned().collect::<Vec<_>>() {
             if let Err(error) = self.thread.send(VtCommand::Theme {
                 key: key.clone(),
@@ -462,7 +468,7 @@ impl WindowShell {
     ) -> Result<bool, crate::settings::SettingsError> {
         let changed = watcher.reload(settings)?;
         if changed {
-            self.settings.clone_from(settings);
+            self.preferences.settings_mut().clone_from(settings);
             crate::settings::apply_saved(self, context);
         }
         Ok(changed)
@@ -735,7 +741,7 @@ impl WindowShell {
                 Rc::clone(&self.thread),
                 context,
             );
-            surface.set_option_as_meta(self.settings.option_as_meta, context);
+            surface.set_option_as_meta(self.settings().option_as_meta, context);
             surface
         });
         let focus_key = key.clone();
@@ -876,8 +882,7 @@ impl WindowShell {
             kind: NoticeKind::Failure,
             detail,
         };
-        if self.last_failure.as_ref() != Some(&notice) {
-            self.last_failure = Some(notice.clone());
+        if self.notices.fail(notice.clone()) {
             context.emit(notice);
             context.notify();
         }
@@ -903,7 +908,7 @@ impl Render for WindowShell {
         let entity = context.entity().downgrade();
         let body = self.body(&entity, context);
         let theme = context.theme();
-        let placement = if self.settings.theme.tabs_in_title_bar {
+        let placement = if self.settings().theme.tabs_in_title_bar {
             bars::TabPlacement::TitleBar
         } else {
             bars::TabPlacement::Bar

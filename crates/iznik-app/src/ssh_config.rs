@@ -460,6 +460,41 @@ impl AliasCache {
     }
 }
 
+/// Where the person's ssh configuration is, and the aliases last read from it.
+///
+/// A test points the path at a scratch file instead of the developer's own,
+/// and a window given no path reads and writes nothing.
+#[derive(Debug, Default)]
+pub(crate) struct SshFiles {
+    /// The configuration file, when there is one.
+    pub(crate) path: Option<PathBuf>,
+    /// The aliases last read, with the files they were read from.
+    cache: core::cell::RefCell<AliasCache>,
+}
+
+impl SshFiles {
+    /// The configuration at `path`, nothing read from it yet.
+    pub(crate) fn new(path: Option<PathBuf>) -> SshFiles {
+        SshFiles {
+            path,
+            cache: core::cell::RefCell::default(),
+        }
+    }
+
+    /// The aliases the configuration and `known_hosts` name, read again only
+    /// when one of the files they came from has changed.
+    pub(crate) fn aliases(&self) -> Vec<String> {
+        let Some(path) = self.path.as_deref() else {
+            return Vec::new();
+        };
+        let mut cache = self.cache.borrow_mut();
+        if !cache.current() {
+            *cache = fill(path);
+        }
+        cache.aliases.clone()
+    }
+}
+
 /// A file's modification time, or `None` when it cannot be read.
 fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path)
@@ -591,12 +626,13 @@ impl crate::window::WindowShell {
         alias: &str,
         address: &str,
     ) -> Result<(), crate::bridge::EngineError> {
-        let path =
-            self.ssh_config_path
-                .clone()
-                .ok_or(crate::bridge::EngineError::Configuration(
-                    SshConfigError::MissingHome,
-                ))?;
+        let path = self
+            .ssh
+            .path
+            .clone()
+            .ok_or(crate::bridge::EngineError::Configuration(
+                SshConfigError::MissingHome,
+            ))?;
         append_host(&path, alias, address).map_err(crate::bridge::EngineError::Configuration)?;
         self.add_host(alias)
     }
@@ -610,14 +646,7 @@ impl crate::window::WindowShell {
     /// developer's own.
     #[must_use]
     pub fn ssh_alias(&self) -> Vec<String> {
-        let Some(path) = self.ssh_config_path.as_deref() else {
-            return Vec::new();
-        };
-        let mut cache = self.ssh_cache.borrow_mut();
-        if !cache.current() {
-            *cache = fill(path);
-        }
-        cache.aliases.clone()
+        self.ssh.aliases()
     }
 
     /// Whether `ssh` can already reach `alias` without this application

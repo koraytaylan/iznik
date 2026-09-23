@@ -6,6 +6,7 @@ batch
 cache
 desired
 dimensions
+dismiss
 followed
 fonts
 forgotten
@@ -17,6 +18,7 @@ included
 includes
 outbox
 polled
+preferences
 raise
 raised
 raising

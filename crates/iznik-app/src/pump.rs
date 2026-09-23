@@ -8,7 +8,7 @@
 //!
 //! [`WakeSignal`]: crate::wake::WakeSignal
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::{Context, Focusable as _, Task, Window};
 
@@ -84,7 +84,7 @@ impl WindowShell {
             // Focus alone is not enough: the window keeps naming the last
             // focused pane after its tab is hidden, so a pane in a background
             // tab — of this host or another — could otherwise still copy.
-            let allowed = focused && self.settings.clipboard_write && shown.contains(&key);
+            let allowed = focused && self.settings().clipboard_write && shown.contains(&key);
             let result = surface.update(context, |surface, surface_context| {
                 surface.allow_program_clipboard(allowed);
                 surface.receive(event, self.hosts().bridge(), surface_context)
@@ -96,33 +96,8 @@ impl WindowShell {
         // A refusal's wait may have run out with nothing else said.
         self.attach_visible(context);
         self.synchronize_sizes(context);
-        self.poll_settings(context);
+        crate::settings::poll(self, self.options.settings_interval, context);
         self.write_session_tabs(false);
         engine_events >= cap || terminal_events >= cap
-    }
-
-    /// Look at the configured settings file, at most once per settings interval.
-    fn poll_settings(&mut self, context: &mut Context<'_, Self>) {
-        let now = Instant::now();
-        if self.settings_polled.is_some_and(|last| {
-            now.saturating_duration_since(last) < self.options.settings_interval
-        }) {
-            return;
-        }
-        self.settings_polled = Some(now);
-        let outcome = {
-            let Some(watcher) = self.settings_watcher.as_mut() else {
-                return;
-            };
-            watcher.reload(&mut self.settings)
-        };
-        match outcome {
-            Ok(true) => {
-                crate::settings::report_unknown(self, context);
-                crate::settings::apply_saved(self, context);
-            }
-            Ok(false) => {}
-            Err(refusal) => crate::settings::refuse(self, &refusal, context),
-        }
     }
 }

@@ -70,12 +70,9 @@ pub(crate) fn note(
     modifiers: Modifiers,
     context: &mut Context<'_, WindowShell>,
 ) {
-    let hint = hint_of(modifiers);
-    if shell.shortcut_hint == hint {
-        return;
+    if shell.show_shortcut_hint(hint_of(modifiers)) {
+        context.notify();
     }
-    shell.shortcut_hint = hint;
-    context.notify();
 }
 
 /// Whether Command is held, alone or with Option, and no other modifier.

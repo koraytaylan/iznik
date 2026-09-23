@@ -26,8 +26,7 @@ impl WindowShell {
     /// host reports, and the host it runs on.
     pub(crate) fn pane_label(&self, key: &PaneKey) -> String {
         let title = self
-            .selected
-            .as_ref()
+            .selected()
             .and_then(|selected| self.tab(selected))
             .and_then(|tab| tab.panes.iter().find(|pane| pane.id == key.pane))
             .map(|pane| pane.title.trim())
@@ -44,10 +43,10 @@ impl WindowShell {
         entity: &WeakEntity<WindowShell>,
         context: &mut Context<'_, Self>,
     ) -> AnyElement {
-        if let (Some(selected), Some(layout)) = (&self.selected, &self.layout) {
+        if let Some((selected, layout, revision)) = self.shown_layout() {
             crate::splits::render_interactive(
                 layout,
-                self.revision,
+                revision,
                 |pane| {
                     let key = PaneKey {
                         host: selected.host.clone(),
@@ -210,7 +209,7 @@ impl WindowShell {
     /// A readable strip for every held host that is not connected and that
     /// the stage is not already describing, then the latest local failure.
     pub(crate) fn banners(&self, context: &mut Context<'_, Self>) -> Vec<AnyElement> {
-        let staged = self.selected.is_none().then(|| {
+        let staged = self.selected().is_none().then(|| {
             stage::stage(
                 self.hosts().state(),
                 self.following.preferred.as_ref(),
@@ -229,7 +228,7 @@ impl WindowShell {
                 banners.push(status::banner(&theme, host, summary, context));
             }
         }
-        if let Some(failure) = &self.last_failure {
+        if let Some(failure) = self.notices.failure() {
             banners.push(banner(context, failure));
         }
         banners
@@ -314,7 +313,7 @@ fn banner(context: &mut Context<'_, WindowShell>, failure: &Notice) -> AnyElemen
             .banner()
             .text_color(foreground)
             .on_close(context.listener(|shell, _, _, context| {
-                shell.last_failure = None;
+                shell.notices.dismiss();
                 context.notify();
             })),
         )

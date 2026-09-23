@@ -218,8 +218,7 @@ impl WindowShell {
     /// With nothing selected yet, open the tab the record left on screen.
     pub(crate) fn settle_selection(&mut self, place: Option<&TabPlace>) {
         if self
-            .selected
-            .as_ref()
+            .selected()
             .is_some_and(|selected| self.tab(selected).is_some())
         {
             return;
@@ -236,7 +235,7 @@ impl WindowShell {
         {
             self.set_selected(chosen);
         } else {
-            self.selected = None;
+            self.clear_selected();
         }
     }
 

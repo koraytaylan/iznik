@@ -15,7 +15,7 @@ use libghostty_vt::style::RgbColor;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::actions::INVENTORY;
 use crate::host_ui::{Notice, NoticeKind};
@@ -461,7 +461,7 @@ impl WindowShell {
     /// The settings the shell is running with.
     #[must_use]
     pub fn settings(&self) -> &Settings {
-        &self.settings
+        self.preferences.settings()
     }
 
     /// Change the terminal behavior settings — the program clipboard, the
@@ -472,16 +472,17 @@ impl WindowShell {
         edit: impl FnOnce(&mut Behavior),
         context: &mut Context<'_, WindowShell>,
     ) {
+        let settings = self.preferences.settings_mut();
         let mut behavior = Behavior {
-            clipboard_write: self.settings.clipboard_write,
-            confirm_multiline_paste: self.settings.confirm_multiline_paste,
-            option_as_meta: self.settings.option_as_meta,
+            clipboard_write: settings.clipboard_write,
+            confirm_multiline_paste: settings.confirm_multiline_paste,
+            option_as_meta: settings.option_as_meta,
         };
         edit(&mut behavior);
-        self.settings.clipboard_write = behavior.clipboard_write;
-        self.settings.confirm_multiline_paste = behavior.confirm_multiline_paste;
-        self.settings.option_as_meta = behavior.option_as_meta;
-        let theme = self.settings.theme.clone();
+        settings.clipboard_write = behavior.clipboard_write;
+        settings.confirm_multiline_paste = behavior.confirm_multiline_paste;
+        settings.option_as_meta = behavior.option_as_meta;
+        let theme = settings.theme.clone();
         self.apply_theme(&theme, context);
         persist(self, context);
     }
@@ -499,44 +500,133 @@ pub struct Behavior {
     pub option_as_meta: bool,
 }
 
+/// The settings a window runs with, the file they are kept in, and when that
+/// file was last looked at.
+///
+/// Owned by the window as one piece, so that what reads, writes and polls the
+/// file is here rather than spread over the window's own fields.
+#[derive(Debug)]
+pub(crate) struct Preferences {
+    /// Validated settings in use.
+    settings: Settings,
+    /// The settings file, when the window was given one.
+    watcher: Option<Watcher>,
+    /// When the file was last looked at; `None` before the first look.
+    polled: Option<Instant>,
+    /// The system's font families, listed once: listing them walks every
+    /// installed font, which is too slow to repeat for each theme change.
+    installed_fonts: Option<Vec<String>>,
+}
+
+impl Preferences {
+    /// The built-in settings, kept in the file at `path` when there is one.
+    pub(crate) fn new(path: Option<PathBuf>) -> Preferences {
+        Preferences {
+            settings: Settings::default(),
+            watcher: path.map(Watcher::new),
+            polled: None,
+            installed_fonts: None,
+        }
+    }
+
+    /// The settings in use.
+    pub(crate) fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// The settings in use, to change; [`Preferences::write`] keeps a change.
+    pub(crate) fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
+    }
+
+    /// Read the file if it changed since it was last read, taking what it
+    /// holds only when the whole of it is valid. `None` when there is no file.
+    pub(crate) fn load(&mut self) -> Option<Result<bool, SettingsError>> {
+        let watcher = self.watcher.as_mut()?;
+        let mut settings = self.settings.clone();
+        let outcome = watcher.reload(&mut settings);
+        if matches!(outcome, Ok(true)) {
+            self.settings = settings;
+        }
+        Some(outcome)
+    }
+
+    /// The same, at most once per `interval`: `None` when the last look was
+    /// more recent, or there is no file.
+    pub(crate) fn poll(
+        &mut self,
+        now: Instant,
+        interval: Duration,
+    ) -> Option<Result<bool, SettingsError>> {
+        if self
+            .polled
+            .is_some_and(|last| now.saturating_duration_since(last) < interval)
+        {
+            return None;
+        }
+        self.polled = Some(now);
+        self.load()
+    }
+
+    /// The file's unknown fields, when they have not been reported yet.
+    pub(crate) fn unreported(&mut self) -> Option<SettingsError> {
+        let settings = &self.settings;
+        self.watcher
+            .as_mut()
+            .and_then(|watcher| watcher.unreported(settings))
+    }
+
+    /// Write the settings in use to the file; `None` when there is no file.
+    pub(crate) fn write(&mut self) -> Option<Result<(), SettingsError>> {
+        let settings = &self.settings;
+        self.watcher.as_mut().map(|watcher| watcher.write(settings))
+    }
+
+    /// The system's font families, listed by `list` the first time only.
+    pub(crate) fn installed_fonts(&mut self, list: impl FnOnce() -> Vec<String>) -> &[String] {
+        self.installed_fonts.get_or_insert_with(list)
+    }
+}
+
 /// Read a saved file into the shell, then apply it. A missing file leaves the
 /// built-in default in place and is not an error.
 pub(crate) fn load_into(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
-    let mut settings = shell.settings.clone();
-    let outcome = {
-        let Some(watcher) = shell.settings_watcher.as_mut() else {
-            apply_saved(shell, context);
-            return;
-        };
-        watcher.reload(&mut settings)
-    };
-    match outcome {
-        Ok(true) => {
-            shell.settings = settings;
-            report_unknown(shell, context);
-        }
-        Err(refusal) => refuse(shell, &refusal, context),
-        Ok(false) => {}
+    match shell.preferences.load() {
+        Some(Ok(true)) => report_unknown(shell, context),
+        Some(Err(refusal)) => refuse(shell, &refusal, context),
+        Some(Ok(false)) | None => {}
     }
     apply_saved(shell, context);
 }
 
+/// Look at the settings file, at most once per `interval`, and apply what
+/// changed in it.
+pub(crate) fn poll(
+    shell: &mut WindowShell,
+    interval: Duration,
+    context: &mut Context<'_, WindowShell>,
+) {
+    match shell.preferences.poll(Instant::now(), interval) {
+        Some(Ok(true)) => {
+            report_unknown(shell, context);
+            apply_saved(shell, context);
+        }
+        Some(Err(refusal)) => refuse(shell, &refusal, context),
+        Some(Ok(false)) | None => {}
+    }
+}
+
 /// Report the file's unknown fields, once for each set of them.
 pub(crate) fn report_unknown(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
-    let settings = shell.settings.clone();
-    let unreported = shell
-        .settings_watcher
-        .as_mut()
-        .and_then(|watcher| watcher.unreported(&settings));
-    if let Some(warning) = unreported {
+    if let Some(warning) = shell.preferences.unreported() {
         refuse(shell, &warning, context);
     }
 }
 
 /// Apply the shell's saved theme name and typography to every surface.
 pub(crate) fn apply_saved(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
-    if !shell.settings.theme_name.is_empty()
-        && !crate::theme::apply_named(&shell.settings.theme_name, context)
+    let settings = shell.preferences.settings();
+    if !settings.theme_name.is_empty() && !crate::theme::apply_named(&settings.theme_name, context)
     {
         refuse(
             shell,
@@ -544,21 +634,17 @@ pub(crate) fn apply_saved(shell: &mut WindowShell, context: &mut Context<'_, Win
             context,
         );
     }
-    let theme = shell.settings.theme.clone();
+    let theme = shell.preferences.settings().theme.clone();
     shell.apply_theme(&theme, context);
 }
 
 /// Write the shell's settings, recording the kit theme that is active now.
 pub(crate) fn persist(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
     if context.has_global::<Theme>() {
-        shell.settings.theme_name = Theme::global(context).theme_name().to_string();
+        shell.preferences.settings_mut().theme_name =
+            Theme::global(context).theme_name().to_string();
     }
-    let settings = shell.settings.clone();
-    let outcome = shell
-        .settings_watcher
-        .as_mut()
-        .map(|watcher| watcher.write(&settings));
-    if let Some(Err(refusal)) = outcome {
+    if let Some(Err(refusal)) = shell.preferences.write() {
         refuse(shell, &refusal, context);
     }
 }
@@ -569,7 +655,7 @@ pub(crate) fn refuse(
     refusal: &SettingsError,
     context: &mut Context<'_, WindowShell>,
 ) {
-    shell.last_failure = Some(Notice {
+    let _shown = shell.notices.fail(Notice {
         host: HostId("settings".to_owned()),
         kind: NoticeKind::Failure,
         detail: format!("{}: {}", refusal.field, refusal.message),

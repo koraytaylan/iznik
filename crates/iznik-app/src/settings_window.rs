@@ -94,7 +94,7 @@ impl Render for SettingsWindow {
 /// Read the shell's current theme, or the default when the main window closed.
 fn theme_of(shell: &WeakEntity<WindowShell>, app: &App) -> AppTheme {
     shell.upgrade().map_or_else(AppTheme::default, |entity| {
-        entity.read(app).settings.theme.clone()
+        entity.read(app).settings().theme.clone()
     })
 }
 
@@ -104,7 +104,7 @@ fn edit_theme(shell: &WeakEntity<WindowShell>, app: &mut App, edit: impl FnOnce(
         return;
     };
     shell.update(app, |shell, context| {
-        let mut theme = shell.settings.theme.clone();
+        let mut theme = shell.settings().theme.clone();
         edit(&mut theme);
         shell.set_theme(theme, context);
     });
@@ -379,7 +379,12 @@ fn keybindings_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
                 SettingField::input(
                     move |app| {
                         let overridden = shell.upgrade().and_then(|entity| {
-                            entity.read(app).settings.keybindings.get(&action).cloned()
+                            entity
+                                .read(app)
+                                .settings()
+                                .keybindings
+                                .get(&action)
+                                .cloned()
                         });
                         SharedString::from(overridden.unwrap_or_else(|| default_chord.clone()))
                     },

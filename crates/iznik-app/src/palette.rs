@@ -570,7 +570,7 @@ impl WindowShell {
         context: &mut Context<'_, Self>,
     ) {
         let key = paste.key.clone();
-        if !self.settings.confirm_multiline_paste {
+        if !self.settings().confirm_multiline_paste {
             if let Err(error) = perform(
                 self,
                 Answer::Paste {
@@ -651,7 +651,7 @@ impl WindowShell {
         window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> bool {
-        let Some(action) = bound_action(&self.settings.keybindings, keystroke) else {
+        let Some(action) = bound_action(&self.settings().keybindings, keystroke) else {
             return false;
         };
         self.palette.open();
