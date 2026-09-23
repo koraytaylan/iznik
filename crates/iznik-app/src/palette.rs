@@ -102,18 +102,41 @@ impl Palette {
         character: Option<char>,
         result_count: usize,
     ) -> PaletteAction {
-        let action = self.key_action(key, character, result_count);
+        self.key_text(key, character.map(String::from).as_deref(), result_count)
+    }
+
+    /// The same, with every character the key produced — a dead key or an
+    /// input method can produce more than one.
+    #[must_use]
+    pub fn key_text(
+        &mut self,
+        key: &str,
+        text: Option<&str>,
+        result_count: usize,
+    ) -> PaletteAction {
+        let action = self.key_action(key, text, result_count);
         self.scroll.scroll_to_item(self.selected);
         action
     }
 
+    /// Add typed or pasted text to the query. The query is one line, so a
+    /// line break becomes a space and other control characters are dropped.
+    pub fn insert(&mut self, text: &str) {
+        let before = self.query.len();
+        self.query.extend(text.chars().filter_map(|character| {
+            if character == '\n' || character == '\r' || character == '\t' {
+                Some(' ')
+            } else {
+                (!character.is_control()).then_some(character)
+            }
+        }));
+        if self.query.len() != before {
+            self.selected = 0;
+        }
+    }
+
     /// The state change and request of one normalized key.
-    fn key_action(
-        &mut self,
-        key: &str,
-        character: Option<char>,
-        result_count: usize,
-    ) -> PaletteAction {
+    fn key_action(&mut self, key: &str, text: Option<&str>, result_count: usize) -> PaletteAction {
         match key {
             "escape" => {
                 self.close();
@@ -134,9 +157,8 @@ impl Palette {
                 PaletteAction::Ignored
             }
             _ => {
-                if let Some(character) = character {
-                    self.query.push(character);
-                    self.selected = 0;
+                if let Some(text) = text {
+                    self.insert(text);
                 }
                 PaletteAction::Ignored
             }
@@ -579,12 +601,12 @@ impl WindowShell {
     pub fn palette_key(
         &mut self,
         key: &str,
-        character: Option<char>,
+        text: Option<&str>,
         result_count: usize,
         window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> PaletteAction {
-        let action = self.palette.key(key, character, result_count);
+        let action = self.palette.key_text(key, text, result_count);
         if matches!(action, PaletteAction::Dispatch) {
             let selected_action = if self.palette.prompt.is_some() {
                 None
@@ -675,20 +697,32 @@ pub fn route_key(
         }
         return false;
     }
-    let character = event
+    if is_paste(&event.keystroke) {
+        if let Some(text) = context.read_from_clipboard().and_then(|item| item.text()) {
+            shell.palette.insert(&text);
+            context.notify();
+        }
+        return true;
+    }
+    // A chord is a command, not text, whatever character it carries.
+    let text = event
         .keystroke
         .key_char
         .as_deref()
-        .and_then(|text| text.chars().next());
+        .filter(|_| !modifiers.platform && !modifiers.control);
     let result_count = result_count(shell.hosts().state(), shell.palette());
-    let _action = shell.palette_key(
-        &event.keystroke.key,
-        character,
-        result_count,
-        window,
-        context,
-    );
+    let _action = shell.palette_key(&event.keystroke.key, text, result_count, window, context);
     true
+}
+
+/// Whether a keystroke is a paste: Command-V, or Control-Shift-V where
+/// Control-V belongs to the terminal.
+fn is_paste(keystroke: &Keystroke) -> bool {
+    let modifiers = &keystroke.modifiers;
+    keystroke.key == "v"
+        && !modifiers.alt
+        && ((modifiers.platform && !modifiers.control)
+            || (modifiers.control && modifiers.shift && !modifiers.platform))
 }
 
 /// Whether `query` matches `candidate` by the words a person is reading.

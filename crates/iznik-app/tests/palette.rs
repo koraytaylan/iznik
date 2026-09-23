@@ -171,3 +171,25 @@ fn state_with_a_pane() -> Result<EngineState, MessageError> {
     );
     Ok(state)
 }
+
+#[test]
+/// A key that produced several characters adds all of them, and pasted text
+/// becomes one line.
+///
+/// # Panics
+///
+/// Panics when characters are dropped or a line break reaches the query.
+fn palette_takes_whole_key_text_and_a_paste() {
+    let mut palette = Palette::default();
+    palette.open();
+    assert_eq!(
+        palette.key_text("", Some("\u{e9}t\u{e9}"), 1),
+        PaletteAction::Ignored
+    );
+    assert_eq!(palette.query, "\u{e9}t\u{e9}", "every composed character");
+    palette.insert(" web\nhost\u{7}");
+    assert_eq!(
+        palette.query, "\u{e9}t\u{e9} web host",
+        "one line, no controls"
+    );
+}
