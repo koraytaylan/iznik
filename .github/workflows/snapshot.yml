@@ -13,9 +13,12 @@ on:
 permissions:
   contents: read
 
+# A newer push waits for the running publish rather than cancelling it: a
+# cancelled publish can stop between two uploads and leave the release with
+# assets from two different commits. Only the newest waiting run is kept.
 concurrency:
   group: snapshot-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # The gates, exactly as a pull request runs them. Nothing below starts until
@@ -34,7 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -72,7 +75,7 @@ jobs:
           cargo xtask distribution --target aarch64-unknown-linux-musl
 
       - name: Upload the Linux servers
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: servers-linux
           if-no-files-found: error
@@ -84,7 +87,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -106,7 +109,7 @@ jobs:
           cargo xtask distribution --target x86_64-apple-darwin
 
       - name: Upload the macOS servers
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: servers-darwin
           if-no-files-found: error
@@ -118,7 +121,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -135,7 +138,7 @@ jobs:
         run: cargo xtask distribution --target x86_64-pc-windows-msvc
 
       - name: Upload the Windows server
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: servers-windows
           if-no-files-found: error
@@ -147,7 +150,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -164,7 +167,7 @@ jobs:
           sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
 
       - name: Download every server
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: servers-*
           merge-multiple: true
@@ -181,7 +184,7 @@ jobs:
           tar -czf "$RUNNER_TEMP/iznik-linux.tar.gz" -C "$RUNNER_TEMP/iznik-linux" .
 
       - name: Upload the Linux application
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: application-linux
           if-no-files-found: error
@@ -193,7 +196,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -210,7 +213,7 @@ jobs:
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
       - name: Download every server
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: servers-*
           merge-multiple: true
@@ -234,7 +237,7 @@ jobs:
             -C "$RUNNER_TEMP/iznik-x86_64-apple-darwin" .
 
       - name: Upload the macOS applications
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: application-darwin
           if-no-files-found: error
@@ -246,7 +249,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -260,7 +263,7 @@ jobs:
         run: bash scripts/ci/install-zig.sh
 
       - name: Download every server
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: servers-*
           merge-multiple: true
@@ -280,7 +283,7 @@ jobs:
           tar -a -cf "$env:RUNNER_TEMP/iznik-x86_64-pc-windows-msvc.zip" -C "$env:RUNNER_TEMP/iznik-windows" .
 
       - name: Upload the Windows application
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: application-windows
           if-no-files-found: error
@@ -294,17 +297,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
       - name: Download the verified application bundles
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: application-*
           path: ${{ runner.temp }}/applications
 
-      - name: Stage the application bundles
+      - name: Stage the application bundles and their checksums
         env:
           APPLICATIONS: ${{ runner.temp }}/applications
           STAGING: ${{ runner.temp }}/snapshot
@@ -314,22 +317,33 @@ jobs:
           find "$APPLICATIONS" -type f \( -name 'iznik-*.tar.gz' -o -name 'iznik-*.zip' \) -exec cp '{}' "$STAGING/" ';'
           test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.tar.gz' | wc -l)" -eq 3
           test "$(find "$STAGING" -maxdepth 1 -type f -name 'iznik-*.zip' | wc -l)" -eq 1
+          # The shape `sha256sum --check` reads, one line per archive.
+          (cd "$STAGING" && sha256sum iznik-* > SHA256SUMS)
+          cat "$STAGING/SHA256SUMS"
 
+      # Every asset is replaced in place with --clobber, so a download during
+      # a publish finds either the previous archive or the new one, never a
+      # missing one. SHA256SUMS goes last, after the archives it describes;
+      # only then does the tag move to this commit, and only then is an asset
+      # this build no longer produces removed.
       - name: Replace the trusted rolling prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           SNAPSHOT_TAG: develop-snapshot
           SNAPSHOT_TITLE: Iznik develop snapshot
+          STAGING: ${{ runner.temp }}/snapshot
         run: |
           set -euo pipefail
-          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. The Windows client is a zip of the executable and the servers it can install on a remote host. It is unsigned, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
-          if gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" -f sha="$GITHUB_SHA" -F force=true
-            gh release edit "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
-          else
+          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA, published after the gates in check.yml passed. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. SHA256SUMS lists the digest of every archive. The Windows client is a zip of the executable and the servers it can install on a remote host. It is unsigned, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
+          if ! gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           fi
+          gh release upload "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" "$STAGING"/iznik-* --clobber
+          gh release upload "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" "$STAGING/SHA256SUMS" --clobber
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" -f sha="$GITHUB_SHA" -F force=true
+          gh release edit "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           while IFS= read -r asset; do
-            gh release delete-asset "$SNAPSHOT_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
-          done < <(gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(test("^iznik-.*\\.(tar\\.gz|zip)$"))')
-          gh release upload "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/snapshot/* --clobber
+            if [[ ! -e "$STAGING/$asset" ]]; then
+              gh release delete-asset "$SNAPSHOT_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+          done < <(gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')

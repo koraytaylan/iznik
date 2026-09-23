@@ -233,7 +233,8 @@ Every push to `develop` that passes the gates in
 [`.github/workflows/check.yml`](.github/workflows/check.yml) also updates the
 rolling GitHub prerelease named `develop-snapshot`. The Linux archive, the two macOS archives and the
 Windows client zip are replaced in place, so the release URL stays stable
-while always pointing at the latest verified development build. The Windows
+while always pointing at the latest verified development build, and a
+`SHA256SUMS` beside them lists each archive's digest. The Windows
 zip is the application and the remote servers it can install, including a
 Windows server for a machine whose OpenSSH Server feature is turned on. A Mac
 host is reached the same way, through Remote Login. The zip is unsigned.
