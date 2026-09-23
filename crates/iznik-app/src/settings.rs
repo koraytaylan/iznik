@@ -17,6 +17,7 @@ use std::time::SystemTime;
 use crate::actions::INVENTORY;
 use crate::host_ui::{Notice, NoticeKind};
 use crate::theme::AppTheme;
+use crate::vt::{MAXIMUM_SCROLLBACK_BYTES, MINIMUM_SCROLLBACK_BYTES, SCROLLBACK_BYTES};
 use crate::window::WindowShell;
 
 /// The directory name under `$HOME` when `XDG_CONFIG_HOME` is unset.
@@ -39,7 +40,7 @@ const HOME: &str = "HOME";
 const TEMPORARY_EXTENSION: &str = "temporary";
 
 /// Settings held by the application after validation.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// Shared terminal and GPUI theme.
     pub theme: AppTheme,
@@ -47,6 +48,34 @@ pub struct Settings {
     pub theme_name: String,
     /// Keybinding overrides keyed by action name.
     pub keybindings: BTreeMap<String, String>,
+    /// Per-pane emulator history budget in bytes, read when the application
+    /// starts; clamped between the emulator's minimum and maximum.
+    pub scrollback_bytes: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: AppTheme::default(),
+            theme_name: String::new(),
+            keybindings: BTreeMap::new(),
+            scrollback_bytes: SCROLLBACK_BYTES,
+        }
+    }
+}
+
+/// Read the settings at `path`; a missing file is the built-in default.
+///
+/// # Errors
+///
+/// Returns a file error when the file cannot be read, or the field that
+/// failed to decode.
+pub fn read(path: &Path) -> Result<Settings, SettingsError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => decode(&text),
+        Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(io_error) => Err(error("file", &io_error.to_string())),
+    }
 }
 
 /// The file this machine keeps: `$XDG_CONFIG_HOME/iznik/settings`, or
@@ -215,7 +244,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -226,7 +255,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme.font_size,
         settings.theme.line_height,
         settings.theme.tabs_in_title_bar,
-        settings.theme_name
+        settings.theme_name,
+        settings.scrollback_bytes
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "keybinding.{action}={chord}");
@@ -259,6 +289,12 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
                 settings.theme.line_height = value
                     .parse()
                     .map_err(|_parse_error| error(field, "not a number"))?;
+            }
+            "scrollback_bytes" => {
+                settings.scrollback_bytes = value
+                    .parse::<usize>()
+                    .map_err(|_parse_error| error(field, "not a whole number of bytes"))?
+                    .clamp(MINIMUM_SCROLLBACK_BYTES, MAXIMUM_SCROLLBACK_BYTES);
             }
             "font_size" => {
                 settings.theme.font_size = value

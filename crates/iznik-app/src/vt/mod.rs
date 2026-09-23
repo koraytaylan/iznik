@@ -32,8 +32,14 @@ use tokio::runtime::Builder;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::LocalSet;
 
-/// Emulator history memory budget, matching the server's default budget.
-pub const SCROLLBACK_BYTES: usize = 10_000;
+/// Default emulator history memory budget per pane: 10 MiB, which holds
+/// tens of thousands of rows of ordinary output. The `scrollback_bytes`
+/// setting replaces it.
+pub const SCROLLBACK_BYTES: usize = 10_485_760;
+/// Least history budget a setting may ask for: 64 KiB, a few hundred rows.
+pub const MINIMUM_SCROLLBACK_BYTES: usize = 65_536;
+/// Most history budget a setting may ask for: 1 GiB per pane.
+pub const MAXIMUM_SCROLLBACK_BYTES: usize = 1_073_741_824;
 /// Neutral foreground until application settings provide a theme.
 const FOREGROUND: RgbColor = RgbColor {
     r: 216,

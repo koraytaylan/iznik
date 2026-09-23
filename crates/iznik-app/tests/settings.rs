@@ -59,6 +59,31 @@ fn settings_round_trip() {
 }
 
 #[test]
+/// The history budget defaults to megabytes, round-trips, and is clamped.
+///
+/// # Panics
+///
+/// Panics when the default is not the named budget, the value is lost, or an
+/// out-of-range value is not clamped.
+fn scrollback_budget_defaults_round_trips_and_is_clamped() {
+    use iznik_app::vt::{MAXIMUM_SCROLLBACK_BYTES, MINIMUM_SCROLLBACK_BYTES, SCROLLBACK_BYTES};
+    assert_eq!(Settings::default().scrollback_bytes, SCROLLBACK_BYTES);
+    let settings = Settings {
+        scrollback_bytes: 2_097_152,
+        ..Settings::default()
+    };
+    assert_eq!(decode(&encode(&settings)).expect("round trip"), settings);
+    let small = decode("scrollback_bytes=1").expect("small");
+    assert_eq!(small.scrollback_bytes, MINIMUM_SCROLLBACK_BYTES);
+    let large = decode("scrollback_bytes=99999999999999").expect("large");
+    assert_eq!(large.scrollback_bytes, MAXIMUM_SCROLLBACK_BYTES);
+    assert_eq!(
+        decode("scrollback_bytes=lots").expect_err("words").field,
+        "scrollback_bytes"
+    );
+}
+
+#[test]
 /// Malformed fields are named by the decoder.
 ///
 /// # Panics

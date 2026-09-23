@@ -154,7 +154,7 @@ rather than ending the connection.
 | `stage` | The body shown while no tab is visible: welcome, a host being reached or unreachable, or a connected host with no session. |
 | `status` | How a host's connection reads: headline, detail, tone and remedies, shared by the stage, the banners and the session bar. |
 | `splits` | Pure divider weight and equalization helpers for authoritative layouts. |
-| `settings` | Validated settings — theme, typography and keybinding overrides — read from and written to `$XDG_CONFIG_HOME/iznik/settings` (or `~/.config/iznik/settings`). |
+| `settings` | Validated settings — theme, typography, keybinding overrides and the per-pane `scrollback_bytes` history budget (10 MiB by default, read at launch) — read from and written to `$XDG_CONFIG_HOME/iznik/settings` (or `~/.config/iznik/settings`). |
 | `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
 | `ssh_config` | The person's own ssh configuration: the concrete aliases it defines, and the `Host`/`HostName` block this application appends when Add Host asks. |
 | `tab_actions` | The bar's right-click menus and drag-to-reorder: the same menu shape for a tab and a session, the orders a move or a drop produces for tabs and for sessions, the entries its close affordances close, and the open menu the shell renders and dismisses. |

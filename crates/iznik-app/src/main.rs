@@ -172,12 +172,22 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) {
         std::fs::create_dir_all(&artifacts)?;
         let runtime_paths = ClientRuntimePaths::resolve()?;
         let bridge = EngineBridge::start(artifacts, runtime_paths)?;
-        let thread = Rc::new(VtThread::start(VtOptions::default())?);
+        let settings_path = iznik_app::settings::default_path();
+        // The history budget sizes each emulator as it is made, so it is read
+        // here, before the thread exists; a bad file is reported by the shell.
+        let scrollback_bytes = settings_path
+            .as_deref()
+            .and_then(|path| iznik_app::settings::read(path).ok())
+            .unwrap_or_default()
+            .scrollback_bytes;
+        let thread = Rc::new(VtThread::start(VtOptions {
+            scrollback_bytes,
+            ..VtOptions::default()
+        })?);
         // The person's own ssh configuration, resolved here and not by the
         // shell, so the shell a case builds reads no file this machine holds.
         let ssh_config_path = iznik_app::ssh_config::default_path();
         let selection_path = iznik_app::session_tabs::default_path();
-        let settings_path = iznik_app::settings::default_path();
         let options = ShellOptions {
             ssh_config_path,
             selection_path,
