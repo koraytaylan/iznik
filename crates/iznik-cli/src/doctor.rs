@@ -1,16 +1,23 @@
 //! `iznik doctor <host>`: one JSON artifact that says which of five layers is
-//! wrong, with secrets redacted by construction.
+//! wrong, with nothing in it that could carry a secret.
 //!
 //! Every section is present whether or not it could be filled: a layer that
 //! failed is visible by having an error where its answer belongs, and the
 //! layers below one that failed say they were skipped rather than pretending
 //! to have been asked. So the shape of the document is the diagnosis.
 //!
-//! Redacted by construction and not by scrubbing: what could carry a secret
-//! is never collected. Of everything `ssh -G` will say, this reads the
-//! handful of settings below and nothing else — not an identity file, not an
-//! agent socket, not a proxy command, each of which can carry key material or
-//! a token or run a program that prints one. Nothing reads the environment.
+//! Mostly by construction, where what could carry a secret is never collected.
+//! Of everything `ssh -G` will say, this reads the handful of settings below
+//! and nothing else — not an identity file, not an agent socket, not a proxy
+//! command, each of which can carry key material or a token or run a program
+//! that prints one. Nothing reads the environment.
+//!
+//! The one section collected whole is the tail of the daemon's own log, and
+//! that one is scrubbed: a log line's fields are what the daemon was handling
+//! when it wrote it — a path, a peer, an error in somebody's words — and every
+//! field's value is replaced, keeping only when the line was written, how
+//! serious it was, where in the server, the server's own fixed words, and the
+//! names of the fields it carried.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -19,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use iznik_client::bootstrap::launch::BootstrapOptions;
 use iznik_client::bootstrap::probe::{HostProbe, ProbeError, RunsRemotely, probe};
+use iznik_client::bootstrap::upload::posix_command;
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::HostState;
 use iznik_client::transport::ssh::{SshError, SshOptions};
@@ -524,10 +532,13 @@ fn yonder(alias: &str) -> Value {
     // Which of the two it is, said out loud: a log with nothing in it and no
     // log at all are different answers, and this is the section whose whole
     // job is to say which layer is wrong.
-    let asked = format!(
-        "{LOG_SCRIPT}\nif [ -f \"$runtime/{LOG_NAME}\" ]\n\
-         then tail -n {LOG_LINES} \"$runtime/{LOG_NAME}\"\n\
-         else printf '%s %s\\n' '{NO_LOG}' \"$runtime/{LOG_NAME}\"; fi"
+    let asked = posix_command(
+        &format!(
+            "{LOG_SCRIPT}\nif [ -f \"$runtime/{LOG_NAME}\" ]\n\
+             then tail -n {LOG_LINES} \"$runtime/{LOG_NAME}\"\n\
+             else printf '%s %s\\n' '{NO_LOG}' \"$runtime/{LOG_NAME}\"; fi"
+        ),
+        &[],
     );
     // Called inside the runtime and not merely awaited in it: this one is
     // not an `async fn`, so it spawns the child where it is called, and a
@@ -545,7 +556,8 @@ fn yonder(alias: &str) -> Value {
     }
 }
 
-/// The last lines of some text, oldest first.
+/// The last lines of some text, oldest first, each with its fields' values
+/// taken out.
 fn tailed(said: &str) -> Value {
     let lines: Vec<&str> = said.lines().collect();
     Value::List(
@@ -554,7 +566,51 @@ fn tailed(said: &str) -> Value {
             .rev()
             .take(LOG_LINES)
             .rev()
-            .map(|line| text(line))
+            .map(|line| text(&redacted(line)))
             .collect(),
     )
+}
+
+/// What a field's value is replaced with.
+const REDACTED: &str = "<redacted>";
+
+/// What separates a field's name from its value in a log line.
+const FIELD_JOIN: char = '=';
+
+/// One line of the daemon's log with every field's value replaced.
+///
+/// A line is what the daemon's subscriber writes: a time, a level, a target,
+/// the event's own fixed words, and then its fields as `name=value`, a value
+/// that is a string written in quotes and able to hold spaces. What comes
+/// before the first field is kept; from the first field on, only the names
+/// are. A line with no field at all is kept whole — its words are the
+/// server's own, fixed in its source.
+#[must_use]
+pub fn redacted(line: &str) -> String {
+    let words: Vec<&str> = line.split(' ').collect();
+    let Some(first) = words.iter().position(|word| field_name(word).is_some()) else {
+        return line.to_owned();
+    };
+    let mut kept: Vec<String> = words
+        .iter()
+        .take(first)
+        .map(|word| (*word).to_owned())
+        .collect();
+    for word in words.iter().skip(first) {
+        if let Some(name) = field_name(word) {
+            kept.push(format!("{name}{FIELD_JOIN}{REDACTED}"));
+        }
+    }
+    kept.join(" ")
+}
+
+/// The name a word begins a field with, when it begins one: letters, digits,
+/// underscores and dots, and then `=`.
+fn field_name(word: &str) -> Option<&str> {
+    let (name, _value) = word.split_once(FIELD_JOIN)?;
+    let named = !name.is_empty()
+        && name
+            .chars()
+            .all(|glyph| glyph.is_ascii_alphanumeric() || glyph == '_' || glyph == '.');
+    named.then_some(name)
 }

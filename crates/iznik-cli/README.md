@@ -9,7 +9,7 @@ The binary is `iznik`, a thin dispatcher over this library: its first argument n
 | Module | Holds | Landed by |
 |---|---|---|
 | `benchmark` | `iznik benchmark <host>`: the keystroke round trip against a host, printed as a distribution. | `plumbing-commands` (plan 0006) |
-| `doctor` | `iznik doctor <host>`: one JSON artifact that says which of five layers is wrong, with secrets redacted by construction. | `diagnostics-bundle` (plan 0006) |
+| `doctor` | `iznik doctor <host>`: one JSON artifact that says which of five layers is wrong, with nothing in it that could carry a secret: most sections by never collecting it, the daemon's log tail by replacing every field's value. | `diagnostics-bundle` (plan 0006) |
 | `output` | The one place the binary writes: one hand-built JSON object per line. | `plumbing-commands` (plan 0006) |
 | `probe` | `iznik probe <host>`: the bootstrap's probe of a host, printed. | `plumbing-commands` (plan 0006) |
 | `state` | `iznik state <host>`: the host model as the server holds it, printed. | `plumbing-commands` (plan 0006) |

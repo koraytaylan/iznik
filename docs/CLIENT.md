@@ -386,7 +386,11 @@ It carries no secrets. Of everything `ssh` would say it reads a named handful,
 never an identity file, an agent socket or a proxy command; it does not read
 your environment; and what a transport says when it refuses is reported by its
 kind rather than in its own words, because those words can contain whatever a
-proxy command printed.
+proxy command printed. The daemon's log is the one thing it carries whole, and
+each of its lines keeps only when it was written, how serious it was, where in
+the server, the server's own fixed words and the names of its fields: every
+field's value — a path, a peer, an error in somebody else's words — is
+replaced with `<redacted>`.
 
 Send it with a bug report.
 

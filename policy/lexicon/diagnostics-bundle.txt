@@ -18,6 +18,8 @@ newer
 planted
 probed
 reached
+redacted
+redaction
 secret
 sentinels
 settings
@@ -25,5 +27,6 @@ skipped
 ssh
 tailed
 transitions
+values
 went
 yonder
