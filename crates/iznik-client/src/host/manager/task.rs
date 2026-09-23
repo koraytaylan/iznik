@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::encode_session_command;
-use iznik_protocol::identity::{DaemonInstance, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, DaemonInstance, PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -19,7 +19,7 @@ use crate::bootstrap::launch::{
 };
 use crate::bootstrap::probe::InstalledServer;
 use crate::bootstrap::{bootstrap_watched, upgrade};
-use crate::commands::{abandoned, expire, replay};
+use crate::commands::{abandoned, expire, replay, withdraw};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
 use crate::host::manager::hearing::{heard, told_the_model};
@@ -29,6 +29,7 @@ use crate::host::state::{
     Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
 };
 use crate::model::HostView;
+use crate::reduce::Notification;
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, RemoteChannel, ServerHello};
 
@@ -558,14 +559,76 @@ enum Turn {
     Ordered(Option<Order>),
 }
 
-/// Serves a connected host until its link goes or it is told to stop.
+/// Serves a connected host until its link goes or it is told to stop, and
+/// then says what became of every command it carried and nobody answered.
 async fn pump(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
+    channel: RemoteChannel,
+) -> Ended {
+    let mut carried = Vec::new();
+    let ended = serve_link(host, shared, machine, orders, kept, channel, &mut carried).await;
+    if !matches!(ended, Ended::Stopped) {
+        orphaned(host, shared, &carried);
+    }
+    ended
+}
+
+/// Puts back what every command this link carried and never had answered
+/// showed, and says its outcome is unknown.
+///
+/// A command is answered exactly once per connection. One whose connection
+/// went first may or may not have been applied — the link can die between the
+/// host applying it and the answer arriving — so it is neither applied nor
+/// refused nor timed out: it is unknown, and the snapshot the next connection
+/// begins with is what says which.
+fn orphaned(host: &HostId, shared: &Arc<Shared>, carried: &[CommandId]) {
+    let told: Vec<Notification> = shared
+        .with(host, |view| {
+            carried
+                .iter()
+                .copied()
+                .filter(|command| withdraw(view, *command))
+                .map(|command| Notification::CommandOutcomeUnknown {
+                    host: host.clone(),
+                    command,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for notification in told {
+        shared.publish(&ManagerEvent::Notify(notification));
+    }
+}
+
+/// Whether a command is still waiting to be carried: submitted, and not
+/// taken back or given up on while it sat in the queue.
+///
+/// One that was is not sent at all. It was told to the caller as undone —
+/// timed out behind a slow bootstrap, or of unknown outcome — and carrying it
+/// now would apply something the caller was told did not happen.
+fn still_asked(host: &HostId, shared: &Shared, command: CommandId) -> bool {
+    shared
+        .with(host, |view| {
+            view.awaiting(command)
+                .is_some_and(|held| held.answered.is_none())
+        })
+        .unwrap_or(false)
+}
+
+/// The loop [`pump`] runs: what arrived and what was ordered, until the link
+/// goes. Every command it writes is added to `carried`.
+async fn serve_link(
+    host: &HostId,
+    shared: &Arc<Shared>,
+    machine: &Mutex<HostStateMachine>,
+    orders: &mut UnboundedReceiver<Order>,
+    kept: &mut Vec<Order>,
     mut channel: RemoteChannel,
+    carried_commands: &mut Vec<CommandId>,
 ) -> Ended {
     let mut carried = 0_usize;
     // An order taken off the queue while gathering credit, and not credit:
@@ -628,6 +691,14 @@ async fn pump(
                 }
             }
             Turn::Ordered(Some(order)) => {
+                if let Order::Command { id, .. } = &order {
+                    if !still_asked(host, shared, *id) {
+                        continue;
+                    }
+                    // Counted before the write: a link that fails part way
+                    // through it may still have delivered the whole frame.
+                    carried_commands.push(*id);
+                }
                 let holdable = keeps(&order).then(|| order.clone());
                 let carrying = carry(&mut channel, order, shared).await;
                 if let Err(ChannelError::Message(refusal)) = &carrying {

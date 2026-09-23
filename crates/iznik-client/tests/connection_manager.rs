@@ -681,17 +681,25 @@ fn connection_manager_gives_up_on_a_host_that_never_answers() {
                 name: "after".to_owned(),
             },
         )?;
+        // Timed out while the cut link still looks alive, or of unknown
+        // outcome once the silence says it is dead: either way it is given up
+        // on by name, and which one depends only on which deadline is first.
         let timed = await_event(&events, "the command being given up on", PROMPT, |event| {
             matches!(
                 event,
-                ManagerEvent::Notify(Notification::CommandTimedOut { command, .. })
-                    if *command == submission.id
+                ManagerEvent::Notify(
+                    Notification::CommandTimedOut { command, .. }
+                        | Notification::CommandOutcomeUnknown { command, .. }
+                ) if *command == submission.id
             )
         })?;
         assert!(
             matches!(
                 timed,
-                ManagerEvent::Notify(Notification::CommandTimedOut { .. })
+                ManagerEvent::Notify(
+                    Notification::CommandTimedOut { .. }
+                        | Notification::CommandOutcomeUnknown { .. }
+                )
             ),
             "a command nobody answered is given up on by name"
         );

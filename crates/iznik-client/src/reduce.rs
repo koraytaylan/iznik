@@ -86,6 +86,21 @@ pub enum Notification {
         /// This client's number for the command.
         command: CommandId,
     },
+    /// A command this client sent on a link that went before its answer came.
+    ///
+    /// Not a timeout: the host may have applied it the moment before the link
+    /// went, and nothing on this side can say whether it did. Each command is
+    /// answered exactly once *per connection*; this is what the rest of it
+    /// becomes. What it showed is put back, and the snapshot the next
+    /// connection begins with says what the host actually did — so a caller
+    /// reads the model rather than sending it again, which for a creation
+    /// would make a second one.
+    CommandOutcomeUnknown {
+        /// The host whose link went.
+        host: HostId,
+        /// This client's number for the command.
+        command: CommandId,
+    },
     /// A command this client sent was answered with something this client
     /// could not read.
     ///

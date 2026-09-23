@@ -194,6 +194,16 @@ reconnection now rather than after the backoff.
 - `IZNIK_EVENT_KIND_MARK` — a shell-integration event in a pane.
 - `IZNIK_EVENT_KIND_NOTIFICATION` — words for a person. When it is about a
   command, `command_id` carries that command's number.
+
+A command is answered exactly once *per connection*. When a host's link goes
+before a command you sent is answered, you are not sent a result: you get a
+notification saying its outcome is unknown, because the host may have applied
+it the moment before the link went. What it showed is put back, and the
+`IZNIK_EVENT_KIND_SNAPSHOT` the next connection begins with says what the host
+really did. Read that before sending the command again — a creation sent twice
+is two panes. A command that is simply never answered on a live link is a
+different notification: it was never answered, and after five seconds it is
+given up on.
 - `IZNIK_EVENT_KIND_PANE_BYTES` — a pane's own bytes, for a pane nothing is
   attached to.
 - `IZNIK_EVENT_KIND_SCREEN` — a pane's screen, with `columns` and `rows`.

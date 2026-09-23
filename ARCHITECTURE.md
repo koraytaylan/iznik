@@ -292,7 +292,14 @@ the next snapshot — is tested by fuzzing in `iznik-protocol`.
 `CreatePane { tab, placement, columns, rows, working_directory }`, `ClosePane`,
 `MovePane`, `SetLayout { tab, layout }`. Every command names stable identity,
 is validated against the model's invariants before anything is spawned, and is
-answered exactly once. A pane always runs the user's login shell; when its
+answered exactly once *per connection*: the server keeps no record of a
+command across connections, so a command whose link goes before its answer
+arrives may or may not have been applied. The client puts back what it showed
+and reports its outcome as unknown — never as timed out — and the snapshot the
+next connection begins with says what the host actually did; a caller reads
+that rather than sending the command again, which for a creation would make a
+second one. A command still waiting in the client's queue when its link went is
+never sent late on the next link once it has been reported. A pane always runs the user's login shell; when its
 child exits the pane is removed and the delta carries the exit status.
 
 ### 5.4 Multiplexing and scheduling

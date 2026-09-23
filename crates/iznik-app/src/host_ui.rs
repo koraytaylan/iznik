@@ -470,6 +470,11 @@ fn read(notification: &Notification) -> (HostId, NoticeKind, String) {
             NoticeKind::Failure,
             format!("command {} was never answered", command.0),
         ),
+        Notification::CommandOutcomeUnknown { host, command } => (
+            host.clone(),
+            NoticeKind::Failure,
+            format!("the link went before command {} was answered", command.0),
+        ),
         Notification::Mark { host, pane, .. } => (
             host.clone(),
             NoticeKind::Mark,
