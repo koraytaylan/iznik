@@ -71,6 +71,12 @@ test = "iznik-app::theme::the_terminal_font_is_an_installed_monospace_family"
 because = "resolution is pure over the installed family names"
 
 [[claim]]
+id = "settings-persist-across-launch"
+statement = "A theme, font size, line height and title-bar choice made in the shell is what the next shell reads from the settings file."
+test = "iznik-app::settings::a_changed_theme_is_what_the_next_shell_reads"
+because = "The test drives two shells over one settings file and needs no container."
+
+[[claim]]
 id = "tabs-in-title-bar"
 statement = "With tabs in the title bar turned on, the selected session's tabs are drawn inside the window's title bar and no separate tab bar is drawn."
 test = "iznik-app::window_shell::tabs_move_into_the_title_bar_when_asked"

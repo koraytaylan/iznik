@@ -51,6 +51,7 @@ fn settings_round_trip() {
     let mut settings = Settings::default();
     settings.theme.line_height = 1.5;
     settings.theme.tabs_in_title_bar = true;
+    settings.theme_name = "Catppuccin Mocha".to_owned();
     settings
         .keybindings
         .insert("CreateSession".to_owned(), "ctrl-n".to_owned());
@@ -102,6 +103,30 @@ fn watcher_applies_changed_file() {
 }
 
 #[test]
+/// A file that is not there yet is not a refusal, and it leaves the current
+/// settings alone.
+///
+/// # Panics
+///
+/// Panics when a missing file is reported as an error or clears the current font.
+fn a_missing_settings_file_keeps_the_current_value() {
+    let path = std::env::temp_dir().join(format!(
+        "iznik-settings-missing-{}-{}",
+        std::process::id(),
+        "keeps"
+    ));
+    let _removed = fs::remove_file(&path);
+    let mut watcher = Watcher::new(&path);
+    let mut current = Settings::default();
+    current.theme.font_size = 19.0;
+    assert!(
+        !watcher.reload(&mut current).expect("missing file"),
+        "a missing file changes nothing"
+    );
+    assert_eq!(current.theme.font_size, 19.0);
+}
+
+#[test]
 /// A settings theme reaches a live emulator snapshot without restarting it.
 ///
 /// # Panics
@@ -123,4 +148,104 @@ fn theme_change_reaches_live_emulator() {
         .expect("theme");
     let snapshot = support::snapshot(&thread).expect("snapshot");
     assert_eq!(snapshot.colors.background, theme.background);
+}
+
+#[path = "support/engine.rs"]
+mod engine;
+
+/// Font size distinct from the built-in default, so a forgotten file fails.
+const SAVED_FONT_SIZE: f32 = 21.0;
+
+/// Row height distinct from the built-in default.
+const SAVED_LINE_HEIGHT: f32 = 1.5;
+
+/// A bundled theme other than the default, so a relaunch that stays on Ayu fails.
+const SAVED_THEME_NAME: &str = "Catppuccin Mocha";
+
+#[gpui_kit::test]
+fn a_changed_theme_is_what_the_next_shell_reads(context: &mut gpui_kit::TestAppContext) {
+    let result = restores(context);
+    assert!(result.is_ok(), "{result:?}");
+}
+
+/// Change the theme through a shell, then open another shell on the same file.
+///
+/// # Errors
+///
+/// Returns a fixture, window, or settings-file failure.
+///
+/// # Panics
+///
+/// Panics when the second shell does not read the first shell's theme, font,
+/// line height, or title-bar choice.
+fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    use std::rc::Rc;
+
+    use gpui_kit::component::Theme;
+    use iznik_app::theme::{apply_default_theme, apply_named};
+    use iznik_app::vt::{VtOptions, VtThread};
+    use iznik_app::window::{ShellOptions, WindowShell};
+
+    context.update(|app| {
+        gpui_kit::init(app);
+        apply_default_theme(app).expect("bundled themes register");
+    });
+    let directory =
+        std::env::temp_dir().join(format!("iznik-settings-persist-{}", std::process::id()));
+    let _removed = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory)?;
+    let path = directory.join("settings");
+    let open = |context: &mut gpui_kit::TestAppContext, label: &str| {
+        let (bridge, retained) = engine::start(label)?;
+        let thread = Rc::new(VtThread::start(VtOptions::default())?);
+        let handle = context.add_window(|window, build| {
+            WindowShell::new(
+                bridge,
+                thread,
+                ShellOptions {
+                    update_interval: None,
+                    settings_path: Some(path.clone()),
+                    ..ShellOptions::default()
+                },
+                window,
+                build,
+            )
+        });
+        Ok::<_, Box<dyn std::error::Error>>((handle, retained))
+    };
+    let (first, _first_directory) = open(context, "settings-persist-first")?;
+    context.update(|app| {
+        assert!(
+            apply_named(SAVED_THEME_NAME, app),
+            "the saved theme is registered"
+        );
+    });
+    first.update(context, |shell, _, app| {
+        let mut theme = shell.settings().theme.clone();
+        theme.font_size = SAVED_FONT_SIZE;
+        theme.line_height = SAVED_LINE_HEIGHT;
+        theme.tabs_in_title_bar = true;
+        shell.set_theme(theme, app);
+    })?;
+    let saved = decode(&fs::read_to_string(&path)?).expect("the written settings parse");
+    assert_eq!(saved.theme.font_size, SAVED_FONT_SIZE);
+    assert_eq!(saved.theme.line_height, SAVED_LINE_HEIGHT);
+    assert!(saved.theme.tabs_in_title_bar);
+    assert_eq!(saved.theme_name, SAVED_THEME_NAME);
+    let (second, _second_directory) = open(context, "settings-persist-next")?;
+    second.update(context, |shell, _, _app| {
+        assert_eq!(shell.settings().theme.font_size, SAVED_FONT_SIZE);
+        assert_eq!(shell.settings().theme.line_height, SAVED_LINE_HEIGHT);
+        assert!(shell.settings().theme.tabs_in_title_bar);
+        assert_eq!(shell.settings().theme_name, SAVED_THEME_NAME);
+    })?;
+    context.update(|app| {
+        assert_eq!(
+            Theme::global(app).theme_name().as_ref(),
+            SAVED_THEME_NAME,
+            "the next shell restores the kit theme, not only the terminal colors"
+        );
+    });
+    let _removed = fs::remove_dir_all(&directory);
+    Ok(())
 }

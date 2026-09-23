@@ -154,6 +154,28 @@ pub fn terminal_theme(theme: &AppTheme) -> TerminalTheme {
     }
 }
 
+/// Make a registered theme the active one, dark or light as that theme is.
+///
+/// Returns whether `name` is registered. An unknown name leaves the active
+/// theme untouched.
+pub fn apply_named(name: &str, app: &mut App) -> bool {
+    let Some(config) = ThemeRegistry::global(app).themes().get(name).cloned() else {
+        return false;
+    };
+    if !app.has_global::<Theme>() {
+        return false;
+    }
+    let mode = config.mode;
+    if mode.is_dark() {
+        Theme::global_mut(app).dark_theme = config;
+    } else {
+        Theme::global_mut(app).light_theme = config;
+    }
+    Theme::change(mode, None, app);
+    app.refresh_windows();
+    true
+}
+
 /// Restyle the kit's own general and monospace UI text to match the
 /// terminal's configured font, so a font change is visible in the
 /// application's own chrome, not only in terminal content.

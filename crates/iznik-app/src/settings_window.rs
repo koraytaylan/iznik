@@ -246,17 +246,9 @@ fn active_theme_name(app: &App) -> SharedString {
 /// Switch the active kit theme and re-derive the terminal's colors from it,
 /// refreshing every open window so the change is visible immediately.
 fn select_theme(shell: &WeakEntity<WindowShell>, name: &SharedString, app: &mut App) {
-    let Some(config) = ThemeRegistry::global(app).themes().get(name).cloned() else {
+    if !crate::theme::apply_named(name, app) {
         return;
-    };
-    let mode = config.mode;
-    if mode.is_dark() {
-        Theme::global_mut(app).dark_theme = config;
-    } else {
-        Theme::global_mut(app).light_theme = config;
     }
-    Theme::change(mode, None, app);
-    app.refresh_windows();
     let colors = Theme::global(app).colors;
     edit_theme(shell, app, |theme| {
         theme.foreground = rgb_color(colors.foreground);

@@ -1,20 +1,69 @@
-//! Validated, hot-reloadable application settings.
+//! Validated application settings, stored as one file and applied while running.
+//!
+//! The file lives at `$XDG_CONFIG_HOME/iznik/settings`, or
+//! `~/.config/iznik/settings` when that variable is unset. A missing file is
+//! the built-in default. A malformed file is refused, with the previous
+//! values kept and the field named.
 
-use crate::actions::INVENTORY;
-use crate::theme::AppTheme;
+use gpui_kit::Context;
+use gpui_kit::component::Theme;
+use iznik_client::host::identity::HostId;
 use libghostty_vt::style::RgbColor;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::actions::INVENTORY;
+use crate::host_ui::{Notice, NoticeKind};
+use crate::theme::AppTheme;
+use crate::window::WindowShell;
+
+/// The directory name under `$HOME` when `XDG_CONFIG_HOME` is unset.
+const CONFIGURATION_DIRECTORY: &str = ".config";
+
+/// The directory under the configuration home that holds this file.
+const APPLICATION_DIRECTORY: &str = "iznik";
+
+/// The file name of the settings.
+const SETTINGS_FILE: &str = "settings";
+
+/// The environment variable that names the configuration home.
+const CONFIGURATION_HOME: &str = "XDG_CONFIG_HOME";
+
+/// The environment variable that names the home directory.
+const HOME: &str = "HOME";
+
+/// The extension of the temporary file settings are written to before they
+/// replace the file a launch reads.
+const TEMPORARY_EXTENSION: &str = "temporary";
 
 /// Settings held by the application after validation.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
     /// Shared terminal and GPUI theme.
     pub theme: AppTheme,
+    /// Name of the kit theme last chosen. Empty leaves the built-in default.
+    pub theme_name: String,
     /// Keybinding overrides keyed by action name.
     pub keybindings: BTreeMap<String, String>,
+}
+
+/// The file this machine keeps: `$XDG_CONFIG_HOME/iznik/settings`, or
+/// `~/.config/iznik/settings` when that variable is unset.
+///
+/// `None` when neither home is known, which is when there is nowhere to write.
+#[must_use]
+pub fn default_path() -> Option<PathBuf> {
+    let directory = std::env::var_os(CONFIGURATION_HOME)
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os(HOME)
+                .filter(|home| !home.is_empty())
+                .map(|home| PathBuf::from(home).join(CONFIGURATION_DIRECTORY))
+        })?;
+    Some(directory.join(APPLICATION_DIRECTORY).join(SETTINGS_FILE))
 }
 
 /// A settings update that preserves the previous values on refusal.
@@ -51,8 +100,11 @@ impl Watcher {
     ///
     /// Returns I/O or field-specific decoding errors while leaving `current` unchanged.
     pub fn reload(&mut self, current: &mut Settings) -> Result<bool, SettingsError> {
-        let metadata = std::fs::metadata(&self.path)
-            .map_err(|io_error| error("file", &io_error.to_string()))?;
+        let metadata = match std::fs::metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(io_error) => return Err(error("file", &io_error.to_string())),
+        };
         let modified = metadata
             .modified()
             .map_err(|io_error| error("file", &io_error.to_string()))?;
@@ -67,6 +119,60 @@ impl Watcher {
         self.stamp = Some(modified);
         Ok(true)
     }
+
+    /// Replace the settings file and remember its modification stamp.
+    ///
+    /// The stamp is the one just written, so the next poll does not apply the
+    /// same change a second time. The previous file stays in place when the
+    /// temporary file cannot be written.
+    ///
+    /// # Errors
+    ///
+    /// Returns a file error when the directory cannot be created or the file
+    /// cannot be replaced.
+    pub fn write(&mut self, settings: &Settings) -> Result<(), SettingsError> {
+        write(&self.path, settings)?;
+        let modified = std::fs::metadata(&self.path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|io_error| error("file", &io_error.to_string()))?;
+        self.stamp = Some(modified);
+        Ok(())
+    }
+}
+
+/// Replace the settings at `path`, creating its directory when it is missing.
+///
+/// # Errors
+///
+/// Returns the operating system's error when the directory cannot be created
+/// or the file cannot be replaced.
+pub fn write(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|io_error| error("file", &io_error.to_string()))?;
+    }
+    let temporary = path.with_extension(TEMPORARY_EXTENSION);
+    std::fs::write(&temporary, encode(settings))
+        .map_err(|io_error| error("file", &io_error.to_string()))?;
+    replace_file(&temporary, path)
+}
+
+/// Move `temporary` onto `path`. A rename that cannot replace an existing
+/// file removes that file and tries once more.
+///
+/// # Errors
+///
+/// Returns a file error when the settings cannot be replaced.
+fn replace_file(temporary: &Path, path: &Path) -> Result<(), SettingsError> {
+    if std::fs::rename(temporary, path).is_ok() {
+        return Ok(());
+    }
+    if path.is_file() {
+        std::fs::remove_file(path).map_err(|io_error| error("file", &io_error.to_string()))?;
+    }
+    std::fs::rename(temporary, path).map_err(|io_error| error("file", &io_error.to_string()))
 }
 
 /// Apply a validated update, retaining the old settings when validation fails.
@@ -109,7 +215,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -119,7 +225,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.theme.font_family,
         settings.theme.font_size,
         settings.theme.line_height,
-        settings.theme.tabs_in_title_bar
+        settings.theme.tabs_in_title_bar,
+        settings.theme_name
     );
     for (action, chord) in &settings.keybindings {
         let _written = writeln!(text, "keybinding.{action}={chord}");
@@ -142,6 +249,7 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             "foreground" => settings.theme.foreground = color(field, value)?,
             "background" => settings.theme.background = color(field, value)?,
             "font_family" => value.clone_into(&mut settings.theme.font_family),
+            "theme_name" => value.clone_into(&mut settings.theme_name),
             "tabs_in_title_bar" => {
                 settings.theme.tabs_in_title_bar = value
                     .parse()
@@ -202,10 +310,73 @@ fn error(field: &str, message: &str) -> SettingsError {
     }
 }
 
-impl crate::window::WindowShell {
+impl WindowShell {
     /// The settings the shell is running with.
     #[must_use]
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
+}
+
+/// Read a saved file into the shell, then apply it. A missing file leaves the
+/// built-in default in place and is not an error.
+pub(crate) fn load_into(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
+    let mut settings = shell.settings.clone();
+    let outcome = {
+        let Some(watcher) = shell.settings_watcher.as_mut() else {
+            apply_saved(shell, context);
+            return;
+        };
+        watcher.reload(&mut settings)
+    };
+    match outcome {
+        Ok(true) => shell.settings = settings,
+        Err(refusal) => refuse(shell, &refusal, context),
+        Ok(false) => {}
+    }
+    apply_saved(shell, context);
+}
+
+/// Apply the shell's saved theme name and typography to every surface.
+pub(crate) fn apply_saved(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
+    if !shell.settings.theme_name.is_empty()
+        && !crate::theme::apply_named(&shell.settings.theme_name, context)
+    {
+        refuse(
+            shell,
+            &error("theme_name", "theme is not registered"),
+            context,
+        );
+    }
+    let theme = shell.settings.theme.clone();
+    shell.apply_theme(&theme, context);
+}
+
+/// Write the shell's settings, recording the kit theme that is active now.
+pub(crate) fn persist(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
+    if context.has_global::<Theme>() {
+        shell.settings.theme_name = Theme::global(context).theme_name().to_string();
+    }
+    let settings = shell.settings.clone();
+    let outcome = shell
+        .settings_watcher
+        .as_mut()
+        .map(|watcher| watcher.write(&settings));
+    if let Some(Err(refusal)) = outcome {
+        refuse(shell, &refusal, context);
+    }
+}
+
+/// Show a settings refusal without changing the values already in use.
+pub(crate) fn refuse(
+    shell: &mut WindowShell,
+    refusal: &SettingsError,
+    context: &mut Context<'_, WindowShell>,
+) {
+    shell.last_failure = Some(Notice {
+        host: HostId("settings".to_owned()),
+        kind: NoticeKind::Failure,
+        detail: format!("{}: {}", refusal.field, refusal.message),
+    });
+    context.notify();
 }

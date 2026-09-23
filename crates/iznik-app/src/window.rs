@@ -56,7 +56,7 @@ pub struct ShellOptions {
     pub metrics: GridMetrics,
     /// Native terminal defaults supplied when a screen creates its emulator.
     pub theme: TerminalTheme,
-    /// Optional settings file polled during updates.
+    /// Optional settings file polled during updates and rewritten when they change.
     pub settings_path: Option<PathBuf>,
     /// Where the person's ssh configuration is read and written.
     ///
@@ -148,7 +148,7 @@ pub struct WindowShell {
     /// Validated settings retained by this shell.
     pub(crate) settings: Settings,
     /// Optional watcher for the configured settings file.
-    settings_watcher: Option<Watcher>,
+    pub(crate) settings_watcher: Option<Watcher>,
     /// Periodic pump is cancelled when the shell drops.
     _update_task: Option<Task<()>>,
     /// Latest local routing failure, dismissible without discarding host state.
@@ -228,8 +228,7 @@ impl WindowShell {
             upgrade_notices: BTreeSet::new(),
             banner_count: 0,
         };
-        let initial_theme = shell.settings.theme.clone();
-        shell.apply_theme(&initial_theme, context);
+        crate::settings::load_into(&mut shell, context);
         shell
     }
     /// The shared host interface used by tabs, sessions and application actions.
@@ -397,6 +396,7 @@ impl WindowShell {
     pub fn set_theme(&mut self, theme: AppTheme, context: &mut Context<'_, Self>) {
         self.apply_theme(&theme, context);
         self.settings.theme = theme;
+        crate::settings::persist(self, context);
     }
     /// Apply application theme defaults to the shell and every retained emulator.
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
@@ -441,30 +441,23 @@ impl WindowShell {
     ) -> Result<bool, crate::settings::SettingsError> {
         let changed = watcher.reload(settings)?;
         if changed {
-            let theme = settings.theme.clone();
-            self.apply_theme(&theme, context);
+            self.settings.clone_from(settings);
+            crate::settings::apply_saved(self, context);
         }
         Ok(changed)
     }
     /// Poll the configured settings file during the ordinary update cycle.
     fn poll_settings(&mut self, context: &mut Context<'_, Self>) {
-        let Some(watcher) = self.settings_watcher.as_mut() else {
-            return;
+        let outcome = {
+            let Some(watcher) = self.settings_watcher.as_mut() else {
+                return;
+            };
+            watcher.reload(&mut self.settings)
         };
-        match watcher.reload(&mut self.settings) {
-            Ok(true) => {
-                let theme = self.settings.theme.clone();
-                self.apply_theme(&theme, context);
-            }
+        match outcome {
+            Ok(true) => crate::settings::apply_saved(self, context),
             Ok(false) => {}
-            Err(refusal) => {
-                self.last_failure = Some(Notice {
-                    host: HostId("settings".to_owned()),
-                    kind: NoticeKind::Failure,
-                    detail: format!("{}: {}", refusal.field, refusal.message),
-                });
-                context.notify();
-            }
+            Err(refusal) => crate::settings::refuse(self, &refusal, context),
         }
     }
     /// A retained surface, also available while its host is reconnecting.
