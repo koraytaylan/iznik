@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
+use iznik_server::pane::Pane;
 use iznik_server::pty::spawn::Program;
+use iznik_server::pty::spawn::{ExitStatus, SpawnOptions};
 use iznik_server::session::registry::{Registry, RegistryDefaults};
 use iznik_server::terminal::mirror::{MirrorError, MirrorThread};
 
@@ -138,4 +140,38 @@ async fn pane_lifecycle_closing_everything_hangs_up_first() {
         "the hung-up shell finished its trap before it was killed"
     );
     let _removed = std::fs::remove_dir_all(&directory);
+}
+
+/// Closing a pane whose shell has already ended and been reaped signals
+/// nothing: its process id belongs to nobody now, and the close succeeds
+/// rather than failing on a group that is gone.
+///
+/// # Panics
+///
+/// When the close tries to hang up the reaped child and fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_lifecycle_closing_an_ended_pane_signals_nothing() {
+    let thread = MirrorThread::start().expect("the mirror thread");
+    let options = SpawnOptions {
+        program: Program::Command {
+            path: "sh".into(),
+            arguments: vec!["-c".to_owned(), "exit 3".to_owned()],
+        },
+        columns: COLUMNS,
+        rows: ROWS,
+        working_directory: None,
+        terminfo_directory: None,
+    };
+    let pane = Pane::spawn(&options, DEFAULT_HISTORY_BUDGET_BYTES, &thread)
+        .await
+        .expect("the pane spawns");
+    let status = tokio::time::timeout(DEADLINE, pane.exit_status())
+        .await
+        .expect("the exit is reported in time");
+    assert_eq!(
+        status,
+        Some(ExitStatus::Exited(3)),
+        "the shell ended itself"
+    );
+    pane.close().expect("closing an ended pane is not an error");
 }

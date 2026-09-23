@@ -292,9 +292,16 @@ impl PtyProcess {
     /// until forced cleanup if that job ignores the signal. At a shell prompt,
     /// the shell itself is the foreground group and receives the hangup.
     ///
+    /// A child that has already been reaped is not signalled: its process id
+    /// is free for the system to hand to somebody else, and there is nothing
+    /// left of it to hang up.
+    ///
     /// # Errors
     /// Returns `Signal` when the foreground group cannot be signaled.
     pub(crate) fn hangup_terminal(&self) -> Result<(), PtyError> {
+        if self.reaped.load(Ordering::Acquire) {
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             let foreground = self.foreground_group().unwrap_or_else(|| self.pid());
