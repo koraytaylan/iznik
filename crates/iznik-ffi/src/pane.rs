@@ -56,11 +56,11 @@ pub struct PaneCallbacks {
 
 /// Begins delivery of a pane's output to these handlers.
 ///
-/// **Obligation:** whatever `context` points at outlives the attachment — it
-/// is detached, the client is freed, or another attachment takes its place,
-/// before it goes away. Any of the three is enough on its own: each waits for
-/// a handler that is running before it returns, so the moment one of them
-/// answers, nothing is reading it any more.
+/// **Obligation:** whatever `context` points at outlives every callback made
+/// with it: until the client is freed, or until the pane has been detached or
+/// attached again and `iznik_wait_for_callbacks` has returned. Detaching and
+/// attaching again return at once — no callback begins with this context
+/// afterwards — and a handler already running may still be reading it.
 ///
 /// # Safety
 ///
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn iznik_pane_attach(
     error: *mut Error,
 ) -> c_int {
     // SAFETY: the caller's obligations, above.
-    let outcome = unsafe {
+    unsafe {
         with_pane(client, host, error, |held, named| {
             let before = held.attach(named, PaneId(pane), callbacks, context);
             let taken = held
@@ -90,18 +90,14 @@ pub unsafe extern "C" fn iznik_pane_attach(
             }
             taken
         })
-    };
-    // Attaching over an attachment takes the one before it away, so it owes
-    // what letting go owes: whoever was there is not called again with what
-    // they gave, and by the time this answers nothing is reading it.
-    // SAFETY: the caller's obligation: a live client, as above.
-    if let Some(held) = unsafe { borrowed(client) } {
-        held.quiesce();
     }
-    outcome
 }
 
 /// Ends it.
+///
+/// Returns at once, waiting for no handler: no callback for this attachment
+/// begins afterwards, and one already running may still be finishing, which
+/// `iznik_wait_for_callbacks` waits for.
 ///
 /// # Safety
 ///
@@ -114,22 +110,13 @@ pub unsafe extern "C" fn iznik_pane_detach(
     error: *mut Error,
 ) -> c_int {
     // SAFETY: the caller's obligations, as `iznik_pane_attach`'s.
-    let outcome = unsafe {
+    unsafe {
         with_pane(client, host, error, |held, named| {
             held.forget(named, PaneId(pane));
             held.manager()
                 .map_or(Ok(()), |manager| manager.unsubscribe(named, PaneId(pane)))
         })
-    };
-    // The pane is out of reach now, so no call will begin for it; one that had
-    // already begun is waited for here, with everything this took let go —
-    // which is what makes the obligation above keepable: when this returns,
-    // nothing is reading the context any more.
-    // SAFETY: the caller's obligation: a live client, as above.
-    if let Some(held) = unsafe { borrowed(client) } {
-        held.quiesce();
     }
-    outcome
 }
 
 /// Returns credit for what a surface has consumed.

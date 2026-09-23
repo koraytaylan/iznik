@@ -41,12 +41,19 @@ command, or replace the event callback.
 **The one call a handler may not make is `iznik_client_free`.** That waits for
 the callback thread, and a handler that called it would be waiting for itself.
 
-Three calls take away something a callback is reading, and each waits for a
-handler that is already running before it returns: `iznik_pane_detach`,
+Three calls take away something a callback is reading: `iznik_pane_detach`,
 `iznik_pane_attach` over an existing attachment, and `iznik_set_event_callback`.
-When one of them answers, nothing is reading what you gave it any more, and
-you may free it. A handler that makes one of those calls about its own pane
-waits for nothing — it *is* the call that would be waited for.
+**None of them waits for a handler.** Each returns at once, and from the moment
+it does no callback *begins* with what was taken away — but one that had
+already begun may still be running. Waiting for it there would deadlock the
+first application whose handler takes a lock of its own while another of its
+threads, holding that lock, lets a pane go.
+
+So freeing a context is two steps: take it away, then call
+`iznik_wait_for_callbacks`, which returns once every callback that had begun
+has returned. Do not hold a lock your handlers take while you call it. From
+inside a callback it returns at once — the handler running is you — so a
+handler may take its own context away and free it before it returns.
 
 ## Ownership of memory
 
@@ -82,7 +89,11 @@ around them is explanation.
 
 `iznik_set_event_callback`:
 
-> **Obligation:** whatever `context` points at outlives the client, or the callback is set to null before it goes away.
+> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the callback has been replaced or set to null and `iznik_wait_for_callbacks` has returned.
+
+`iznik_wait_for_callbacks`:
+
+> **Obligation:** not called while holding a lock that a handler takes: it waits for the handler that is running, which would be waiting for that lock.
 
 `iznik_host_add`, and every other call that names a host:
 
@@ -94,7 +105,7 @@ around them is explanation.
 
 `iznik_pane_attach`:
 
-> **Obligation:** whatever `context` points at outlives the attachment — it is detached, the client is freed, or another attachment takes its place, before it goes away. Any of the three is enough on its own: each waits for a handler that is running before it returns, so the moment one of them answers, nothing is reading it any more.
+> **Obligation:** whatever `context` points at outlives every callback made with it: until the client is freed, or until the pane has been detached or attached again and `iznik_wait_for_callbacks` has returned. Detaching and attaching again return at once — no callback begins with this context afterwards — and a handler already running may still be reading it.
 
 `iznik_pane_input`:
 
@@ -362,6 +373,7 @@ exactly as it does today.
 ## The whole surface
 
 Functions: `iznik_client_new`, `iznik_client_free`, `iznik_set_event_callback`,
+`iznik_wait_for_callbacks`,
 `iznik_host_add`, `iznik_host_remove`, `iznik_host_reconnect`,
 `iznik_host_upgrade`, `iznik_host_uninstall`, `iznik_command`,
 `iznik_pane_attach`, `iznik_pane_detach`, `iznik_pane_credit`,
@@ -434,8 +446,16 @@ void attach(struct surface *held, iznik_client *client, const char *alias,
         report(error.message, error.layer);
         return;
     }
-    /* From here: a screen arrives first, then output. When you are done,
-     * iznik_pane_detach answers only once nothing is reading `held` any
-     * more, and it may then be freed. */
+    /* From here: a screen arrives first, then output. */
+}
+
+void detach(struct surface *held, iznik_client *client, const char *alias,
+            uint64_t pane) {
+    /* No callback begins with `held` once this returns... */
+    iznik_pane_detach(client, alias, pane, NULL);
+    /* ...and once this returns, none that had begun is still running. Hold
+     * no lock your handlers take across it. */
+    iznik_wait_for_callbacks(client);
+    surface_free(held);
 }
 ```

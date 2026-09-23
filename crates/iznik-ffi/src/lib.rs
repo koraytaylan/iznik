@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{JoinHandle, ThreadId};
 
 use iznik_client::bootstrap::launch::{Stage, UpgradeError};
@@ -73,15 +73,12 @@ pub struct Client {
     listening: Arc<Mutex<Listener>>,
     /// The panes an application has attached to, and what to call for each.
     attached: Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
-    /// Held by the thread below for as long as a callback is running.
-    ///
-    /// Not taken in order to make a call — taken to say that one is being
-    /// made, so that letting a pane go, or taking the event callback away,
-    /// can wait for the call that may already be running instead of leaving
-    /// an application to guess whether its context is still being read.
-    delivering: Arc<Mutex<()>>,
-    /// Which thread that is, so that a handler calling back in is never made
-    /// to wait for itself.
+    /// How many callbacks have begun and how many have returned, so that
+    /// [`iznik_wait_for_callbacks`] can wait for the ones already running
+    /// without anything being held while they run.
+    deliveries: Arc<Deliveries>,
+    /// Which thread the callbacks arrive on, so that a handler calling back
+    /// in is never made to wait for itself.
     delivers: ThreadId,
     /// The one thread every callback arrives on.
     pump: Option<JoinHandle<()>>,
@@ -96,24 +93,69 @@ struct Attached {
     context: Carried,
 }
 
+/// How many callbacks have begun, and how many of those have returned.
+///
+/// Counted rather than locked: a lock held while a callback runs is a lock an
+/// application's own thread waits on while the handler waits on the
+/// application's lock, and neither ever moves again. A callback is counted
+/// as begun in the same breath as what it will be given is looked up, under
+/// the lock that guards what it looks up — so anything taken away after that
+/// lock is let go is never handed to a callback that begins afterwards, and
+/// one that had already begun is counted in what a wait waits for.
+#[derive(Debug, Default)]
+struct Deliveries {
+    /// The two counts.
+    counts: Mutex<Counts>,
+    /// Signalled whenever a callback returns.
+    returned: Condvar,
+}
+
+/// The counts [`Deliveries`] keeps.
+#[derive(Debug, Default)]
+struct Counts {
+    /// Callbacks that have begun.
+    begun: u64,
+    /// Callbacks that have returned.
+    ended: u64,
+}
+
+impl Deliveries {
+    /// Says one callback is about to be made.
+    fn begin(&self) {
+        if let Ok(mut held) = self.counts.lock() {
+            held.begun = held.begun.saturating_add(1);
+        }
+    }
+
+    /// Says it has returned.
+    fn end(&self) {
+        if let Ok(mut held) = self.counts.lock() {
+            held.ended = held.ended.saturating_add(1);
+        }
+        self.returned.notify_all();
+    }
+
+    /// Waits until every callback that had begun when this was called has
+    /// returned.
+    fn wait(&self) {
+        let Ok(held) = self.counts.lock() else {
+            return;
+        };
+        let target = held.begun;
+        let _done = self
+            .returned
+            .wait_while(held, |counts| counts.ended < target);
+    }
+}
+
 impl Client {
-    /// Waits for a callback that may already be running to finish.
-    ///
-    /// Taken after whatever is being taken away is out of reach and never
-    /// before: a call that has not begun will not find it, and one that has
-    /// is what this waits for. So an application that has detached a pane, or
-    /// replaced its event callback, may free what it passed as soon as the
-    /// call it made returns.
-    ///
-    /// Nothing else may be held while this waits — the thread it waits for
-    /// makes calls that come back in and take those locks. A handler that
-    /// calls in from inside a callback waits for nothing at all: it *is* the
-    /// call, and what it passed is alive for as long as it is running.
+    /// Waits for every callback that had begun to return — unless this is
+    /// the thread they run on, where the one running is the caller itself.
     fn quiesce(&self) {
         if std::thread::current().id() == self.delivers {
             return;
         }
-        drop(self.delivering.lock());
+        self.deliveries.wait();
     }
 
     /// A share of the engine, while there is one.
@@ -334,15 +376,15 @@ fn started(manager: HostManager) -> Client {
     let attached = Arc::new(Mutex::new(BTreeMap::new()));
     let telling = Arc::clone(&listening);
     let watching = Arc::clone(&attached);
-    let delivering = Arc::new(Mutex::new(()));
-    let busy = Arc::clone(&delivering);
-    let pump = std::thread::spawn(move || deliver(&telling, &watching, &busy, &events));
+    let deliveries = Arc::new(Deliveries::default());
+    let counting = Arc::clone(&deliveries);
+    let pump = std::thread::spawn(move || deliver(&telling, &watching, &counting, &events));
     let delivers = pump.thread().id();
     Client {
         manager: Mutex::new(Some(Arc::new(manager))),
         listening,
         attached,
-        delivering,
+        deliveries,
         delivers,
         pump: Some(pump),
     }
@@ -350,46 +392,51 @@ fn started(manager: HostManager) -> Client {
 
 /// Reads every event and hands it to the application, on this one thread.
 ///
-/// The lock over the listener is taken to read it and let go before the call,
-/// so an application that calls back into iznik from its handler waits for
-/// nothing this thread holds.
+/// Nothing of this crate's is held while a callback runs: what to call is read
+/// under its lock, the callback is counted as begun under that same lock, and
+/// the lock is let go before the call. So a handler may call straight back in,
+/// and an application thread that takes a context away never waits for a
+/// handler — which may itself be waiting for that thread.
 fn deliver(
     listening: &Arc<Mutex<Listener>>,
     attached: &Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
-    delivering: &Arc<Mutex<()>>,
+    deliveries: &Deliveries,
     events: &Receiver<ManagerEvent>,
 ) {
     while let Ok(event) = events.recv() {
-        // Taken for the whole of the call and let go between calls: what
-        // waits on it is a caller taking away the context this one is about
-        // to read.
-        let Ok(_delivering) = delivering.lock() else {
-            return;
-        };
         // A pane somebody is watching is handed its own bytes, and not handed
         // them twice: an application that attached to a pane reads it there.
-        if handed(attached, &event) {
+        if handed(attached, deliveries, &event) {
             continue;
         }
-        let Ok(held) = listening.lock() else {
-            return;
-        };
-        let (callback, context) = (held.callback, held.context);
-        drop(held);
-        let Some(callback) = callback else {
+        let Some((callback, context)) = listened(listening, deliveries) else {
             continue;
         };
         carry(callback, context, &event);
+        deliveries.end();
     }
 }
 
+/// The event callback and its context, counted as begun, when there is one.
+fn listened(
+    listening: &Arc<Mutex<Listener>>,
+    deliveries: &Deliveries,
+) -> Option<(extern "C" fn(*const Event, *mut c_void), Carried)> {
+    let held = listening.lock().ok()?;
+    let callback = held.callback?;
+    deliveries.begin();
+    Some((callback, held.context))
+}
+
 /// Hands one event to the pane it is about, when somebody is watching that
-/// pane, and says whether it did.
+/// pane with a handler for it, and says whether it did.
 ///
-/// The lock is let go before the call, for the reason every other callback is
-/// made without one: the handler may call straight back in.
+/// Looked up, and counted as begun, under the lock a detachment takes: a pane
+/// let go before this looked is never handed anything again, and one let go
+/// after is waited for by whoever waits for callbacks.
 fn handed(
     attached: &Arc<Mutex<BTreeMap<(HostId, PaneId), Attached>>>,
+    deliveries: &Deliveries,
     event: &ManagerEvent,
 ) -> bool {
     let Some((host, pane)) = about(event) else {
@@ -401,8 +448,26 @@ fn handed(
     let Some(watching) = held.get(&(host, pane)).copied() else {
         return false;
     };
+    if !handles(&watching, event) {
+        return false;
+    }
+    deliveries.begin();
     drop(held);
-    to_the_pane(&watching, event)
+    let _taken = to_the_pane(&watching, event);
+    deliveries.end();
+    true
+}
+
+/// Whether a pane's handlers include one for this event.
+fn handles(watching: &Attached, event: &ManagerEvent) -> bool {
+    let callbacks = &watching.callbacks;
+    match event {
+        ManagerEvent::Bytes { .. } => callbacks.output.is_some(),
+        ManagerEvent::Screen { .. } => callbacks.screen.is_some(),
+        ManagerEvent::Detached { .. } => callbacks.detached.is_some(),
+        ManagerEvent::Notify(Notification::Mark { .. }) => callbacks.mark.is_some(),
+        _elsewhere => false,
+    }
 }
 
 /// Which host and pane an event is about, when it is about one.
@@ -598,8 +663,13 @@ pub unsafe extern "C" fn iznik_client_free(client: *mut Client) {
 /// Every call arrives on one thread, and iznik holds no lock of its own while
 /// one runs — a handler may call straight back in.
 ///
-/// **Obligation:** whatever `context` points at outlives the client, or the
-/// callback is set to null before it goes away.
+/// Replacing it, or setting it to null, returns at once: no callback begins
+/// with the old one afterwards, and one already running may still be
+/// finishing — `iznik_wait_for_callbacks` waits for it.
+///
+/// **Obligation:** whatever `context` points at outlives every callback made
+/// with it: until the client is freed, or until the callback has been
+/// replaced or set to null and `iznik_wait_for_callbacks` has returned.
 ///
 /// # Safety
 ///
@@ -621,8 +691,32 @@ pub unsafe extern "C" fn iznik_set_event_callback(
         listening.callback = callback;
         listening.context = Carried(context);
     }
-    // The listener is let go first: the thread this waits for takes it to
-    // read what to call.
+}
+
+/// Waits until every callback that had begun when this was called has
+/// returned.
+///
+/// Letting a pane go, attaching over it and replacing the event callback all
+/// return at once: none of them waits for a handler, because a handler may be
+/// waiting for the very thread that called them. What each promises is that
+/// no callback *begins* with what was taken away once it has returned. This is
+/// how an application learns that the ones already running have finished, and
+/// so that what it gave them may be freed. Called from the callback thread, it
+/// returns at once: the handler running there is the caller.
+///
+/// **Obligation:** not called while holding a lock that a handler takes: it
+/// waits for the handler that is running, which would be waiting for that
+/// lock.
+///
+/// # Safety
+///
+/// `client` is a live client from [`iznik_client_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iznik_wait_for_callbacks(client: *mut Client) {
+    // SAFETY: the caller's obligation, above.
+    let Some(held) = (unsafe { borrowed(client) }) else {
+        return;
+    };
     held.quiesce();
 }
 

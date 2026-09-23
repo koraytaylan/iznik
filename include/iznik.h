@@ -242,9 +242,10 @@ typedef struct {
  * back into iznik: no call holds a lock of iznik's while it works, and none
  * is held while a callback runs.
  *
- * Replacing it, or taking it away with a null, waits for a call that is
- * already running before it returns — so the context the application gave
- * with it may be freed as soon as that answers.
+ * Replacing it, or taking it away with a null, returns at once and waits for
+ * nothing: a handler may be waiting for the very thread that asked. A call
+ * already running may still be finishing; `iznik_wait_for_callbacks` is what
+ * says it has, and so when the context given with it may be freed.
  */
 typedef void (*iznik_event_callback)(const iznik_event *event, void *context);
 
@@ -328,14 +329,41 @@ void iznik_client_free(iznik_client *client);
  * Every call arrives on one thread, and iznik holds no lock of its own while
  * one runs — a handler may call straight back in.
  *
- * **Obligation:** whatever `context` points at outlives the client, or the
- * callback is set to null before it goes away.
+ * Replacing it, or setting it to null, returns at once: no callback begins
+ * with the old one afterwards, and one already running may still be
+ * finishing — `iznik_wait_for_callbacks` waits for it.
+ *
+ * **Obligation:** whatever `context` points at outlives every callback made
+ * with it: until the client is freed, or until the callback has been
+ * replaced or set to null and `iznik_wait_for_callbacks` has returned.
  *
  * Safety:
  *
  * `client` is a live client from `iznik_client_new`.
  */
 void iznik_set_event_callback(iznik_client *client, iznik_event_callback callback, void *context);
+
+/**
+ * Waits until every callback that had begun when this was called has
+ * returned.
+ *
+ * Letting a pane go, attaching over it and replacing the event callback all
+ * return at once: none of them waits for a handler, because a handler may be
+ * waiting for the very thread that called them. What each promises is that
+ * no callback *begins* with what was taken away once it has returned. This is
+ * how an application learns that the ones already running have finished, and
+ * so that what it gave them may be freed. Called from the callback thread, it
+ * returns at once: the handler running there is the caller.
+ *
+ * **Obligation:** not called while holding a lock that a handler takes: it
+ * waits for the handler that is running, which would be waiting for that
+ * lock.
+ *
+ * Safety:
+ *
+ * `client` is a live client from `iznik_client_new`.
+ */
+void iznik_wait_for_callbacks(iznik_client *client);
 
 /**
  * Begins holding a host, and connecting to it.
@@ -423,11 +451,11 @@ int iznik_command(iznik_client *client,
 /**
  * Begins delivery of a pane's output to these handlers.
  *
- * **Obligation:** whatever `context` points at outlives the attachment — it
- * is detached, the client is freed, or another attachment takes its place,
- * before it goes away. Any of the three is enough on its own: each waits for
- * a handler that is running before it returns, so the moment one of them
- * answers, nothing is reading it any more.
+ * **Obligation:** whatever `context` points at outlives every callback made
+ * with it: until the client is freed, or until the pane has been detached or
+ * attached again and `iznik_wait_for_callbacks` has returned. Detaching and
+ * attaching again return at once — no callback begins with this context
+ * afterwards — and a handler already running may still be reading it.
  *
  * Safety:
  *
@@ -443,6 +471,10 @@ int iznik_pane_attach(iznik_client *client,
 
 /**
  * Ends it.
+ *
+ * Returns at once, waiting for no handler: no callback for this attachment
+ * begins afterwards, and one already running may still be finishing, which
+ * `iznik_wait_for_callbacks` waits for.
  *
  * Safety:
  *

@@ -5,50 +5,34 @@
 //! stops consuming stops its own pane and nothing else. Every case here calls
 //! the `extern "C"` functions against a daemon on this machine.
 
+#[path = "fixtures/pane_daemon.rs"]
+mod daemon;
 #[path = "fixtures/pane_notices.rs"]
 mod notices;
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::time::Duration;
 use std::ffi::CString;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use iznik::error::{Error, Layer, OK};
+use iznik::error::OK;
 use iznik::pane::{
-    PaneCallbacks, iznik_pane_attach, iznik_pane_credit, iznik_pane_detach, iznik_pane_input,
-    iznik_pane_resize,
+    PaneCallbacks, iznik_pane_attach, iznik_pane_credit, iznik_pane_detach, iznik_pane_resize,
 };
-use iznik::{
-    Client, Configuration, iznik_client_free, iznik_client_new, iznik_command, iznik_host_add,
-    iznik_set_event_callback,
-};
-use iznik_protocol::command::{SessionCommand, encode_session_command};
-use iznik_testkit::stack::{Stack, StackOptions};
+use iznik::{Client, iznik_client_free, iznik_set_event_callback};
 use iznik_testkit::vt::Vt;
-use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
-/// How long a case waits for something that should happen at once.
-const PROMPT: Duration = Duration::from_secs(10);
+use daemon::{COLUMNS, PANE, PROMPT, ROWS, blank, connected, runtime, said, scratch, typed};
 
 /// How long it waits to be sure something is *not* going to happen.
 const BRIEF: Duration = Duration::from_millis(400);
-
-/// The width a pane is made at.
-const COLUMNS: u16 = 80;
-
-/// Its height.
-const ROWS: u16 = 24;
 
 /// The width a resize asks for.
 const WIDER: u16 = 100;
 
 /// The height it asks for.
 const TALLER: u16 = 30;
-
-/// The pane every case attaches to.
-const PANE: u64 = 1;
 
 /// How many bytes the host sends before it must be given more.
 const WINDOW: usize = 256 * 1024;
@@ -100,105 +84,18 @@ type Failed = Box<dyn std::error::Error>;
 
 /// A client, carried to another thread.
 ///
-/// Every function at this boundary is safe to call from any thread — they are
-/// serialized among themselves — and that is what the case about a hundred
-/// callers is for.
+/// Every function at this boundary is safe to call from any thread, and that
+/// is what the case about a hundred callers is for.
 #[derive(Clone, Copy)]
 struct Reachable(*mut Client);
 
 // SAFETY: the boundary's own promise, stated in its header and its module:
-// every function may be called from any thread, and the calls are serialized
-// inside. Nothing in this case dereferences the pointer itself.
+// every function may be called from any thread. Nothing in this case
+// dereferences the pointer itself.
 unsafe impl Send for Reachable {}
 
 // SAFETY: as above.
 unsafe impl Sync for Reachable {}
-
-/// How long the handler in the case about waiting holds on for.
-const DAWDLE: Duration = Duration::from_millis(400);
-
-/// How much of that letting go must have waited for it to have waited at all.
-///
-/// Well under the whole, since the case notices the handler some way into it;
-/// far above nothing, which is what a call that did not wait would take.
-const WAITED: Duration = Duration::from_millis(100);
-
-/// What the case about waiting passes to its handler: how many are inside it.
-///
-/// A count rather than a flag that one has begun: what has to be caught is a
-/// handler running *now*, and one that has been and gone would look the same.
-struct Dawdling(Mutex<usize>);
-
-/// A handler that takes its time.
-extern "C" fn dawdles(context: *mut c_void, _bytes: *const u8, _length: usize) {
-    if context.is_null() {
-        return;
-    }
-    // SAFETY: this case's own box, alive until the case ends.
-    let dawdling = unsafe { &*context.cast::<Dawdling>() };
-    if let Ok(mut inside) = dawdling.0.lock() {
-        *inside = inside.saturating_add(1);
-    }
-    std::thread::sleep(DAWDLE);
-    if let Ok(mut inside) = dawdling.0.lock() {
-        *inside = inside.saturating_sub(1);
-    }
-}
-
-/// What the case that lets a pane go from inside a handler passes to it.
-struct Leaving {
-    /// The client to call back into.
-    client: Reachable,
-    /// The host, kept null-terminated for that call.
-    alias: CString,
-    /// What the handler has been told, and what came of its own call.
-    told: Mutex<Left>,
-}
-
-/// What that handler saw.
-#[derive(Debug, Default)]
-struct Left {
-    /// How many times output arrived.
-    calls: usize,
-    /// What letting the pane go answered, once it has.
-    answered: Option<c_int>,
-}
-
-/// A handler that lets its own pane go, from inside the call.
-///
-/// The one call that must not wait for the call it is inside: waiting for a
-/// handler is what lets an application free what it gave, and a handler doing
-/// it to itself would wait for ever.
-extern "C" fn leaves(context: *mut c_void, _bytes: *const u8, _length: usize) {
-    if context.is_null() {
-        return;
-    }
-    // SAFETY: the context is this case's own box, alive until the case ends.
-    let leaving = unsafe { &*context.cast::<Leaving>() };
-    let first = {
-        let Ok(mut told) = leaving.told.lock() else {
-            return;
-        };
-        told.calls = told.calls.saturating_add(1);
-        told.calls == 1
-    };
-    if !first {
-        return;
-    }
-    // SAFETY: the client is live for the whole of the case and the alias is
-    // null-terminated; no error is asked for.
-    let answered = unsafe {
-        iznik_pane_detach(
-            leaving.client.0,
-            leaving.alias.as_ptr(),
-            PANE,
-            core::ptr::null_mut(),
-        )
-    };
-    if let Ok(mut told) = leaving.told.lock() {
-        told.answered = Some(answered);
-    }
-}
 
 /// What a pane's handlers have been given.
 #[derive(Debug, Default)]
@@ -291,131 +188,6 @@ fn handlers() -> PaneCallbacks {
     }
 }
 
-/// A temporary directory of this case's own, removed when the guard drops.
-#[derive(Debug)]
-struct Scratch {
-    /// Where it is.
-    path: PathBuf,
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _gone = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-/// A scratch directory named for `case`.
-///
-/// # Errors
-///
-/// When it cannot be made.
-fn scratch(case: &str) -> Result<Scratch, Failed> {
-    let base = std::env::var_os("TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
-    let path = base.join(format!("iznik-pipe-{case}-{}", std::process::id()));
-    let _gone = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path)?;
-    Ok(Scratch { path })
-}
-
-/// A runtime for the daemon a case stands up.
-///
-/// # Errors
-///
-/// When it cannot be built.
-fn runtime() -> Result<Runtime, Failed> {
-    Ok(RuntimeBuilder::new_multi_thread().enable_all().build()?)
-}
-
-/// An error struct to be filled in.
-fn blank() -> Error {
-    Error {
-        code: OK,
-        layer: Layer::Client,
-        message: core::ptr::null(),
-    }
-}
-
-/// What an error says.
-fn said(error: &Error) -> String {
-    if error.message.is_null() {
-        return String::new();
-    }
-    // SAFETY: iznik's own promise: valid until the next call on this thread.
-    unsafe { core::ffi::CStr::from_ptr(error.message) }
-        .to_string_lossy()
-        .into_owned()
-}
-
-/// A client, a daemon, and a session with one pane on it.
-///
-/// # Errors
-///
-/// When any of the three will not come up.
-fn connected(held: &Scratch, runtime: &Runtime) -> Result<(Stack, *mut Client, CString), Failed> {
-    let stack = runtime.block_on(Stack::start(StackOptions::default()))?;
-    let directory = CString::new(held.path.join("runtime").display().to_string())?;
-    let configuration = Configuration {
-        runtime_directory: directory.as_ptr(),
-        artifacts_directory: core::ptr::null(),
-        askpass_program: core::ptr::null(),
-        log_path: core::ptr::null(),
-    };
-    let mut error = blank();
-    // SAFETY: the configuration is alive for this call and its string is
-    // null-terminated.
-    let client = unsafe { iznik_client_new(&raw const configuration, &raw mut error) };
-    if client.is_null() {
-        return Err(format!("no client: {}", said(&error)).into());
-    }
-    let alias = CString::new(format!("unix:{}", stack.socket().display()))?;
-    // SAFETY: the client is live and the alias null-terminated.
-    let added = unsafe { iznik_host_add(client, alias.as_ptr(), &raw mut error) };
-    if added != OK {
-        return Err(format!("the host was not taken: {}", said(&error)).into());
-    }
-    make_a_session(client, &alias)?;
-    Ok((stack, client, alias))
-}
-
-/// Makes a session, and waits until the host has one.
-///
-/// # Errors
-///
-/// When the command will not go, or the session never appears.
-fn make_a_session(client: *mut Client, alias: &CString) -> Result<(), Failed> {
-    let asked = encode_session_command(&SessionCommand::CreateSession {
-        name: "work".to_owned(),
-        columns: COLUMNS,
-        rows: ROWS,
-        working_directory: None,
-    })?;
-    let mut error = blank();
-    let mut number: u64 = 0;
-    let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
-    while Instant::now() < expires {
-        // SAFETY: every pointer is alive for the call and the bytes are this
-        // case's own.
-        let sent = unsafe {
-            iznik_command(
-                client,
-                alias.as_ptr(),
-                asked.as_ptr(),
-                asked.len(),
-                &raw mut number,
-                &raw mut error,
-            )
-        };
-        if sent == OK {
-            // The pane exists once the host has answered; the attach below
-            // waits for what the host says about it.
-            std::thread::sleep(Duration::from_millis(200));
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Err(format!("no session: {}", said(&error)).into())
-}
-
 /// Waits until what a pane's handlers were given satisfies `wanted`.
 ///
 /// # Errors
@@ -448,31 +220,6 @@ fn await_watched(
         },
     );
     Err(format!("{what} never happened; the pane said {said}").into())
-}
-
-/// Types one line into a pane.
-///
-/// # Errors
-///
-/// When the boundary refuses it.
-fn typed(client: *mut Client, alias: &CString, pane: u64, text: &str) -> Result<(), Failed> {
-    let bytes = text.as_bytes();
-    let mut error = blank();
-    // SAFETY: every pointer is alive for the call.
-    let sent = unsafe {
-        iznik_pane_input(
-            client,
-            alias.as_ptr(),
-            pane,
-            bytes.as_ptr(),
-            bytes.len(),
-            &raw mut error,
-        )
-    };
-    if sent == OK {
-        return Ok(());
-    }
-    Err(format!("the input was refused: {}", said(&error)).into())
 }
 
 /// Attaches to a pane, with a record of this case's own.
@@ -842,157 +589,6 @@ fn pane_byte_pipe_stops_when_it_is_let_go() {
         unsafe { iznik_client_free(client) };
         // SAFETY: the box this case made, taken back once.
         drop(unsafe { Box::from_raw(watched) });
-        drop(stack);
-        Ok(())
-    };
-    case().unwrap_or_else(|error| panic!("{error}"));
-}
-
-/// # Panics
-///
-/// When letting a pane go from inside its own handler waits for that handler
-/// to finish, or when anything arrives for it afterwards.
-#[test]
-fn pane_byte_pipe_lets_a_pane_go_from_inside_its_own_handler() {
-    let case = || -> Result<(), Failed> {
-        let held = scratch("leaving")?;
-        let runtime = runtime()?;
-        let (stack, client, alias) = connected(&held, &runtime)?;
-        let leaving: *mut Leaving = Box::into_raw(Box::new(Leaving {
-            client: Reachable(client),
-            alias: alias.clone(),
-            told: Mutex::new(Left::default()),
-        }));
-        let handlers = PaneCallbacks {
-            output: Some(leaves),
-            screen: None,
-            mark: None,
-            detached: None,
-        };
-        let mut error = blank();
-        // SAFETY: the client is live, the alias null-terminated, and the
-        // context outlives the attachment — this case frees it at the end.
-        let taken = unsafe {
-            iznik_pane_attach(
-                client,
-                alias.as_ptr(),
-                PANE,
-                handlers,
-                leaving.cast::<c_void>(),
-                &raw mut error,
-            )
-        };
-        assert_eq!(taken, OK, "the pane was taken: {}", said(&error));
-        typed(client, &alias, PANE, "#hello\n")?;
-        // The handler lets the pane go while it is running. Without the rule
-        // that a handler waits for nothing, this never answers.
-        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
-        while Instant::now() < expires {
-            // SAFETY: this case's own box, alive here.
-            let answered = unsafe { &*leaving }
-                .told
-                .lock()
-                .ok()
-                .and_then(|told| told.answered);
-            if answered.is_some() {
-                assert_eq!(answered, Some(OK), "and it answers that it let go");
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let calls = {
-            // SAFETY: this case's own box, alive here.
-            let told = unsafe { &*leaving }
-                .told
-                .lock()
-                .map_err(|_broken| "the record")?;
-            assert_eq!(told.answered, Some(OK), "letting go answered");
-            told.calls
-        };
-        // And nothing more arrives for a pane that was let go, however much
-        // the shell goes on saying.
-        typed(client, &alias, PANE, "#more\n")?;
-        std::thread::sleep(BRIEF);
-        {
-            // SAFETY: this case's own box, alive here.
-            let told = unsafe { &*leaving }
-                .told
-                .lock()
-                .map_err(|_broken| "the record")?;
-            assert_eq!(told.calls, calls, "nothing arrived after it let go");
-        }
-        // SAFETY: it came from `iznik_client_new` and is freed once.
-        unsafe { iznik_client_free(client) };
-        // SAFETY: the box this case made, taken back once, after the client
-        // that could have called into it is gone.
-        drop(unsafe { Box::from_raw(leaving) });
-        drop(stack);
-        Ok(())
-    };
-    case().unwrap_or_else(|error| panic!("{error}"));
-}
-
-/// # Panics
-///
-/// When letting a pane go answers while a handler is still reading what the
-/// application gave it.
-#[test]
-fn pane_byte_pipe_waits_for_a_handler_before_it_lets_go() {
-    let case = || -> Result<(), Failed> {
-        let held = scratch("waiting")?;
-        let runtime = runtime()?;
-        let (stack, client, alias) = connected(&held, &runtime)?;
-        let dawdling: *mut Dawdling = Box::into_raw(Box::new(Dawdling(Mutex::new(0))));
-        let handlers = PaneCallbacks {
-            output: Some(dawdles),
-            screen: None,
-            mark: None,
-            detached: None,
-        };
-        let mut error = blank();
-        // SAFETY: the client is live, the alias null-terminated, and the
-        // context outlives the attachment — this case frees it at the end.
-        let taken = unsafe {
-            iznik_pane_attach(
-                client,
-                alias.as_ptr(),
-                PANE,
-                handlers,
-                dawdling.cast::<c_void>(),
-                &raw mut error,
-            )
-        };
-        assert_eq!(taken, OK, "the pane was taken: {}", said(&error));
-        typed(client, &alias, PANE, "#hello\n")?;
-        // Waited for closely, so that most of the handler's own wait is still
-        // ahead of it when the letting go begins.
-        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
-        let mut inside = false;
-        while Instant::now() < expires && !inside {
-            // SAFETY: this case's own box, alive here.
-            inside = unsafe { &*dawdling }
-                .0
-                .lock()
-                .is_ok_and(|running| *running > 0);
-            if !inside {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        }
-        assert!(inside, "a handler is running, which is what is waited for");
-        let started = Instant::now();
-        // SAFETY: the client is live and the alias null-terminated.
-        let gone = unsafe { iznik_pane_detach(client, alias.as_ptr(), PANE, &raw mut error) };
-        let took = started.elapsed();
-        assert_eq!(gone, OK, "the pane was let go: {}", said(&error));
-        assert!(
-            took >= WAITED,
-            "letting go waited for the handler that was running: {took:?}"
-        );
-        // SAFETY: it came from `iznik_client_new` and is freed once.
-        unsafe { iznik_client_free(client) };
-        // SAFETY: the box this case made, taken back once, after the client
-        // that could have called into it is gone.
-        drop(unsafe { Box::from_raw(dawdling) });
         drop(stack);
         Ok(())
     };

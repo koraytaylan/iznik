@@ -100,7 +100,8 @@ pub struct Event {
 /// back into iznik: no call holds a lock of iznik's while it works, and none
 /// is held while a callback runs.
 ///
-/// Replacing it, or taking it away with a null, waits for a call that is
-/// already running before it returns — so the context the application gave
-/// with it may be freed as soon as that answers.
+/// Replacing it, or taking it away with a null, returns at once and waits for
+/// nothing: a handler may be waiting for the very thread that asked. A call
+/// already running may still be finishing; `iznik_wait_for_callbacks` is what
+/// says it has, and so when the context given with it may be freed.
 pub type EventCallback = Option<extern "C" fn(event: *const Event, context: *mut c_void)>;
