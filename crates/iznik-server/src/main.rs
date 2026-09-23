@@ -18,13 +18,21 @@ const SUBCOMMANDS: &[&str] = &["--stdio", "--daemon", "--foreground", "--stop", 
 /// runtime to report through — so it is a failure status and nothing else.
 fn main() -> ExitCode {
     let arguments: Vec<OsString> = env::args_os().skip(1).collect();
-    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    else {
+    let first = arguments.first().and_then(|argument| argument.to_str());
+    let relaying = first == Some("--stdio");
+    // Only the daemon itself — `--foreground`, which `--daemon` starts —
+    // carries enough at once to want a worker per core. The relay copies two
+    // streams; `--daemon`, `--stop` and `--version` say one thing and go:
+    // a thread each for them is a thread per core per SSH connection, on a
+    // host somebody else may be sharing.
+    let mut builder = if first == Some("--foreground") {
+        tokio::runtime::Builder::new_multi_thread()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    let Ok(runtime) = builder.enable_all().build() else {
         return ExitCode::FAILURE;
     };
-    let relaying = arguments.first().and_then(|argument| argument.to_str()) == Some("--stdio");
     let status = runtime.block_on(dispatch(&arguments));
     // Only the relay. It reads standard input on a blocking thread, and a
     // client that has stopped writing leaves that read parked for ever:
