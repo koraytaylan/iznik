@@ -30,6 +30,8 @@ pub(super) struct Script {
     pub after_snapshot: Vec<(u8, Vec<u8>)>,
     /// Frames sent whenever a pane is subscribed to.
     pub on_subscribe: Vec<(u8, Vec<u8>)>,
+    /// What the host says its server is, when not `scripted`.
+    pub version: Option<String>,
     /// Keystrokes that end the connection they arrive on.
     pub close_on: Option<Vec<u8>>,
 }
@@ -100,7 +102,11 @@ impl Serving {
                 ToServer::Hello { .. } => {
                     let greeting = ToClient::Hello {
                         protocol_version: PROTOCOL_VERSION,
-                        server_version: "scripted".to_owned(),
+                        server_version: self
+                            .script
+                            .version
+                            .clone()
+                            .unwrap_or_else(|| "scripted".to_owned()),
                         capabilities: Capabilities::from_bits(0),
                     };
                     send(&mut link, &greeting).await?;

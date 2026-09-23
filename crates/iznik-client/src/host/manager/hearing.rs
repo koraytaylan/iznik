@@ -120,7 +120,7 @@ fn carried(
                  more than the {MAXIMUM_UNRETURNED_BYTES} any window allows",
                 pane.0
             );
-            tracing::warn!(host = %host.0, pane = pane.0, unreturned, "a host sent past its credit");
+            tracing::warn!(host = ?host.0, pane = pane.0, unreturned, "a host sent past its credit");
             return Err(detail);
         }
     };

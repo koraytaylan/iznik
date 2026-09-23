@@ -166,7 +166,7 @@ pub fn abandoned(host: &HostId, commands: &[CommandId]) {
         return;
     }
     tracing::info!(
-        host = %host.0,
+        host = ?host.0,
         commands = ?commands,
         "a replaced daemon answered these, and they stop being shown"
     );

@@ -166,7 +166,15 @@ fn advance(
         // want to know is when a host went and how long it was gone — and it
         // is the only account of that a native application can hand over
         // without having kept one itself.
-        tracing::info!(host = %host.0, from = %before, to = %after, "a host moved");
+        // Debug, not Display: a state carries what the server said it is,
+        // and a server that names itself with a newline or an escape must
+        // not be able to write lines of its own into this log.
+        tracing::info!(
+            host = ?host.0,
+            from = ?before.to_string(),
+            to = ?after.to_string(),
+            "a host moved"
+        );
         shared.publish(&ManagerEvent::Moved {
             host: host.clone(),
             state: after,
@@ -577,7 +585,7 @@ async fn pump(
                 if let Err(ChannelError::Message(refusal)) = &carrying {
                     // Refused here, before a byte of it was written: the order
                     // fails and the link, which never saw it, carries on.
-                    tracing::warn!(host = %host.0, %refusal, "an order could not be encoded");
+                    tracing::warn!(host = ?host.0, %refusal, "an order could not be encoded");
                     continue;
                 }
                 if carrying.is_err() {

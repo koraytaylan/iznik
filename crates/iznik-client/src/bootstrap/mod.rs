@@ -239,7 +239,8 @@ async fn stop(
             with_prefix(REMOTE_STOP_SCRIPT, &found.prefix)
         }
     };
-    let _said = probe::RunsRemotely::run(transport, &asked, deadline)
+    let _said = transport
+        .run_for(&asked, deadline, "stopping the daemon")
         .await
         .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
     Ok(())
@@ -380,7 +381,12 @@ pub async fn uninstall(
             with_prefix(REMOTE_UNINSTALL_SCRIPT, prefix)
         }
     };
-    let said = probe::RunsRemotely::run(transport, &asked, left(expires, options.command_deadline))
+    let said = transport
+        .run_for(
+            &asked,
+            left(expires, options.command_deadline),
+            "taking iznik off",
+        )
         .await
         .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
     removed(&host, &said)

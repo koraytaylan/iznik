@@ -431,3 +431,43 @@ fn wire_orders_drop_a_host_that_sends_past_its_credit() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a server that names itself with a line break can write a line of its
+/// own into the client's log.
+#[test]
+fn wire_orders_keep_a_server_version_out_of_the_log() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("logged")?;
+        let runtime = runtime()?;
+        let forged = "a line the server wrote";
+        let script = Script {
+            version: Some(format!("1.0\n{forged}")),
+            ..Script::default()
+        };
+        let (host, _heard) = scripted(&runtime, &held, script)?;
+        let log = held.path.join("client.log");
+        let artifacts = held.path.join("artifacts");
+        std::fs::create_dir_all(&artifacts)?;
+        let paths = ClientRuntimePaths::under(&held.path.join("runtime"))?;
+        let mut options = ManagerOptions::new(artifacts, paths);
+        options.log_path = Some(log.clone());
+        let manager = HostManager::new(options)?;
+        let events = manager.events();
+        manager.add_host(&host)?;
+        await_connected(&events)?;
+        drop(manager);
+        let written = std::fs::read_to_string(&log)?;
+        assert!(
+            written.contains(forged),
+            "the version is in the log: {written}"
+        );
+        assert!(
+            !written.lines().any(|line| line.starts_with(forged)),
+            "but never as a line of its own: {written}"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

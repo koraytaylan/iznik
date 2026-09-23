@@ -297,6 +297,25 @@ impl RunsRemotely for Transport {
         command: &str,
         deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
+        self.run_for(command, deadline, "probing")
+    }
+}
+
+impl Transport {
+    /// Runs `command` on the host and gives back its standard output, naming
+    /// what it was for — `doing` — in the refusal a deadline becomes, so a
+    /// daemon that would not stop is not reported as a host that would not
+    /// answer a probe.
+    ///
+    /// # Errors
+    ///
+    /// As [`RunsRemotely::run`].
+    pub fn run_for(
+        &self,
+        command: &str,
+        deadline: Duration,
+        doing: &'static str,
+    ) -> impl Future<Output = Result<String, ProbeError>> + Send {
         let asked = command.to_owned();
         let host = self.alias();
         let spawned = match self {
@@ -315,11 +334,11 @@ impl RunsRemotely for Transport {
             let Ok(output) = waited else {
                 return Err(ProbeError::from(SshError::Timeout {
                     host,
-                    stage: "probing".to_owned(),
+                    stage: doing.to_owned(),
                 }));
             };
             let output = output.map_err(|source| ProbeError::Transport {
-                detail: format!("the probe could not be waited for: {source}"),
+                detail: format!("{doing}: the command could not be waited for: {source}"),
             })?;
             if output.status.success() {
                 return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
