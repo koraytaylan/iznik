@@ -387,7 +387,9 @@ impl Drop for Arrived {
 ///
 /// It exits `Ok` when `shutdown` flips, when `SIGTERM` arrives, or when it has
 /// had no panes and no clients for `options.idle_shutdown` — removing its
-/// socket and its lock on the way out either way.
+/// socket, hanging up every pane it still holds and killing those that
+/// outlast their grace period, and releasing its lock on the way out either
+/// way.
 ///
 /// # Errors
 ///
@@ -418,6 +420,11 @@ pub async fn serve(
     tracing::info!(socket = %paths.socket.display(), "the daemon is listening");
     let outcome = accept_until(&listener, &registry, &options, shutdown).await;
     let _removed = std::fs::remove_file(&paths.socket);
+    // Hung up, given their grace, and only then killed: a shell told to stop
+    // with the daemon gets the chance to save its history that closing its
+    // pane would have given it. The lock is held until they have gone, so a
+    // `--stop` that waits for it has waited for them too.
+    registry.write().await.close_all().await;
     held.release();
     outcome
 }

@@ -644,6 +644,45 @@ impl Registry {
         self.apply_budget();
     }
 
+    /// Hangs up every pane at once, waits out their grace period for them to
+    /// go, and kills whatever is left: how a daemon that was told to stop
+    /// ends its panes, the same hangup-then-kill a closed pane gets, rather
+    /// than killing everything outright. Nothing is emitted — nobody is left
+    /// to tell — and the registry holds no pane afterwards.
+    ///
+    /// # Panics
+    ///
+    /// Within a Tokio runtime only: ending a pane escalates on a task.
+    pub async fn close_all(&mut self) {
+        let panes: Vec<(PaneId, Arc<Pane>)> = std::mem::take(&mut self.panes).into_iter().collect();
+        self.watching.clear();
+        let mut grace = Duration::ZERO;
+        for (id, pane) in &panes {
+            if let Some(programs) = &self.programs {
+                programs.forget(*id);
+            }
+            self.budget
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(*id);
+            if let Err(error) = pane.close() {
+                tracing::warn!(%error, pane = id.0, "a pane did not close cleanly");
+            }
+            grace = grace.max(pane.close_grace());
+        }
+        let deadline = tokio::time::Instant::now()
+            .checked_add(grace)
+            .unwrap_or_else(tokio::time::Instant::now);
+        for (_id, pane) in &panes {
+            if tokio::time::timeout_at(deadline, pane.exit_status())
+                .await
+                .is_err()
+            {
+                pane.kill();
+            }
+        }
+    }
+
     /// Takes a tab out of the model with every pane in it, and the session
     /// behind it when it was the last tab.
     fn remove_tab(&mut self, tab: TabId) {

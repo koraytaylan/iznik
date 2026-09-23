@@ -1,6 +1,7 @@
 accept
 admit
 announce
+appears
 arranges
 broadcast
 budgeted
@@ -11,6 +12,8 @@ emit
 emitted
 ending
 even
+gets
+hangs
 ingest
 lagging
 look

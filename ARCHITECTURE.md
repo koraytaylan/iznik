@@ -204,7 +204,9 @@ A pane is four things held together by one event stream:
   included. Forced cleanup signals the terminal's foreground process group
   before the shell group; job control normally makes these different groups.
   Close first hangs up the foreground job, retaining the shell session during
-  a configurable grace period so escalation can still discover an ignoring job.
+  a configurable grace period so escalation can still discover an ignoring job;
+  dropping a pane that is closing leaves the ending to that escalation, and a
+  daemon told to stop closes every pane this way before it lets go of its lock.
   The child wait holds no terminal-owner mutex. Jobs detached from both groups
   are outside terminal group signaling. Output is read on an async task and
   never blocks anything.

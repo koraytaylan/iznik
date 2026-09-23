@@ -14,6 +14,7 @@
 //! attached client's own emulator answers; the task writes those answers back to
 //! the child's input after each fed chunk.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -160,8 +161,10 @@ impl Drop for Subscription {
 
 /// A pane: a pseudoterminal with a login shell, mirrored and observed, its
 /// history kept, behind one interface. Dropping it kills the child's process
-/// group and the terminal foreground group; jobs detached from both groups
-/// are beyond terminal group signaling.
+/// group and the terminal foreground group — unless [`Pane::close`] has
+/// already begun, in which case the close's own escalation ends them after
+/// its grace period; jobs detached from both groups are beyond terminal group
+/// signaling.
 #[derive(Debug)]
 pub struct Pane {
     /// The child's input; each write is put through whole.
@@ -180,6 +183,9 @@ pub struct Pane {
     options: PaneOptions,
     /// The child's exit status, once it has ended.
     exit: watch::Receiver<Option<ExitStatus>>,
+    /// Whether [`Pane::close`] has hung the terminal up and handed the rest to
+    /// its escalation, so dropping the pane must not cut the grace short.
+    closing: AtomicBool,
 }
 
 impl Pane {
@@ -263,6 +269,7 @@ impl Pane {
             process,
             options: pane_options,
             exit,
+            closing: AtomicBool::new(false),
         })
     }
 
@@ -419,6 +426,10 @@ impl Pane {
     /// ignoring foreground job remains discoverable through the terminal.
     /// [`Pane::exit_status`] resolves once the child has gone. Call within Tokio.
     ///
+    /// The escalation holds the child itself, so the pane may be dropped at
+    /// once — as the registry does when it forgets a pane — without the drop
+    /// killing what the grace period was for.
+    ///
     /// # Errors
     /// Returns `Pty` when the initial hangup cannot be sent.
     pub fn close(&self) -> Result<(), PaneError> {
@@ -439,7 +450,24 @@ impl Pane {
                     .kill_terminal_groups();
             }
         });
+        self.closing.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// How long [`Pane::close`] waits after hanging up before it kills.
+    #[must_use]
+    pub fn close_grace(&self) -> Duration {
+        self.options.close_escalation
+    }
+
+    /// Kills the child's process group and the terminal's foreground group
+    /// now, without a grace period: what a close escalates to, for a caller
+    /// that cannot leave the escalation to a task — a daemon about to exit.
+    pub fn kill(&self) {
+        self.process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .kill_terminal_groups();
     }
 
     /// Resolves to the child's exit status once it has ended, or `None` if the
@@ -459,11 +487,13 @@ impl Pane {
 
 impl Drop for Pane {
     fn drop(&mut self) {
+        // A close in progress owns the ending: its escalation kills after the
+        // grace period, and killing here would take that grace away.
+        if self.closing.load(Ordering::Acquire) {
+            return;
+        }
         // The child wait owns no process mutex, so cleanup cannot wait behind it.
-        self.process
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .kill_terminal_groups();
+        self.kill();
     }
 }
 
