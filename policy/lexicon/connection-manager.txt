@@ -32,6 +32,7 @@ golden
 gone
 handle
 healthy
+hearing
 held
 holdable
 holding

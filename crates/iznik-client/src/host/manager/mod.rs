@@ -53,6 +53,7 @@ pub const ORDERS_PER_TURN: usize = 64;
 
 pub mod credit;
 mod error;
+mod hearing;
 mod task;
 mod waiting;
 

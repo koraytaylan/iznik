@@ -144,6 +144,52 @@ impl CreditStreams {
     }
 }
 
+/// Credit claimed in one turn of a host's loop, summed per stream, so that a
+/// window returned a delivery at a time goes back as one message per pane.
+///
+/// Each receipt is still claimed on its own and at most once — the summing is
+/// of grants that were already admitted, and only of grants for the same
+/// stream: the same pane on the same channel, in a turn in which no stream can
+/// have been replaced, because streams are replaced only by what the host
+/// says and nothing is heard in the middle of a turn.
+#[derive(Debug, Default)]
+pub struct CreditBatch {
+    /// One grant per stream, in the order each stream was first claimed for.
+    grants: Vec<CreditGrant>,
+}
+
+impl CreditBatch {
+    /// Adds one admitted grant, to its stream's total.
+    ///
+    /// A total that would pass what one message can say starts another grant
+    /// for the same stream rather than saturating, so no byte of credit is
+    /// ever lost to the sum.
+    pub fn add(&mut self, grant: CreditGrant) {
+        let same = self.grants.iter_mut().rev().find(|held| {
+            held.host == grant.host && held.pane == grant.pane && held.channel == grant.channel
+        });
+        if let Some(held) = same
+            && let Some(total) = held.bytes.checked_add(grant.bytes)
+        {
+            held.bytes = total;
+            return;
+        }
+        self.grants.push(grant);
+    }
+
+    /// Whether nothing was claimed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.grants.is_empty()
+    }
+
+    /// The grants to send, one per stream unless a total needed more.
+    #[must_use]
+    pub fn into_grants(self) -> Vec<CreditGrant> {
+        self.grants
+    }
+}
+
 impl super::HostManager {
     /// Return credit to the pane's current stream, retaining that identity in the queued order.
     /// Use `credit_receipt` for consumption that may outlive the delivering stream.

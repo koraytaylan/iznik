@@ -115,3 +115,54 @@ fn stream_credit_queued_returns_check_the_stream_at_drain() {
         "only the current delivery is grants once"
     );
 }
+
+/// # Panics
+///
+/// When a turn's credit is not summed per stream, is summed across streams,
+/// admits a receipt twice or one from a replaced stream, or loses a byte to a
+/// total too large for one message.
+#[test]
+fn stream_credit_sums_a_turn_per_stream() {
+    use iznik_client::host::manager::credit::CreditBatch;
+    let host = HostId("batched".to_owned());
+    let (first, second) = (PaneId(1), PaneId(2));
+    let mut streams = CreditStreams::default();
+    streams.open(&host, first, 7);
+    streams.open(&host, second, 8);
+    let stale = streams.receipt(&host, first, 100).expect("a delivery");
+    streams.open(&host, first, 7);
+    let mut batch = CreditBatch::default();
+    let deliveries = [
+        streams.receipt(&host, first, 3).expect("a delivery"),
+        streams.receipt(&host, second, 4).expect("a delivery"),
+        streams.receipt(&host, first, 5).expect("a delivery"),
+    ];
+    for receipt in deliveries.iter().chain(deliveries.iter()).chain([&stale]) {
+        if let Some(grant) = streams.claim(receipt) {
+            batch.add(grant);
+        }
+    }
+    let grants: Vec<_> = batch
+        .into_grants()
+        .into_iter()
+        .map(|grant| (grant.pane, grant.channel, grant.bytes))
+        .collect();
+    assert_eq!(
+        grants,
+        vec![(first, 7, 8), (second, 8, 4)],
+        "one grant per stream, each receipt once, none from a replaced stream"
+    );
+    let mut huge = CreditBatch::default();
+    for _ in 0..3 {
+        let receipt = streams
+            .receipt(&host, second, u32::MAX / 2)
+            .expect("a delivery");
+        huge.add(streams.claim(&receipt).expect("current"));
+    }
+    let total: u64 = huge
+        .into_grants()
+        .iter()
+        .map(|grant| u64::from(grant.bytes))
+        .sum();
+    assert_eq!(total, u64::from(u32::MAX / 2) * 3, "and no byte is lost");
+}

@@ -10,13 +10,16 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
+use iznik_client::host::manager::credit::CreditReceipt;
 use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::{BackoffPolicy, HostState};
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::{PaneId, SessionId};
-use iznik_protocol::message::{MAXIMUM_INPUT_LENGTH, ToServer};
+use iznik_protocol::identity::{PaneId, Sequence, SessionId};
+use iznik_protocol::message::{
+    CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToClient, ToServer, encode_to_client,
+};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
 #[path = "fixtures/listening_host.rs"]
@@ -241,6 +244,101 @@ fn wire_orders_refuse_a_command_too_large_to_send() {
         assert!(
             said.iter().all(|(connection, _)| *connection == 0),
             "and the link carries on"
+        );
+        drop(manager);
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The channel the scripted host carries its pane on.
+const PANE_CHANNEL: u8 = 7;
+
+/// What the scripted host prints, a frame at a time.
+const PRINTED: [&[u8]; 5] = [b"one ", b"two ", b"three ", b"four ", b"five"];
+
+/// A script that, when the pane is subscribed to, announces its channel and
+/// prints [`PRINTED`] on it.
+///
+/// # Errors
+///
+/// When the announcement cannot be encoded.
+fn printing() -> Result<Script, Failed> {
+    let announced = encode_to_client(&ToClient::PaneChannel {
+        pane: PANE,
+        channel: PANE_CHANNEL,
+        sequence: Sequence(0),
+    })?;
+    let mut on_subscribe = vec![(CHANNEL_CONTROL, announced)];
+    on_subscribe.extend(PRINTED.iter().map(|bytes| (PANE_CHANNEL, bytes.to_vec())));
+    Ok(Script {
+        on_subscribe,
+        ..Script::default()
+    })
+}
+
+/// The receipts of the first `count` deliveries of a pane's bytes.
+///
+/// # Errors
+///
+/// When they do not all arrive inside [`PROMPT`].
+fn receipts(events: &Receiver<ManagerEvent>, count: usize) -> Result<Vec<CreditReceipt>, Failed> {
+    let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+    let mut held = Vec::new();
+    while held.len() < count {
+        let left = expires
+            .checked_duration_since(Instant::now())
+            .ok_or("the pane's bytes never all arrived")?;
+        if let Ok(ManagerEvent::Bytes {
+            receipt: Some(receipt),
+            ..
+        }) = events.recv_timeout(left)
+        {
+            held.push(receipt);
+        }
+    }
+    Ok(held)
+}
+
+/// # Panics
+///
+/// When credit returned a delivery at a time goes back as a message per
+/// delivery rather than one per stream for the turn, or as other than exactly
+/// what was delivered.
+#[test]
+fn wire_orders_return_a_turn_of_credit_as_one_message() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("credit")?;
+        let runtime = runtime()?;
+        let (host, heard) = scripted(&runtime, &held, printing()?)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        manager.add_host(&host)?;
+        await_connected(&events)?;
+        manager.subscribe(&host, PANE)?;
+        let delivered = receipts(&events, PRINTED.len())?;
+        // Something slow for the task to write first, so that every credit
+        // is already waiting when it gets to them: the turn is what they
+        // share, and this is what puts them in one.
+        let paste = vec![b'x'; usize::try_from(MAXIMUM_INPUT_LENGTH)?.saturating_mul(2)];
+        manager.input(&host, PANE, paste)?;
+        for receipt in &delivered {
+            manager.credit_receipt(receipt)?;
+        }
+        manager.input(&host, PANE, b"done".to_vec())?;
+        let said = heard_until(&heard, |(_, message)| typed(message, b"done"))?;
+        let credited: Vec<(u8, u32)> = said
+            .iter()
+            .filter_map(|(_, message)| match message {
+                ToServer::Credit { channel, bytes } => Some((*channel, *bytes)),
+                _otherwise => None,
+            })
+            .collect();
+        let total: usize = PRINTED.iter().map(|bytes| bytes.len()).sum();
+        assert_eq!(
+            credited,
+            vec![(PANE_CHANNEL, u32::try_from(total)?)],
+            "one message for the stream, carrying exactly what was delivered"
         );
         drop(manager);
         Ok(())

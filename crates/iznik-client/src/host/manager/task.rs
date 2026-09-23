@@ -9,11 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::command::{CommandOutcome, encode_session_command};
+use iznik_protocol::command::encode_session_command;
 use iznik_protocol::identity::{PaneId, Sequence};
-use iznik_protocol::message::{
-    CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, decode_to_client, encode_to_server,
-};
+use iznik_protocol::message::{CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bootstrap::launch::{
@@ -21,15 +19,16 @@ use crate::bootstrap::launch::{
 };
 use crate::bootstrap::probe::InstalledServer;
 use crate::bootstrap::{bootstrap_watched, upgrade};
-use crate::commands::{abandoned, confirm, expire, replay};
+use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
+use crate::host::manager::credit::{CreditBatch, CreditReceipt};
+use crate::host::manager::hearing::{heard, told_the_model};
 use crate::host::manager::waiting::{Waiting, hold_until, keep, keeps, waiting};
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{
     Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
 };
 use crate::model::HostView;
-use crate::reduce::{Effect, Notification, arrived, reduce};
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, RemoteChannel, ServerHello};
 
@@ -461,7 +460,10 @@ async fn resume(host: &HostId, shared: &Arc<Shared>, channel: &mut RemoteChannel
 /// # Errors
 ///
 /// Whatever the channel says, when the link will not take it.
-async fn write(channel: &mut RemoteChannel, message: &ToServer) -> Result<(), ChannelError> {
+pub(super) async fn write(
+    channel: &mut RemoteChannel,
+    message: &ToServer,
+) -> Result<(), ChannelError> {
     let bytes = encode_to_server(message).map_err(ChannelError::Message)?;
     channel.send(CHANNEL_CONTROL, &bytes).await
 }
@@ -484,12 +486,18 @@ async fn pump(
     mut channel: RemoteChannel,
 ) -> Ended {
     let mut carried = 0_usize;
+    // An order taken off the queue while gathering credit, and not credit:
+    // the next turn is its.
+    let mut pending: Option<Order> = None;
     loop {
         let now = Instant::now();
         let soon = now
             .checked_add(shared.options.expire_interval)
             .unwrap_or(now);
-        let turn = next_turn(&mut channel, orders, soon, carried < ORDERS_PER_TURN).await;
+        let turn = match pending.take() {
+            Some(order) => Turn::Ordered(Some(order)),
+            None => next_turn(&mut channel, orders, soon, carried < ORDERS_PER_TURN).await,
+        };
         carried = if matches!(turn, Turn::Ordered(_)) {
             carried.saturating_add(1)
         } else {
@@ -528,6 +536,14 @@ async fn pump(
                 channel.close();
                 let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
                 return Ended::Upgrade { force };
+            }
+            Turn::Ordered(Some(Order::Credit { receipt })) => {
+                let (carrying, after) = carry_credit(&mut channel, &receipt, orders, shared).await;
+                pending = after;
+                if carrying.is_err() {
+                    let _dead = advance(shared, host, machine, dead("the link would not take it"));
+                    return Ended::Gone;
+                }
             }
             Turn::Ordered(Some(order)) => {
                 let holdable = keeps(&order).then(|| order.clone());
@@ -611,244 +627,6 @@ pub(super) fn give_up(host: &HostId, shared: &Arc<Shared>) {
     }
 }
 
-/// Takes what arrived into the model and does what it asks for.
-///
-/// Answers `false` when the channel would not take what had to be written
-/// back.
-async fn heard(
-    host: &HostId,
-    shared: &Arc<Shared>,
-    channel: &mut RemoteChannel,
-    received: crate::transport::channel::Received,
-) -> bool {
-    let effects = if received.channel == CHANNEL_CONTROL {
-        let Ok(message) = decode_to_client(&received.payload) else {
-            return true;
-        };
-        let taken = reduce_under(shared, host, &message);
-        if let Ok(mut credit) = shared.credit.lock() {
-            match &message {
-                iznik_protocol::message::ToClient::PaneChannel {
-                    pane,
-                    channel: number,
-                    ..
-                } => {
-                    credit.open(host, *pane, *number);
-                }
-                iznik_protocol::message::ToClient::PaneDetached { pane, .. } => {
-                    credit.detach(host, *pane);
-                }
-                _ => {}
-            }
-        }
-        // What the host said about its model goes on as the host said it: the
-        // layer above this one hands those bytes to an application that
-        // decodes them with the protocol's own reader.
-        //
-        // Except what this client could not take. A gap in the numbering, a
-        // change that did not fit, a model that could not be read: each leaves
-        // the model exactly as it was, and each asks for something. Passing it
-        // on regardless would have the application take what this client
-        // refused, and the two would part until the snapshot arrived. What is
-        // passed on is what was applied, so an application that applies every
-        // one in turn holds what this client holds.
-        if !refused(&taken) || !carries_a_model(&message) {
-            announced(host, shared, &message);
-        }
-        taken
-    } else {
-        if !carried(host, shared, &received) {
-            return false;
-        }
-        Vec::new()
-    };
-    for effect in effects {
-        if !act(host, shared, channel, effect).await {
-            return false;
-        }
-    }
-    true
-}
-
-/// Moves a pane's cursor by what arrived on its channel, and passes the bytes
-/// on with the byte position they start at.
-fn carried(
-    host: &HostId,
-    shared: &Arc<Shared>,
-    received: &crate::transport::channel::Received,
-) -> bool {
-    let Ok(mut model) = shared.model.lock() else {
-        return false;
-    };
-    // The byte these start at is the cursor *before* they are counted.
-    let standing = model
-        .host(host)
-        .and_then(|view| view.carrying(received.channel))
-        .and_then(|pane| {
-            model
-                .host(host)
-                .and_then(|view| view.subscription(pane))
-                .map(|held| (pane, held.cursor))
-        });
-    let Some((pane, sequence)) = standing else {
-        return true;
-    };
-    let Some(receipt) = u32::try_from(received.payload.len())
-        .ok()
-        .and_then(|bytes| shared.credit.lock().ok()?.receipt(host, pane, bytes))
-    else {
-        return false;
-    };
-    let _nothing = arrived(&mut model, host, received.channel, received.payload.len());
-    drop(model);
-    shared.publish(&ManagerEvent::Bytes {
-        host: host.clone(),
-        pane,
-        sequence,
-        bytes: received.payload.clone(),
-        receipt: Some(receipt),
-    });
-    true
-}
-
-/// Announces a whole model, in the encoding the host itself uses.
-fn told_the_model(host: &HostId, shared: &Arc<Shared>, model: &iznik_protocol::model::HostModel) {
-    let Ok(payload) = iznik_protocol::model::encode_host_model(model) else {
-        return;
-    };
-    shared.publish(&ManagerEvent::Snapshot {
-        host: host.clone(),
-        generation: model.generation,
-        payload,
-    });
-}
-
-/// Whether what came back from a reduction says the message was not taken.
-///
-/// The two ways a message carrying a model is refused: a number that did not
-/// follow the last, which asks for the whole of it, and bytes that could not
-/// be read, which say so. Anything else came back from a message that *was*
-/// taken — the account of what a replaced daemon answered among them, which a
-/// snapshot that was applied perfectly well produces.
-fn refused(taken: &[Effect]) -> bool {
-    taken.iter().any(|effect| {
-        matches!(
-            effect,
-            Effect::RequestSnapshot | Effect::Notify(Notification::Malformed { .. })
-        )
-    })
-}
-
-/// Whether a message is one of the two that say what the host's model is.
-fn carries_a_model(message: &iznik_protocol::message::ToClient) -> bool {
-    matches!(
-        message,
-        iznik_protocol::message::ToClient::Snapshot { .. }
-            | iznik_protocol::message::ToClient::Delta { .. }
-    )
-}
-
-/// Passes on the host's own account of its model, unchanged.
-fn announced(host: &HostId, shared: &Arc<Shared>, message: &iznik_protocol::message::ToClient) {
-    let told = match message {
-        iznik_protocol::message::ToClient::Snapshot {
-            generation,
-            payload,
-        } => ManagerEvent::Snapshot {
-            host: host.clone(),
-            generation: *generation,
-            payload: payload.clone(),
-        },
-        iznik_protocol::message::ToClient::Delta {
-            generation,
-            payload,
-        } => ManagerEvent::Delta {
-            host: host.clone(),
-            generation: *generation,
-            payload: payload.clone(),
-        },
-        iznik_protocol::message::ToClient::PaneDetached { pane, .. } => ManagerEvent::Detached {
-            host: host.clone(),
-            pane: *pane,
-        },
-        _otherwise => return,
-    };
-    shared.publish(&told);
-}
-
-/// Applies one message to the model, with the lock held for that and nothing
-/// else.
-fn reduce_under(
-    shared: &Arc<Shared>,
-    host: &HostId,
-    message: &iznik_protocol::message::ToClient,
-) -> Vec<Effect> {
-    let Ok(mut model) = shared.model.lock() else {
-        return Vec::new();
-    };
-    reduce(&mut model, host, message)
-}
-
-/// Does what one effect asks for.
-///
-/// Answers `false` when the channel would not take what it had to write.
-async fn act(
-    host: &HostId,
-    shared: &Arc<Shared>,
-    channel: &mut RemoteChannel,
-    effect: Effect,
-) -> bool {
-    match effect {
-        Effect::RequestSnapshot => write(channel, &ToServer::SnapshotRequest).await.is_ok(),
-        // Written down here, where the model's lock is not held: a log is a
-        // file, and a file is something every other caller would be waiting
-        // on if it were written from inside a reduction.
-        Effect::Abandoned { commands } => {
-            abandoned(host, &commands);
-            true
-        }
-        Effect::ReleaseChannel { channel: number } => {
-            write(channel, &ToServer::ChannelReleased { channel: number })
-                .await
-                .is_ok()
-        }
-        Effect::Screen {
-            pane,
-            sequence,
-            columns,
-            rows,
-            bytes,
-        } => {
-            shared.publish(&ManagerEvent::Screen {
-                host: host.clone(),
-                pane,
-                sequence,
-                columns,
-                rows,
-                bytes,
-            });
-            true
-        }
-        Effect::Notify(notification) => {
-            settle(host, shared, &notification);
-            shared.publish(&ManagerEvent::Notify(notification));
-            true
-        }
-    }
-}
-
-/// Retires or rolls back the pending command an answer settles.
-fn settle(host: &HostId, shared: &Arc<Shared>, notification: &Notification) {
-    let Notification::CommandFinished {
-        command, outcome, ..
-    } = notification
-    else {
-        return;
-    };
-    let settled: CommandOutcome = outcome.clone();
-    let _confirmed = shared.with(host, |view| confirm(view, *command, &settled));
-}
-
 /// Writes keystrokes on the channel, as as many `Input` messages as they need.
 ///
 /// A paste larger than one message can carry would otherwise fail to encode —
@@ -894,7 +672,6 @@ async fn carry(
     order: Order,
     shared: &Shared,
 ) -> Result<(), ChannelError> {
-    let mut granted = None;
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
         Order::Unsubscribe { pane } => ToServer::Unsubscribe { pane },
@@ -911,20 +688,9 @@ async fn carry(
         Order::Focus { pane: Some(pane) } => ToServer::Focus { pane },
         Order::Screen { pane } => ToServer::ScreenRequest { pane },
         Order::Credit { receipt } => {
-            let Some(grant) = shared
-                .credit
-                .lock()
-                .ok()
-                .and_then(|credit| credit.claim(&receipt))
-            else {
-                return Ok(());
-            };
-            let message = ToServer::Credit {
-                channel: grant.channel,
-                bytes: grant.bytes,
-            };
-            granted = Some(grant);
-            message
+            let mut batch = CreditBatch::default();
+            claim_into(&mut batch, &receipt, shared);
+            return send_credit(channel, batch, shared).await;
         }
         Order::Command { id, command } => ToServer::Command {
             command_id: id,
@@ -937,8 +703,70 @@ async fn carry(
             return Ok(());
         }
     };
-    write(channel, &message).await?;
-    if let Some(grant) = granted {
+    write(channel, &message).await
+}
+
+/// Claims `first` and every credit order already waiting behind it, and
+/// writes what they add up to: one message per stream rather than one per
+/// delivery, which for a pane printing fast is the difference between a
+/// credit frame per read and a credit frame per turn.
+///
+/// Gives back, with how the writing went, the first order behind them that
+/// was not credit, for the loop to take next.
+async fn carry_credit(
+    channel: &mut RemoteChannel,
+    first: &CreditReceipt,
+    orders: &mut UnboundedReceiver<Order>,
+    shared: &Shared,
+) -> (Result<(), ChannelError>, Option<Order>) {
+    let mut batch = CreditBatch::default();
+    claim_into(&mut batch, first, shared);
+    let mut after = None;
+    while let Ok(order) = orders.try_recv() {
+        match order {
+            Order::Credit { receipt } => claim_into(&mut batch, &receipt, shared),
+            other => {
+                after = Some(other);
+                break;
+            }
+        }
+    }
+    (send_credit(channel, batch, shared).await, after)
+}
+
+/// Admits one receipt, once and only while its stream is current, into what
+/// this turn will return.
+fn claim_into(batch: &mut CreditBatch, receipt: &CreditReceipt, shared: &Shared) {
+    let admitted = shared
+        .credit
+        .lock()
+        .ok()
+        .and_then(|credit| credit.claim(receipt));
+    if let Some(grant) = admitted {
+        batch.add(grant);
+    }
+}
+
+/// Writes what a turn claimed, and records each grant against its pane once
+/// the link has taken it.
+///
+/// # Errors
+///
+/// Whatever the channel says, when the link will not take one.
+async fn send_credit(
+    channel: &mut RemoteChannel,
+    batch: CreditBatch,
+    shared: &Shared,
+) -> Result<(), ChannelError> {
+    for grant in batch.into_grants() {
+        write(
+            channel,
+            &ToServer::Credit {
+                channel: grant.channel,
+                bytes: grant.bytes,
+            },
+        )
+        .await?;
         let _recorded = shared.with(&grant.host, |view| {
             if let Some(subscription) = view.subscription_mut(grant.pane) {
                 subscription.grant(u64::from(grant.bytes));
