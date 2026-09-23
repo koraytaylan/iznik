@@ -654,7 +654,7 @@ fn profiles_match_architecture() {
     )
     .expect("expected regression profile");
     let expected_release: toml::Table = toml::from_str(
-        "strip = true\ndebug = false\nlto = \"fat\"\ncodegen-units = 1\npanic = \"abort\"\n",
+        "strip = true\ndebug = false\nlto = \"fat\"\ncodegen-units = 1\npanic = \"unwind\"\n",
     )
     .expect("expected release profile");
     assert_eq!(

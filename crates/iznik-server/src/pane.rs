@@ -607,6 +607,12 @@ impl VtTask {
             drain,
             ready,
         } = self;
+        // Held for the whole run: however the task ends — the output
+        // closing, the drain running out, or a panic unwinding it off the
+        // mirror thread — the pane is published as ended, so the registry
+        // takes it away rather than holding a pane nothing feeds.
+        let state = EndsExited(state);
+        let state = &state.0;
         let mut mirror = match Mirror::new(columns, rows) {
             Ok(mirror) => {
                 let _sent = ready.send(Ok(()));
@@ -639,7 +645,7 @@ impl VtTask {
                     }
                     Some(Request::Resize { columns: width, rows: height }) => {
                         mirror.resize(width, height);
-                        publish(&state, &history, &mirror, false, prompts);
+                        publish(state, &history, &mirror, false, prompts);
                     }
                     Some(Request::Subscribe) => {
                         subscribers = subscribers.saturating_add(1);
@@ -674,13 +680,23 @@ impl VtTask {
                             &responses,
                         );
                         prompts = prompts.saturating_add(prompted);
-                        publish(&state, &history, &mirror, false, prompts);
+                        publish(state, &history, &mirror, false, prompts);
                     }
                     None => break,
                 },
             }
         }
-        publish(&state, &history, &mirror, true, prompts);
+        publish(state, &history, &mirror, true, prompts);
+    }
+}
+
+/// A pane's state sender that says the pane has ended when it is dropped,
+/// including when a panic unwinds the task that holds it.
+struct EndsExited(watch::Sender<PaneState>);
+
+impl Drop for EndsExited {
+    fn drop(&mut self) {
+        self.0.send_modify(|state| state.exited = true);
     }
 }
 

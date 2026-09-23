@@ -51,7 +51,10 @@ strip = true
 debug = false
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# Unwind, not abort: the daemon holds every terminal its user has open, and a
+# panic in one pane's VT task or reader thread ends that task or thread — and
+# with it that pane — where aborting would end every session on the host.
+panic = "unwind"
 
 [workspace.lints.rust]
 missing_docs = "deny"
