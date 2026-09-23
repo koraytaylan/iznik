@@ -33,8 +33,8 @@ fn main() -> ExitCode {
     // what it had to say by here and has nothing else to finish.
     //
     // The daemon does. Its runtime is dropped, which waits for the blocking
-    // work still in flight — a pane's reaper among it — so that what it was
-    // doing on the way out is done rather than abandoned.
+    // work still in flight, so that what it was doing on the way out is done
+    // rather than abandoned.
     if relaying {
         runtime.shutdown_background();
     }

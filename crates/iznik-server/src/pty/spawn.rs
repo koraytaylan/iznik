@@ -406,6 +406,13 @@ impl ProcessReaper {
                 source: Box::new(source),
             })?;
             self.reaped.store(true, Ordering::Release);
+            // Whatever is left of the shell's own group — a background job
+            // started without job control — would otherwise keep the terminal
+            // open with nobody to answer to. The group outlives its leader
+            // only while it has members, so this reaches them or, once they
+            // too are gone, nobody: the id is not handed to a new group in
+            // the instant between the wait and the signal.
+            let _hung = signal::killpg(self.process, NixSignal::SIGHUP);
             match status {
                 WaitStatus::Exited(_pid, code) => Ok(ExitStatus::Exited(code)),
                 WaitStatus::Signaled(_pid, signal, _dumped) => {

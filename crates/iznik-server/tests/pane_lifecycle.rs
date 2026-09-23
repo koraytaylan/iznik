@@ -175,3 +175,136 @@ async fn pane_lifecycle_closing_an_ended_pane_signals_nothing() {
     );
     pane.close().expect("closing an ended pane is not an error");
 }
+
+/// The process id a shell wrote to `path`, within [`DEADLINE`].
+///
+/// # Errors
+///
+/// When no process id is in the file within [`DEADLINE`].
+async fn written_process(path: &Path) -> Result<i32, Box<dyn std::error::Error>> {
+    // The file appears before the shell's `echo` has filled it.
+    let read = tokio::time::timeout(DEADLINE, async {
+        loop {
+            if let Ok(parsed) = std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .trim()
+                .parse()
+            {
+                return parsed;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    })
+    .await?;
+    Ok(read)
+}
+
+/// Whether the process is still there, zombies included.
+fn running(process: i32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(process), None).is_ok()
+}
+
+/// A pane whose shell runs `script`, at the usual size.
+fn running_script(script: String) -> SpawnOptions {
+    SpawnOptions {
+        program: Program::Command {
+            path: "sh".into(),
+            arguments: vec!["-c".to_owned(), script],
+        },
+        columns: COLUMNS,
+        rows: ROWS,
+        working_directory: None,
+        terminfo_directory: None,
+    }
+}
+
+/// A shell that exits leaving a background job on its terminal is reaped
+/// and reported at once rather than when the job lets go of the terminal, and
+/// the job left in its group is hung up.
+///
+/// # Panics
+///
+/// When the exit is never reported or the job outlives the shell.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_lifecycle_a_background_job_does_not_keep_a_pane_alive() {
+    let directory = scratch("background").expect("a scratch directory");
+    let job = directory.join("job");
+    let script = format!("sleep 1000 & echo $! > \"{}\"; exit 0", job.display());
+    let thread = MirrorThread::start().expect("the mirror thread");
+    let pane = Pane::spawn(
+        &running_script(script),
+        DEFAULT_HISTORY_BUDGET_BYTES,
+        &thread,
+    )
+    .await
+    .expect("the pane spawns");
+    let process = written_process(&job).await.expect("the job's process id");
+    let status = tokio::time::timeout(DEADLINE, pane.exit_status())
+        .await
+        .expect("the exit is reported while the job could still be running");
+    assert_eq!(
+        status,
+        Some(ExitStatus::Exited(0)),
+        "the shell's own status"
+    );
+    let mut state = pane.state_updates();
+    tokio::time::timeout(DEADLINE, state.wait_for(|state| state.exited))
+        .await
+        .expect("the pane ends in time")
+        .expect("the pane says it has ended");
+    let gone = tokio::time::timeout(DEADLINE, async {
+        while running(process) {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    })
+    .await;
+    if gone.is_err() {
+        let _killed = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(process),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(
+        gone.is_ok(),
+        "the job left in the shell's group was hung up"
+    );
+    let _removed = std::fs::remove_dir_all(&directory);
+}
+
+/// A background job that ignores the hangup and keeps the terminal open does
+/// not keep its pane from ending either.
+///
+/// # Panics
+///
+/// When the pane waits for the job.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_lifecycle_a_job_ignoring_the_hangup_does_not_keep_a_pane_alive() {
+    let directory = scratch("ignoring").expect("a scratch directory");
+    let job = directory.join("job");
+    let script = format!(
+        "(trap '' HUP; exec sleep 1000) & echo $! > \"{}\"; exit 0",
+        job.display()
+    );
+    let thread = MirrorThread::start().expect("the mirror thread");
+    let pane = Pane::spawn(
+        &running_script(script),
+        DEFAULT_HISTORY_BUDGET_BYTES,
+        &thread,
+    )
+    .await
+    .expect("the pane spawns");
+    let process = written_process(&job).await.expect("the job's process id");
+    let mut state = pane.state_updates();
+    let ended = tokio::time::timeout(DEADLINE, state.wait_for(|state| state.exited)).await;
+    let _killed = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(process),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    assert!(ended.is_ok(), "the pane ended with the job still running");
+    assert_eq!(
+        pane.exit_status_now(),
+        Some(ExitStatus::Exited(0)),
+        "and says how its shell ended"
+    );
+    let _removed = std::fs::remove_dir_all(&directory);
+}

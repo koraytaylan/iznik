@@ -516,6 +516,7 @@ async fn pane_close_escalates_a_foreground_job() {
         &thread,
         PaneOptions {
             close_escalation: Duration::from_millis(10),
+            ..PaneOptions::default()
         },
     )
     .await
@@ -700,6 +701,7 @@ async fn pane_close_remains_available_after_output_ends() {
             &thread,
             PaneOptions {
                 close_escalation: Duration::from_millis(10),
+                ..PaneOptions::default()
             },
         )
         .await

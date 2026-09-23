@@ -37,6 +37,12 @@ const MARK_CHANNEL_CAPACITY: usize = 1024;
 /// to `SIGKILL`, so a shell that ignores `SIGHUP` is still ended.
 const CLOSE_ESCALATION: Duration = Duration::from_secs(2);
 
+/// How long the VT task keeps reading after the shell has been reaped without
+/// its output closing. The shell's last words are already in the terminal and
+/// arrive within milliseconds; a background job still holding the terminal
+/// open is what would otherwise keep the pane alive for as long as it runs.
+const EXIT_DRAIN: Duration = Duration::from_millis(250);
+
 /// The alternate-screen enter to remember for reconstruction when the recognized
 /// switch began in an earlier read, so its own bytes are not wholly in the chunk
 /// the pane splits at it. A client applying it reaches the alternate screen.
@@ -220,12 +226,12 @@ impl Pane {
         let process = spawn(options)?;
         let (output, input) = streams(&process)?;
         let process = Arc::new(Mutex::new(process));
+        let (exit_tx, exit) = watch::channel(None);
+        reap_on_exit(Arc::clone(&process), exit_tx)?;
 
         let history = Arc::new(Mutex::new(PaneHistory::new(history_bytes)));
         let (marks, _marks_rx) = broadcast::channel(MARK_CHANNEL_CAPACITY);
         let (requests, requests_rx) = mpsc::unbounded_channel();
-        let (closed_tx, closed_rx) = oneshot::channel();
-        let (exit_tx, exit) = watch::channel(None);
         let initial = PaneState {
             columns,
             rows,
@@ -248,7 +254,8 @@ impl Pane {
             marks: marks.clone(),
             state: state_tx,
             requests: requests_rx,
-            closed: closed_tx,
+            exit: exit.clone(),
+            drain: pane_options.exit_drain,
             ready: ready_tx,
         };
         thread.spawn(move || task.run());
@@ -257,8 +264,6 @@ impl Pane {
             Ok(Err(source)) => return Err(PaneError::Mirror(source)),
             Err(_recv) => return Err(PaneError::Gone),
         }
-
-        reap_on_exit(Arc::clone(&process), closed_rx, exit_tx);
 
         Ok(Pane {
             input,
@@ -502,12 +507,16 @@ impl Drop for Pane {
 pub struct PaneOptions {
     /// Grace after foreground hangup before forcing foreground and shell cleanup.
     pub close_escalation: Duration,
+    /// How long output is still read once the shell has been reaped while
+    /// something else holds its terminal open.
+    pub exit_drain: Duration,
 }
 
 impl Default for PaneOptions {
     fn default() -> Self {
         Self {
             close_escalation: CLOSE_ESCALATION,
+            exit_drain: EXIT_DRAIN,
         }
     }
 }
@@ -531,15 +540,20 @@ struct VtTask {
     state: watch::Sender<PaneState>,
     /// Requests from the pane.
     requests: mpsc::UnboundedReceiver<Request>,
-    /// Told once the output has closed, so the reaper reaps the child.
-    closed: oneshot::Sender<()>,
+    /// The shell's exit status, set by the reaper whether or not the output
+    /// has closed.
+    exit: watch::Receiver<Option<ExitStatus>>,
+    /// How long to keep reading once the shell has been reaped.
+    drain: Duration,
     /// Signals whether the mirror was created, so the spawn fails if it was not.
     ready: oneshot::Sender<Result<(), MirrorError>>,
 }
 
 impl VtTask {
     /// Runs the task: build the mirror, then feed it every chunk and answer every
-    /// request until the output closes.
+    /// request until the output closes — or, once the shell has been reaped,
+    /// until the drain after it runs out, because a background job holding the
+    /// terminal would keep the output open for as long as it lives.
     async fn run(self) {
         let VtTask {
             columns,
@@ -550,7 +564,8 @@ impl VtTask {
             marks,
             state,
             mut requests,
-            closed,
+            mut exit,
+            drain,
             ready,
         } = self;
         let mut mirror = match Mirror::new(columns, rows) {
@@ -568,7 +583,10 @@ impl VtTask {
         let mut prompts = 0_u64;
         let mut subscribers = 0_usize;
         let mut requests_open = true;
+        let mut exit_open = true;
+        let mut ending: Option<tokio::time::Instant> = None;
         loop {
+            let deadline = ending.unwrap_or_else(tokio::time::Instant::now);
             tokio::select! {
                 chunk = output.next() => match chunk {
                     Some(bytes) => {
@@ -605,10 +623,20 @@ impl VtTask {
                     }
                     None => requests_open = false,
                 },
+                changed = exit.changed(), if exit_open && ending.is_none() => {
+                    if changed.is_err() {
+                        exit_open = false;
+                    } else if exit.borrow_and_update().is_some() {
+                        ending = tokio::time::Instant::now().checked_add(drain);
+                        if ending.is_none() {
+                            break;
+                        }
+                    }
+                }
+                () = tokio::time::sleep_until(deadline), if ending.is_some() => break,
             }
         }
         publish(&state, &history, &mirror, true, prompts);
-        let _sent = closed.send(());
     }
 }
 
@@ -741,35 +769,40 @@ fn publish(
     });
 }
 
-/// After output closes, wait on the blocking pool through a PID/completion
-/// handle. EOF need not mean process exit, so the wait holds no terminal-owner
-/// mutex; close and drop can still signal the child while that wait is pending.
+/// Waits for the child from the moment it is spawned, on a thread of its own,
+/// and publishes how it ended.
+///
+/// The wait does not follow the output: a shell that exits leaving a
+/// background job holding its terminal never sees its output close, and a
+/// reaper that waited for that would leave it a zombie and its pane alive for
+/// as long as the job ran. The wait holds no terminal-owner mutex, so close
+/// and drop can still signal the child while it is pending, and the thread
+/// holds the owner itself until the child is reaped, so the owner's drop
+/// never has to wait for it. A thread rather than the blocking pool, because
+/// the wait lasts as long as the pane and the pool is shared and bounded.
+///
+/// # Errors
+///
+/// [`PaneError::Pty`] when the thread cannot be started.
 fn reap_on_exit(
     process: Arc<Mutex<PtyProcess>>,
-    closed: oneshot::Receiver<()>,
     exit: watch::Sender<Option<ExitStatus>>,
-) {
-    tokio::spawn(async move {
-        // Cancellation leaves final cleanup to the PTY owner. A normal EOF
-        // starts the wait even if the child closed its descriptors deliberately
-        // and remains alive; forced cleanup can still acquire the owner below.
-        if closed.await.is_err() {
-            return;
-        }
-        let reaper = process
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .reaper();
-        let waited = tokio::task::spawn_blocking(move || {
-            let status = reaper.wait();
+) -> Result<(), PaneError> {
+    let reaper = process
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .reaper();
+    std::thread::Builder::new()
+        .name("pty-reaper".to_owned())
+        .spawn(move || {
+            let status = reaper.wait().ok();
             drop(process);
-            status
+            let _sent = exit.send(status);
         })
-        .await;
-        let status = match waited {
-            Ok(Ok(status)) => Some(status),
-            _ => None,
-        };
-        let _sent = exit.send(status);
-    });
+        .map_err(|source| {
+            PaneError::Pty(PtyError::Wait {
+                source: source.into(),
+            })
+        })?;
+    Ok(())
 }

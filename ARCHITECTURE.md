@@ -207,7 +207,10 @@ A pane is four things held together by one event stream:
   a configurable grace period so escalation can still discover an ignoring job;
   dropping a pane that is closing leaves the ending to that escalation, and a
   daemon told to stop closes every pane this way before it lets go of its lock.
-  The child wait holds no terminal-owner mutex. Jobs detached from both groups
+  The child wait holds no terminal-owner mutex and does not wait for the
+  output to close: a shell that exits leaving a background job on its terminal
+  is reaped and reported at once, what is left of its group is hung up, and
+  the pane ends after a short drain of its last output. Jobs detached from both groups
   are outside terminal group signaling. Output is read on an async task and
   never blocks anything.
 - **A terminal mirror** — a `libghostty-vt` terminal fed every byte, the same
