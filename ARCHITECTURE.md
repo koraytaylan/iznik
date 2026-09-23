@@ -110,13 +110,15 @@ on.
 
 It is not a zero-copy path, and nothing here should read as one. On the
 server a chunk is read from the pseudoterminal into a buffer, appended to the
-history ring, copied out of the ring into the payload a subscriber is sent,
-and copied again behind the frame header; the mirror parses a copy of its
-own. When the link is compressed (section 5.6) the whole frame stream is
-compressed on the way out and decompressed on the way in. On the client the
-bytes land in the frame decoder's buffer and are copied out as the payload
-handed to the pane. Each copy is a `memcpy` of at most one chunk; what the
-design avoids is interpretation, not copying.
+history ring, copied out of the ring into the payload a subscriber is sent —
+which is then handed, not copied, to the connection's writer — and copied
+again behind the frame header; the mirror parses a copy of its own. When the
+link is compressed (section 5.6) the whole frame stream is compressed on the
+way out and decompressed on the way in. On the client the bytes land in the
+frame decoder's buffer and are copied out once as the payload, which is moved,
+not copied, into the event an application is handed — copied again only for
+each listener beyond the first. Each copy is a `memcpy` of at most one chunk;
+what the design avoids is interpretation, not copying.
 
 ### 4.2 Control messages
 

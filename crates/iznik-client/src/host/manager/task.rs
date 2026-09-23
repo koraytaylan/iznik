@@ -76,7 +76,7 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
             // It was told to stop while it had no link, and whoever is
             // watching is told so rather than left with a host that simply
             // stopped saying anything.
-            shared.publish(&ManagerEvent::Removed { host });
+            shared.publish(ManagerEvent::Removed { host });
             return;
         };
         match pump(
@@ -191,7 +191,7 @@ fn advance(
             to = ?after.to_string(),
             "a host moved"
         );
-        shared.publish(&ManagerEvent::Moved {
+        shared.publish(ManagerEvent::Moved {
             host: host.clone(),
             state: after,
         });
@@ -614,7 +614,7 @@ struct LinkRecord {
 /// Tells the application keystrokes were not delivered, because there was
 /// no link when they were given.
 pub(super) fn dropped_input(host: &HostId, shared: &Shared, pane: PaneId, bytes: usize) {
-    shared.publish(&ManagerEvent::Notify(Notification::InputDropped {
+    shared.publish(ManagerEvent::Notify(Notification::InputDropped {
         host: host.clone(),
         pane,
         bytes,
@@ -671,7 +671,7 @@ fn orphaned(host: &HostId, shared: &Arc<Shared>, carried: &[CommandId]) {
         })
         .unwrap_or_default();
     for notification in told {
-        shared.publish(&ManagerEvent::Notify(notification));
+        shared.publish(ManagerEvent::Notify(notification));
     }
 }
 
@@ -842,7 +842,7 @@ pub(super) fn give_up(host: &HostId, shared: &Arc<Shared>) {
         })
         .unwrap_or_default();
     for notification in told {
-        shared.publish(&ManagerEvent::Notify(notification));
+        shared.publish(ManagerEvent::Notify(notification));
     }
 }
 

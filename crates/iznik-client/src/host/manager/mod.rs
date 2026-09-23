@@ -307,11 +307,26 @@ impl Shared {
     ///
     /// Never waits: a listener is an unbounded queue, and what bounds it is
     /// the flow control [`HostManager::events`] describes.
-    pub(crate) fn publish(&self, event: &ManagerEvent) {
+    ///
+    /// The event is moved to the last listener and copied only for the ones
+    /// before it, so an application listening alone is handed a pane's bytes
+    /// without a copy being made of them.
+    pub(crate) fn publish(&self, event: ManagerEvent) {
         let Ok(mut listeners) = self.listeners.lock() else {
             return;
         };
-        listeners.retain(|held| held.send(event.clone()).is_ok());
+        let count = listeners.len();
+        let mut event = Some(event);
+        let mut reached: usize = 0;
+        listeners.retain(|held| {
+            reached = reached.saturating_add(1);
+            let sending = if reached == count {
+                event.take()
+            } else {
+                event.clone()
+            };
+            sending.is_some_and(|sent| held.send(sent).is_ok())
+        });
     }
 
     /// Does something to one host's view, if the manager still holds it.
@@ -595,7 +610,7 @@ impl HostManager {
         if let Ok(mut model) = self.shared.model.lock() {
             let _gone = model.remove(&host);
         }
-        self.shared.publish(&ManagerEvent::Removed { host });
+        self.shared.publish(ManagerEvent::Removed { host });
         Ok(())
     }
 
@@ -828,7 +843,7 @@ impl HostManager {
         if let Ok(mut model) = self.shared.model.lock() {
             let _dropped = model.remove(&host);
         }
-        self.shared.publish(&ManagerEvent::Removed { host });
+        self.shared.publish(ManagerEvent::Removed { host });
         Ok(())
     }
 

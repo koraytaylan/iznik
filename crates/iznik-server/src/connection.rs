@@ -189,12 +189,9 @@ impl FrameSink for Handoff {
     fn send(
         &mut self,
         channel: u8,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send {
-        let outgoing = Outgoing {
-            channel,
-            payload: payload.to_vec(),
-        };
+        let outgoing = Outgoing { channel, payload };
         let frames = self.frames.clone();
         async move {
             frames

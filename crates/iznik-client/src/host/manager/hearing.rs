@@ -77,7 +77,7 @@ pub(super) async fn heard(
         }
         taken
     } else {
-        carried(host, shared, &received)?;
+        carried(host, shared, received)?;
         Vec::new()
     };
     for effect in effects {
@@ -100,7 +100,7 @@ pub(super) async fn heard(
 fn carried(
     host: &HostId,
     shared: &Arc<Shared>,
-    received: &crate::transport::channel::Received,
+    received: crate::transport::channel::Received,
 ) -> Result<(), String> {
     let Ok(mut model) = shared.model.lock() else {
         return Err("the model's lock is broken".to_owned());
@@ -143,12 +143,14 @@ fn carried(
         .map_or(Sequence(0), |view| view.answered_through(pane));
     let _nothing = arrived(&mut model, host, received.channel, received.payload.len());
     drop(model);
-    shared.publish(&ManagerEvent::Bytes {
+    shared.publish(ManagerEvent::Bytes {
         host: host.clone(),
         pane,
         sequence,
         answered_through,
-        bytes: received.payload.clone(),
+        // Moved, not copied: the frame was copied once out of the link's
+        // buffer, and that copy is what the application is handed.
+        bytes: received.payload,
         receipt: Some(receipt),
     });
     Ok(())
@@ -163,7 +165,7 @@ pub(super) fn told_the_model(
     let Ok(payload) = iznik_protocol::model::encode_host_model(model) else {
         return;
     };
-    shared.publish(&ManagerEvent::Snapshot {
+    shared.publish(ManagerEvent::Snapshot {
         host: host.clone(),
         generation: model.generation,
         payload,
@@ -220,7 +222,7 @@ fn announced(host: &HostId, shared: &Arc<Shared>, message: &iznik_protocol::mess
         },
         _otherwise => return,
     };
-    shared.publish(&told);
+    shared.publish(told);
 }
 
 /// Applies one message to the model, with the lock held for that and nothing
@@ -276,7 +278,7 @@ async fn act(
             rows,
             bytes,
         } => {
-            shared.publish(&ManagerEvent::Screen {
+            shared.publish(ManagerEvent::Screen {
                 host: host.clone(),
                 pane,
                 sequence,
@@ -288,7 +290,7 @@ async fn act(
         }
         Effect::Notify(notification) => {
             settle(host, shared, &notification);
-            shared.publish(&ManagerEvent::Notify(notification));
+            shared.publish(ManagerEvent::Notify(notification));
             true
         }
     }

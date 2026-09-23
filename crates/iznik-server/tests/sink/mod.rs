@@ -85,13 +85,10 @@ impl FrameSink for Collected {
     fn send(
         &mut self,
         channel: u8,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send {
         let inner = Arc::clone(&self.inner);
-        let frame = Frame {
-            channel,
-            payload: payload.to_vec(),
-        };
+        let frame = Frame { channel, payload };
         async move {
             let mut held = inner.lock().unwrap_or_else(PoisonError::into_inner);
             let carried = u64::try_from(frame.payload.len()).unwrap_or(0);

@@ -9,8 +9,8 @@
 //!
 //! **It buffers no pane bytes of its own.** The history ring is the queue: a
 //! subscription is a cursor into it, credit decides how far the cursor
-//! advances, and one frame's worth is copied into a buffer the pump owns on
-//! its way to the link. A background pane that falls further behind than
+//! advances, and one frame's worth is copied out of the ring into a buffer
+//! that is then handed, not copied, to the link. A background pane that falls further behind than
 //! catching up byte by byte is worth stops being served and is marked stale;
 //! when it is looked at again it is sent the truth instead. The ring keeps
 //! every byte regardless, so a client that scrolls back after focus can still
@@ -72,7 +72,9 @@ pub const CATCH_UP_INTERVAL: Duration = Duration::from_secs(1);
 /// it. It is a trait rather than a link so that what the scheduler decides can
 /// be proven without a socket.
 pub trait FrameSink: Send {
-    /// Hands one frame to the link: the channel it belongs to and its bytes.
+    /// Hands one frame to the link: the channel it belongs to and its bytes,
+    /// by value — the pump's frame and an encoded message are handed over,
+    /// not copied on their way to the writer.
     ///
     /// # Errors
     ///
@@ -80,7 +82,7 @@ pub trait FrameSink: Send {
     fn send(
         &mut self,
         channel: u8,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send;
 }
 
@@ -247,7 +249,7 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
     /// [`MultiplexerError::Sink`] when the link cannot take it.
     async fn tell(&mut self, message: &ToClient) -> Result<(), MultiplexerError> {
         let payload = encode_to_client(message)?;
-        self.sink.send(CHANNEL_CONTROL, &payload).await?;
+        self.sink.send(CHANNEL_CONTROL, payload).await?;
         Ok(())
     }
 
@@ -274,7 +276,7 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         };
         match encode_to_client(&message) {
             Ok(payload) => {
-                self.sink.send(CHANNEL_CONTROL, &payload).await?;
+                self.sink.send(CHANNEL_CONTROL, payload).await?;
                 Ok(())
             }
             Err(error) => {
@@ -856,10 +858,11 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
         if self.frame.is_empty() {
             return Ok(false);
         }
+        // Handed to the writer, not copied: the next frame is read into a
+        // buffer of its own.
         let bytes = std::mem::take(&mut self.frame);
-        self.sink.send(cursor.channel, &bytes).await?;
-        self.frame = bytes;
-        let count = self.frame.len();
+        let count = bytes.len();
+        self.sink.send(cursor.channel, bytes).await?;
         if let Some(advanced) = self.cursors.get_mut(&pane) {
             let carried = u64::try_from(count).unwrap_or(0);
             advanced.sequence = Sequence(advanced.sequence.0.saturating_add(carried));
