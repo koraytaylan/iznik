@@ -13,6 +13,7 @@ use std::time::Instant;
 use iznik_client::host::manager::credit::{CreditReceipt, MAXIMUM_UNRETURNED_BYTES};
 use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::{BackoffPolicy, HostState};
+use iznik_client::reduce::Notification;
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_protocol::command::SessionCommand;
@@ -467,6 +468,60 @@ fn wire_orders_keep_a_server_version_out_of_the_log() {
             !written.lines().any(|line| line.starts_with(forged)),
             "but never as a line of its own: {written}"
         );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a command whose answer cannot be read is left waiting for the
+/// timeout rather than given up on at once.
+#[test]
+fn wire_orders_give_up_on_a_command_with_an_unreadable_answer() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("unreadable")?;
+        let runtime = runtime()?;
+        let script = Script {
+            answer_commands_with: Some(vec![0xff, 0xff, 0xff]),
+            ..Script::default()
+        };
+        let (host, _heard) = scripted(&runtime, &held, script)?;
+        let manager = manager(&held)?;
+        let events = manager.events();
+        manager.add_host(&host)?;
+        await_connected(&events)?;
+        let submission = manager.command(
+            &host,
+            SessionCommand::RenameSession {
+                session: SessionId(1),
+                name: "renamed".to_owned(),
+            },
+        )?;
+        let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
+        let mut given_up = false;
+        while let Some(left) = expires.checked_duration_since(Instant::now()) {
+            match events.recv_timeout(left) {
+                Ok(ManagerEvent::Notify(Notification::CommandUnreadable { command, .. }))
+                    if command == submission.id =>
+                {
+                    given_up = true;
+                    break;
+                }
+                Ok(ManagerEvent::Notify(Notification::CommandTimedOut { .. })) => {
+                    return Err("it was left to time out".into());
+                }
+                Ok(_otherwise) => {}
+                Err(_nothing) => break,
+            }
+        }
+        assert!(given_up, "the command was given up on when its answer came");
+        let pending = manager
+            .model()
+            .host(&iznik_client::host::identity::HostId(host.clone()))
+            .map(|view| view.pending.len());
+        assert_eq!(pending, Some(0), "and nothing of it is still pending");
+        drop(manager);
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

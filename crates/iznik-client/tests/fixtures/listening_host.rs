@@ -30,6 +30,9 @@ pub(super) struct Script {
     pub after_snapshot: Vec<(u8, Vec<u8>)>,
     /// Frames sent whenever a pane is subscribed to.
     pub on_subscribe: Vec<(u8, Vec<u8>)>,
+    /// What every command is answered with, as the payload of its
+    /// `CommandResult`, when commands are answered at all.
+    pub answer_commands_with: Option<Vec<u8>>,
     /// What the host says its server is, when not `scripted`.
     pub version: Option<String>,
     /// Keystrokes that end the connection they arrive on.
@@ -133,6 +136,15 @@ impl Serving {
                     }
                 }
                 ToServer::Subscribe { .. } => say(&mut link, &self.script.on_subscribe).await?,
+                ToServer::Command { command_id, .. } => {
+                    if let Some(payload) = &self.script.answer_commands_with {
+                        let answer = ToClient::CommandResult {
+                            command_id: *command_id,
+                            payload: payload.clone(),
+                        };
+                        send(&mut link, &answer).await?;
+                    }
+                }
                 _otherwise => {}
             }
             let closing = matches!(

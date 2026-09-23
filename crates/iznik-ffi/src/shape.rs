@@ -145,7 +145,8 @@ fn told(notification: &Notification) -> Option<(EventKind, String, Vec<u8>)> {
             host.0.clone(),
             format!("{code:?}: {message}").into_bytes(),
         )),
-        Notification::Malformed { host, detail } => Some((
+        Notification::CommandUnreadable { host, detail, .. }
+        | Notification::Malformed { host, detail } => Some((
             EventKind::Notification,
             host.0.clone(),
             detail.clone().into_bytes(),
@@ -206,7 +207,8 @@ fn command_of(event: &ManagerEvent) -> u64 {
     match event {
         ManagerEvent::Notify(
             Notification::CommandFinished { command, .. }
-            | Notification::CommandTimedOut { command, .. },
+            | Notification::CommandTimedOut { command, .. }
+            | Notification::CommandUnreadable { command, .. },
         ) => command.0,
         _elsewhere => 0,
     }

@@ -310,8 +310,10 @@ async fn remote_launch_names_the_handshake_when_the_server_refuses() {
             "the stage is the handshake: {error}"
         );
         assert!(
-            error.detail.contains("ProtocolVersion"),
-            "and the remote's own words are carried: {error}"
+            error
+                .detail
+                .contains(&format!("speaks iznik/{OTHER_VERSION}")),
+            "and it is reported as the version it is, with the number the server gave: {error}"
         );
         Ok::<(), Failed>(())
     };

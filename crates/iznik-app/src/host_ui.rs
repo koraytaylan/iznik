@@ -484,7 +484,8 @@ fn read(notification: &Notification) -> (HostId, NoticeKind, String) {
             NoticeKind::Refusal,
             format!("{code:?}: {message}"),
         ),
-        Notification::Malformed { host, detail } => {
+        Notification::Malformed { host, detail }
+        | Notification::CommandUnreadable { host, detail, .. } => {
             (host.clone(), NoticeKind::Failure, detail.clone())
         }
     }

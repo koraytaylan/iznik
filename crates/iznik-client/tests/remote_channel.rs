@@ -197,7 +197,11 @@ async fn a_channel_refuses_another_protocol_version() {
         let Err(ChannelError::ProtocolVersion { host, server }) = refused else {
             return Err(format!("another version was not refused: {refused:?}").into());
         };
-        assert_eq!(server, OTHER_VERSION, "and says which version it speaks");
+        assert_eq!(
+            server,
+            Some(OTHER_VERSION),
+            "and says which version it speaks"
+        );
         assert!(host.contains("scripted.sock"), "and which host: {host}");
         Ok::<(), Failed>(())
     };

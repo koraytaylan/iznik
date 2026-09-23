@@ -7,7 +7,7 @@ use std::sync::Arc;
 use iznik_protocol::command::CommandOutcome;
 use iznik_protocol::message::{CHANNEL_CONTROL, ToServer, decode_to_client};
 
-use crate::commands::{abandoned, confirm};
+use crate::commands::{abandoned, confirm, withdraw};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{MAXIMUM_UNRETURNED_BYTES, Undeliverable};
 use crate::host::manager::task::write;
@@ -28,8 +28,21 @@ pub(super) async fn heard(
     received: crate::transport::channel::Received,
 ) -> Result<(), String> {
     let effects = if received.channel == CHANNEL_CONTROL {
-        let Ok(message) = decode_to_client(&received.payload) else {
-            return Ok(());
+        let message = match decode_to_client(&received.payload) {
+            Ok(message) => message,
+            // Not a reason to drop the link — a newer server may say something
+            // this build has no word for — but not a reason to say nothing
+            // either: a message that was lost is the explanation for whatever
+            // looks wrong next.
+            Err(refusal) => {
+                tracing::warn!(
+                    host = ?host.0,
+                    %refusal,
+                    bytes = received.payload.len(),
+                    "a control message could not be read, and was passed over"
+                );
+                return Ok(());
+            }
         };
         let taken = reduce_under(shared, host, &message);
         if let Ok(mut credit) = shared.credit.lock() {
@@ -268,12 +281,18 @@ async fn act(
 
 /// Retires or rolls back the pending command an answer settles.
 fn settle(host: &HostId, shared: &Arc<Shared>, notification: &Notification) {
-    let Notification::CommandFinished {
-        command, outcome, ..
-    } = notification
-    else {
-        return;
-    };
-    let settled: CommandOutcome = outcome.clone();
-    let _confirmed = shared.with(host, |view| confirm(view, *command, &settled));
+    match notification {
+        Notification::CommandFinished {
+            command, outcome, ..
+        } => {
+            let settled: CommandOutcome = outcome.clone();
+            let _confirmed = shared.with(host, |view| confirm(view, *command, &settled));
+        }
+        // An answer that came and could not be read settles the command as
+        // surely as a refusal: what it showed is put back now.
+        Notification::CommandUnreadable { command, .. } => {
+            let _taken_back = shared.with(host, |view| withdraw(view, *command));
+        }
+        _otherwise => {}
+    }
 }

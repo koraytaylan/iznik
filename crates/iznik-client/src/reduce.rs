@@ -86,6 +86,20 @@ pub enum Notification {
         /// This client's number for the command.
         command: CommandId,
     },
+    /// A command this client sent was answered with something this client
+    /// could not read.
+    ///
+    /// Given up on at once, with what it showed put back: waiting out the
+    /// timeout for an answer that has already come would only make a person
+    /// wait to be told less than this says.
+    CommandUnreadable {
+        /// The host that answered.
+        host: HostId,
+        /// This client's number for the command.
+        command: CommandId,
+        /// What could not be read.
+        detail: String,
+    },
     /// A shell-integration event in a pane.
     Mark {
         /// The host.
@@ -336,8 +350,9 @@ fn answered(host: &HostId, command: CommandId, payload: &[u8]) -> Notification {
             command,
             outcome,
         },
-        Err(source) => Notification::Malformed {
+        Err(source) => Notification::CommandUnreadable {
             host: host.clone(),
+            command,
             detail: format!(
                 "the answer to command {} could not be read: {source}",
                 command.0

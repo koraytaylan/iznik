@@ -21,8 +21,8 @@ use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameReader, FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, MessageError, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client,
-    encode_to_server,
+    CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
+    decode_to_client, encode_to_server,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(unix)]
@@ -140,8 +140,9 @@ pub enum ChannelError {
     ProtocolVersion {
         /// The host.
         host: String,
-        /// What it said it speaks.
-        server: u16,
+        /// What it said it speaks, when it said a number: a server that
+        /// refuses this client's version says so in words, which carry it.
+        server: Option<u16>,
     },
     /// The link came up and the server never greeted.
     Silent {
@@ -190,10 +191,19 @@ impl Display for ChannelError {
             ChannelError::Link(source) => write!(formatter, "the link failed: {source}"),
             ChannelError::Message(source) => write!(formatter, "the message failed: {source}"),
             ChannelError::Io { host, source } => write!(formatter, "{host}: {source}"),
-            ChannelError::ProtocolVersion { host, server } => write!(
+            ChannelError::ProtocolVersion {
+                host,
+                server: Some(server),
+            } => write!(
                 formatter,
                 "{host} speaks iznik/{server} and this client speaks iznik/{PROTOCOL_VERSION}. \
                  The server holds the sessions, so it is not replaced without being asked."
+            ),
+            ChannelError::ProtocolVersion { host, server: None } => write!(
+                formatter,
+                "{host} speaks another version of iznik's protocol than this client's \
+                 iznik/{PROTOCOL_VERSION}. The server holds the sessions, so it is not replaced \
+                 without being asked."
             ),
             ChannelError::Silent { host, waited } => write!(
                 formatter,
@@ -335,6 +345,21 @@ fn keep_complaints(errors: tokio::process::ChildStderr, kept: Arc<Mutex<String>>
             }
         }
     });
+}
+
+/// The protocol version a server's refusal names: the number its words end
+/// with — "this server speaks protocol 2" — when they end with one.
+fn spoken(message: &str) -> Option<u16> {
+    let digits: String = message
+        .trim_end()
+        .chars()
+        .rev()
+        .take_while(char::is_ascii_digit)
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect();
+    digits.parse().ok()
 }
 
 /// Whether a capability set offers compression.
@@ -525,22 +550,36 @@ impl RemoteChannel {
             });
         }
         let message = decode_to_client(frame.payload).map_err(ChannelError::Message)?;
-        let ToClient::Hello {
-            protocol_version,
-            server_version,
-            capabilities,
-        } = message
-        else {
-            return Err(ChannelError::Unexpected {
-                host: host.to_owned(),
-                wanted: "the server's Hello",
-                received: format!("{message:?}"),
-            });
+        let (protocol_version, server_version, capabilities) = match message {
+            ToClient::Hello {
+                protocol_version,
+                server_version,
+                capabilities,
+            } => (protocol_version, server_version, capabilities),
+            // What a server of another version answers a `Hello` with: its
+            // refusal, which is the version mismatch this client exists to
+            // report by name — not something unexpected.
+            ToClient::Error {
+                code: ErrorCode::ProtocolVersion,
+                message,
+            } => {
+                return Err(ChannelError::ProtocolVersion {
+                    host: host.to_owned(),
+                    server: spoken(&message),
+                });
+            }
+            other => {
+                return Err(ChannelError::Unexpected {
+                    host: host.to_owned(),
+                    wanted: "the server's Hello",
+                    received: format!("{other:?}"),
+                });
+            }
         };
         if protocol_version != PROTOCOL_VERSION {
             return Err(ChannelError::ProtocolVersion {
                 host: host.to_owned(),
-                server: protocol_version,
+                server: Some(protocol_version),
             });
         }
         Ok(ServerHello {
