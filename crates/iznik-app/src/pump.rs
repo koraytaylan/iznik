@@ -91,6 +91,7 @@ impl WindowShell {
         }
         self.synchronize_sizes(context);
         self.poll_settings(context);
+        self.write_session_tabs(false);
         engine_events >= cap || terminal_events >= cap
     }
 

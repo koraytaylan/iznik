@@ -347,3 +347,64 @@ fn banner(context: &mut Context<'_, WindowShell>, failure: &Notice) -> AnyElemen
 pub fn painted_pane_color(theme: &crate::vt::TerminalTheme) -> gpui_kit::Hsla {
     grid::terminal_color(theme.background)
 }
+
+impl WindowShell {
+    /// Apply authoritative model dimensions on the VT owner after its initial screen exists.
+    pub(crate) fn synchronize_sizes(&mut self, context: &mut Context<'_, Self>) {
+        self.sizes_pending = false;
+        let mut failures = Vec::new();
+        for (host, view) in &self.hosts.state().model().hosts {
+            for pane in view
+                .model
+                .sessions
+                .iter()
+                .flat_map(|session| &session.tabs)
+                .flat_map(|tab| &tab.panes)
+            {
+                let key = PaneKey {
+                    host: host.clone(),
+                    pane: pane.id,
+                };
+                let Some(held) = self.panes.get_mut(&key) else {
+                    continue;
+                };
+                let Some(snapshot) = held.surface.read(context).grid().read(context).snapshot()
+                else {
+                    continue;
+                };
+                let desired = (pane.columns, pane.rows);
+                let Ok(row_count) = u16::try_from(snapshot.rows.len()) else {
+                    continue;
+                };
+                let shown = (snapshot.columns, row_count);
+                let (awaiting, action) = local_size(
+                    held.measured,
+                    held.awaiting_model,
+                    held.native_size,
+                    desired,
+                    shown,
+                );
+                held.awaiting_model = awaiting;
+                match action {
+                    LocalSize::Settled => {
+                        note_settled_size(held, self.banner_count, desired);
+                    }
+                    LocalSize::Hold => {}
+                    LocalSize::Apply(size) => {
+                        match self.thread.send(VtCommand::Resize {
+                            key,
+                            columns: size.0,
+                            rows: size.1,
+                        }) {
+                            Ok(()) => held.native_size = Some(size),
+                            Err(error) => failures.push((host.clone(), error.to_string())),
+                        }
+                    }
+                }
+            }
+        }
+        for (host, detail) in failures {
+            self.failure(&host, detail, context);
+        }
+    }
+}

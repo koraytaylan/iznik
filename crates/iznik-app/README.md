@@ -89,7 +89,9 @@ session needing the `ReorderSessions` command the wire carries alongside
 
 The tab on screen, and the tab each other session was left on, are written to
 `~/.config/iznik/session-tabs` (`$XDG_CONFIG_HOME/iznik/session-tabs` when that
-variable is set, `%APPDATA%\iznik\session-tabs` on Windows when neither is). Quitting and opening the application again shows that tab,
+variable is set, `%APPDATA%\iznik\session-tabs` on Windows when neither is),
+a second after the last change and when the window closes, so a burst of tab
+changes is one write. Quitting and opening the application again shows that tab,
 and choosing another session shows the tab it was left on, while those tabs
 still exist. A recorded tab the host no longer holds yields that session's
 first remaining tab.
@@ -158,7 +160,7 @@ rather than ending the connection.
 | `settings` | Validated settings — theme, typography, keybinding overrides and the per-pane `scrollback_bytes` history budget (10 MiB by default, read at launch) — read from and written to `$XDG_CONFIG_HOME/iznik/settings` (or `~/.config/iznik/settings`, or `%APPDATA%\iznik\settings` on Windows). Sizes are clamped to what the grid can draw; a field this version does not know is reported once and kept when the file is written, and a malformed file is reported once per change. |
 | `configuration_file` | Where the application's own files live, and their atomic replacement: a uniquely named temporary file, flushed to disk, renamed into place. |
 | `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
-| `ssh_config` | The person's own ssh configuration: the concrete aliases it defines, and the `Host`/`HostName` block this application appends when Add Host asks. |
+| `ssh_config` | The person's own ssh configuration: the concrete aliases it and the files it `Include`s define, cached until one of those files or `known_hosts` changes, and the `Host`/`HostName` block this application appends when Add Host asks. |
 | `tab_actions` | The bar's right-click menus and drag-to-reorder: the same menu shape for a tab and a session, the orders a move or a drop produces for tabs and for sessions, the entries its close affordances close, and the open menu the shell renders and dismisses. |
 | `tab_label` | The name a tab chip shows: a renamed tab's own name, otherwise the foreground program or the directory. |
 | `theme` | Application theme mapped into terminal emulator defaults: the kit theme's red, green, yellow, blue, magenta and cyan as the ANSI hues, and a light or dark answer to programs from the background's luminance. |

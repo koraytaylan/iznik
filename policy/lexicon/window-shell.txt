@@ -3,9 +3,14 @@ applies
 axis
 banners
 batch
+cache
 desired
 dimensions
+followed
+fonts
 hot
+included
+includes
 outbox
 polled
 raise
@@ -17,8 +22,11 @@ restored
 retained
 revision
 showing
+stamps
 synchronize
+unwritten
 update
 visible
 weights
+wildcard
 windows

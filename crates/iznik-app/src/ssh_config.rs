@@ -11,14 +11,18 @@
 //! A host pattern that matches more than itself — one holding `*`, `?` or `!`
 //! — is not a host a person can connect to, so it is never offered and never
 //! written. A name in `known_hosts` that is hashed or carries its port cannot
-//! be handed to `ssh` as an alias, so it is not offered either. Nothing here
-//! follows an `Include`: an alias defined in an included file is not in the
-//! text read, which is why a person who typed it anyway is asked for an
-//! address rather than refused.
+//! be handed to `ssh` as an alias, so it is not offered either, and neither is
+//! a `@cert-authority` or `@revoked` line, which names no host a person
+//! reached. An `Include` is followed — relative to `~/.ssh`, with `~` and a
+//! wildcard in its last component — so aliases split across files are
+//! offered too. What was read is kept with each file's modification time and
+//! read again only when one of them changes.
 
 use core::fmt::{self, Display, Formatter};
+use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The directory the ssh configuration lives in, under the home directory.
 const SSH_DIRECTORY: &str = ".ssh";
@@ -54,6 +58,16 @@ const PATTERN_CHARACTERS: [char; PATTERN_CHARACTER_COUNT] = ['*', '?', '!'];
 /// The character that begins a comment.
 const COMMENT: char = '#';
 
+/// The first word of a line that reads another configuration file, in any case.
+const INCLUDE_WORD: &str = "include";
+/// How deep one included file may include another: the limit `ssh` itself has.
+const MAXIMUM_INCLUDE_DEPTH: usize = 16;
+/// The character a `known_hosts` marker line begins with.
+const MARKER_START: char = '@';
+/// The character that stands for the home directory at the start of a path.
+const HOME_MARK: &str = "~";
+/// The environment variable that names the home directory.
+const HOME_VARIABLE: &str = "HOME";
 /// The word that names a host's address inside its block.
 const ADDRESS_WORD: &str = "HostName";
 
@@ -147,11 +161,9 @@ fn home_path(name: &str) -> Option<PathBuf> {
 /// [`SshConfigError::Io`] when a file exists but cannot be read.
 pub fn known_hosts(path: &Path, known_hosts_path: &Path) -> Result<Vec<String>, SshConfigError> {
     let mut hosts = aliases(path)?;
+    let mut seen: BTreeSet<String> = hosts.iter().map(|host| host.to_lowercase()).collect();
     for remembered in read_known_hosts(known_hosts_path)? {
-        if !hosts
-            .iter()
-            .any(|known| known.eq_ignore_ascii_case(&remembered))
-        {
+        if seen.insert(remembered.to_lowercase()) {
             hosts.push(remembered);
         }
     }
@@ -184,6 +196,7 @@ fn read_known_hosts(path: &Path) -> Result<Vec<String>, SshConfigError> {
 #[must_use]
 pub fn parsed_aliases(text: &str) -> Vec<String> {
     let mut aliases: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
     for line in text.lines() {
         let mut words = line.split_whitespace();
         let Some(first) = words.next() else {
@@ -196,7 +209,7 @@ pub fn parsed_aliases(text: &str) -> Vec<String> {
             if pattern.starts_with(COMMENT) {
                 break;
             }
-            if plain_pattern(pattern) && !aliases.iter().any(|known| known == pattern) {
+            if plain_pattern(pattern) && seen.insert(pattern) {
                 aliases.push(pattern.to_owned());
             }
         }
@@ -226,9 +239,14 @@ pub fn defines(text: &str, alias: &str) -> bool {
 #[must_use]
 pub fn parsed_known_hosts(text: &str) -> Vec<String> {
     let mut hosts: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
     for line in text.lines() {
         let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with(COMMENT) || trimmed.starts_with(HASH_MARKER) {
+        if trimmed.is_empty()
+            || trimmed.starts_with(COMMENT)
+            || trimmed.starts_with(HASH_MARKER)
+            || trimmed.starts_with(MARKER_START)
+        {
             continue;
         }
         let Some(first) = trimmed.split_whitespace().next() else {
@@ -242,7 +260,7 @@ pub fn parsed_known_hosts(text: &str) -> Vec<String> {
             {
                 continue;
             }
-            if !hosts.iter().any(|known| known == name) {
+            if seen.insert(name) {
                 hosts.push(name.to_owned());
             }
         }
@@ -268,13 +286,219 @@ fn address(name: &str) -> bool {
 ///
 /// [`SshConfigError::Io`] when the file exists but cannot be read.
 pub fn aliases(path: &Path) -> Result<Vec<String>, SshConfigError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(parsed_aliases(&text)),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(source) => Err(SshConfigError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
+    let mut reading = Reading::default();
+    read_configuration(path, path.parent(), 0, &mut reading)?;
+    Ok(reading.aliases)
+}
+
+/// What reading a configuration and its includes has found so far.
+#[derive(Default)]
+struct Reading {
+    /// Aliases in the order they were defined.
+    aliases: Vec<String>,
+    /// The same aliases, for finding a repeat without a scan.
+    seen: BTreeSet<String>,
+    /// Every file read, so a cache knows what to watch.
+    files: Vec<PathBuf>,
+}
+
+/// Read the configuration at `path`, then every file it includes, into
+/// `reading`. An absent file defines nothing.
+///
+/// # Errors
+///
+/// [`SshConfigError::Io`] when a file exists but cannot be read.
+fn read_configuration(
+    path: &Path,
+    base: Option<&Path>,
+    depth: usize,
+    reading: &mut Reading,
+) -> Result<(), SshConfigError> {
+    reading.files.push(path.to_path_buf());
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(SshConfigError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    for alias in parsed_aliases(&text) {
+        if reading.seen.insert(alias.clone()) {
+            reading.aliases.push(alias);
+        }
+    }
+    if depth >= MAXIMUM_INCLUDE_DEPTH {
+        return Ok(());
+    }
+    for pattern in parsed_includes(&text) {
+        for included in expanded(&pattern, base) {
+            read_configuration(&included, base, depth.saturating_add(1), reading)?;
+        }
+    }
+    Ok(())
+}
+
+/// Every path an `Include` line of a configuration's text names, in order.
+#[must_use]
+pub fn parsed_includes(text: &str) -> Vec<String> {
+    let mut includes = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_start();
+        let Some(split) =
+            line.find(|character: char| character.is_whitespace() || character == '=')
+        else {
+            continue;
+        };
+        let (word, rest) = line.split_at(split);
+        if !word.eq_ignore_ascii_case(INCLUDE_WORD) {
+            continue;
+        }
+        let rest = rest
+            .trim_start_matches(|character: char| character.is_whitespace() || character == '=');
+        for path in rest.split_whitespace() {
+            if path.starts_with(COMMENT) {
+                break;
+            }
+            includes.push(path.to_owned());
+        }
+    }
+    includes
+}
+
+/// The files an `Include` pattern names: `~` is the home directory, a
+/// relative path is under `base`, and a `*` or `?` in the last component
+/// matches the files of its directory, in name order.
+fn expanded(pattern: &str, base: Option<&Path>) -> Vec<PathBuf> {
+    let path = if let Some(rest) = pattern.strip_prefix(HOME_MARK) {
+        let Some(home) = std::env::var_os(HOME_VARIABLE).filter(|home| !home.is_empty()) else {
+            return Vec::new();
+        };
+        PathBuf::from(home).join(rest.trim_start_matches('/'))
+    } else if Path::new(pattern).is_absolute() {
+        PathBuf::from(pattern)
+    } else {
+        let Some(base) = base else {
+            return Vec::new();
+        };
+        base.join(pattern)
+    };
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !name.contains(['*', '?']) {
+        return vec![path];
+    }
+    let Some(directory) = path.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut matched: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| wildcard(&name, &entry.file_name().to_string_lossy()))
+        .map(|entry| entry.path())
+        .collect();
+    matched.sort();
+    matched
+}
+
+/// Whether `name` matches `pattern`, where `*` is any run and `?` is one character.
+fn wildcard(pattern: &str, name: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let mut matches = vec![false; name.len().saturating_add(1)];
+    if let Some(first) = matches.first_mut() {
+        *first = true;
+    }
+    for token in pattern {
+        let mut next = vec![false; matches.len()];
+        for (index, matched) in matches.iter().enumerate() {
+            if !matched {
+                continue;
+            }
+            if token == '*' {
+                for slot in next.iter_mut().skip(index) {
+                    *slot = true;
+                }
+            } else if let (Some(character), Some(slot)) =
+                (name.get(index), next.get_mut(index.saturating_add(1)))
+                && (token == '?' || token == *character)
+            {
+                *slot = true;
+            }
+        }
+        matches = next;
+    }
+    matches.last().copied().unwrap_or(false)
+}
+
+/// The aliases last read and the modification time of every file they were
+/// read from, so rendering a frame does not read and parse them again.
+#[derive(Clone, Debug, Default)]
+pub struct AliasCache {
+    /// Each file read and its modification time then; `None` when it was absent.
+    stamps: Vec<(PathBuf, Option<SystemTime>)>,
+    /// The aliases, configuration first and `known_hosts` last.
+    aliases: Vec<String>,
+    /// Whether anything has been read yet.
+    filled: bool,
+}
+
+impl AliasCache {
+    /// Whether every file read still has the modification time it had.
+    fn current(&self) -> bool {
+        self.filled
+            && self
+                .stamps
+                .iter()
+                .all(|(path, stamp)| modified(path) == *stamp)
+    }
+}
+
+/// A file's modification time, or `None` when it cannot be read.
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
+/// Read the configuration at `path` and the `known_hosts` beside it into a
+/// fresh cache; a file that cannot be read contributes nothing.
+fn fill(path: &Path) -> AliasCache {
+    let mut reading = Reading::default();
+    let _read = read_configuration(path, path.parent(), 0, &mut reading);
+    let mut seen: BTreeSet<String> = reading
+        .aliases
+        .iter()
+        .map(|alias| alias.to_lowercase())
+        .collect();
+    if let Some(remembered) = path
+        .parent()
+        .map(|directory| directory.join(KNOWN_HOSTS_NAME))
+    {
+        for host in read_known_hosts(&remembered).unwrap_or_default() {
+            if seen.insert(host.to_lowercase()) {
+                reading.aliases.push(host);
+            }
+        }
+        reading.files.push(remembered);
+    }
+    AliasCache {
+        stamps: reading
+            .files
+            .into_iter()
+            .map(|file| {
+                let stamp = modified(&file);
+                (file, stamp)
+            })
+            .collect(),
+        aliases: reading.aliases,
+        filled: true,
     }
 }
 
@@ -343,9 +567,10 @@ pub fn append_host(path: &Path, alias: &str, address: &str) -> Result<(), SshCon
         })
 }
 
-/// Whether a host pattern names one host rather than a set of them.
+/// Whether a host pattern names one host rather than a set of them, and one
+/// `ssh` would not read as an option.
 fn plain_pattern(pattern: &str) -> bool {
-    !pattern.is_empty() && !pattern.contains(PATTERN_CHARACTERS)
+    !pattern.is_empty() && !pattern.starts_with('-') && !pattern.contains(PATTERN_CHARACTERS)
 }
 
 impl crate::window::WindowShell {
@@ -388,13 +613,11 @@ impl crate::window::WindowShell {
         let Some(path) = self.ssh_config_path.as_deref() else {
             return Vec::new();
         };
-        let remembered = path
-            .parent()
-            .map(|directory| directory.join(KNOWN_HOSTS_NAME));
-        match remembered {
-            Some(remembered) => known_hosts(path, &remembered).unwrap_or_default(),
-            None => aliases(path).unwrap_or_default(),
+        let mut cache = self.ssh_cache.borrow_mut();
+        if !cache.current() {
+            *cache = fill(path);
         }
+        cache.aliases.clone()
     }
 
     /// Whether `ssh` can already reach `alias` without this application
@@ -419,6 +642,8 @@ impl crate::window::WindowShell {
 fn refuse_alias(alias: &str) -> Result<(), SshConfigError> {
     let detail = if alias.is_empty() {
         Some("it is empty")
+    } else if alias.starts_with('-') {
+        Some("it would be read as an option")
     } else if alias.chars().any(char::is_whitespace) {
         Some("it holds space")
     } else if alias.contains(PATTERN_CHARACTERS) {

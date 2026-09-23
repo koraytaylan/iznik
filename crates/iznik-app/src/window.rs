@@ -40,6 +40,8 @@ const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 const SETTINGS_INTERVAL: Duration = Duration::from_secs(2);
 /// Bound each owner drain so continuous terminal output cannot monopolize a UI update.
 const MAXIMUM_EVENTS_PER_UPDATE: usize = 256;
+/// How long the session-tabs record waits after a change before it is written.
+const SELECTION_WRITE_DELAY: Duration = Duration::from_secs(1);
 /// Default width used when the palette creates a new pane or session.
 const DEFAULT_COLUMNS: u16 = 80;
 /// Default height used when the palette creates a new pane or session.
@@ -76,6 +78,8 @@ pub struct ShellOptions {
     /// The file that records the tab each session was left on. Resolved like
     /// [`Self::ssh_config_path`]: absent reads and writes nothing.
     pub selection_path: Option<PathBuf>,
+    /// How long a changed record waits, so a burst of tab changes is one write.
+    pub selection_write_delay: Duration,
 }
 
 impl Default for ShellOptions {
@@ -89,6 +93,7 @@ impl Default for ShellOptions {
             settings_path: None,
             ssh_config_path: None,
             selection_path: None,
+            selection_write_delay: SELECTION_WRITE_DELAY,
         }
     }
 }
@@ -141,7 +146,7 @@ pub(crate) struct HeldPane {
 #[derive(Debug)]
 pub struct WindowShell {
     /// Sole engine owner and model mirror; the shell does not maintain another reducer.
-    hosts: HostUi,
+    pub(crate) hosts: HostUi,
     /// One shared terminal owner for all panes shown by the window.
     pub(crate) thread: Rc<VtThread>,
     /// Stable pane entities, keyed by host as well as pane number.
@@ -162,7 +167,7 @@ pub struct WindowShell {
     _update_task: Option<Task<()>>,
     /// Whether the model may have moved since sizes were last put on the
     /// emulators, so output must wait for them.
-    sizes_pending: bool,
+    pub(crate) sizes_pending: bool,
     /// When the settings file was last looked at; `None` before the first look.
     pub(crate) settings_polled: Option<std::time::Instant>,
     /// Latest local routing failure, dismissible without discarding host state.
@@ -187,6 +192,11 @@ pub struct WindowShell {
     pub(crate) banner_count: usize,
     /// Tabs or sessions numbered while Command is held.
     pub(crate) shortcut_hint: ShortcutHint,
+    /// The system's font families, listed once: listing them walks every
+    /// installed font, which is too slow to repeat for each theme change.
+    installed_fonts: Option<Vec<String>>,
+    /// The ssh aliases last read, with the files they were read from.
+    pub(crate) ssh_cache: std::cell::RefCell<crate::ssh_config::AliasCache>,
 }
 
 impl Focusable for WindowShell {
@@ -234,6 +244,8 @@ impl WindowShell {
             upgrade_notices: BTreeSet::new(),
             banner_count: 0,
             shortcut_hint: ShortcutHint::None,
+            installed_fonts: None,
+            ssh_cache: std::cell::RefCell::default(),
         };
         crate::settings::load_into(&mut shell, context);
         shell
@@ -412,8 +424,10 @@ impl WindowShell {
         let theme = &crate::settings::drawable(theme);
         let terminal = theme::terminal_theme_in(theme, context);
         self.options.theme = terminal.clone();
-        let installed = context.text_system().all_font_names();
-        let font = SharedString::from(theme::terminal_font(&theme.font_family, &installed));
+        let installed = self
+            .installed_fonts
+            .get_or_insert_with(|| context.text_system().all_font_names());
+        let font = SharedString::from(theme::terminal_font(&theme.font_family, installed));
         let size = px(theme.font_size);
         self.options.metrics.font = font.clone();
         self.options.metrics.font_size = size;
@@ -827,64 +841,6 @@ impl WindowShell {
             }
         }
     }
-    /// Apply authoritative model dimensions on the VT owner after its initial screen exists.
-    pub(crate) fn synchronize_sizes(&mut self, context: &mut Context<'_, Self>) {
-        self.sizes_pending = false;
-        let mut failures = Vec::new();
-        for (host, view) in &self.hosts.state().model().hosts {
-            for pane in view
-                .model
-                .sessions
-                .iter()
-                .flat_map(|session| &session.tabs)
-                .flat_map(|tab| &tab.panes)
-            {
-                let key = PaneKey {
-                    host: host.clone(),
-                    pane: pane.id,
-                };
-                let Some(held) = self.panes.get_mut(&key) else {
-                    continue;
-                };
-                let Some(snapshot) = held.surface.read(context).grid().read(context).snapshot()
-                else {
-                    continue;
-                };
-                let desired = (pane.columns, pane.rows);
-                let Ok(row_count) = u16::try_from(snapshot.rows.len()) else {
-                    continue;
-                };
-                let shown = (snapshot.columns, row_count);
-                let (awaiting, action) = crate::chrome::local_size(
-                    held.measured,
-                    held.awaiting_model,
-                    held.native_size,
-                    desired,
-                    shown,
-                );
-                held.awaiting_model = awaiting;
-                match action {
-                    crate::chrome::LocalSize::Settled => {
-                        crate::chrome::note_settled_size(held, self.banner_count, desired);
-                    }
-                    crate::chrome::LocalSize::Hold => {}
-                    crate::chrome::LocalSize::Apply(size) => {
-                        match self.thread.send(VtCommand::Resize {
-                            key,
-                            columns: size.0,
-                            rows: size.1,
-                        }) {
-                            Ok(()) => held.native_size = Some(size),
-                            Err(error) => failures.push((host.clone(), error.to_string())),
-                        }
-                    }
-                }
-            }
-        }
-        for (host, detail) in failures {
-            self.failure(&host, detail, context);
-        }
-    }
     /// Deliver a pane routing failure through the window's existing notice inventory.
     pub(crate) fn failure(
         &mut self,
@@ -905,6 +861,11 @@ impl WindowShell {
     }
 }
 impl gpui_kit::EventEmitter<Notice> for WindowShell {}
+impl Drop for WindowShell {
+    fn drop(&mut self) {
+        self.write_session_tabs(true);
+    }
+}
 impl Render for WindowShell {
     fn render(
         &mut self,

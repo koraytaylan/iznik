@@ -62,6 +62,9 @@ pub struct Following {
     pub session_tab: BTreeMap<SessionKey, TabId>,
     /// The tab that was on screen. The next launch opens it while it exists.
     pub open: Option<TabKey>,
+    /// When the record first changed without being written since; a burst of
+    /// tab changes is written once, after the selection write delay.
+    pub unwritten_since: Option<std::time::Instant>,
 }
 
 /// Every tab a host holds.
@@ -183,12 +186,23 @@ impl WindowShell {
             key.tab,
         );
         self.following.open = Some(key.clone());
-        self.write_session_tabs();
+        if self.following.unwritten_since.is_none() {
+            self.following.unwritten_since = Some(std::time::Instant::now());
+        }
+        self.write_session_tabs(false);
     }
 
-    /// Write the tabs this window has shown. A record that cannot be written
-    /// leaves the selection as it is: the window still changes tabs.
-    fn write_session_tabs(&self) {
+    /// Write the tabs this window has shown, once the record has waited the
+    /// selection write delay or when `now` is asked for. A record that cannot
+    /// be written leaves the selection as it is: the window still changes tabs.
+    pub(crate) fn write_session_tabs(&mut self, now: bool) {
+        let Some(since) = self.following.unwritten_since else {
+            return;
+        };
+        if !now && since.elapsed() < self.options.selection_write_delay {
+            return;
+        }
+        self.following.unwritten_since = None;
         let Some(path) = &self.options.selection_path else {
             return;
         };

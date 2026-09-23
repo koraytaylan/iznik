@@ -281,6 +281,7 @@ fn open_with(
             ShellOptions {
                 update_interval: None,
                 selection_path: selection,
+                selection_write_delay: std::time::Duration::ZERO,
                 ..ShellOptions::default()
             },
             window,
