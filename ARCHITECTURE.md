@@ -535,11 +535,53 @@ documentation, the lint set, the dependency allowlist — are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md). They are enforced by gates, not by
 habit.
 
-## 9. Decisions
+## 9. Prior art
+
+iznik is not the first answer to "keep a remote terminal alive across a bad
+link", and several of the others make trade-offs it deliberately does not.
+
+- **tmux and screen** hold the shells on the host and redraw them into
+  whatever terminal attaches. They need nothing but the host, work from any
+  terminal, and are everywhere. Their screen is their own emulator's
+  re-rendering, so scrollback, selection and the local terminal's own
+  features stop at the multiplexer. Control mode does pass a pane's output
+  through, but tmux still owns the layout, the history and the size. iznik
+  gives up "any terminal, nothing
+  installed" for one application that renders each pane itself.
+- **mosh** runs its own protocol over UDP, roams across address changes
+  without reconnecting, and echoes predictively so typing feels local on a
+  slow link. It synchronizes the screen state rather than the byte stream,
+  so it has no scrollback. iznik keeps the user's ordinary SSH over TCP:
+  it reconnects rather than roams, resuming from the byte it holds, and it
+  has no predictive echo yet (section 10 keeps the sequence numbers that
+  would allow it). A roaming laptop pays a reconnect with iznik where it
+  pays nothing with mosh.
+- **Eternal Terminal** keeps a TCP session alive across reconnects with a
+  server of its own and passes scrollback through, but leaves multiplexing
+  to tmux. iznik's server is also the session registry.
+- **zellij** is a terminal multiplexer with layouts and plugins, drawn as a
+  text user interface in the terminal that attaches, like tmux.
+- **WezTerm's SSH domains and its multiplexer server** are the closest
+  design: a GPU terminal application that talks to a mux server on the host,
+  which holds the panes and survives the client. The differences are of
+  degree — iznik's protocol is small, golden-pinned and documented for a
+  second implementation, carries panes as byte streams with explicit
+  sequence numbers and credit, and bootstraps its server over the user's own
+  `ssh` — and iznik is far younger and far less featureful.
+- **VS Code Remote** installs a server over SSH and runs terminals there,
+  which is the bootstrap iznik also uses; its terminals do not outlive the
+  server session in the same way, and a terminal is one feature of an
+  editor rather than the product.
+
+What iznik gives up for its design, stated plainly: no UDP transport and no
+roaming, no predictive echo, no text-mode client, one application to install,
+and a server to install on every host.
+
+## 10. Decisions
 
 | Decision | Why |
 |---|---|
-| Own server rather than driving tmux's control mode or patching a third-party multiplexer. | Both put a second terminal emulator, a second layout authority and a second key handler between the shell and the surface, and every feature iznik cares about — exact resume, credit-based scheduling, shell-integration marks, faithful exit statuses — becomes a workaround. The server iznik needs is a pseudoterminal holder with a session registry, not a multiplexer. |
+| Own server rather than driving tmux's control mode or patching a third-party multiplexer. | iznik's server does run a terminal emulator per pane — `libghostty-vt`, the next row — so the objection is not to emulating on the host. It is that tmux's emulator is a *different* one from the application's, and that tmux also brings its own layout authority, history and key handling, so exact resume, credit-based scheduling, shell-integration marks and faithful exit statuses each become a workaround. Running the same emulator at both ends keeps the server's mirror a cache of what the client will compute anyway. The server iznik needs is a pseudoterminal holder with a session registry, not a multiplexer. |
 | `libghostty-vt` on the server. | A reconnecting client needs a screen, not a byte replay. Running the same emulator on both ends makes `Screen` exact by construction and gives the server titles, working directories and query handling for free. |
 | The system `ssh` binary, not an SSH library. | The user's SSH configuration is where their proxies, keys, hardware tokens and certificates already live. Reimplementing it means reimplementing it wrong for the first interesting setup. |
 | Hand-written little-endian codec with golden fixtures. | The protocol crate has no dependencies, the fixtures are the contract, and both ends and the C ABI carry one encoding. |
