@@ -138,10 +138,22 @@ printf 'installed %s\n' "$into/iznik-server"
 /// same two reasons the artifact's partial is: two bootstraps of one host must
 /// not write one file, and a `tic` that fails must not leave its input behind
 /// in a prefix for ever.
+///
+/// And it refuses a prefix, or a `terminfo` under it, that is a symbolic link
+/// or not this user's own, for the reason the upload does: what the probe saw
+/// can change before this runs, and `tic` writing through somebody else's link
+/// writes where they chose.
 pub const REMOTE_TERMINFO_SCRIPT: &str = r#"
 set -e
+own() {
+  if [ -L "$1" ] || [ ! -d "$1" ] || [ ! -O "$1" ]
+  then printf 'not a directory owned by this user: %s\n' "$1" >&2; exit 1; fi
+}
 into="$IZNIK_PREFIX/terminfo"
+mkdir -p "$IZNIK_PREFIX"
+own "$IZNIK_PREFIX"
 mkdir -p "$into"
+own "$into"
 entry=$(mktemp "$IZNIK_PREFIX/.terminfo-XXXXXX")
 trap 'rm -f "$entry"' EXIT
 cat > "$entry"

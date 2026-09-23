@@ -189,6 +189,11 @@ pub struct HostProbe {
     /// Where iznik may put things: the first candidate the host will let it
     /// write.
     pub prefix: PathBuf,
+    /// Where a server of iznik's already is, when one is anywhere: the first
+    /// candidate holding one. Usually `prefix`, and not always — a candidate
+    /// that was writable when the server was installed may not be now — and
+    /// it is where taking iznik off must look.
+    pub installed_at: Option<PathBuf>,
 }
 
 /// Why a host could not be probed, or could not be used.
@@ -574,5 +579,9 @@ pub fn parse(output: &str) -> Result<HostProbe, ProbeError> {
         terminfo_installed: chosen.terminfo,
         tic_available: said_yes(output, "tic"),
         prefix: chosen.path.clone(),
+        installed_at: offered
+            .iter()
+            .find(|candidate| candidate.server.is_some() || candidate.digest.is_some())
+            .map(|candidate| candidate.path.clone()),
     })
 }

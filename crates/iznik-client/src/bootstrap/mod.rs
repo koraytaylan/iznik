@@ -41,23 +41,36 @@ printf 'stopped %s\n' "$IZNIK_PREFIX"
 /// The remote script that takes iznik off a host.
 ///
 /// It names what it installed rather than sweeping the prefix away, because a
-/// probed prefix may be a directory iznik was given rather than one it made —
+/// probed prefix may be a directory iznik was lent rather than one it made —
 /// `XDG_RUNTIME_DIR` is one of the candidates — and nothing of somebody else's
-/// is this program's to delete. The prefix itself goes when it is empty — and
-/// never when it *is* the runtime directory, which is the one candidate iznik
-/// is lent rather than makes, and which a person's session put there.
+/// is this program's to delete. A prefix is iznik's own when it is named for
+/// iznik (`…/iznik`, or `iznik-<uid>` under a temporary directory); anything
+/// else is lent. From its own prefix it removes the server, the digest beside
+/// it, the terminfo it compiled and the prefix itself once empty. From a lent
+/// one it removes only its own files — the server, its digest, its partials,
+/// the entries `tic` compiled for it — and no directory at all, not even one
+/// that is empty, because an empty directory of somebody else's is still
+/// theirs.
 pub const REMOTE_UNINSTALL_SCRIPT: &str = r#"
 server="$IZNIK_PREFIX/bin/iznik-server"
 if [ -x "$server" ]; then "$server" --stop >/dev/null 2>&1 || true; fi
+case "${IZNIK_PREFIX##*/}" in
+  iznik|"iznik-$(id -u)") own=yes ;;
+  *) own=no ;;
+esac
 rm -f "$server" "$server.sha256" "$IZNIK_PREFIX/bin"/.partial-* "$IZNIK_PREFIX"/.terminfo-*
-rm -rf "$IZNIK_PREFIX/terminfo"
+for compiled in "$IZNIK_PREFIX"/terminfo/*/xterm-ghostty
+do if [ -f "$compiled" ] && [ ! -L "$compiled" ]; then rm -f "$compiled"; fi; done
 if [ -n "${XDG_RUNTIME_DIR:-}" ]
 then runtime="$XDG_RUNTIME_DIR/iznik"
 else runtime="${TMPDIR:-/tmp}/iznik-$(id -u)"; fi
-rm -rf "$runtime"
-rmdir "$IZNIK_PREFIX/bin" 2>/dev/null || true
-if [ "$IZNIK_PREFIX" != "${XDG_RUNTIME_DIR:-}" ]
-then rmdir "$IZNIK_PREFIX" 2>/dev/null || true; fi
+if [ "$runtime" != "$IZNIK_PREFIX" ]; then rm -rf "$runtime"; fi
+if [ "$own" = yes ]
+then
+  rm -rf "$IZNIK_PREFIX/terminfo"
+  rmdir "$IZNIK_PREFIX/bin" 2>/dev/null || true
+  rmdir "$IZNIK_PREFIX" 2>/dev/null || true
+fi
 printf 'removed %s\n' "$IZNIK_PREFIX"
 printf 'runtime %s\n' "$runtime"
 "#;
@@ -357,12 +370,14 @@ pub async fn uninstall(
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
         .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
+    // Where the server is, which is not always where a new one would go: the
+    // first writable candidate may have changed since it was installed, and
+    // taking iznik off the wrong prefix would leave it where it is.
+    let prefix = found.installed_at.as_ref().unwrap_or(&found.prefix);
     let asked = match found.operating_system {
-        probe::OperatingSystem::Windows => {
-            windows::command_for(windows::UNINSTALL_SCRIPT, &found.prefix)
-        }
+        probe::OperatingSystem::Windows => windows::command_for(windows::UNINSTALL_SCRIPT, prefix),
         probe::OperatingSystem::Linux | probe::OperatingSystem::Darwin => {
-            with_prefix(REMOTE_UNINSTALL_SCRIPT, &found.prefix)
+            with_prefix(REMOTE_UNINSTALL_SCRIPT, prefix)
         }
     };
     let said = probe::RunsRemotely::run(transport, &asked, left(expires, options.command_deadline))

@@ -236,6 +236,7 @@ fn probed(tic_available: bool, terminfo_installed: bool) -> HostProbe {
         terminfo_installed,
         tic_available,
         prefix: PathBuf::from(PREFIX),
+        installed_at: None,
     }
 }
 

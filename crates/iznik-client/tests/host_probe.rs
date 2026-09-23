@@ -132,6 +132,7 @@ fn host_probe_reads_an_ordinary_linux_host() {
             terminfo_installed: false,
             tic_available: true,
             prefix: PathBuf::from("/data/me/iznik"),
+            installed_at: None,
         },
         "a fresh host with tic and no server"
     );
@@ -723,5 +724,24 @@ fn host_probe_reads_the_digest_of_the_chosen_server() {
         parse(&stranger).expect("a probe").server_digest,
         None,
         "and a line that is not one is nothing"
+    );
+}
+
+/// # Panics
+///
+/// When a server installed under a candidate that is no longer the one a new
+/// server would go to is not found where it is.
+#[test]
+fn host_probe_finds_a_server_where_it_was_installed() {
+    let read = parse(&linux("no", "yes", "yes", "iznik-server 0.0.0 protocol 1")).expect("a probe");
+    assert_eq!(
+        read.prefix,
+        PathBuf::from(PLACES[1]),
+        "a new server would go to the first writable place"
+    );
+    assert_eq!(
+        read.installed_at,
+        Some(PathBuf::from(PLACES[0])),
+        "while the one there is found where it was put"
     );
 }

@@ -88,6 +88,7 @@ fn probed(server: Option<InstalledServer>) -> HostProbe {
         terminfo_installed: true,
         tic_available: true,
         prefix: PathBuf::from(PREFIX),
+        installed_at: None,
     }
 }
 
