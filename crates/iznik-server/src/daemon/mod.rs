@@ -202,6 +202,31 @@ fn base() -> PathBuf {
     }
 }
 
+/// The directory under an install prefix the bootstrap compiles the
+/// terminfo into.
+const TERMINFO_DIRECTORY: &str = "terminfo";
+
+/// The entry a pane's ghostty `TERM` needs.
+const TERMINFO_ENTRY: &str = "xterm-ghostty";
+
+/// The terminfo the bootstrap installed beside this binary, if it did: the
+/// server is `<prefix>/bin/iznik-server` and the terminfo `<prefix>/terminfo`,
+/// compiled there by the host's own `tic` into a subdirectory named for the
+/// entry's first letter — `x` on most hosts, its hexadecimal code `78` on
+/// macOS — so any subdirectory holding the entry will do. A binary run from
+/// anywhere else, or on a host with no `tic`, has none, and its panes are
+/// given the fallback `TERM`.
+#[must_use]
+pub fn terminfo_beside(executable: &Path) -> Option<PathBuf> {
+    let prefix = executable.parent()?.parent()?;
+    let directory = prefix.join(TERMINFO_DIRECTORY);
+    let compiled = std::fs::read_dir(&directory)
+        .ok()?
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().join(TERMINFO_ENTRY).is_file());
+    compiled.then_some(directory)
+}
+
 /// Every timing and default the daemon runs under, so a test can shorten any
 /// of them.
 #[derive(Clone, Debug)]
@@ -414,7 +439,9 @@ pub async fn serve(
     let registry = Arc::new(RwLock::new(Registry::new(
         RegistryDefaults {
             program: options.program.clone(),
-            terminfo_directory: None,
+            terminfo_directory: std::env::current_exe()
+                .ok()
+                .and_then(|executable| terminfo_beside(&executable)),
             agent_socket: Some(paths.agent.clone()),
             program_interval: crate::pty::program::PROGRAM_INTERVAL,
         },

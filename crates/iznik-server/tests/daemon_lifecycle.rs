@@ -557,3 +557,38 @@ async fn stop_ends_a_daemon_and_says_when_there_is_none() {
     };
     case.await.unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When the terminfo the bootstrap compiles beside the binary is not found,
+/// in either layout `tic` uses, or is found where nothing was compiled.
+#[test]
+fn the_installed_terminfo_is_found_beside_the_binary() {
+    let prefix = std::env::temp_dir().join(format!("iznik-terminfo-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&prefix);
+    let binary = prefix.join("bin").join("iznik-server");
+    std::fs::create_dir_all(prefix.join("bin")).expect("a bin directory");
+    assert_eq!(
+        iznik_server::daemon::terminfo_beside(&binary),
+        None,
+        "nothing was compiled"
+    );
+    std::fs::create_dir_all(prefix.join("terminfo").join("x")).expect("a letter directory");
+    assert_eq!(
+        iznik_server::daemon::terminfo_beside(&binary),
+        None,
+        "an empty tree is not an installed entry"
+    );
+    for letter in ["x", "78"] {
+        let _emptied = std::fs::remove_dir_all(prefix.join("terminfo"));
+        let entry = prefix.join("terminfo").join(letter);
+        std::fs::create_dir_all(&entry).expect("a letter directory");
+        std::fs::write(entry.join("xterm-ghostty"), b"compiled").expect("an entry");
+        assert_eq!(
+            iznik_server::daemon::terminfo_beside(&binary),
+            Some(prefix.join("terminfo")),
+            "the entry under {letter} is found"
+        );
+    }
+    let _cleaned = std::fs::remove_dir_all(&prefix);
+}
