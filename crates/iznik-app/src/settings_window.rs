@@ -12,6 +12,7 @@ use gpui_kit::{
 };
 
 use crate::actions::INVENTORY;
+use crate::settings::{Behavior, Settings};
 use crate::theme::AppTheme;
 use crate::window::WindowShell;
 
@@ -83,6 +84,7 @@ impl Render for SettingsWindow {
                 div().flex_1().min_h_0().child(
                     SettingsPanel::new("iznik-settings")
                         .page(appearance_page(&self.shell, context))
+                        .page(terminal_page(&self.shell))
                         .page(keybindings_page(&self.shell)),
                 ),
             )
@@ -239,6 +241,86 @@ fn tabs_in_title_bar_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
         ),
     )
     .description("Show the session's tabs in the window's title bar instead of a bar of their own.")
+}
+
+/// The Terminal settings page: what a pane's program may do, and how keys
+/// and pastes reach it.
+fn terminal_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
+    SettingPage::new("Terminal").group(
+        SettingGroup::new()
+            .title("Terminal")
+            .item(
+                behavior_item(
+                    shell,
+                    "Programs May Copy",
+                    |behavior| behavior.clipboard_write,
+                    |behavior, value| behavior.clipboard_write = value,
+                )
+                .description(
+                    "Let a program in the focused pane put text on the clipboard (OSC 52).",
+                ),
+            )
+            .item(
+                behavior_item(
+                    shell,
+                    "Ask Before Pasting Lines",
+                    |behavior| behavior.confirm_multiline_paste,
+                    |behavior, value| behavior.confirm_multiline_paste = value,
+                )
+                .description(
+                    "Ask before pasting several lines into a program that would run each one.",
+                ),
+            )
+            .item(
+                behavior_item(
+                    shell,
+                    "Option as Meta",
+                    |behavior| behavior.option_as_meta,
+                    |behavior, value| behavior.option_as_meta = value,
+                )
+                .description("Send Option as Meta instead of typing the layout's characters."),
+            ),
+    )
+}
+
+/// One switch over a behavior setting of the live shell.
+fn behavior_item(
+    shell: &WeakEntity<WindowShell>,
+    title: &'static str,
+    read: fn(&Behavior) -> bool,
+    write: fn(&mut Behavior, bool),
+) -> SettingItem {
+    SettingItem::new(
+        title,
+        SettingField::switch(
+            {
+                let shell = shell.clone();
+                move |app| read(&behavior_of(&shell, app))
+            },
+            {
+                let shell = shell.clone();
+                move |value, app| {
+                    if let Some(shell) = shell.upgrade() {
+                        shell.update(app, |shell, context| {
+                            shell.edit_behavior(|behavior| write(behavior, value), context);
+                        });
+                    }
+                }
+            },
+        ),
+    )
+}
+
+/// The shell's current behavior settings, or the defaults once it has closed.
+fn behavior_of(shell: &WeakEntity<WindowShell>, app: &App) -> Behavior {
+    let settings = shell.upgrade().map_or_else(Settings::default, |entity| {
+        entity.read(app).settings().clone()
+    });
+    Behavior {
+        clipboard_write: settings.clipboard_write,
+        confirm_multiline_paste: settings.confirm_multiline_paste,
+        option_as_meta: settings.option_as_meta,
+    }
 }
 
 /// Every registered theme's name, sorted for the dropdown's option list.

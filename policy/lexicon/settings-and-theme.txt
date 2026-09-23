@@ -6,6 +6,7 @@ application
 asciinema
 aurora
 ayu
+behavior
 bright
 catppuccin
 classic

@@ -463,6 +463,40 @@ impl WindowShell {
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
+
+    /// Change the terminal behavior settings — the program clipboard, the
+    /// multi-line paste question and Option as Meta — apply them to every
+    /// pane and write the file.
+    pub fn edit_behavior(
+        &mut self,
+        edit: impl FnOnce(&mut Behavior),
+        context: &mut Context<'_, WindowShell>,
+    ) {
+        let mut behavior = Behavior {
+            clipboard_write: self.settings.clipboard_write,
+            confirm_multiline_paste: self.settings.confirm_multiline_paste,
+            option_as_meta: self.settings.option_as_meta,
+        };
+        edit(&mut behavior);
+        self.settings.clipboard_write = behavior.clipboard_write;
+        self.settings.confirm_multiline_paste = behavior.confirm_multiline_paste;
+        self.settings.option_as_meta = behavior.option_as_meta;
+        let theme = self.settings.theme.clone();
+        self.apply_theme(&theme, context);
+        persist(self, context);
+    }
+}
+
+/// The settings that change how a pane behaves rather than how it looks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Behavior {
+    /// Whether a program in the focused pane may write the system clipboard.
+    pub clipboard_write: bool,
+    /// Whether a multi-line paste into a program without bracketed paste waits
+    /// for a person to confirm it.
+    pub confirm_multiline_paste: bool,
+    /// Whether Option is sent as Meta.
+    pub option_as_meta: bool,
 }
 
 /// Read a saved file into the shell, then apply it. A missing file leaves the

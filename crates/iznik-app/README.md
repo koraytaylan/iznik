@@ -163,7 +163,7 @@ rather than ending the connection.
 | `splits` | Pure divider weight and equalization helpers for authoritative layouts. |
 | `settings` | Validated settings — theme, typography, keybinding overrides and the per-pane `scrollback_bytes` history budget (10 MiB by default, read at launch) — read from and written to `$XDG_CONFIG_HOME/iznik/settings` (or `~/.config/iznik/settings`, or `%APPDATA%\iznik\settings` on Windows). Sizes are clamped to what the grid can draw; a field this version does not know is reported once and kept when the file is written, and a malformed file is reported once per change. |
 | `configuration_file` | Where the application's own files live, and their atomic replacement: a uniquely named temporary file, flushed to disk, renamed into place. |
-| `settings_window` | The settings window: a second OS window over the shell's live theme and the closed keybinding inventory. |
+| `settings_window` | The settings window: a second OS window over the shell's live theme, the terminal behavior switches (program clipboard writes, the multi-line paste question, Option as Meta), and the closed keybinding inventory. Each change is written to the settings file at once. |
 | `ssh_config` | The person's own ssh configuration: the concrete aliases it and the files it `Include`s define, cached until one of those files or `known_hosts` changes, and the `Host`/`HostName` block this application appends when Add Host asks. |
 | `tab_actions` | The bar's right-click menus and drag-to-reorder: the same menu shape for a tab and a session, the orders a move or a drop produces for tabs and for sessions, the entries its close affordances close, and the open menu the shell renders and dismisses. |
 | `tab_label` | The name a tab chip shows: a renamed tab's own name, otherwise the foreground program or the directory. |
@@ -232,8 +232,10 @@ returns their `consumed_bytes` through `EngineBridge::credit`. Screen replay
 consumes no stream credit and never replays historical query effects. A program
 clipboard write, such as OSC 52 from a text selection inside a full-screen
 application, is carried on the snapshot and applied to the system clipboard —
-only for the focused pane, and only while the `clipboard_write` setting (on by
-default) allows it. An OSC inside a DCS, SOS, PM or APC payload, such as a
+only for the focused pane of the tab being shown (a pane of a background tab,
+on this host or another, never writes it), and only while the
+`clipboard_write` setting (on by default, and a switch in the settings
+window) allows it. An OSC inside a DCS, SOS, PM or APC payload, such as a
 tmux passthrough, is not a copy.
 Screen replay drops those writes, so attaching again does not replace the clipboard.
 

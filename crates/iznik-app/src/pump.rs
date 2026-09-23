@@ -67,6 +67,7 @@ impl WindowShell {
             engine_events = engine_events.saturating_add(1);
         }
         let mut terminal_events = 0_usize;
+        let shown = self.shown_panes();
         while terminal_events < cap {
             let Some(event) = self.thread.poll() else {
                 break;
@@ -80,7 +81,10 @@ impl WindowShell {
                 .read(context)
                 .focus_handle(context)
                 .contains_focused(window, context);
-            let allowed = focused && self.settings.clipboard_write;
+            // Focus alone is not enough: the window keeps naming the last
+            // focused pane after its tab is hidden, so a pane in a background
+            // tab — of this host or another — could otherwise still copy.
+            let allowed = focused && self.settings.clipboard_write && shown.contains(&key);
             let result = surface.update(context, |surface, surface_context| {
                 surface.allow_program_clipboard(allowed);
                 surface.receive(event, self.hosts().bridge(), surface_context)

@@ -210,7 +210,7 @@ fn check(result: &Result<(), Box<dyn std::error::Error>>) {
 /// # Panics
 ///
 /// Panics when the second shell does not read the first shell's theme, font,
-/// line height, or title-bar choice.
+/// line height, title-bar choice, or program clipboard choice.
 fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
     use std::rc::Rc;
 
@@ -258,6 +258,7 @@ fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::e
         theme.line_height = SAVED_LINE_HEIGHT;
         theme.tabs_in_title_bar = true;
         shell.set_theme(theme, app);
+        shell.edit_behavior(|behavior| behavior.clipboard_write = false, app);
     })?;
     let saved = decode(&fs::read_to_string(&path)?).map_err(|error| format!("{error:?}"))?;
     assert_saved(&saved, "the written file");
@@ -299,6 +300,10 @@ fn assert_saved(settings: &Settings, source: &str) {
     assert_eq!(
         settings.theme_name, SAVED_THEME_NAME,
         "{source} keeps the theme"
+    );
+    assert!(
+        !settings.clipboard_write,
+        "{source} keeps the program clipboard turned off"
     );
 }
 
