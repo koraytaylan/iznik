@@ -30,7 +30,10 @@ scenario = "in-container"
 - `test = "<package>::<binary>::<test>"` names an in-process test, and then a
   one-sentence `because` is required, saying why a container adds nothing to the
   proof. A claim proven by a scenario needs no `because`; a claim proven by a
-  test cannot omit it.
+  test cannot omit it. The package must be a workspace member and the binary
+  one of its test targets — `tests/<binary>.rs`, `tests/<binary>/main.rs` or a
+  `[[test]]` of that name — so a misspelt target fails when the registry
+  loads, not as a claim whose verdict never appears.
 
 A claim names one proof or the other, never both and never neither.
 
@@ -48,8 +51,9 @@ condition:
 
 `registry::load` rejects, naming what and where: an unreadable or unparseable
 file; a file named for no task; two claims that share an id; a claim with both
-proofs or with neither; a test proof with no `because`; a scenario proof whose
-scenario file does not exist; and a scenario of a registered task that names a
+proofs or with neither; a test proof with no `because`; a test proof whose
+package or test target does not exist; a scenario proof whose scenario file
+does not exist; and a scenario of a registered task that names a
 claim the registry declares nowhere. A task with no claims file is simply not in
 the registry, and its scenarios are not read — which is how every task that
 landed before this one stays exempt from a registry it could not depend on.
@@ -59,14 +63,26 @@ landed before this one stays exempt from a registry it could not depend on.
 `selection::select` resolves three selections to a list of task ids:
 
 - **`--task <id>` (one or more)** — exactly those tasks.
-- **`coverage`** — every task that has a claims file. This is the run for the
-  trunk, whose branch diff is empty.
-- **no `--task`** — the current branch: the tasks whose claims files differ from
-  the merge base with `develop`. If that diff touches product or tooling code —
-  a path under `crates/*/src/`, `crates/*/benches/`, or `xtask/src/` — while
-  changing no claims file, and a registry exists, the selection fails, naming
-  the rule. That is the case the registry exists to catch: code that changes
-  without declaring what it now claims.
+- **`coverage`** — every task that has a claims file. This is the run that
+  proves the whole tree.
+- **no `--task`** — the current branch: the tasks whose claims files differ,
+  in the working tree with untracked files included, from the merge base with
+  `develop`. If that diff touches product or tooling code — a path under
+  `crates/*/src/`, `crates/*/benches/`, or `xtask/src/` — while changing no
+  claims file, and a registry exists, the selection fails, naming the rule.
+  That is the case the registry exists to catch: code that changes without
+  declaring what it now claims.
+
+Two details keep that rule from being satisfied by accident:
+
+- **On `develop` itself** the merge base is `HEAD`, so the diff would be only
+  uncommitted work and a commit made there would be checked by nothing. When
+  the merge base is `HEAD`, the comparison is with `HEAD`'s parent instead:
+  the working tree plus the last commit.
+- **A claims file counts only if what it declares changed.** Before and after
+  are parsed as TOML and compared as tables; an edit that leaves them equal —
+  a comment, whitespace, the order of keys — neither selects the task nor
+  satisfies the rule.
 
 ## What a verdict is
 

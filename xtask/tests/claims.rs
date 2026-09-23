@@ -411,6 +411,166 @@ fn claims_no_registry_leaves_the_rule_off() {
     assert!(selected.is_empty(), "{selected:?}");
 }
 
+/// On the trunk the merge base is `HEAD`, so the last commit is what is
+/// compared: a commit to `develop` that changes product code and no claims
+/// breaks the rule there too, rather than selecting nothing.
+///
+/// # Panics
+///
+/// When the rule does not bite on the trunk.
+#[test]
+fn claims_on_the_trunk_the_last_commit_is_checked() {
+    let tree = Tree::new("trunk-code").expect("a tree");
+    tree.task("alpha").expect("alpha");
+    tree.claims("alpha", "# placeholder\n")
+        .expect("a registry exists");
+    develop_baseline(&tree).expect("the baseline");
+    tree.write("crates/iznik-server/src/thing.rs", "// changed\n")
+        .expect("product code");
+    git(&tree, &["add", "-A"]).expect("staged");
+    git(&tree, &["commit", "-q", "-m", "code on develop"]).expect("committed");
+    let error = selection::select(tree.root(), &Selection::CurrentBranch)
+        .expect_err("the rule bites on the trunk");
+    assert!(
+        matches!(error, SelectionError::ProductCodeWithoutClaims { .. }),
+        "{error}"
+    );
+}
+
+/// On the trunk, the claims the last commit declares are selected, and so
+/// are claims in the working tree that are not committed yet, untracked
+/// files included.
+///
+/// # Panics
+///
+/// When either is not selected.
+#[test]
+fn claims_on_the_trunk_the_last_commit_and_the_working_tree_select() {
+    let tree = Tree::new("trunk-claims").expect("a tree");
+    tree.task("alpha").expect("alpha");
+    tree.task("beta").expect("beta");
+    tree.claims("alpha", "# placeholder\n")
+        .expect("a registry exists");
+    develop_baseline(&tree).expect("the baseline");
+    tree.claims("alpha", ALPHA_CLAIMS).expect("alpha changed");
+    git(&tree, &["add", "-A"]).expect("staged");
+    git(&tree, &["commit", "-q", "-m", "declare on develop"]).expect("committed");
+    let selected = selection::select(tree.root(), &Selection::CurrentBranch).expect("selected");
+    assert_eq!(selected, vec!["alpha".to_owned()]);
+
+    tree.claims(
+        "beta",
+        "[[claim]]\nid = \"beta-one\"\nstatement = \"Beta.\"\nscenario = \"one\"\n",
+    )
+    .expect("beta, untracked");
+    let with_untracked =
+        selection::select(tree.root(), &Selection::CurrentBranch).expect("selected");
+    assert_eq!(with_untracked, vec!["alpha".to_owned(), "beta".to_owned()]);
+}
+
+/// A claims file edited so that it parses to the same TOML — a comment,
+/// spacing, the order of keys — declares nothing new: it selects nothing and
+/// does not satisfy the product-code rule.
+///
+/// # Panics
+///
+/// When a cosmetic edit counts as declaring claims.
+#[test]
+fn claims_an_identical_claims_file_does_not_count() {
+    let tree = Tree::new("cosmetic").expect("a tree");
+    tree.task("alpha").expect("alpha");
+    tree.claims("alpha", ALPHA_CLAIMS).expect("alpha");
+    develop_baseline(&tree).expect("the baseline");
+    git(&tree, &["checkout", "-q", "-b", "feature"]).expect("the branch");
+    tree.claims(
+        "alpha",
+        "# Only the layout changed.\n[[claim]]\nscenario   = \"one\"\nid = \"alpha-one\"\nstatement = \"Alpha does its one thing.\"\n",
+    )
+    .expect("reformatted");
+    git(&tree, &["add", "-A"]).expect("staged");
+    git(&tree, &["commit", "-q", "-m", "a comment"]).expect("committed");
+    let selected = selection::select(tree.root(), &Selection::CurrentBranch).expect("selected");
+    assert!(selected.is_empty(), "{selected:?}");
+
+    tree.write("crates/iznik-server/src/thing.rs", "// changed\n")
+        .expect("product code");
+    git(&tree, &["add", "-A"]).expect("staged");
+    git(&tree, &["commit", "-q", "-m", "code and a comment"]).expect("committed");
+    let error = selection::select(tree.root(), &Selection::CurrentBranch)
+        .expect_err("a comment is not a claim");
+    assert!(
+        matches!(error, SelectionError::ProductCodeWithoutClaims { .. }),
+        "{error}"
+    );
+}
+
+/// A root whose workspace declares one package with one test target.
+///
+/// # Errors
+///
+/// When a file cannot be written.
+fn workspace_with_a_test_target(tree: &Tree) -> Result<(), std::io::Error> {
+    tree.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/demo\", \"crates/mimic\"]\n",
+    )?;
+    tree.write("crates/demo/Cargo.toml", "[package]\nname = \"demo\"\n")?;
+    tree.write("crates/demo/tests/unit.rs", "")?;
+    tree.write(
+        "crates/mimic/Cargo.toml",
+        "[package]\nname = \"mimic\"\n\n[[test]]\nname = \"scenarios\"\nharness = false\n",
+    )
+}
+
+/// A test proof loads when its package and test target exist, as a file
+/// under `tests/` or as a `[[test]]`, and is rejected, naming the proof, when
+/// the package, the target or the test is missing.
+///
+/// # Panics
+///
+/// When a real target is rejected or a missing one is accepted.
+#[test]
+fn claims_a_test_proof_names_an_existing_test_target() {
+    let tree = Tree::new("test-target").expect("a tree");
+    tree.task("alpha").expect("the task");
+    workspace_with_a_test_target(&tree).expect("the workspace");
+    let claim = |test: &str| {
+        format!(
+            "[[claim]]\nid = \"alpha-one\"\nstatement = \"It holds.\"\ntest = \"{test}\"\nbecause = \"a unit proves it\"\n"
+        )
+    };
+    for present in ["demo::unit::passes", "mimic::scenarios::a::b"] {
+        tree.claims("alpha", &claim(present)).expect("the claims");
+        registry::load(tree.root()).unwrap_or_else(|error| panic!("{present}: {error}"));
+    }
+    for missing in [
+        "demo::absent::passes",
+        "ghost::unit::passes",
+        "mimic::other::passes",
+        "demo::unit",
+        "demo::unit::",
+    ] {
+        tree.claims("alpha", &claim(missing)).expect("the claims");
+        let error = registry::load(tree.root()).expect_err(missing);
+        assert!(
+            matches!(error, RegistryError::TestTargetMissing { .. }),
+            "{missing}: {error}"
+        );
+        assert!(error.to_string().contains(missing), "{error}");
+    }
+}
+
+/// The repository's own registry loads, so every test proof it declares
+/// names a test target that exists.
+///
+/// # Panics
+///
+/// When it does not load.
+#[test]
+fn claims_the_real_registry_loads() {
+    registry::load(&xtask::repository_root()).expect("the registry loads");
+}
+
 /// Explicit tasks are the selection, sorted and unique.
 ///
 /// # Panics

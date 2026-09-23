@@ -6,7 +6,8 @@
 //! a container adds nothing, or a deferred `display` measurement record. Loading validates the whole set at once: ids are
 //! unique across the registry, every proof is well formed, every file is named
 //! for a real task under `docs/plans/`, every scenario proof names a scenario
-//! that exists, and no scenario of a registered task names a claim the registry
+//! that exists, every test proof names a test target a workspace package
+//! declares, and no scenario of a registered task names a claim the registry
 //! does not declare. A task that has no claims file is not in the registry and
 //! its scenarios are not read, which is how the tasks that landed before the
 //! registry stay exempt from it.
@@ -25,6 +26,19 @@ const SCENARIOS_DIRECTORY: &str = "regression/scenarios";
 
 /// Where the task files whose ids name the claims files live.
 const TASKS_GLOB_ROOT: &str = "docs/plans";
+
+/// The manifest of the workspace, and of each package in it.
+const MANIFEST: &str = "Cargo.toml";
+
+/// Where cargo finds a package's integration tests, one target per file.
+const TESTS_DIRECTORY: &str = "tests";
+
+/// What separates the package, the test target and the test in a test proof.
+const TEST_PATH_SEPARATOR: &str = "::";
+
+/// The parts a test proof is split into: the package, the test target, and
+/// the rest, which is the test's own path and may itself hold separators.
+const TEST_PATH_PARTS: usize = 3;
 
 /// A validated claim: what a task asserts about runtime behavior and the one
 /// proof that establishes it.
@@ -268,6 +282,17 @@ pub enum RegistryError {
         /// The scenario file the proof named.
         path: PathBuf,
     },
+    /// A test proof names no test target a workspace package declares: a
+    /// package that is not a member, a binary with no `tests/<binary>.rs` or
+    /// `[[test]]`, or a path that is not `package::binary::test`.
+    TestTargetMissing {
+        /// The task.
+        task: String,
+        /// The claim.
+        id: String,
+        /// The test proof as written.
+        test: String,
+    },
     /// A scenario of a registered task names a claim the registry does not
     /// declare.
     ScenarioClaimUndeclared {
@@ -321,6 +346,10 @@ impl Display for RegistryError {
                 "claim `{id}` of task `{task}` names scenario {}, which does not exist",
                 path.display()
             ),
+            RegistryError::TestTargetMissing { task, id, test } => write!(
+                formatter,
+                "claim `{id}` of task `{task}` names test `{test}`, but no workspace package declares that test target"
+            ),
             RegistryError::ScenarioClaimUndeclared {
                 task,
                 scenario,
@@ -351,7 +380,7 @@ impl std::error::Error for RegistryError {
 /// [`RegistryError`] naming the first inconsistency: an unreadable or
 /// unparseable file, a file named for no task, a duplicate id, a malformed
 /// proof, a scenario proof with no scenario, or a scenario of a registered task
-/// naming an undeclared claim.
+/// naming an undeclared claim, or a test proof naming no test target.
 pub fn load(root: &Path) -> Result<Registry, RegistryError> {
     let tasks = task_ids(root);
     let mut claims: Vec<Claim> = Vec::new();
@@ -364,6 +393,7 @@ pub fn load(root: &Path) -> Result<Registry, RegistryError> {
         parse_file(&file, &task, &mut claims, &mut origin)?;
     }
     check_scenario_proofs(root, &claims)?;
+    check_test_targets(root, &claims)?;
     check_display_records(root, &claims)?;
     check_scenario_claims(root, &claims)?;
     Ok(Registry { claims })
@@ -435,6 +465,91 @@ fn check_scenario_proofs(root: &Path, claims: &[Claim]) -> Result<(), RegistryEr
         }
     }
     Ok(())
+}
+
+/// Every test proof names a test target that exists: its package is a
+/// workspace member, and that member has `tests/<binary>.rs`,
+/// `tests/<binary>/main.rs` or a `[[test]]` of that name. The test function
+/// itself is nextest's to find; a proof naming a target that is not there
+/// would otherwise select nothing and be reported only as a missing verdict.
+///
+/// # Errors
+///
+/// [`RegistryError::TestTargetMissing`] for the first proof that names none.
+fn check_test_targets(root: &Path, claims: &[Claim]) -> Result<(), RegistryError> {
+    let packages = workspace_packages(root);
+    for claim in claims {
+        let Proof::Test { name, .. } = &claim.proof else {
+            continue;
+        };
+        let mut parts = name.splitn(TEST_PATH_PARTS, TEST_PATH_SEPARATOR);
+        let found = match (parts.next(), parts.next(), parts.next()) {
+            (Some(package), Some(binary), Some(test)) if !test.is_empty() => packages
+                .get(package)
+                .is_some_and(|directory| declares_test_target(directory, binary)),
+            _ => false,
+        };
+        if !found {
+            return Err(RegistryError::TestTargetMissing {
+                task: claim.task.clone(),
+                id: claim.id.clone(),
+                test: name.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Every workspace member's package name and directory, read from the root
+/// manifest's `members` and each member's own manifest. A root without a
+/// workspace manifest has no packages.
+fn workspace_packages(root: &Path) -> BTreeMap<String, PathBuf> {
+    let members: Vec<String> = read_table(&root.join(MANIFEST))
+        .and_then(|manifest| {
+            manifest
+                .get("workspace")?
+                .get("members")?
+                .as_array()
+                .map(|members| {
+                    members
+                        .iter()
+                        .filter_map(|member| member.as_str().map(str::to_owned))
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+    members
+        .into_iter()
+        .filter_map(|member| {
+            let directory = root.join(member);
+            let manifest = read_table(&directory.join(MANIFEST))?;
+            let name = manifest.get("package")?.get("name")?.as_str()?.to_owned();
+            Some((name, directory))
+        })
+        .collect()
+}
+
+/// Whether a package directory declares a test target named `binary`.
+fn declares_test_target(directory: &Path, binary: &str) -> bool {
+    let tests = directory.join(TESTS_DIRECTORY);
+    if tests.join(format!("{binary}.rs")).is_file() || tests.join(binary).join("main.rs").is_file()
+    {
+        return true;
+    }
+    read_table(&directory.join(MANIFEST))
+        .and_then(|manifest| {
+            manifest.get("test")?.as_array().map(|targets| {
+                targets
+                    .iter()
+                    .any(|target| target.get("name").and_then(toml::Value::as_str) == Some(binary))
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// A TOML file read as a table, or nothing when it cannot be read or parsed.
+fn read_table(path: &Path) -> Option<toml::Table> {
+    std::fs::read_to_string(path).ok()?.parse().ok()
 }
 
 /// No scenario of a registered task names a claim the registry does not

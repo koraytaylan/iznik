@@ -10,6 +10,7 @@ captured
 change
 claim
 classname
+comparison
 contents
 counter
 deferred
@@ -45,9 +46,11 @@ select
 selected
 selects
 sorted
+suffix
 trunk
 unions
 unique
+untracked
 verdicts
 window
 xml
