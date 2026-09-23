@@ -228,8 +228,10 @@ iznik doctor <host>
 
 One file goes to a host whose libc version nothing knows: a stripped,
 statically linked musl binary, reproducible from the same commit, beside a
-`SHA256SUMS` and a manifest naming the crate version, the protocol version,
-the triple and the digest.
+`SHA256SUMS`, a manifest naming the crate version, the protocol version,
+the triple and the digest, and a `THIRD-PARTY-NOTICES` listing every package
+the binary is built from with its licence, and each licence text once. An
+application bundle carries the same file for the application and its servers.
 
 ```sh
 cargo xtask distribution --target x86_64-unknown-linux-musl

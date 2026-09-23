@@ -1,10 +1,13 @@
-//! `xtask app-bundle`: invoke the product's headless bundle writer.
+//! `xtask app-bundle`: invoke the product's headless bundle writer, then write
+//! the bundle's `THIRD-PARTY-NOTICES`.
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::ExitCode;
+
+use crate::distribution::{BINARY, DistributionError, notices};
 
 /// Target flag.
 const TARGET_FLAG: &str = "--target";
@@ -20,6 +23,12 @@ const USAGE_LINE: &str =
     "usage: xtask app-bundle --target <triple> --binary <path> --output <path> --servers <path>";
 /// Usage exit status.
 const USAGE_EXIT_CODE: u8 = 2;
+/// The package the bundled executable is built from.
+const APPLICATION_PACKAGE: &str = "iznik-app";
+/// What a macOS target's triple ends in.
+const DARWIN_SUFFIX: &str = "apple-darwin";
+/// Where a macOS bundle keeps its resources, under the bundle.
+const DARWIN_RESOURCES: &[&str] = &["Contents", "Resources"];
 /// Number of items needed to read a flag and its value.
 const FLAG_WINDOW_LENGTH: usize = 2;
 
@@ -69,10 +78,63 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         .arg(version)
         .arg(&servers_path)
         .status();
-    match status {
-        Ok(result) if result.success() => ExitCode::SUCCESS,
-        Ok(_) | Err(_) => ExitCode::FAILURE,
+    if !status.is_ok_and(|result| result.success()) {
+        return ExitCode::FAILURE;
     }
+    match bundle_notices(
+        &crate::distribution::workspace_root(),
+        &target,
+        &servers_path,
+        Path::new(&output),
+    ) {
+        Ok(_written) => ExitCode::SUCCESS,
+        Err(error) => {
+            let _written = writeln!(std::io::stderr(), "app-bundle: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes `THIRD-PARTY-NOTICES` into a bundle: the packages the application is
+/// built from for `target`, and those of every server the bundle carries for
+/// its own triple. A macOS bundle keeps it under `Contents/Resources`; the
+/// other layouts at their root. Says where it wrote it.
+///
+/// # Errors
+///
+/// What [`notices::write`] reports.
+pub fn bundle_notices(
+    root: &Path,
+    target: &str,
+    servers: &Path,
+    output: &Path,
+) -> Result<PathBuf, DistributionError> {
+    let triples: Vec<String> = std::fs::read_dir(servers)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().join(BINARY).is_file())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut roots = vec![(APPLICATION_PACKAGE, target)];
+    roots.extend(triples.iter().map(|triple| (BINARY, triple.as_str())));
+    let directory = if target.ends_with(DARWIN_SUFFIX) {
+        DARWIN_RESOURCES
+            .iter()
+            .fold(output.to_path_buf(), |path, segment| path.join(segment))
+    } else {
+        output.to_path_buf()
+    };
+    let path = directory.join(notices::NOTICES);
+    notices::write(
+        root,
+        &format!("the iznik application for {target}"),
+        &roots,
+        &path,
+    )?;
+    Ok(path)
 }
 
 /// Read a string value following a flag.

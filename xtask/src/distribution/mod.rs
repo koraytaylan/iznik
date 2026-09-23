@@ -5,12 +5,15 @@
 //! know, so the artifact is statically linked and stripped, and reproducible
 //! from the same commit so that two people who build it get the same bytes.
 //! The manifest is for a person and for a pipeline; the bootstrap computes
-//! digests itself and trusts nothing written beside the file.
+//! digests itself and trusts nothing written beside the file. Beside them is
+//! `THIRD-PARTY-NOTICES`, the licences of every package the binary is built
+//! from.
 
 pub mod app;
 pub mod darwin;
 pub mod launch;
 pub mod linux;
+pub mod notices;
 pub mod shape;
 pub mod windows;
 
@@ -219,6 +222,12 @@ pub fn build_with_output(
         path,
     };
     record(root, &directory, &artifact)?;
+    notices::write(
+        root,
+        &format!("{BINARY} for {target}"),
+        &[(BINARY, target)],
+        &directory.join(notices::NOTICES),
+    )?;
     Ok(artifact)
 }
 
@@ -234,7 +243,7 @@ pub fn build_with_output(
 ///
 /// [`DistributionError::Io`] when a file is there and cannot be removed.
 fn clear(directory: &Path) -> Result<(), DistributionError> {
-    for name in [BINARY, CHECKSUMS, MANIFEST] {
+    for name in [BINARY, CHECKSUMS, MANIFEST, notices::NOTICES] {
         let path = directory.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => {}

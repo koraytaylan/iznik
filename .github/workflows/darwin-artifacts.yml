@@ -72,7 +72,9 @@ jobs:
             target/distribution/aarch64-apple-darwin/iznik-server
             target/distribution/aarch64-apple-darwin/SHA256SUMS
             target/distribution/aarch64-apple-darwin/manifest.toml
+            target/distribution/aarch64-apple-darwin/THIRD-PARTY-NOTICES
             target/distribution/x86_64-apple-darwin/iznik-server
             target/distribution/x86_64-apple-darwin/SHA256SUMS
             target/distribution/x86_64-apple-darwin/manifest.toml
+            target/distribution/x86_64-apple-darwin/THIRD-PARTY-NOTICES
           if-no-files-found: error
