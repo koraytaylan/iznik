@@ -30,7 +30,9 @@ invalid
 jellybeans
 kibble
 kit
+lands
 leftovers
+loosest
 malformed
 max
 mellifluous
@@ -39,6 +41,7 @@ min
 mirage
 molokai
 monospace
+nearest
 overrides
 propagates
 reload

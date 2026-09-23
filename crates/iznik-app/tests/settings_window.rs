@@ -121,3 +121,60 @@ fn opens_settings_window(context: &mut TestAppContext) -> Result<(), Failed> {
     let _removed = std::fs::remove_dir_all(directory);
     Ok(())
 }
+
+/// Smallest font size the field offers, as the window declares it.
+const SMALLEST_FONT: f32 = 8.0;
+/// Largest font size the field offers.
+const LARGEST_FONT: f32 = 32.0;
+/// The font size field's step.
+const FONT_STEP: f32 = 1.0;
+/// The row height field's step.
+const ROW_STEP: f32 = 0.1;
+/// Loosest row height offered.
+const LOOSEST_ROW: f32 = 2.0;
+/// A typed font size between two steps, nearer the upper.
+const TYPED_FONT: f64 = 13.7;
+/// The step that value lands on.
+const TYPED_FONT_STEP: f32 = 14.0;
+/// A row height as a 64-bit field holds it.
+const TYPED_ROW: f64 = 1.2;
+/// The row height step that value lands on, as a theme holds it.
+const TYPED_ROW_STEP: f32 = 1.2;
+/// Far past the largest font size.
+const HUGE: f64 = 1.0e9;
+
+/// A field's 64-bit value becomes the theme's 32-bit one by choosing the
+/// nearest step inside the field's range, not by printing and parsing it.
+///
+/// # Panics
+/// Fails when a value lands outside the range or off its nearest step.
+#[test]
+fn a_field_value_lands_on_its_nearest_step() {
+    use iznik_app::settings_window::nearest_step;
+    let font = |value| nearest_step(value, SMALLEST_FONT, LARGEST_FONT, FONT_STEP);
+    assert!(
+        (font(TYPED_FONT) - TYPED_FONT_STEP).abs() < f32::EPSILON,
+        "rounded to the nearest point size"
+    );
+    assert!(
+        (font(HUGE) - LARGEST_FONT).abs() < f32::EPSILON,
+        "clamped to the largest"
+    );
+    assert!(
+        (font(-HUGE) - SMALLEST_FONT).abs() < f32::EPSILON,
+        "clamped to the smallest"
+    );
+    assert!(
+        (font(f64::NAN) - SMALLEST_FONT).abs() < f32::EPSILON,
+        "not a number is the smallest"
+    );
+    let row = nearest_step(TYPED_ROW, 1.0, LOOSEST_ROW, ROW_STEP);
+    assert!(
+        (row - TYPED_ROW_STEP).abs() < ROW_STEP / LOOSEST_ROW,
+        "a row height keeps its tenth: {row}"
+    );
+    assert!(
+        (nearest_step(HUGE, 1.0, LOOSEST_ROW, ROW_STEP) - LOOSEST_ROW).abs() < f32::EPSILON,
+        "the loosest row height is reachable"
+    );
+}

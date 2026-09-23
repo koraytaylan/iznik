@@ -23,8 +23,10 @@ const MAX_FONT_SIZE: f32 = 32.0;
 const MIN_LINE_HEIGHT: f32 = 1.0;
 /// Loosest row height offered.
 const MAX_LINE_HEIGHT: f32 = 2.0;
+/// How far one step of the font size field moves it.
+const FONT_SIZE_STEP: f32 = 1.0;
 /// How far one step of the row height field moves it.
-const LINE_HEIGHT_STEP: f64 = 0.1;
+const LINE_HEIGHT_STEP: f32 = 0.1;
 /// Steps per unit of row height, so the field shows `1.2` rather than the
 /// `1.2000000476837158` a 32-bit value widens to.
 const LINE_HEIGHT_STEPS_PER_UNIT: f64 = 10.0;
@@ -140,7 +142,7 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
                     NumberFieldOptions {
                         min: f64::from(MIN_FONT_SIZE),
                         max: f64::from(MAX_FONT_SIZE),
-                        step: 1.0,
+                        step: f64::from(FONT_SIZE_STEP),
                     },
                     {
                         let shell = shell.clone();
@@ -149,9 +151,9 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
                     {
                         let shell = shell.clone();
                         move |value, app| {
-                            if let Ok(font_size) = value.to_string().parse::<f32>() {
-                                edit_theme(&shell, app, |theme| theme.font_size = font_size);
-                            }
+                            let font_size =
+                                nearest_step(value, MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_SIZE_STEP);
+                            edit_theme(&shell, app, |theme| theme.font_size = font_size);
                         }
                     },
                 ),
@@ -159,6 +161,35 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
             .item(line_height_item(shell))
             .item(tabs_in_title_bar_item(shell)),
     )
+}
+
+/// The field's step nearest to `value`, as the 32-bit value a theme holds.
+///
+/// A number field hands over a 64-bit value and the theme holds a 32-bit
+/// one, and there is no conversion between the two that cannot lose
+/// something. So the value is not converted at all: it is clamped to the
+/// field's range, and the answer is the step of that range — built in 32 bits
+/// from `minimum` and `step` — whose lossless widening lies nearest to it. A
+/// value no number is, which a field should never hand over, is `minimum`.
+#[must_use]
+pub fn nearest_step(value: f64, minimum: f32, maximum: f32, step: f32) -> f32 {
+    if value.is_nan() || step.is_nan() || step <= 0.0 || minimum > maximum {
+        return minimum;
+    }
+    let wanted = value.clamp(f64::from(minimum), f64::from(maximum));
+    let distance = |candidate: f32| (f64::from(candidate) - wanted).abs();
+    let mut nearest = minimum;
+    let mut index: u16 = 0;
+    loop {
+        let candidate = step.mul_add(f32::from(index), minimum).min(maximum);
+        if distance(candidate) < distance(nearest) {
+            nearest = candidate;
+        }
+        let Some(next) = index.checked_add(1).filter(|_| candidate < maximum) else {
+            return nearest;
+        };
+        index = next;
+    }
 }
 
 /// The row height setting: a multiple of the font size.
@@ -169,7 +200,7 @@ fn line_height_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
             NumberFieldOptions {
                 min: f64::from(MIN_LINE_HEIGHT),
                 max: f64::from(MAX_LINE_HEIGHT),
-                step: LINE_HEIGHT_STEP,
+                step: f64::from(LINE_HEIGHT_STEP),
             },
             {
                 let shell = shell.clone();
@@ -182,10 +213,9 @@ fn line_height_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
             {
                 let shell = shell.clone();
                 move |value, app| {
-                    if let Ok(line_height) = value.to_string().parse::<f32>() {
-                        let clamped = line_height.clamp(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT);
-                        edit_theme(&shell, app, |theme| theme.line_height = clamped);
-                    }
+                    let line_height =
+                        nearest_step(value, MIN_LINE_HEIGHT, MAX_LINE_HEIGHT, LINE_HEIGHT_STEP);
+                    edit_theme(&shell, app, |theme| theme.line_height = line_height);
                 }
             },
         ),
