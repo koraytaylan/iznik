@@ -2,6 +2,7 @@ alert
 applies
 axis
 banners
+batch
 desired
 dimensions
 hot
@@ -10,6 +11,7 @@ polled
 raise
 raised
 raising
+redraw
 remember
 restored
 retained

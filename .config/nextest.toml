@@ -102,6 +102,13 @@ threads-required = 12
 filter = 'test(/latency|throughput|baseline/)'
 threads-required = 'num-cpus'
 
+# The application's grid budgets are timings too: a debug-build draw list read
+# beside the rest of the application suite measures the scheduler, and a
+# sample the kernel preempted is not a slow conversion.
+[[profile.default.overrides]]
+filter = 'test(/_stays_within_its_budget$/)'
+threads-required = 'num-cpus'
+
 # And so is this one, which is why it is here rather than in the group below.
 # It reads what a hundred lines cost against what one costs, and the reading
 # only says which of the two ways they were carried while the pane on the

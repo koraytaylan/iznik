@@ -23,6 +23,23 @@ so the workspace and claims gates enforce it. Run its standalone target with:
 timeout 1200 cargo nextest run --package iznik-app --bench grid_budget --success-output immediate
 ```
 
+## Headless output-flood budget
+
+Measured on 2026-09-23 on an Apple M-series laptop running macOS, debug
+profile. The fixture sends 256 chunks of four colored 100-cell rows to the
+real client VT thread as separate `Feed` commands, the way transport frames
+arrive, and consumes every snapshot it publishes the way `TerminalGrid::apply`
+does, redrawing only the rows `changed_rows` reports. Feeding, snapshot
+extraction and the row rebuild are all inside the timed region.
+
+| Workload | Samples | Average | Worst | Committed ceiling |
+|---|---:|---:|---:|---:|
+| 256 chunks of 4 rows into 100x100 cells | 4 | 16.5 ms | 17.1 ms | 200 ms |
+
+With one full snapshot and one full redraw per chunk, as before output was
+batched, the same flood took 0.8 s. The test is
+`grid_flood_stays_within_its_budget`, in the same benchmark target.
+
 ## Paint and viewport evidence
 
 Headless tests exercise the actual custom GPUI row element. Cached row

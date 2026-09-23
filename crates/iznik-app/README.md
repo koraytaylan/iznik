@@ -141,6 +141,7 @@ rather than ending the connection.
 | `prompt` | The palette's argument step: names, host aliases, destinations and arrangements an action needs before it is sent. |
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::keyboard` | Normalized GPUI keystrokes mapped into owned terminal key requests. |
+| `grid::draw` | Row draw lists built from snapshot cells, and which rows a new snapshot actually changes. |
 | `grid::ime` | Unsent UTF-16 composition, cursor-relative preedit shaping, candidate geometry and GPUI input-handler registration. |
 | `grid::paint` | GPUI shaping, cell fills, text decorations, cursor painting, and cached row entities. |
 | `grid` | Custom GPUI row painting from owned snapshots, cached row damage, selection geometry, and viewport requests to the VT owner. |
@@ -160,6 +161,7 @@ rather than ending the connection.
 | `bundle` | Deterministic Linux and macOS application layout writers. |
 | `surface` | Per-pane grid subscriptions, native clipboard delivery, engine input forwarding and consumption-credit retry. |
 | `vt` | One `LocalSet` thread owning client emulators, sequence-checked pane feeds, theme-aware query answers, and owned cell snapshots with damage and credit. |
+| `vt::batch` | Commands the emulator thread finds queued together: a pane's output fed before one snapshot that carries every chunk's credit and receipt. |
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
 | `menu` | The application's main menu: the named menus the system menu bar shows while an iznik window is frontmost, and the handlers that run each item. |
@@ -223,7 +225,11 @@ Screen replay drops those writes, so attaching again does not replace the clipbo
 
 Snapshots retain graphemes, widths, styles, resolved colors, cursor state,
 alternate-screen state and history extent. Both row and global damage are
-reset after snapshot extraction. Themes change emulator defaults while
+reset after snapshot extraction. The thread takes the commands it finds
+queued together as one batch: a pane's queued output is all fed before one
+snapshot, which carries the credit and receipts of every chunk it covers, and
+only the rows the emulator marked dirty are read again — the rest are shared
+with the previous snapshot, and the grid redraws only the rows that changed. Themes change emulator defaults while
 preserving program OSC overrides. A gap invalidates the pane until a server
 screen replaces it; no output is guessed across a discontinuity.
 

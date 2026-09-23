@@ -160,6 +160,9 @@ pub struct WindowShell {
     pub(crate) settings_watcher: Option<Watcher>,
     /// Event-driven pump, cancelled when the shell drops.
     _update_task: Option<Task<()>>,
+    /// Whether the model may have moved since sizes were last put on the
+    /// emulators, so output must wait for them.
+    sizes_pending: bool,
     /// When the settings file was last looked at; `None` before the first look.
     pub(crate) settings_polled: Option<std::time::Instant>,
     /// Latest local routing failure, dismissible without discarding host state.
@@ -221,6 +224,7 @@ impl WindowShell {
             settings_watcher,
             _update_task: update_task,
             settings_polled: None,
+            sizes_pending: true,
             last_failure: None,
             palette: Palette::default(),
             menu: None,
@@ -616,15 +620,23 @@ impl WindowShell {
             {
                 // A size already in the model has to be on the local terminal
                 // before these bytes, or a redraw is parsed at the old size.
-                self.synchronize_sizes(context);
+                if self.sizes_pending {
+                    self.synchronize_sizes(context);
+                }
                 if let Err(error) =
                     EngineBridge::feed_terminal(&self.thread, said, &self.options.theme)
                 {
                     self.failure(&key.host, error.to_string(), context);
                 }
             }
+            // Output changes no model and no selection: the grid redraws the
+            // rows it changes when its snapshot comes back.
+            if matches!(said, ManagerEvent::Bytes { .. }) {
+                return;
+            }
         }
         self.hosts.absorb_event(event);
+        self.sizes_pending = true;
         self.notify_upgrades_on_offer(window, context);
         self.reconcile(place.as_ref(), window, context);
         context.notify();
@@ -807,6 +819,7 @@ impl WindowShell {
     }
     /// Apply authoritative model dimensions on the VT owner after its initial screen exists.
     pub(crate) fn synchronize_sizes(&mut self, context: &mut Context<'_, Self>) {
+        self.sizes_pending = false;
         let mut failures = Vec::new();
         for (host, view) in &self.hosts.state().model().hosts {
             for pane in view

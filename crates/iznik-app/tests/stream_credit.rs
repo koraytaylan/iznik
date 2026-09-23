@@ -87,8 +87,8 @@ fn retry(context: &mut TestAppContext) -> Result<(), Failed> {
     let receipt = receipt(&streams)?;
     let frame = deliver(&thread, &receipt)?;
     assert_eq!(
-        frame.receipt.as_ref(),
-        Some(&receipt),
+        frame.receipts.as_slice(),
+        std::slice::from_ref(&receipt),
         "bridge and native owner retain identity"
     );
     assert_eq!(
@@ -154,7 +154,7 @@ fn replacement(context: &mut TestAppContext) -> Result<(), Failed> {
     streams.open(&key().host, key().pane, CHANNEL);
     let reset = open(&thread, Sequence(0), COLUMNS, ROWS)?;
     assert!(
-        reset.receipt.is_none(),
+        reset.receipts.is_empty(),
         "screen replay has no delivery receipt"
     );
     assert_eq!(

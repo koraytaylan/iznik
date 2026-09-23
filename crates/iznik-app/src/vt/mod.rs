@@ -1,11 +1,14 @@
 //! One `LocalSet` thread owns every application emulator. Only owned snapshots
 //! and commands cross its channel; no terminal handle leaves the thread.
 
+mod batch;
+
 use crate::input::{InputEncoder, TerminalInput};
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
@@ -92,16 +95,23 @@ pub struct VtOptions {
     pub scrollback_bytes: usize,
     /// Maximum native wheel reports emitted by one platform request; excess is refused.
     pub maximum_wheel_reports: usize,
+    /// Most queued commands taken together, so a pane's queued output is fed
+    /// before one snapshot rather than one snapshot per chunk.
+    pub maximum_batch: usize,
 }
 
 /// A wheel burst stays bounded to a few kilobytes and cannot monopolize the VT owner.
 const MAXIMUM_WHEEL_REPORTS: usize = 128;
+/// Enough queued chunks to absorb a flood in one snapshot, few enough that a
+/// keystroke's reply is never held behind more than a moment of output.
+const MAXIMUM_BATCH: usize = 256;
 
 impl Default for VtOptions {
     fn default() -> Self {
         Self {
             scrollback_bytes: SCROLLBACK_BYTES,
             maximum_wheel_reports: MAXIMUM_WHEEL_REPORTS,
+            maximum_batch: MAXIMUM_BATCH,
         }
     }
 }
@@ -153,7 +163,8 @@ pub struct TerminalSnapshot {
     /// Live emulator width, including program-requested changes.
     pub columns: u16,
     /// Visible rows in display order, each containing exactly `columns` cells.
-    pub rows: Vec<Vec<CellSnapshot>>,
+    /// A row the emulator did not change is shared with the previous snapshot.
+    pub rows: Vec<Arc<[CellSnapshot]>>,
     /// Visible cursor position, absent when outside the viewport or hidden.
     pub cursor: Option<CursorViewport>,
     /// Block, underline, or bar requested by the program.
@@ -162,7 +173,8 @@ pub struct TerminalSnapshot {
     pub colors: Colors,
     /// Damage state since the previous snapshot.
     pub dirty: Dirty,
-    /// Per-row damage since the previous snapshot.
+    /// Per-row damage since the previous snapshot: true where the row's cells
+    /// were read again, false where the previous snapshot's row is reused.
     pub dirty_rows: Vec<bool>,
     /// Whether the program is using its alternate screen.
     pub alternate: bool,
@@ -174,8 +186,9 @@ pub struct TerminalSnapshot {
     pub reset: bool,
     /// Stream bytes this snapshot consumed; return credit only after display consumption.
     pub consumed_bytes: u32,
-    /// Original delivery identity; absent for local changes and offline fixtures.
-    pub receipt: Option<CreditReceipt>,
+    /// Original delivery identities of every chunk fed since the previous
+    /// snapshot, in order; empty for local changes and offline fixtures.
+    pub receipts: Vec<CreditReceipt>,
     /// Query replies to forward as pane input independently of painting.
     pub responses: Vec<u8>,
     /// Plain text a program copied, in arrival order. Empty after a reconstructed screen.
@@ -358,14 +371,22 @@ impl VtThread {
             .name("iznik-app-vt".to_owned())
             .spawn(move || {
                 LocalSet::new().block_on(&runtime, async move {
-                    let mut panes = BTreeMap::new();
-                    let mut pending_size = BTreeMap::new();
+                    let mut owner = batch::Owner::new(options);
                     while let Some(command) = receiving.recv().await {
-                        let key = command.key().clone();
-                        let result = apply(&mut panes, &mut pending_size, command, &options);
-                        let published = publish(&sending, key, result);
+                        let mut results = Vec::new();
+                        owner.take(command, &mut results);
+                        for _taken in 1..owner.maximum_batch() {
+                            let Ok(next) = receiving.try_recv() else {
+                                break;
+                            };
+                            owner.take(next, &mut results);
+                        }
+                        owner.finish(&mut results);
+                        let open = results
+                            .into_iter()
+                            .all(|(key, result)| publish(&sending, key, result));
                         raising.raise();
-                        if !published {
+                        if !open {
                             break;
                         }
                     }
@@ -441,6 +462,10 @@ struct PaneTerminal {
     scheme: Rc<RefCell<ColorScheme>>,
     /// Expected next stream position; absent after any discontinuity.
     sequence: Option<Sequence>,
+    /// Rows of the last snapshot, reused for rows the emulator left clean.
+    published: Vec<Arc<[CellSnapshot]>>,
+    /// Viewport of the last snapshot; a different one reads every row again.
+    published_viewport: Option<Viewport>,
 }
 
 impl PaneTerminal {
@@ -496,6 +521,8 @@ impl PaneTerminal {
             scan: ClipboardScan::new(),
             scheme,
             sequence: None,
+            published: Vec::new(),
+            published_viewport: None,
         };
         pane.theme(theme)?;
         Ok(pane)
@@ -578,35 +605,51 @@ impl PaneTerminal {
         let viewport = self.viewport()?;
         let snapshot = self.render.update(&self.terminal)?;
         let colors = snapshot.colors()?;
+        let columns = snapshot.cols()?;
+        let every_row = snapshot.dirty()? == Dirty::Full
+            || self.published_viewport != Some(viewport)
+            || self.published.first().map(|row| row.len()) != Some(usize::from(columns));
         let mut rows = Vec::new();
         let mut dirty_rows = Vec::new();
         let mut row_iterator = RowIterator::new()?;
         let mut cell_iterator = CellIterator::new()?;
         let mut iterator = row_iterator.update(&snapshot)?;
         while let Some(row) = iterator.next() {
-            let row_index = u32::try_from(rows.len()).map_err(|_row| VtError::Overflow)?;
-            dirty_rows.push(row.dirty()?);
-            let mut cells = Vec::new();
-            let mut reading = cell_iterator.update(row)?;
-            while let Some(cell) = reading.next() {
-                let column = u16::try_from(cells.len()).map_err(|_column| VtError::Overflow)?;
-                let raw = cell.raw_cell()?;
-                cells.push(CellSnapshot {
-                    text: cell.graphemes()?.into_iter().collect(),
-                    width: raw.wide()?,
-                    style: cell.style()?,
-                    foreground: cell.fg_color()?.unwrap_or(colors.foreground),
-                    background: cell.bg_color()?.unwrap_or(colors.background),
-                    link: cell_link(&self.terminal, column, row_index, raw.has_hyperlink()?)?,
-                });
-            }
+            let kept = if every_row || row.dirty()? {
+                None
+            } else {
+                self.published.get(rows.len()).cloned()
+            };
+            dirty_rows.push(kept.is_none());
+            let cells = if let Some(cells) = kept {
+                cells
+            } else {
+                let row_index = u32::try_from(rows.len()).map_err(|_row| VtError::Overflow)?;
+                let mut cells = Vec::new();
+                let mut reading = cell_iterator.update(row)?;
+                while let Some(cell) = reading.next() {
+                    let column = u16::try_from(cells.len()).map_err(|_column| VtError::Overflow)?;
+                    let raw = cell.raw_cell()?;
+                    cells.push(CellSnapshot {
+                        text: cell.graphemes()?.into_iter().collect(),
+                        width: raw.wide()?,
+                        style: cell.style()?,
+                        foreground: cell.fg_color()?.unwrap_or(colors.foreground),
+                        background: cell.bg_color()?.unwrap_or(colors.background),
+                        link: cell_link(&self.terminal, column, row_index, raw.has_hyperlink()?)?,
+                    });
+                }
+                Arc::from(cells)
+            };
             row.set_dirty(false)?;
             rows.push(cells);
         }
+        self.published.clone_from(&rows);
+        self.published_viewport = Some(viewport);
         let result = TerminalSnapshot {
             key,
             sequence,
-            columns: snapshot.cols()?,
+            columns,
             rows,
             cursor: if snapshot.cursor_visible()? {
                 snapshot.cursor_viewport()?
@@ -622,7 +665,7 @@ impl PaneTerminal {
             viewport,
             reset: false,
             consumed_bytes,
-            receipt: None,
+            receipts: Vec::new(),
             responses: std::mem::take(&mut *self.responses.borrow_mut()),
             clipboard: std::mem::take(&mut *self.clipboard.borrow_mut()),
         };
@@ -682,7 +725,15 @@ fn apply(
 ) -> Result<Option<VtOutput>, VtError> {
     let key = command.key().clone();
     let reset = matches!(&command, VtCommand::Screen { .. });
-    let receipt = delivery_receipt(&command)?;
+    let receipt = match &command {
+        VtCommand::Feed {
+            key: fed,
+            bytes,
+            receipt: delivery,
+            ..
+        } => delivery_receipt(fed, bytes, delivery.as_ref())?,
+        _ => None,
+    };
     let consumed_bytes = match command {
         VtCommand::Screen {
             sequence,
@@ -752,7 +803,7 @@ fn apply(
         .snapshot(key, consumed_bytes)
         .map(|mut snapshot| {
             snapshot.reset = reset;
-            snapshot.receipt = receipt;
+            snapshot.receipts = receipt.into_iter().collect();
             Some(VtOutput::Snapshot(Box::new(snapshot)))
         })
 }
@@ -761,14 +812,12 @@ fn apply(
 ///
 /// # Errors
 /// Returns `Credit` when a receipt describes another pane or byte count.
-fn delivery_receipt(command: &VtCommand) -> Result<Option<CreditReceipt>, VtError> {
-    let VtCommand::Feed {
-        key,
-        bytes,
-        receipt: Some(receipt),
-        ..
-    } = command
-    else {
+fn delivery_receipt(
+    key: &PaneKey,
+    bytes: &[u8],
+    receipt: Option<&CreditReceipt>,
+) -> Result<Option<CreditReceipt>, VtError> {
+    let Some(receipt) = receipt else {
         return Ok(None);
     };
     if receipt.host() != &key.host
