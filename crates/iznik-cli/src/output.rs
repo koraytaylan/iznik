@@ -12,26 +12,6 @@
 use core::fmt::Write as _;
 use std::io::{self, Write};
 
-/// How many bits of a byte one character of base 64 carries.
-const BASE64_BITS: u32 = 6;
-
-/// How many characters base 64 has, which is what its name says.
-const BASE64_CHARACTERS: usize = 64;
-
-/// The characters base 64 is written with, in their own order.
-const BASE64_ALPHABET: &[u8; BASE64_CHARACTERS] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// How many bytes go into one group of four characters.
-const BASE64_GROUP: usize = 3;
-
-/// The bits one character of base 64 takes from what it is given.
-const BASE64_MASK: u32 = 0x3F;
-
-/// How much of what a value takes to write, the writer asks for at the start:
-/// twice its length, which for base 64 is nearer the mark than its length.
-const ROOM: usize = 2;
-
 /// The first character that needs no escaping of its own.
 const FIRST_PLAIN: char = ' ';
 
@@ -79,27 +59,7 @@ pub fn object(fields: Vec<(&str, Value)>) -> Value {
 /// text that would have to be mended to be printed.
 #[must_use]
 pub fn bytes(held: &[u8]) -> Value {
-    let mut written = String::with_capacity(held.len().saturating_mul(ROOM));
-    for group in held.chunks(BASE64_GROUP) {
-        let mut carried: u32 = 0;
-        for at in 0..BASE64_GROUP {
-            let byte = group.get(at).copied().unwrap_or(0);
-            carried = (carried << u8::BITS) | u32::from(byte);
-        }
-        for at in 0..=BASE64_GROUP {
-            let shift = BASE64_BITS
-                .saturating_mul(u32::try_from(BASE64_GROUP.saturating_sub(at)).unwrap_or_default());
-            if at > group.len() {
-                written.push('=');
-                continue;
-            }
-            let index = usize::try_from((carried >> shift) & BASE64_MASK).unwrap_or_default();
-            written.push(char::from(
-                BASE64_ALPHABET.get(index).copied().unwrap_or(b'A'),
-            ));
-        }
-    }
-    Value::Text(written)
+    Value::Text(iznik_client::base64::encode(held))
 }
 
 /// Writes one value as a line of its own.

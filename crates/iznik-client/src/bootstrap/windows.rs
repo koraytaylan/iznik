@@ -10,26 +10,6 @@ use std::path::Path;
 
 use crate::bootstrap::upload::{DIGEST_VARIABLE, PREFIX_VARIABLE};
 
-/// How many source bytes one Base64 group consumes.
-const GROUP_BYTES: usize = 3;
-/// How many characters one Base64 group produces.
-const GROUP_CHARACTERS: usize = 4;
-/// The shift of the first byte in a group of three.
-const FIRST_SHIFT: u32 = 16;
-/// The shift of the second byte.
-const SECOND_SHIFT: u32 = 8;
-/// The shifts of the four characters in a group, from the high end.
-const CHARACTER_SHIFTS: [u32; GROUP_CHARACTERS] = [18, 12, 6, 0];
-/// Mask isolating one Base64 character.
-const CHARACTER_MASK: u32 = 0x3F;
-/// How many symbols the Base64 alphabet has.
-const ALPHABET_LENGTH: usize = 64;
-/// The Base64 alphabet.
-const ALPHABET: &[u8; ALPHABET_LENGTH] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-/// The index of the third byte in a group of three.
-const THIRD_BYTE: usize = 2;
-
 /// The probe. It prints the same fields the POSIX probe prints.
 pub const PROBE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Continue'
@@ -158,38 +138,6 @@ fn encoded_shell(script: &str) -> String {
 
 /// UTF-16LE Base64, which is what `-EncodedCommand` reads.
 fn encoded(script: &str) -> String {
-    let mut wide = Vec::new();
-    for unit in script.encode_utf16() {
-        wide.extend(unit.to_le_bytes());
-    }
-    let mut encoded = String::new();
-    let mut rest = wide.as_slice();
-    while !rest.is_empty() {
-        let take = rest.len().min(GROUP_BYTES);
-        let (chunk, remaining) = rest.split_at(take);
-        rest = remaining;
-        let first = chunk.first().copied().unwrap_or(0);
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(THIRD_BYTE).copied().unwrap_or(0);
-        let combined = u32::from(first).wrapping_shl(FIRST_SHIFT)
-            | u32::from(second).wrapping_shl(SECOND_SHIFT)
-            | u32::from(third);
-        for shift in CHARACTER_SHIFTS {
-            let index = (combined >> shift) & CHARACTER_MASK;
-            let symbol = ALPHABET
-                .get(usize::try_from(index).unwrap_or(0))
-                .copied()
-                .unwrap_or(b'A');
-            encoded.push(char::from(symbol));
-        }
-        if take < GROUP_BYTES {
-            encoded.pop();
-            encoded.push('=');
-        }
-        if take < GROUP_BYTES.saturating_sub(1) {
-            encoded.pop();
-            encoded.push('=');
-        }
-    }
-    encoded
+    let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    crate::base64::encode(&wide)
 }

@@ -29,16 +29,6 @@ const SUBSTITUTE: u8 = 0x1a;
 /// A larger write is discarded. One mebibyte of base64 is more than a selection
 /// from a full-screen application needs, and the buffer must stay bounded.
 const MAXIMUM_BODY_BYTES: usize = 1_048_576;
-/// The standard base64 alphabet; a character's position is its six-bit value.
-const BASE64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-/// Bits one base64 character carries.
-const CHARACTER_BITS: u32 = 6;
-/// Bits in one decoded byte.
-const BYTE_BITS: u32 = 8;
-/// Characters in one complete base64 group, padding included.
-const GROUP_LENGTH: usize = 4;
-/// The padding character that fills out a final group.
-const PADDING: u8 = b'=';
 
 /// Where an OSC 52 scan is between output batches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -226,7 +216,7 @@ fn record_clipboard(body: &[u8], copies: &mut Vec<String>) {
     let Ok(encoded) = std::str::from_utf8(encoded) else {
         return;
     };
-    let Some(decoded) = decode_base64(encoded) else {
+    let Some(decoded) = iznik_client::base64::decode(encoded) else {
         return;
     };
     if let Ok(text) = String::from_utf8(decoded)
@@ -234,46 +224,4 @@ fn record_clipboard(body: &[u8], copies: &mut Vec<String>) {
     {
         copies.push(text);
     }
-}
-
-/// Decode standard base64, ignoring ASCII whitespace.
-///
-/// Each character is looked up in [`BASE64_ALPHABET`] and its six bits are
-/// shifted into an pending; every time eight bits are waiting, one byte
-/// comes out. Padding may only end the payload, and the payload must be whole
-/// groups of four. `None` means it is not valid base64.
-fn decode_base64(encoded: &str) -> Option<Vec<u8>> {
-    let characters: Vec<u8> = encoded.bytes().filter(|byte| !is_space(*byte)).collect();
-    if characters.len().checked_rem(GROUP_LENGTH) != Some(0) {
-        return None;
-    }
-    let data_length = characters
-        .iter()
-        .rposition(|character| *character != PADDING)
-        .map_or(0, |last| last.saturating_add(1));
-    let padding = characters.len().saturating_sub(data_length);
-    if padding >= GROUP_LENGTH.saturating_sub(1) {
-        return None;
-    }
-    let mut output = Vec::new();
-    let mut pending: u32 = 0;
-    let mut waiting: u32 = 0;
-    for character in characters.get(..data_length)? {
-        let value = BASE64_ALPHABET
-            .iter()
-            .position(|symbol| symbol == character)?;
-        pending = pending.checked_shl(CHARACTER_BITS)? | u32::try_from(value).ok()?;
-        waiting = waiting.saturating_add(CHARACTER_BITS);
-        if waiting >= BYTE_BITS {
-            waiting = waiting.saturating_sub(BYTE_BITS);
-            output.push(u8::try_from(pending.checked_shr(waiting)? & u32::from(u8::MAX)).ok()?);
-            pending &= 1_u32.checked_shl(waiting)?.saturating_sub(1);
-        }
-    }
-    Some(output)
-}
-
-/// Whether `byte` is ASCII whitespace a base64 payload may contain.
-fn is_space(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }

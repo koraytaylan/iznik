@@ -6,6 +6,7 @@ The client engine the GPUI application (`iznik-app`) links directly, and the C A
 
 | Module | Holds | Landed by |
 |---|---|---|
+| `base64` | Standard base64, written once for the Windows host's encoded commands, the command-line tool's byte fields and the application's OSC 52 clipboard writes. | review follow-up |
 | `bootstrap` | The bootstrap: probe, decide, upload, launch, handshake, snapshot, and the upgrade and uninstall paths. | `remote-launch` (plan 0005) |
 | `bootstrap::launch` | Launching or adopting the daemon on a probed host, and the upgrade decision. | `remote-launch` (plan 0005) |
 | `bootstrap::probe` | One script asked of a host and a pure reading of its answer: the machine, an installed server, the terminal's terminfo and `tic`, and the first prefix the host will let iznik write. | `host-probe` (plan 0005) |

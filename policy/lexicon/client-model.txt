@@ -35,6 +35,7 @@ restarted
 resume
 retire
 retired
+rfc
 rollback
 says
 screen
@@ -49,6 +50,7 @@ subscriptions
 takes
 untouched
 validates
+vectors
 view
 waited
 where

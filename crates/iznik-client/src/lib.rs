@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+pub mod base64;
 pub mod bootstrap;
 pub mod commands;
 pub mod host;
