@@ -20,6 +20,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameWriter, FramedLink, LinkError};
@@ -60,6 +61,27 @@ const FRAME_QUEUE: usize = 8;
 /// reason.
 const REQUEST_QUEUE: usize = 8;
 
+/// How long a peer that has connected has to say `Hello`. A client says it at
+/// once; a peer that connects and says nothing — a half-open socket, a stuck
+/// process — would otherwise hold a connection task and its descriptor for as
+/// long as the daemon runs.
+pub const GREETING_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The timing a connection runs under, so a test can shorten it.
+#[derive(Clone, Copy, Debug)]
+pub struct ConnectionOptions {
+    /// How long the peer has to send its `Hello`.
+    pub greeting_deadline: Duration,
+}
+
+impl Default for ConnectionOptions {
+    fn default() -> Self {
+        ConnectionOptions {
+            greeting_deadline: GREETING_DEADLINE,
+        }
+    }
+}
+
 /// Why a connection ended.
 #[derive(Debug)]
 pub enum ConnectionError {
@@ -72,6 +94,9 @@ pub enum ConnectionError {
         /// What was wrong with it.
         detail: String,
     },
+    /// The peer connected and did not say `Hello` within the greeting
+    /// deadline.
+    Silent,
     /// The peer speaks a protocol version this server does not.
     ProtocolVersion {
         /// The version it said.
@@ -98,6 +123,9 @@ impl core::fmt::Display for ConnectionError {
             ConnectionError::Link(source) => write!(formatter, "the link: {source}"),
             ConnectionError::Garbage { detail } => {
                 write!(formatter, "the client spoke garbage: {detail}")
+            }
+            ConnectionError::Silent => {
+                write!(formatter, "the client did not say hello in time")
             }
             ConnectionError::ProtocolVersion { spoken } => write!(
                 formatter,
@@ -207,16 +235,21 @@ struct Greeted<Stream: AsyncRead + AsyncWrite + Unpin> {
 /// [`ConnectionError::Garbage`] when the first frame is not a `Hello`,
 /// [`ConnectionError::ProtocolVersion`] when the versions differ — after the
 /// client has been told, so it can say why it failed — and
-/// [`ConnectionError::Link`] when the link fails.
+/// [`ConnectionError::Link`] when the link fails, and
+/// [`ConnectionError::Silent`] when nothing arrives within `deadline`.
 async fn greet<Stream>(
     mut link: FramedLink<Stream>,
+    deadline: Duration,
 ) -> Result<Option<Greeted<Stream>>, ConnectionError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
 {
     // A peer that connects and closes without speaking has said nothing wrong:
     // that is what a readiness probe looks like from here.
-    let Some(first) = link.next_frame().await? else {
+    let Some(first) = tokio::time::timeout(deadline, link.next_frame())
+        .await
+        .map_err(|_late| ConnectionError::Silent)??
+    else {
         return Ok(None);
     };
     if first.channel != CHANNEL_CONTROL {
@@ -280,7 +313,23 @@ pub async fn serve<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let Some(greeted) = greet(FramedLink::new(stream)).await? else {
+    serve_with_options(stream, registry, ConnectionOptions::default()).await
+}
+
+/// [`serve`] under timing of the caller's choosing.
+///
+/// # Errors
+///
+/// As [`serve`].
+pub async fn serve_with_options<Stream>(
+    stream: Stream,
+    registry: Arc<RwLock<Registry>>,
+    options: ConnectionOptions,
+) -> Result<(), ConnectionError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let Some(greeted) = greet(FramedLink::new(stream), options.greeting_deadline).await? else {
         return Ok(());
     };
     if offers_zstd(greeted.capabilities) && offers_zstd(CAPABILITIES) {

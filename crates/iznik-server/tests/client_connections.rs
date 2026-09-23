@@ -19,7 +19,7 @@ use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client,
     encode_to_server,
 };
-use iznik_server::connection::serve;
+use iznik_server::connection::{ConnectionError, ConnectionOptions, serve, serve_with_options};
 use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
 use iznik_server::pty::spawn::Program;
 use iznik_server::pty::streams::MAXIMUM_PENDING_INPUT_BYTES;
@@ -60,7 +60,7 @@ struct Host {
     /// The host model and the panes behind it.
     registry: Arc<RwLock<Registry>>,
     /// One task per accepted stream, so a case can say how a connection ended.
-    serving: Vec<JoinHandle<Result<(), iznik_server::connection::ConnectionError>>>,
+    serving: Vec<JoinHandle<Result<(), ConnectionError>>>,
 }
 
 impl Host {
@@ -875,6 +875,33 @@ async fn a_pane_that_exits_reaches_every_client() {
         })
         .await?;
         assert!(gone.0 > 0, "the pane's going is a change like any other");
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a peer that connects and never says `Hello` holds its connection
+/// past the greeting deadline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_silent_peer_is_let_go() {
+    bounded(async {
+        let host = Host::new()?;
+        let (_near, far) = UnixStream::pair()?;
+        let serving = tokio::spawn(serve_with_options(
+            far,
+            Arc::clone(&host.registry),
+            ConnectionOptions {
+                greeting_deadline: Duration::from_millis(50),
+            },
+        ));
+        let ended = tokio::time::timeout(PROMPT, serving).await??;
+        assert!(
+            matches!(ended, Err(ConnectionError::Silent)),
+            "the connection ends for want of a Hello: {ended:?}"
+        );
         Ok::<(), Failed>(())
     })
     .await
