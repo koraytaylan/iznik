@@ -24,7 +24,8 @@ fn check_local_size(
 ) {
     assert_eq!(
         local_size(measured, awaiting_model, native_size, desired, shown),
-        (baseline, action)
+        (baseline, action),
+        "the local size decision"
     );
 }
 

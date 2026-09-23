@@ -5,8 +5,11 @@ banners
 desired
 dimensions
 hot
+remember
+restored
 retained
 revision
+showing
 synchronize
 update
 visible

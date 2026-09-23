@@ -39,7 +39,7 @@ struct ProgramEntry {
     pane: Arc<Pane>,
     /// The newest sample, when one has been read.
     latest: Option<ProgramSample>,
-    /// Whether [`ProgramWatch::apply`] has not yet published `latest`.
+    /// Whether [`Registry::apply_programs`] has not yet published `latest`.
     fresh: bool,
     /// The title sampling last published, so a later sample can replace it
     /// and leave a title the program set itself.

@@ -264,6 +264,7 @@ pub enum LocalSize {
 /// belongs to someone else and wins.
 ///
 /// The returned baseline replaces `awaiting_model`.
+#[must_use]
 pub fn local_size(
     measured: Option<(u16, u16)>,
     awaiting_model: Option<(u16, u16)>,

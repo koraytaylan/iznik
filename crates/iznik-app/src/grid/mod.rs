@@ -3,7 +3,7 @@
 
 mod ime;
 mod interaction;
-mod keyboard;
+pub mod keyboard;
 mod paint;
 pub(crate) use paint::color as terminal_color;
 

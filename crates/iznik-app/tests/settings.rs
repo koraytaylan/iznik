@@ -123,7 +123,11 @@ fn a_missing_settings_file_keeps_the_current_value() {
         !watcher.reload(&mut current).expect("missing file"),
         "a missing file changes nothing"
     );
-    assert_eq!(current.theme.font_size, 19.0);
+    assert_eq!(
+        current.theme.font_size.to_bits(),
+        19.0_f32.to_bits(),
+        "the current font size is kept"
+    );
 }
 
 #[test]
@@ -164,7 +168,15 @@ const SAVED_THEME_NAME: &str = "Catppuccin Mocha";
 
 #[gpui_kit::test]
 fn a_changed_theme_is_what_the_next_shell_reads(context: &mut gpui_kit::TestAppContext) {
-    let result = restores(context);
+    check(&restores(context));
+}
+
+/// Keep fixture assertion outside the GPUI macro's generated test documentation.
+///
+/// # Panics
+///
+/// Fails on a fixture error.
+fn check(result: &Result<(), Box<dyn std::error::Error>>) {
     assert!(result.is_ok(), "{result:?}");
 }
 
@@ -188,17 +200,17 @@ fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::e
 
     context.update(|app| {
         gpui_kit::init(app);
-        apply_default_theme(app).expect("bundled themes register");
+        assert!(apply_default_theme(app).is_ok(), "bundled themes register");
     });
     let directory =
         std::env::temp_dir().join(format!("iznik-settings-persist-{}", std::process::id()));
-    let _removed = fs::remove_dir_all(&directory);
+    let _stale = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory)?;
     let path = directory.join("settings");
-    let open = |context: &mut gpui_kit::TestAppContext, label: &str| {
+    let open = |window_context: &mut gpui_kit::TestAppContext, label: &str| {
         let (bridge, retained) = engine::start(label)?;
         let thread = Rc::new(VtThread::start(VtOptions::default())?);
-        let handle = context.add_window(|window, build| {
+        let handle = window_context.add_window(|window, build| {
             WindowShell::new(
                 bridge,
                 thread,
@@ -227,17 +239,11 @@ fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::e
         theme.tabs_in_title_bar = true;
         shell.set_theme(theme, app);
     })?;
-    let saved = decode(&fs::read_to_string(&path)?).expect("the written settings parse");
-    assert_eq!(saved.theme.font_size, SAVED_FONT_SIZE);
-    assert_eq!(saved.theme.line_height, SAVED_LINE_HEIGHT);
-    assert!(saved.theme.tabs_in_title_bar);
-    assert_eq!(saved.theme_name, SAVED_THEME_NAME);
+    let saved = decode(&fs::read_to_string(&path)?).map_err(|error| format!("{error:?}"))?;
+    assert_saved(&saved, "the written file");
     let (second, _second_directory) = open(context, "settings-persist-next")?;
     second.update(context, |shell, _, _app| {
-        assert_eq!(shell.settings().theme.font_size, SAVED_FONT_SIZE);
-        assert_eq!(shell.settings().theme.line_height, SAVED_LINE_HEIGHT);
-        assert!(shell.settings().theme.tabs_in_title_bar);
-        assert_eq!(shell.settings().theme_name, SAVED_THEME_NAME);
+        assert_saved(shell.settings(), "the next shell");
     })?;
     context.update(|app| {
         assert_eq!(
@@ -248,4 +254,30 @@ fn restores(context: &mut gpui_kit::TestAppContext) -> Result<(), Box<dyn std::e
     });
     let _removed = fs::remove_dir_all(&directory);
     Ok(())
+}
+
+/// Assert that `settings` carry the saved theme, font, line height and title-bar choice.
+///
+/// # Panics
+///
+/// Panics when any of them is not the saved value.
+fn assert_saved(settings: &Settings, source: &str) {
+    assert_eq!(
+        settings.theme.font_size.to_bits(),
+        SAVED_FONT_SIZE.to_bits(),
+        "{source} keeps the font size"
+    );
+    assert_eq!(
+        settings.theme.line_height.to_bits(),
+        SAVED_LINE_HEIGHT.to_bits(),
+        "{source} keeps the line height"
+    );
+    assert!(
+        settings.theme.tabs_in_title_bar,
+        "{source} keeps tabs in the title bar"
+    );
+    assert_eq!(
+        settings.theme_name, SAVED_THEME_NAME,
+        "{source} keeps the theme"
+    );
 }
