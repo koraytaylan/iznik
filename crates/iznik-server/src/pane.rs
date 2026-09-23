@@ -43,6 +43,25 @@ const CLOSE_ESCALATION: Duration = Duration::from_secs(2);
 /// open is what would otherwise keep the pane alive for as long as it runs.
 const EXIT_DRAIN: Duration = Duration::from_millis(250);
 
+/// The widest a pane may be. A client asks for a size and the server makes a
+/// terminal of it — a mirror whose grid and scrollback are sized by it — so
+/// the size is bounded here rather than trusted: a thousand columns is wider
+/// than any display shows at a readable size.
+pub const MAXIMUM_COLUMNS: u16 = 1000;
+
+/// The tallest a pane may be, for the same reason.
+pub const MAXIMUM_ROWS: u16 = 500;
+
+/// A size a pane can be made at: at least one cell each way, and at most
+/// [`MAXIMUM_COLUMNS`] by [`MAXIMUM_ROWS`].
+#[must_use]
+pub fn bounded_size(columns: u16, rows: u16) -> (u16, u16) {
+    (
+        columns.clamp(1, MAXIMUM_COLUMNS),
+        rows.clamp(1, MAXIMUM_ROWS),
+    )
+}
+
 /// The alternate-screen enter to remember for reconstruction when the recognized
 /// switch began in an earlier read, so its own bytes are not wholly in the chunk
 /// the pane splits at it. A client applying it reaches the alternate screen.
@@ -137,7 +156,7 @@ impl From<HistoryError> for PaneError {
 enum Request {
     /// Serialize the screen, exact at the newest sequence, back over the channel.
     Screen(oneshot::Sender<Result<SerializedScreen, ScreenError>>),
-    /// Resize the mirror to match a resize already applied to the pseudoterminal.
+    /// Resize the mirror, ahead of the pseudoterminal's own resize.
     Resize {
         /// The new width in columns.
         columns: u16,
@@ -221,11 +240,12 @@ impl Pane {
         thread: &MirrorThread,
         pane_options: PaneOptions,
     ) -> Result<Pane, PaneError> {
-        let columns = options.columns;
-        let rows = options.rows;
+        let (columns, rows) = bounded_size(options.columns, options.rows);
         // Off the runtime's workers: a fork, an exec and the directory checks
         // on the way to them are blocking system calls, however quick.
-        let owned = options.clone();
+        let mut owned = options.clone();
+        owned.columns = columns;
+        owned.rows = rows;
         let (process, output, input) = tokio::task::spawn_blocking(move || {
             let process = spawn(&owned)?;
             let (output, input) = streams(&process)?;
@@ -421,21 +441,28 @@ impl Pane {
         }
     }
 
-    /// Resizes the pseudoterminal — which sends the child `SIGWINCH` — and the
-    /// mirror with it, so the next screen is at the new size.
+    /// Resizes the mirror and then the pseudoterminal — which sends the child
+    /// `SIGWINCH` — so the next screen is at the new size, within
+    /// [`bounded_size`].
+    ///
+    /// The mirror's resize is queued first. The VT task takes a queued request
+    /// before the next chunk of output, and whatever the child draws for its
+    /// new size comes after the `SIGWINCH` that the pseudoterminal's resize
+    /// sends, so the mirror is already at that size when those bytes reach
+    /// it — the other way round, a redraw could land on the old grid.
     ///
     /// # Errors
     ///
     /// [`PaneError::Pty`] when the pseudoterminal cannot be resized, and
     /// [`PaneError::Gone`] when the mirror thread has ended.
     pub fn resize(&self, columns: u16, rows: u16) -> Result<(), PaneError> {
-        {
-            let process = self.process.lock().unwrap_or_else(PoisonError::into_inner);
-            process.resize(columns, rows)?;
-        }
+        let (columns, rows) = bounded_size(columns, rows);
         self.requests
             .send(Request::Resize { columns, rows })
-            .map_err(|_send| PaneError::Gone)
+            .map_err(|_send| PaneError::Gone)?;
+        let process = self.process.lock().unwrap_or_else(PoisonError::into_inner);
+        process.resize(columns, rows)?;
+        Ok(())
     }
 
     /// Hang up the foreground job, then force cleanup after the configured grace
@@ -599,23 +626,12 @@ impl VtTask {
         let mut ending: Option<tokio::time::Instant> = None;
         loop {
             let deadline = ending.unwrap_or_else(tokio::time::Instant::now);
+            // Requests before output: a resize queued before the child was
+            // told of it reaches the mirror before anything the child drew
+            // for it. The drain's end before output too, so a job that
+            // never stops printing cannot hold an ended pane open.
             tokio::select! {
-                chunk = output.next() => match chunk {
-                    Some(bytes) => {
-                        let prompted = feed_chunk(
-                            &bytes,
-                            &mut mirror,
-                            &mut observer,
-                            &mut screen_state,
-                            &history,
-                            &marks,
-                            &responses,
-                        );
-                        prompts = prompts.saturating_add(prompted);
-                        publish(&state, &history, &mirror, false, prompts);
-                    }
-                    None => break,
-                },
+                biased;
                 request = requests.recv(), if requests_open => match request {
                     Some(Request::Screen(reply)) => {
                         let sequence = newest_of(&history);
@@ -646,6 +662,22 @@ impl VtTask {
                     }
                 }
                 () = tokio::time::sleep_until(deadline), if ending.is_some() => break,
+                chunk = output.next() => match chunk {
+                    Some(bytes) => {
+                        let prompted = feed_chunk(
+                            &bytes,
+                            &mut mirror,
+                            &mut observer,
+                            &mut screen_state,
+                            &history,
+                            &marks,
+                            &responses,
+                        );
+                        prompts = prompts.saturating_add(prompted);
+                        publish(&state, &history, &mirror, false, prompts);
+                    }
+                    None => break,
+                },
             }
         }
         publish(&state, &history, &mirror, true, prompts);

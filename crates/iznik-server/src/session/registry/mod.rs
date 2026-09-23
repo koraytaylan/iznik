@@ -28,7 +28,7 @@ use iznik_protocol::reconcile::{ReconcileError, apply};
 use tokio::sync::{Notify, broadcast, watch};
 
 use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
-use crate::pane::{Pane, PaneState};
+use crate::pane::{Pane, PaneState, bounded_size};
 use crate::pty::spawn::{Program, SpawnOptions};
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
@@ -262,6 +262,8 @@ impl Registry {
         rows: u16,
         working_directory: Option<PathBuf>,
     ) -> Result<(PaneId, model::Pane), RegistryError> {
+        // What it is made at is what the model says, not what was asked for.
+        let (columns, rows) = bounded_size(columns, rows);
         // What it was asked to start in is what the model shows until the
         // shell says otherwise: a pane whose directory a client asked for
         // should not read as having none until the next prompt.

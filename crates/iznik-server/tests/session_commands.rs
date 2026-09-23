@@ -592,3 +592,53 @@ async fn session_commands_a_working_directory_is_settled_first() {
     );
     registry.close_all().await;
 }
+
+/// A size no display could show is not trusted: a pane asked to be made, or
+/// resized, past the maxima is made at them, and one asked for nothing is
+/// given a cell.
+///
+/// # Panics
+///
+/// When a pane is made or resized past the maxima, or to nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_commands_a_size_is_bounded() {
+    use iznik_server::pane::{MAXIMUM_COLUMNS, MAXIMUM_ROWS};
+    let mut registry = registry().expect("a registry");
+    let outcome = apply(
+        &mut registry,
+        SessionCommand::CreateSession {
+            name: "huge".to_owned(),
+            columns: u16::MAX,
+            rows: u16::MAX,
+            working_directory: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(made(&outcome), Ok(Created::Session(_named))),
+        "{outcome:?}"
+    );
+    let model = registry.snapshot();
+    let held = model
+        .sessions
+        .iter()
+        .flat_map(|session| session.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .next()
+        .expect("the pane");
+    assert_eq!((held.columns, held.rows), (MAXIMUM_COLUMNS, MAXIMUM_ROWS));
+    let pane = registry.pane(held.id).expect("the pane").clone();
+    pane.resize(0, u16::MAX).expect("a resize");
+    let mut state = pane.state_updates();
+    let resized = tokio::time::timeout(
+        DEADLINE,
+        state.wait_for(|now| (now.columns, now.rows) == (1, MAXIMUM_ROWS)),
+    )
+    .await;
+    assert!(
+        resized.is_ok(),
+        "resized within the bounds: {:?}",
+        pane.state()
+    );
+    registry.close_all().await;
+}

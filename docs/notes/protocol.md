@@ -507,4 +507,8 @@ measured against the fidelity corpus:
 The client owns size. It sends `Resize`, the server sets the pseudoterminal
 and its mirror, and the resulting `PaneResized` delta is what every client —
 including the sender — renders. When two clients look at one pane the last
-`Resize` wins and both observe it.
+`Resize` wins and both observe it. The server bounds every size it is asked
+for, in `Resize` and in a creating command alike: at least one cell each way
+and at most `pane::MAXIMUM_COLUMNS` by `pane::MAXIMUM_ROWS` (1000 by 500), so
+the size a client reads back in `PaneResized` or the model may be smaller
+than the one it asked for.
