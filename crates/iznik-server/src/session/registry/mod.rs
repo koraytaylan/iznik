@@ -35,6 +35,7 @@ use crate::terminal::mirror::MirrorThread;
 
 mod ingest;
 mod program;
+mod summary;
 
 pub use program::ClientAttachment;
 
@@ -220,7 +221,10 @@ impl Registry {
                 true
             }
             Err(error) => {
-                tracing::error!(%error, ?delta, "the registry built a delta the reconciler refused");
+                // Its kind and ids, never its names, titles or directories:
+                // this log is bundled into bug reports.
+                let delta = summary::summary(&delta);
+                tracing::error!(%error, delta, "the registry built a delta the reconciler refused");
                 false
             }
         }
