@@ -57,11 +57,13 @@ pub(super) enum Woken {
 ///
 /// Answers `None` when the host was told to stop. Orders that need a channel
 /// are dropped: there is none, and a keystroke held for a minute and then
-/// delivered is worse than one that went nowhere.
+/// delivered is worse than one that went nowhere — which `dropping` is told,
+/// with the pane and how many bytes, so the application hears of it.
 pub(super) async fn hold_until(
     wait: &Waiting,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
+    dropping: &(dyn Fn(PaneId, usize) + Sync),
 ) -> Option<Woken> {
     loop {
         let waiting = async {
@@ -78,6 +80,7 @@ pub(super) async fn hold_until(
                 // Somebody asked for it now, so the wait is over.
                 Some(Order::Reconnect) => return Some(Woken::Due),
                 Some(Order::Upgrade { force }) => return Some(Woken::Upgrade { force }),
+                Some(Order::Input { pane, bytes, .. }) => dropping(pane, bytes.len()),
                 Some(held) => keep(kept, held),
             },
         }

@@ -199,6 +199,13 @@ reconnection now rather than after the backoff.
 - `IZNIK_EVENT_KIND_NOTIFICATION` — words for a person. When it is about a
   command, `command_id` carries that command's number.
 
+Keystrokes you send with `iznik_pane_input` while a host has no link — it is
+reconnecting, or being bootstrapped, which can take minutes — are not held and
+delivered late: they are dropped, and you get a notification saying how many
+bytes for which pane. A key pressed a minute ago and typed now lands in
+whatever the person has moved on to. Subscriptions, sizes and focus given
+meanwhile are kept and sent once the link is up.
+
 A command is answered exactly once *per connection*. When a host's link goes
 before a command you sent is answered, you are not sent a result: you get a
 notification saying its outcome is unknown, because the host may have applied

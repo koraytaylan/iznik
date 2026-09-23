@@ -64,17 +64,32 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
     // What was asked for while there was nowhere to send it. A keystroke held
     // for a minute and then delivered is worse than one that went nowhere; a
     // subscription is not, because nothing will ever ask for it again and a
-    // pane nobody subscribed to is a pane that stays blank.
+    // pane nobody subscribed to is a pane that stays blank. So keystrokes
+    // given while there was no link — waiting out a backoff, or queued behind
+    // a bootstrap that took minutes — are dropped, and the application is told
+    // with `InputDropped`; everything else of the kinds `keep` names is held.
     let mut kept: Vec<Order> = Vec::new();
     loop {
-        let Some(channel) = connect(&host, &shared, &machine, &mut orders, &mut kept).await else {
+        let Some((channel, linked)) =
+            connect(&host, &shared, &machine, &mut orders, &mut kept).await
+        else {
             // It was told to stop while it had no link, and whoever is
             // watching is told so rather than left with a host that simply
             // stopped saying anything.
             shared.publish(&ManagerEvent::Removed { host });
             return;
         };
-        match pump(&host, &shared, &machine, &mut orders, &mut kept, channel).await {
+        match pump(
+            &host,
+            &shared,
+            &machine,
+            &mut orders,
+            &mut kept,
+            channel,
+            linked,
+        )
+        .await
+        {
             Ended::Stopped => return,
             Ended::Gone => {}
             Ended::Upgrade { force } => {
@@ -188,18 +203,21 @@ fn advance(
 /// and trying again for as long as it says to.
 ///
 /// Answers `None` when the host was told to stop, and never gives up by
-/// itself: a failure retrying cannot mend waits for somebody to ask.
+/// itself: a failure retrying cannot mend waits for somebody to ask. With the
+/// channel comes the moment it was reached: a keystroke given before it had no
+/// link to go on, and is not delivered late.
 async fn connect(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
-) -> Option<RemoteChannel> {
+) -> Option<(RemoteChannel, Instant)> {
     loop {
         let wait = waiting(machine);
         if !matches!(wait, Waiting::Not) {
-            match hold_until(&wait, orders, kept).await {
+            let dropping = |pane: PaneId, bytes: usize| dropped_input(host, shared, pane, bytes);
+            match hold_until(&wait, orders, kept, &dropping).await {
                 None => {
                     let _torn = advance(shared, host, machine, HostEvent::Removed);
                     return None;
@@ -219,6 +237,7 @@ async fn connect(
         }
         match reach(host, shared, machine).await {
             Ok(reached) => {
+                let linked = Instant::now();
                 let mut channel = accept(host, shared, machine, reached).await;
                 // Everything asked for while there was nowhere to send it.
                 // What the link would not take stays held: the next
@@ -236,7 +255,7 @@ async fn connect(
                     sent = sent.saturating_add(1);
                 }
                 kept.extend(standing.into_iter().skip(sent));
-                return Some(channel);
+                return Some((channel, linked));
             }
             // The machine decides what comes next — a wait, or for a failure
             // trying again cannot mend, a wait for somebody to ask — and the
@@ -571,13 +590,62 @@ async fn pump(
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
     channel: RemoteChannel,
+    linked: Instant,
 ) -> Ended {
-    let mut carried = Vec::new();
-    let ended = serve_link(host, shared, machine, orders, kept, channel, &mut carried).await;
+    let mut record = LinkRecord {
+        linked,
+        carried: Vec::new(),
+    };
+    let ended = serve_link(host, shared, machine, orders, kept, channel, &mut record).await;
     if !matches!(ended, Ended::Stopped) {
-        orphaned(host, shared, &carried);
+        orphaned(host, shared, &record.carried);
     }
     ended
+}
+
+/// What one link did that outlives it.
+struct LinkRecord {
+    /// When it was reached: a keystroke given before this had no link.
+    linked: Instant,
+    /// Every command it carried, whose answers it may not live to hear.
+    carried: Vec<CommandId>,
+}
+
+/// Tells the application keystrokes were not delivered, because there was
+/// no link when they were given.
+pub(super) fn dropped_input(host: &HostId, shared: &Shared, pane: PaneId, bytes: usize) {
+    shared.publish(&ManagerEvent::Notify(Notification::InputDropped {
+        host: host.clone(),
+        pane,
+        bytes,
+    }));
+}
+
+/// Whether an order may go out on this link, recording what the link must
+/// answer for.
+///
+/// A keystroke given before the link was reached is dropped and said so: a
+/// key pressed while a bootstrap ran for a minute and then delivered is worse
+/// than one that went nowhere. A command already taken back is not sent. A
+/// command that is sent is counted, so a link that goes before its answer
+/// can say what became of it.
+fn admitted(host: &HostId, shared: &Shared, order: &Order, record: &mut LinkRecord) -> bool {
+    match order {
+        Order::Input { pane, bytes, given } if *given < record.linked => {
+            dropped_input(host, shared, *pane, bytes.len());
+            false
+        }
+        Order::Command { id, .. } => {
+            if !still_asked(host, shared, *id) {
+                return false;
+            }
+            // Counted before the write: a link that fails part way through it
+            // may still have delivered the whole frame.
+            record.carried.push(*id);
+            true
+        }
+        _otherwise => true,
+    }
 }
 
 /// Puts back what every command this link carried and never had answered
@@ -623,7 +691,7 @@ fn still_asked(host: &HostId, shared: &Shared, command: CommandId) -> bool {
 }
 
 /// The loop [`pump`] runs: what arrived and what was ordered, until the link
-/// goes. Every command it writes is added to `carried`.
+/// goes, with what it carried kept in `record`.
 async fn serve_link(
     host: &HostId,
     shared: &Arc<Shared>,
@@ -631,7 +699,7 @@ async fn serve_link(
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
     mut channel: RemoteChannel,
-    carried_commands: &mut Vec<CommandId>,
+    record: &mut LinkRecord,
 ) -> Ended {
     let mut carried = 0_usize;
     // An order taken off the queue while gathering credit, and not credit:
@@ -694,13 +762,8 @@ async fn serve_link(
                 }
             }
             Turn::Ordered(Some(order)) => {
-                if let Order::Command { id, .. } = &order {
-                    if !still_asked(host, shared, *id) {
-                        continue;
-                    }
-                    // Counted before the write: a link that fails part way
-                    // through it may still have delivered the whole frame.
-                    carried_commands.push(*id);
+                if !admitted(host, shared, &order, record) {
+                    continue;
                 }
                 let holdable = keeps(&order).then(|| order.clone());
                 let carrying = carry(&mut channel, order, shared).await;
@@ -831,7 +894,7 @@ async fn carry(
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
         Order::Unsubscribe { pane } => ToServer::Unsubscribe { pane },
-        Order::Input { pane, bytes } => return carry_input(channel, pane, bytes).await,
+        Order::Input { pane, bytes, .. } => return carry_input(channel, pane, bytes).await,
         Order::Resize {
             pane,
             columns,

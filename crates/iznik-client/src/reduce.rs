@@ -101,6 +101,20 @@ pub enum Notification {
         /// This client's number for the command.
         command: CommandId,
     },
+    /// Keystrokes that were not delivered, because the host had no link when
+    /// they were given.
+    ///
+    /// Dropped on purpose: a key pressed while a host reconnects or
+    /// bootstraps, and delivered a minute later, is worse than one that went
+    /// nowhere.
+    InputDropped {
+        /// The host.
+        host: HostId,
+        /// The pane they were for.
+        pane: PaneId,
+        /// How many bytes were dropped.
+        bytes: usize,
+    },
     /// A command this client sent was answered with something this client
     /// could not read.
     ///

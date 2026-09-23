@@ -154,6 +154,16 @@ fn told(notification: &Notification) -> Option<(EventKind, String, Vec<u8>)> {
             host.0.clone(),
             format!("command {} was never answered", command.0).into_bytes(),
         )),
+        Notification::InputDropped { host, pane, bytes } => Some((
+            EventKind::Notification,
+            host.0.clone(),
+            format!(
+                "{bytes} bytes of input for pane {} were dropped: there was no link when they \
+                 were given",
+                pane.0
+            )
+            .into_bytes(),
+        )),
         Notification::CommandOutcomeUnknown { host, command } => Some((
             EventKind::Notification,
             host.0.clone(),

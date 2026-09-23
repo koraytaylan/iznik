@@ -241,6 +241,9 @@ pub(crate) enum Order {
         pane: PaneId,
         /// The bytes.
         bytes: Vec<u8>,
+        /// When they were given: keystrokes given while there was no link
+        /// are dropped rather than delivered late.
+        given: Instant,
     },
     /// A new size.
     Resize {
@@ -626,11 +629,24 @@ impl HostManager {
 
     /// Sends keystrokes to a pane.
     ///
+    /// Only on a link that was up when they were given. Keystrokes given while
+    /// the host has no link — reconnecting, or bootstrapping, which may take
+    /// minutes — are dropped, and a [`Notification::InputDropped`] says so: a
+    /// key delivered a minute after it was pressed is worse than one that
+    /// went nowhere.
+    ///
     /// # Errors
     ///
     /// As [`HostManager::reconnect`].
     pub fn input(&self, alias: &str, pane: PaneId, bytes: Vec<u8>) -> Result<(), ManagerError> {
-        self.order(alias, Order::Input { pane, bytes })
+        self.order(
+            alias,
+            Order::Input {
+                pane,
+                bytes,
+                given: Instant::now(),
+            },
+        )
     }
 
     /// Tells a pane it is another size.

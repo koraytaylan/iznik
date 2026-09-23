@@ -470,6 +470,14 @@ fn read(notification: &Notification) -> (HostId, NoticeKind, String) {
             NoticeKind::Failure,
             format!("command {} was never answered", command.0),
         ),
+        Notification::InputDropped { host, pane, bytes } => (
+            host.clone(),
+            NoticeKind::Failure,
+            format!(
+                "{bytes} bytes typed into pane {} while the host was away were dropped",
+                pane.0
+            ),
+        ),
         Notification::CommandOutcomeUnknown { host, command } => (
             host.clone(),
             NoticeKind::Failure,
