@@ -1,6 +1,6 @@
 # iznik-client
 
-The client engine the GPUI application (`iznik-app`) links directly, and the C ABI in `iznik-ffi` wraps for other front ends: the SSH transport over the system `ssh`, the bootstrap, the client-side model and reducer, optimistic commands, and multi-host management. Asynchronous end to end.
+The client engine the GPUI application (`iznik-app`) links directly, and the C ABI in `iznik-ffi` wraps for other front ends: the SSH transport over the system `ssh`, the bootstrap, the client-side model and reducer, optimistic commands, and multi-host management. It runs on the async runtime; its few `std::fs` calls — the runtime directory, the log, the upload's artifact listing — are short synchronous operations on local paths.
 
 ## Modules
 

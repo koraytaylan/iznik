@@ -1,6 +1,6 @@
 # iznik-server
 
-The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions, multiplexing and resume. Asynchronous end to end; the one module with blocking I/O is `pty::streams`, whose purpose is to hide it.
+The remote daemon: pseudoterminal ownership, terminal mirrors, history, sessions, multiplexing and resume. It runs on the async runtime, but not all of it asynchronously: `pty::streams` holds two blocking threads per pane, the child's `waitpid` runs on the blocking pool, every mirror lives on one dedicated thread, and the lock file and runtime directory are handled with synchronous `std::fs` calls.
 
 The binary `iznik-server` takes one of `--stdio`, `--daemon`, `--foreground`, `--stop` and `--version` as its first argument and hands the command line to the module that owns it; `--help` lists them, and each of them answers `--help` with what it takes. The four the `daemon` module owns share two flags: `--idle-shutdown-seconds`, which shortens the interval after which a daemon with no panes and no clients exits, and `--program`, which says what a pane runs rather than leaving it to whoever's login shell is on the machine. `tests/readme_commands.rs` asks every command this file names, so a name here that no binary answers to is a failing test.
 

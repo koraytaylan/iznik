@@ -49,7 +49,11 @@ iznik-app (GPUI)
                                                             └─ shell-integration observer
 ```
 
-One SSH channel per host carries every pane on that host. The `--stdio` relay
+One SSH channel per host carries every pane on that host. Where the system
+`ssh` can multiplex — every Unix — the bootstrap's commands and that channel
+share one connection through `ControlMaster`. Win32-OpenSSH cannot, so on a
+Windows client every command the bootstrap runs is an `ssh` connection of
+its own, and the channel is one more. The `--stdio` relay
 on the remote side is a thin bridge between the SSH channel and the daemon's
 unix socket; the daemon treats it as one more local client. Nothing in the
 daemon knows what SSH is.
@@ -100,8 +104,19 @@ A frame is a 4-byte little-endian payload length, a 1-byte **channel**, and
 the payload. Payloads are at most 1 MiB; a larger length is a protocol error,
 not an allocation. Channel `0` carries structured control messages. Channels
 `1..=255` carry pane output as **raw bytes**: the payload *is* the terminal
-data and is never deserialized, re-encoded or copied on the way past. This is
-the one performance decision the whole system rests on.
+data, and nothing on the way past parses it into cells or re-encodes it as
+anything else. This is the one performance decision the whole system rests
+on.
+
+It is not a zero-copy path, and nothing here should read as one. On the
+server a chunk is read from the pseudoterminal into a buffer, appended to the
+history ring, copied out of the ring into the payload a subscriber is sent,
+and copied again behind the frame header; the mirror parses a copy of its
+own. When the link is compressed (section 5.6) the whole frame stream is
+compressed on the way out and decompressed on the way in. On the client the
+bytes land in the frame decoder's buffer and are copied out as the payload
+handed to the pane. Each copy is a `memcpy` of at most one chunk; what the
+design avoids is interpretation, not copying.
 
 ### 4.2 Control messages
 
@@ -366,7 +381,9 @@ as its first input rather than dropped.
 ### 6.1 Transport
 
 `iznik-client` shells out to the system `ssh` with `ControlMaster` and
-`ControlPersist` and a control path under its own runtime directory. The
+`ControlPersist` and a control path under its own runtime directory — on
+Unix. Win32-OpenSSH fails a connection that asks for `ControlMaster`, so a
+Windows build leaves those options off and opens one connection per command. The
 user's `~/.ssh/config` is authoritative: `ProxyJump`, `Match` blocks, agents,
 certificates and bastions keep working because iznik never reimplements them.
 Failures are classified — unreachable, authentication refused, host key

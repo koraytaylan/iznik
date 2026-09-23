@@ -153,13 +153,29 @@ may die of a bug that could have been an error value.
 
 ### 3.6 Blocking
 
-`iznik-server` and `iznik-client` are asynchronous end to end. In their
-sources there is no `std::thread::sleep`, no blocking `std::io::Read` or
-`std::io::Write`, and no `std::process` beyond its inert types and values —
-`std::process::ExitCode`, `ExitStatus`, `Stdio`, `Output` and `id`, which a
-binary's `main` returns and `tokio::process` itself hands out; the async
-runtime's equivalents are used instead.
-*Enforced by `xtask/tests/policy_blocking.rs`.*
+`iznik-server` and `iznik-client` run on the async runtime, and nothing
+that blocks runs on its worker threads. In their sources there is no
+`std::thread::sleep`, no blocking `std::io::Read` or `std::io::Write`, and no
+`std::process` beyond its inert types and values — `std::process::ExitCode`,
+`ExitStatus`, `Stdio`, `Output` and `id`, which a binary's `main` returns and
+`tokio::process` itself hands out; the async runtime's equivalents are used
+instead. *Enforced by `xtask/tests/policy_blocking.rs`.*
+
+That is not the same as "asynchronous end to end", and the server is not.
+Blocking work exists where the operating system offers nothing else, and it
+runs off the runtime's workers:
+
+- **Two threads per pane** in `crates/iznik-server/src/pty/streams.rs`, one
+  blocked reading the pseudoterminal and one blocked writing it, bridged to
+  the runtime by channels. That file is exempt from the policy check by name.
+- **The child's `waitpid`**, which runs on the runtime's blocking pool
+  through `spawn_blocking` (`crates/iznik-server/src/pane.rs`).
+- **One mirror thread**, a `LocalSet` holding every pane's emulator, because
+  the emulator's handles are `!Send`.
+- **Small synchronous file operations** — the lock file, the runtime
+  directory, the upload's artifact listing — call `std::fs` directly. The
+  policy does not check `std::fs` or `std::net`; each such call is a single
+  short system call on a local path.
 
 ### 3.7 Unsafe
 

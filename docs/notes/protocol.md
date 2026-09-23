@@ -70,8 +70,10 @@ an empty payload is five bytes and is legal.
 
 Channel `0` carries the structured control messages of §4 and §5. Channels
 `1..=255` carry pane output as **raw bytes**: the payload *is* the terminal
-data, and it is never deserialized, re-encoded or copied on the way past. A
-reader that treats a pane channel's payload as anything but bytes is wrong.
+data, and no layer parses or re-encodes it on the way past — it is copied
+between buffers, and compressed with the rest of the stream when compression
+is on, but never interpreted. A reader that treats a pane channel's payload as
+anything but bytes is wrong.
 
 *Fixtures:* `frame.jsonl` — "an empty payload on channel 1", "a one-byte
 payload on channel 1", "a control message on channel 0", and the refusal of a

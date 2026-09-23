@@ -1,12 +1,14 @@
 //! No blocking standard-library facility under the two asynchronous crates:
-//! `iznik-server` and `iznik-client` are asynchronous end to end, and in their
+//! `iznik-server` and `iznik-client` run on the async runtime, and in their
 //! sources nothing names `std::thread::sleep`, the blocking `std::io` streams
 //! and traits, or `std::process` beyond its inert types and values
 //! (`ExitCode`, `ExitStatus`, `Stdio`, `Output`, `id`) — the runtime's
 //! equivalents are used instead. One file is the exception and part of the
 //! rule: `crates/iznik-server/src/pty/streams.rs`, whose whole purpose is to
 //! turn a pseudoterminal's blocking descriptor into async streams on
-//! dedicated threads.
+//! dedicated threads. `std::fs` and `std::net` are not checked: the crates
+//! make short synchronous calls through them on local paths, which
+//! `CONTRIBUTING.md` section 3.6 lists.
 //!
 //! `std::io` is held to a list, because its error types are inert and every
 //! async interface returns them; `std::process` is held to an allowlist, as
