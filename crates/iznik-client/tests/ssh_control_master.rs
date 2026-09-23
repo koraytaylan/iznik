@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use iznik_client::transport::ssh::{
-    CONNECT_TIMEOUT, CONTROL_PERSIST, END_OF_OPTIONS, SERVER_ALIVE_COUNT_MAXIMUM,
+    BATCH_MODE, CONNECT_TIMEOUT, CONTROL_PERSIST, END_OF_OPTIONS, SERVER_ALIVE_COUNT_MAXIMUM,
     SERVER_ALIVE_INTERVAL, SshError, SshOptions, classify,
 };
 use iznik_client::transport::{
@@ -109,6 +109,7 @@ fn ssh_passes_what_it_owns_and_nothing_a_person_configured() {
             "RequestTTY=no".to_owned(),
             "RemoteCommand=none".to_owned(),
             "ClearAllForwardings=yes".to_owned(),
+            BATCH_MODE.to_owned(),
         ] {
             assert!(
                 arguments.contains(&wanted),
@@ -345,6 +346,26 @@ fn ssh_says_which_failure_it_was() {
                 "and says so alarmingly: {alarming}"
             );
         }
+        for unknown_case in ["host-key-unknown", "host-key-declined"] {
+            let unknown = classify(host, Some(255), &captured(unknown_case)?);
+            let SshError::HostKeyUnknown { .. } = &unknown else {
+                return Err(format!(
+                    "{unknown_case}: an unknown host key is not a changed one: {unknown:?}"
+                )
+                .into());
+            };
+            let instructive = unknown.to_string();
+            for wanted in ["not known", &format!("ssh {host}"), "fingerprint"] {
+                assert!(
+                    instructive.contains(wanted),
+                    "{unknown_case}: and says how to accept it: {instructive}"
+                );
+            }
+            assert!(
+                !instructive.contains("do not connect"),
+                "{unknown_case}: without the alarm a changed key raises: {instructive}"
+            );
+        }
         let failed = classify(host, Some(127), &captured("command-failed")?);
         let SshError::RemoteCommandFailed { status, stderr, .. } = &failed else {
             return Err(format!("a command that failed is not the link: {failed:?}").into());
@@ -438,6 +459,35 @@ fn ssh_ends_its_options_before_the_alias() {
             .position(|argument| argument == END_OF_OPTIONS)
             .ok_or("the options are never ended")?;
         assert!(exit < ended, "and asks before the options end: {closing:?}");
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When `ssh` is left free to prompt with nothing to prompt through, or is
+/// told never to prompt when the application gave it a program to ask with.
+#[test]
+fn ssh_asks_nobody_without_an_askpass_program() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("batch")?;
+        let paths = ClientRuntimePaths::under(&held.path)?;
+        let asking = SshOptions {
+            askpass_program: Some(PathBuf::from("/usr/local/bin/askpass")),
+            ..SshOptions::default()
+        };
+        for (options, batch) in [(SshOptions::default(), true), (asking, false)] {
+            let Transport::Ssh(transport) = Transport::for_alias("host0", &paths, options) else {
+                return Err("an ordinary alias is not local".into());
+            };
+            let arguments = transport.arguments(&[]);
+            assert_eq!(
+                arguments.iter().any(|given| given == BATCH_MODE),
+                batch,
+                "batch mode is exactly when there is nobody to ask: {arguments:?}"
+            );
+        }
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));

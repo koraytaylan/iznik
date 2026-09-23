@@ -87,6 +87,10 @@ pub const OVERRIDES: &[&str] = &[
     "ClearAllForwardings=yes",
 ];
 
+/// What makes `ssh` fail rather than ask, when there is no askpass program to
+/// ask through.
+pub const BATCH_MODE: &str = "BatchMode=yes";
+
 /// The flag every option is given with.
 const OPTION_FLAG: &str = "-o";
 
@@ -115,7 +119,9 @@ const ASKPASS_REQUIRE: &str = "force";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SshOptions {
     /// The program `ssh` asks for a passphrase with, when the application
-    /// provides one.
+    /// provides one. Without one, `ssh` runs with [`BATCH_MODE`]: whatever
+    /// would have needed a person — a passphrase, a password, a host key
+    /// nobody has accepted — fails at once and says which.
     pub askpass_program: Option<PathBuf>,
     /// How long a master outlives the last command that used it.
     pub control_persist: Duration,
@@ -184,6 +190,18 @@ pub enum SshError {
         /// What `ssh` said.
         detail: String,
     },
+    /// `known_hosts` remembers no key for the host, and nobody was there to
+    /// accept the one it offered.
+    ///
+    /// Its own error, because it wants the opposite reaction from a changed
+    /// key: this is every host's first connection, and the answer is to
+    /// connect once by hand and check the fingerprint.
+    HostKeyUnknown {
+        /// The alias.
+        host: String,
+        /// What `ssh` said.
+        detail: String,
+    },
     /// The connection worked and the command did not.
     RemoteCommandFailed {
         /// The alias.
@@ -219,10 +237,15 @@ impl Display for SshError {
             ),
             SshError::HostKeyChanged { host, detail } => write!(
                 formatter,
-                "the host key for {host} was not accepted: {detail} \
-                 If it was remembered before and has changed, either the host \
-                 was rebuilt or something is answering in its place; do not \
-                 connect until you know which."
+                "the host key for {host} has changed: {detail} \
+                 Either the host was rebuilt or something is answering in its \
+                 place; do not connect until you know which."
+            ),
+            SshError::HostKeyUnknown { host, detail } => write!(
+                formatter,
+                "the host key for {host} is not known yet: {detail} \
+                 Run `ssh {host}` once in a terminal, check the fingerprint it \
+                 shows, accept it, and then reconnect."
             ),
             SshError::RemoteCommandFailed {
                 host,
@@ -246,13 +269,23 @@ const REFUSED_MARKERS: &[&str] = &[
     "no supported authentication methods",
 ];
 
-/// What it says when the key the host offered is not one this machine will
-/// accept — because it is not the one remembered, or because none is
-/// remembered and strict checking was asked for. Both are the host's key and
-/// neither is the network, so both are told apart from being unreachable; the
-/// detail carried is `ssh`'s own last line, which says which it was.
+/// What it says when the key the host offered is not the one remembered.
+///
+/// Looked for before [`UNKNOWN_MARKERS`], because a changed key's warning ends
+/// with the same generic line an unknown one does.
 const CHANGED_MARKERS: &[&str] = &[
     "remote host identification has changed",
+    "has changed and you have requested strict checking",
+];
+
+/// What it says when no key is remembered for the host and nobody accepted the
+/// one it offered: the batch-mode refusal, the question an askpass program was
+/// asked and declined, and — when neither of those lines is there — the
+/// generic last line both host-key failures end with, which is read as the
+/// milder of the two because a changed key always says so first.
+const UNKNOWN_MARKERS: &[&str] = &[
+    "host key is known for",
+    "the authenticity of host",
     "host key verification failed",
 ];
 
@@ -356,6 +389,13 @@ impl SshTransport {
             seconds(self.options.connect_timeout)
         ));
         options.extend(OVERRIDES.iter().map(|forced| (*forced).to_owned()));
+        // With nothing to ask a person through, nothing may be asked: a
+        // prompt would go to a terminal nobody is looking at, or to none, and
+        // the connection would hang until its deadline instead of failing at
+        // once with words that say why.
+        if self.options.askpass_program.is_none() {
+            options.push(BATCH_MODE.to_owned());
+        }
         options
             .into_iter()
             .flat_map(|option| vec![OPTION_FLAG.to_owned(), option])
@@ -450,7 +490,8 @@ pub fn classify(host: &str, status: Option<i32>, stderr: &str) -> SshError {
         };
     };
     for (markers, name) in [
-        (CHANGED_MARKERS, Refusal::HostKey),
+        (CHANGED_MARKERS, Refusal::ChangedKey),
+        (UNKNOWN_MARKERS, Refusal::UnknownKey),
         (REFUSED_MARKERS, Refusal::Credentials),
         (UNREACHABLE_MARKERS, Refusal::Link),
     ] {
@@ -466,11 +507,13 @@ pub fn classify(host: &str, status: Option<i32>, stderr: &str) -> SshError {
     }
 }
 
-/// Which of the three the words named.
+/// Which of the four the words named.
 #[derive(Clone, Copy)]
 enum Refusal {
-    /// The host's key.
-    HostKey,
+    /// The host's key, which is not the one remembered.
+    ChangedKey,
+    /// The host's key, when none is remembered.
+    UnknownKey,
     /// The credentials offered.
     Credentials,
     /// The link itself.
@@ -482,7 +525,8 @@ impl Refusal {
     fn into_error(self, host: &str, detail: String) -> SshError {
         let host = host.to_owned();
         match self {
-            Refusal::HostKey => SshError::HostKeyChanged { host, detail },
+            Refusal::ChangedKey => SshError::HostKeyChanged { host, detail },
+            Refusal::UnknownKey => SshError::HostKeyUnknown { host, detail },
             Refusal::Credentials => SshError::AuthenticationFailed { host, detail },
             Refusal::Link => SshError::Unreachable { host, detail },
         }

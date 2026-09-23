@@ -299,8 +299,17 @@ tool that installs binaries on other people's machines owes them that.
 
 If reaching a host needs a passphrase, `ssh` asks for it the way it always
 does — through the program named by `askpass_program` in your configuration.
-Iznik never prompts, never reads a terminal, and never handles a passphrase
-itself.
+Iznik itself never prompts, never reads a terminal, and never handles a
+passphrase.
+
+**With no `askpass_program`, nothing is asked at all.** `ssh` runs in batch
+mode, so whatever would have needed a person — a passphrase, a password, a
+host key nobody has accepted yet — fails at once instead of waiting on a
+terminal nobody is looking at. A host whose key is not yet in `known_hosts`
+is reported as exactly that, with the words to tell the person to run
+`ssh <alias>` once in a terminal and accept it; a host whose key has
+*changed* is reported differently, as the warning it is. Neither is retried
+until you ask.
 
 ## Diagnosing
 

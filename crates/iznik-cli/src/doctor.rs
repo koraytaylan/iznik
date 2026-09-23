@@ -290,7 +290,8 @@ fn ssh_kind(refusal: &SshError) -> &'static str {
     match refusal {
         SshError::Unreachable { .. } => "the host could not be reached",
         SshError::AuthenticationFailed { .. } => "the host refused the credentials offered",
-        SshError::HostKeyChanged { .. } => "the host's key was not accepted",
+        SshError::HostKeyChanged { .. } => "the host's key has changed",
+        SshError::HostKeyUnknown { .. } => "the host's key is not known yet",
         SshError::RemoteCommandFailed { .. } => "the host could not run the probe",
         SshError::Spawn { .. } => "ssh could not be started",
         SshError::Timeout { .. } => "the host did not answer in time",

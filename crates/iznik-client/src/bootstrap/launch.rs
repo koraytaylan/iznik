@@ -133,7 +133,7 @@ impl Cause {
     pub fn of_ssh(source: &SshError) -> Cause {
         match source {
             SshError::AuthenticationFailed { .. } => Cause::Credentials,
-            SshError::HostKeyChanged { .. } => Cause::HostKey,
+            SshError::HostKeyChanged { .. } | SshError::HostKeyUnknown { .. } => Cause::HostKey,
             SshError::Unreachable { .. }
             | SshError::RemoteCommandFailed { .. }
             | SshError::Spawn { .. }
