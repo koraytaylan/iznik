@@ -592,3 +592,51 @@ fn the_installed_terminfo_is_found_beside_the_binary() {
     }
     let _cleaned = std::fs::remove_dir_all(&prefix);
 }
+
+/// # Panics
+///
+/// When a start that was waiting on a predecessor's lock keeps a lock on the
+/// file that predecessor removed on its way out, which a third start could
+/// not see and would not wait for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lock_on_a_removed_file_is_not_kept() {
+    use iznik_server::daemon::lock::{Lock, LockError};
+    use nix::fcntl::{Flock, FlockArg};
+
+    let directory = std::env::temp_dir().join(format!("iznik-unlinked-{}", std::process::id()));
+    let _stale = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let path = directory.join("server.lock");
+    let predecessor = std::fs::File::create(&path).expect("the predecessor's file");
+    let held = Flock::lock(predecessor, FlockArg::LockExclusiveNonblock)
+        .map_err(|(_file, errno)| errno)
+        .expect("the predecessor's lock");
+
+    let starting = tokio::spawn({
+        let path = path.clone();
+        async move { Lock::acquire(&path).await }
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The predecessor goes as a daemon does: the file first, then the lock.
+    std::fs::remove_file(&path).expect("the predecessor removes its file");
+    drop(held);
+    let lock = starting
+        .await
+        .expect("the start ran")
+        .expect("the start takes the lock");
+
+    assert!(path.exists(), "the lock is on a file the path names");
+    let third = Lock::acquire(&path).await;
+    assert!(
+        matches!(third, Err(LockError::Held { .. })),
+        "a third start finds it held: {third:?}"
+    );
+    let recorded = std::fs::read_to_string(&path).expect("the file");
+    assert_eq!(
+        recorded.trim(),
+        std::process::id().to_string(),
+        "the holder's id is in the locked file"
+    );
+    lock.release();
+    let _removed = std::fs::remove_dir_all(&directory);
+}

@@ -331,7 +331,9 @@ Three details are worth writing down because each was a bug before it was a
 rule. The lock is asked *who holds it* through a second, shared-mode open, so
 a refusal names a process id rather than a path; a start that meets that probe
 mid-flight asks again after a pause rather than failing. Releasing unlinks
-before dropping, so the file a later daemon flocks is never one already gone.
+before dropping, and a start that has flocked a file its path no longer names
+— one opened just before a predecessor removed it — lets it go and opens the
+path again, so the file a daemon holds is never one already gone.
 And the log is written through the runtime — a `tracing-subscriber` layer
 formats each event into a line and one task owns the file — because §3.6
 forbids this crate the standard library's blocking streams, which is what that

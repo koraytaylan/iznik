@@ -77,12 +77,13 @@ impl core::error::Error for LockError {}
 /// and removed by [`Lock::release`].
 #[derive(Debug)]
 pub struct Lock {
-    /// The locked file. On Unix nothing reads it: what it is for is the lock
-    /// the kernel holds, released when this is dropped. On Windows the file's
-    /// existence is the lock, and this handle keeps that obvious.
+    /// The locked file: what it is for is the lock the kernel holds,
+    /// released when this is dropped, and the process id is written through
+    /// it.
     #[cfg(unix)]
-    _held: Flock<File>,
-    /// The locked file on Windows.
+    held: Flock<File>,
+    /// The locked file on Windows, where the file's existence is the lock and
+    /// this handle keeps that obvious.
     #[cfg(windows)]
     _held: File,
     /// Where it is, so it can be removed when the daemon goes.
@@ -117,6 +118,38 @@ impl Lock {
     /// As [`Lock::acquire`].
     #[cfg(unix)]
     async fn acquire_exclusive(path: &Path) -> Result<Lock, LockError> {
+        // A lock taken on a file that has since been unlinked — by a daemon
+        // on its way out, which removes the file before it lets go — locks
+        // an inode nobody else will ever open: a second daemon would lock the
+        // new file at that path, and two would run. So the lock is kept only
+        // when the path still names the file that was locked.
+        for _attempt in 0..CONTENTION_ATTEMPTS {
+            let held = Self::lock_once(path).await?;
+            if names(path, &held) {
+                let lock = Lock {
+                    held,
+                    path: path.to_path_buf(),
+                };
+                lock.record()?;
+                return Ok(lock);
+            }
+            drop(held);
+            tokio::time::sleep(CONTENTION_PAUSE).await;
+        }
+        Err(LockError::Io {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("the lock file kept being replaced"),
+        })
+    }
+
+    /// Opens the file at `path` and locks it, waiting out a moment's
+    /// contention.
+    ///
+    /// # Errors
+    ///
+    /// As [`Lock::acquire`].
+    #[cfg(unix)]
+    async fn lock_once(path: &Path) -> Result<Flock<File>, LockError> {
         let opened = OpenOptions::new()
             .read(true)
             .write(true)
@@ -157,22 +190,44 @@ impl Lock {
                 }
             }
         };
-        let lock = Lock {
-            _held: held,
-            path: path.to_path_buf(),
-        };
-        lock.record()?;
-        Ok(lock)
+        Ok(held)
     }
 
     /// Writes this process's id into the locked file, replacing whatever a
-    /// dead predecessor left. It writes through the path rather than through
-    /// the handle it holds: the lock is on the open file this holds, and a
-    /// truncating write through the same path does not disturb it.
+    /// dead predecessor left. It writes through the handle it holds rather
+    /// than through the path, so what it writes is in the file it locked
+    /// whatever the path names by now.
     ///
     /// # Errors
     ///
     /// [`LockError::Io`] when the file cannot be written.
+    #[cfg(unix)]
+    fn record(&self) -> Result<(), LockError> {
+        let failed = |errno: Errno| LockError::Io {
+            path: self.path.clone(),
+            source: std::io::Error::from(errno),
+        };
+        let file: &File = &self.held;
+        nix::unistd::ftruncate(file, 0).map_err(failed)?;
+        let line = format!("{}\n", std::process::id());
+        let mut rest = line.as_bytes();
+        while !rest.is_empty() {
+            match nix::unistd::write(file, rest) {
+                Ok(0) => return Err(failed(Errno::EIO)),
+                Ok(written) => rest = rest.get(written..).unwrap_or_default(),
+                Err(Errno::EINTR) => {}
+                Err(errno) => return Err(failed(errno)),
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes this process's id into the file whose existence is the lock.
+    ///
+    /// # Errors
+    ///
+    /// [`LockError::Io`] when the file cannot be written.
+    #[cfg(windows)]
     fn record(&self) -> Result<(), LockError> {
         std::fs::write(&self.path, format!("{}\n", std::process::id())).map_err(|source| {
             LockError::Io {
@@ -208,6 +263,17 @@ impl Lock {
             drop(self);
             let _removed = std::fs::remove_file(path);
         }
+    }
+}
+
+/// Whether `path` still names the file `held` is open on: the same device and
+/// inode. A path that is gone, or names another file, does not.
+#[cfg(unix)]
+fn names(path: &Path, held: &Flock<File>) -> bool {
+    let file: &File = held;
+    match (nix::sys::stat::fstat(file), nix::sys::stat::stat(path)) {
+        (Ok(taken), Ok(named)) => taken.st_dev == named.st_dev && taken.st_ino == named.st_ino,
+        _ => false,
     }
 }
 
