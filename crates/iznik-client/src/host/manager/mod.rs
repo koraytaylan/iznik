@@ -279,6 +279,9 @@ pub(crate) struct Shared {
 
 impl Shared {
     /// Tells everyone listening, and forgets the ones that have gone.
+    ///
+    /// Never waits: a listener is an unbounded queue, and what bounds it is
+    /// the flow control [`HostManager::events`] describes.
     pub(crate) fn publish(&self, event: &ManagerEvent) {
         let Ok(mut listeners) = self.listeners.lock() else {
             return;
@@ -473,6 +476,22 @@ impl HostManager {
     }
 
     /// A stream of everything the manager says. Every caller gets its own.
+    ///
+    /// The queue behind it has no length of its own; what bounds it is flow
+    /// control, and only while this receiver is the one returning credit. A
+    /// pane's bytes stop at the host once its window is spent, and the window
+    /// is refilled only from the receipts these events carry — so a receiver
+    /// that is read, and whose receipts are returned as they are consumed,
+    /// holds at most what the hosts may have outstanding: a window per pane,
+    /// and never more than [`credit::MAXIMUM_UNRETURNED_BYTES`], past which
+    /// the link is dropped. Everything else here is a host's account of its
+    /// model and its marks, which is small and arrives at the pace of what
+    /// happens on the host.
+    ///
+    /// What is *not* bounded is a receiver that is kept and not read while
+    /// credit is returned through another: every host goes on sending, and
+    /// everything is queued for it too. A receiver nobody reads is dropped,
+    /// and is then forgotten at the next event.
     #[must_use]
     pub fn events(&self) -> Receiver<ManagerEvent> {
         let (sender, receiver) = channel();
