@@ -97,6 +97,9 @@ pub struct ManagerOptions {
     pub bootstrap_deadline: Duration,
     /// How often a host's task wakes when nothing is arriving.
     pub expire_interval: Duration,
+    /// How long ending a host's task may take before it is cut short — and,
+    /// when the manager ends, how long ending all of them together may.
+    pub stop_deadline: Duration,
 }
 
 impl ManagerOptions {
@@ -115,6 +118,7 @@ impl ManagerOptions {
             bootstrap: BootstrapOptions::default(),
             bootstrap_deadline: BOOTSTRAP_DEADLINE,
             expire_interval: EXPIRE_INTERVAL,
+            stop_deadline: STOP_DEADLINE,
         }
     }
 }
@@ -838,9 +842,9 @@ impl HostManager {
         let _asked = handle.orders.send(Order::Stop);
         let task = handle.task;
         let cutting = task.abort_handle();
-        let ended = self
-            .runtime
-            .block_on(async { tokio::time::timeout(STOP_DEADLINE, task).await });
+        let ended = self.runtime.block_on(async {
+            tokio::time::timeout(self.shared.options.stop_deadline, task).await
+        });
         if ended.is_err() {
             cutting.abort();
         }
@@ -873,10 +877,32 @@ impl Drop for HostManager {
             .lock()
             .map(|mut held| std::mem::take(&mut *held).into_iter().collect())
             .unwrap_or_default();
+        // Every host at once, under one deadline: a client with four hosts
+        // on a network that has gone would otherwise take four deadlines to
+        // close, and a person quitting an application waits for all of them.
+        let expires = tokio::time::Instant::now()
+            .checked_add(self.shared.options.stop_deadline)
+            .unwrap_or_else(tokio::time::Instant::now);
+        let mut ending = tokio::task::JoinSet::new();
         for (host, handle) in taken {
-            self.end(handle);
-            self.let_go(&host);
+            let _asked = handle.orders.send(Order::Stop);
+            let transport = self.reach(&host);
+            let _ending = ending.spawn_on(
+                async move {
+                    let task = handle.task;
+                    let cutting = task.abort_handle();
+                    if tokio::time::timeout_at(expires, task).await.is_err() {
+                        cutting.abort();
+                    }
+                    if let Transport::Ssh(ssh) = transport {
+                        ssh.end_master().await;
+                    }
+                },
+                self.runtime.handle(),
+            );
         }
+        self.runtime
+            .block_on(async { while ending.join_next().await.is_some() {} });
         self.sweeper.abort();
     }
 }

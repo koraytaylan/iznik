@@ -845,3 +845,69 @@ fn connection_manager_refuses_an_alias_that_is_an_option() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// How long each stuck host may take to end in the case about ending them
+/// together.
+const STOP_PATIENCE: Duration = Duration::from_millis(400);
+
+/// How many hosts are stuck at once in it.
+const STUCK_HOSTS: usize = 4;
+
+/// # Panics
+///
+/// When ending a manager with several hosts stuck inside a bootstrap takes a
+/// deadline for each of them rather than one for all.
+#[test]
+fn connection_manager_ends_every_host_under_one_deadline() {
+    let case = || -> Result<(), Failed> {
+        let held = scratch("ending")?;
+        let runtime = runtime()?;
+        let artifacts = held.path.join("artifacts");
+        std::fs::create_dir_all(&artifacts)?;
+        let paths = ClientRuntimePaths::under(&held.path.join("runtime"))?;
+        let mut options = ManagerOptions::new(artifacts, paths);
+        // Stuck for far longer than the case lasts: each host's task sits in
+        // its greeting until it is cut short.
+        options.channel.greeting_deadline = Duration::from_mins(1);
+        options.stop_deadline = STOP_PATIENCE;
+        let manager = HostManager::new(options)?;
+        let events = manager.events();
+        for index in 0..STUCK_HOSTS {
+            let socket = held.path.join(format!("stuck-{index}.sock"));
+            let listener = runtime.block_on(async { UnixListener::bind(&socket) })?;
+            let _holding = runtime.spawn(async move {
+                let mut kept = Vec::new();
+                while let Ok((stream, _from)) = listener.accept().await {
+                    kept.push(stream);
+                }
+            });
+            manager.add_host(&alias(&socket))?;
+        }
+        let mut connecting = 0_usize;
+        while connecting < STUCK_HOSTS {
+            // A socket on this machine is reached with no bootstrap stages
+            // to report, so a host stuck in its greeting says it is probing.
+            let _seen = await_event(&events, "a host being reached", PROMPT, |event| {
+                matches!(
+                    event,
+                    ManagerEvent::Moved {
+                        state: HostState::Probing,
+                        ..
+                    }
+                )
+            })?;
+            connecting = connecting.saturating_add(1);
+        }
+        // Long enough that every task is inside its greeting.
+        std::thread::sleep(STOP_PATIENCE);
+        let started = Instant::now();
+        drop(manager);
+        let took = started.elapsed();
+        assert!(
+            took < STOP_PATIENCE.saturating_mul(2),
+            "{STUCK_HOSTS} stuck hosts ended in {took:?}, not {STOP_PATIENCE:?} apiece"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
