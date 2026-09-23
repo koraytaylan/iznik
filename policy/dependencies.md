@@ -323,7 +323,7 @@
 - `libbz2-rs-sys` — reached from `bzip2`.
 - `libc` — reached from `cbindgen`, `nix`, `portable-pty`, `sha2`, `tokio` and `zstd`.
 - `libfuzzer-sys` — reached from `rav1e`.
-- `libghostty-vt` — the terminal emulator the macOS application renders with, so the server's mirror and the test oracle run the same engine.
+- `libghostty-vt` — the terminal emulator the GPUI application renders with, so the server's mirror, the application's VT thread and the test oracle run the same engine.
 - `libghostty-vt-sys` — reached from `libghostty-vt`.
 - `libloading` — reached from `ash`, `backtrace`, `clang-sys`, `dlib`, `khronos-egl` and 3 more.
 - `libm` — reached from `core_maths`, `cosmic-text`, `kurbo`, `naga`, `num-bigint-dig` and 5 more.

@@ -1,4 +1,4 @@
-/* A Swift developer's first afternoon, in C.
+/* A front end's first afternoon against the C ABI, in C.
  *
  * Everything an application does on the way to a pane it can draw: make a
  * client, hold a host, make a session on it, attach to the pane that comes

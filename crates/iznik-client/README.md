@@ -1,6 +1,6 @@
 # iznik-client
 
-The client engine the macOS application links: the SSH transport over the system `ssh`, the bootstrap, the client-side model and reducer, optimistic commands, and multi-host management. Asynchronous end to end.
+The client engine the GPUI application (`iznik-app`) links directly, and the C ABI in `iznik-ffi` wraps for other front ends: the SSH transport over the system `ssh`, the bootstrap, the client-side model and reducer, optimistic commands, and multi-host management. Asynchronous end to end.
 
 ## Modules
 

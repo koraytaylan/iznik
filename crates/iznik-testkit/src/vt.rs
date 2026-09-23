@@ -1,5 +1,5 @@
 //! The headless VT oracle over `libghostty-vt` 0.2.1, the emulator the
-//! macOS application renders with, so "the screen shows X" is a byte-exact
+//! server's mirror and the GPUI application render with, so "the screen shows X" is a byte-exact
 //! assertion through the identical engine rather than an opinion. Snapshots
 //! are deterministic and carry no address, capacity or time, so they can be
 //! committed as goldens; the goldens live in `tests/fixtures/vt/`.

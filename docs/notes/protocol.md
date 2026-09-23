@@ -1,7 +1,8 @@
 # The `iznik/1` wire protocol
 
 What a second implementation needs to speak to this server, and nothing it
-does not. The macOS repository reads this document; it does not read the Rust.
+does not. A front end in another language reads this document; it does not
+read the Rust.
 
 **The golden fixtures are the arbiter.** Every layout below names the line of
 `crates/iznik-protocol/tests/fixtures/*.jsonl` that pins it, by its

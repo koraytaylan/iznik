@@ -6,7 +6,7 @@ The instruments that need the emulator or the server: the golden loader, the hea
 
 | Module | Holds | Landed by |
 |---|---|---|
-| `client` | The protocol test client: `iznik/1` over any duplex stream, the client the macOS application will resemble minus the surface. | `test-client` (plan 0004) |
+| `client` | The protocol test client: `iznik/1` over any duplex stream, the same conversation the client engine holds, without its model or reconnection. | `test-client` (plan 0004) |
 | `corpus` | The fidelity corpus: the constructs that break naive terminal plumbing, each named, and the seeded generator for floods. | `fidelity-corpus` (plan 0001) |
 | `generate` | The seeded generator of valid models, delta sequences and registry operations that three crates' tests share. | `deltas-and-reconciler` (plan 0003) |
 | `golden` | The one JSONL golden loader every golden test uses, whose error names the file and the line, and the hex the goldens carry bytes in. | `frame-codec` (plan 0001) |

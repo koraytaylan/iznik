@@ -33,7 +33,7 @@ because = "both lists are read from the tree, and comparing them needs nothing e
 
 [[claim]]
 id = "smoke-runs-a-c-program-against-a-daemon"
-statement = "A C program compiled against the generated header and the static archive — with the system libraries the toolchain says the archive needs, never guessed — makes a client, holds a host, makes a session, attaches to its pane, types a line, takes the bytes back through the output callback with the screen having come first, returns the credit they cost, lets the pane go and ends the client, against a real daemon, and exits zero inside ten seconds. A Swift developer's first afternoon, proven in C rather than promised."
+statement = "A C program compiled against the generated header and the static archive — with the system libraries the toolchain says the archive needs, never guessed — makes a client, holds a host, makes a session, attaches to its pane, types a line, takes the bytes back through the output callback with the screen having come first, returns the credit they cost, lets the pane go and ends the client, against a real daemon, and exits zero inside ten seconds. A front end's first afternoon against the C ABI, proven in C rather than promised."
 test = "xtask::regression_ffi_smoke::regression_ffi_smoke_runs_a_c_program_against_a_daemon"
 because = "the daemon is a whole daemon on this machine and the compiler is the system's own; what SSH would add is a network, which this boundary does not know about"
 

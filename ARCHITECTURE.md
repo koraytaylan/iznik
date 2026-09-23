@@ -11,14 +11,15 @@
 The cross-platform GPUI terminal application connects to a remote host over
 the user's own SSH configuration, installs `iznik-server` there if it is
 missing, and attaches. Every pane is a real pseudoterminal on the remote host,
-rendered by the application through a libghostty surface fed the pane's raw
-bytes. Sessions, tabs and panes live in the server, so a dropped link, a
+rendered by the application's own GPUI grid element from a `libghostty-vt`
+terminal fed the pane's raw bytes. Sessions, tabs and panes live in the server, so a dropped link, a
 closed laptop or a restarted application costs a reconnect and nothing else.
 
 This repository holds the server, the client engine, the wire protocol, the
 cross-platform GPUI application, the C ABI for other front ends, and the test
-harness that proves all of it. The application reads
-[`docs/CLIENT.md`](docs/CLIENT.md), the contract this one keeps.
+harness that proves all of it. The GPUI application links `iznik-client`
+directly; [`docs/CLIENT.md`](docs/CLIENT.md) is the contract of the C ABI,
+for a front end written in another language.
 
 ### Non-goals
 
@@ -89,7 +90,7 @@ so a wrong byte is a failing test rather than a corrupted terminal.
 
 This section says what the protocol is for. **Every discriminant, byte layout
 and rule a second implementation needs is in
-[protocol.md](docs/notes/protocol.md)**, which the macOS repository reads
+[protocol.md](docs/notes/protocol.md)**, which a second implementation reads
 instead of the Rust, and which a test holds to the source constant by
 constant.
 
@@ -193,7 +194,7 @@ A pane is four things held together by one event stream:
   are outside terminal group signaling. Output is read on an async task and
   never blocks anything.
 - **A terminal mirror** — a `libghostty-vt` terminal fed every byte, the same
-  engine the macOS application renders with. It exists so the server can
+  engine the GPUI application renders with, on its VT thread. It exists so the server can
   answer "what does this pane look like right now" without replaying history:
   the `Screen` message is the mirror's state formatted as VT sequences, and
   because both ends run the same emulator, applying it to a fresh surface

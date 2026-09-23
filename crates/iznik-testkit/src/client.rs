@@ -1,5 +1,5 @@
-//! The protocol test client: `iznik/1` over any duplex stream, the client the
-//! macOS application will resemble minus the surface.
+//! The protocol test client: `iznik/1` over any duplex stream, the same
+//! conversation the client engine holds, without its model or reconnection.
 //!
 //! It is written once, here, so that no test in the daemon plan or the client
 //! plan hand-rolls a second protocol client — two clients would be two

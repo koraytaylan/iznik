@@ -4,15 +4,16 @@ A remote terminal system with a cross-platform GPUI front end.
 
 The GPUI application connects to a host over your own SSH configuration,
 installs `iznik-server` there if it is missing, and attaches. Every pane is a
-real pseudoterminal on the remote host, rendered by a libghostty
-surface fed the pane's raw bytes. Sessions, tabs and panes live in the
+real pseudoterminal on the remote host, rendered by the application from a
+`libghostty-vt` terminal fed the pane's raw bytes. Sessions, tabs and panes live in the
 server, so a dropped link, a closed laptop or a restarted application costs a
 reconnect and nothing else.
 
 This repository is the server, the client engine, the wire protocol, the GPUI
 application, the C ABI for other front ends, and the harness that proves all of
-it. The application reads [`docs/CLIENT.md`](docs/CLIENT.md), the contract this
-one keeps.
+it. The GPUI application links `iznik-client` directly;
+[`docs/CLIENT.md`](docs/CLIENT.md) is the contract of the C ABI, for a front
+end written in another language.
 
 ## Status
 
