@@ -61,13 +61,14 @@ struct Listener {
 /// below, and its size is nobody else's business.
 #[derive(Debug)]
 pub struct Client {
-    /// The engine itself. In an `Option` so that ending it, and with it the
-    /// stream of events, can be done before the thread reading them is waited
-    /// for.
-    manager: Option<HostManager>,
-    /// Serializes the application's own calls, and is never held while a
-    /// callback runs.
-    calling: Mutex<()>,
+    /// The engine itself, shared with every call that is using it.
+    ///
+    /// The lock is held only to take a share of it — never across what a call
+    /// does with it, because an uninstall takes minutes and every other call,
+    /// the credit that keeps a pane printing among them, would wait behind
+    /// it. In an `Option` so that ending it, and with it the stream of events,
+    /// can be done before the thread reading them is waited for.
+    manager: Mutex<Option<Arc<HostManager>>>,
     /// What to tell, and what to tell it with.
     listening: Arc<Mutex<Listener>>,
     /// The panes an application has attached to, and what to call for each.
@@ -115,16 +116,12 @@ impl Client {
         drop(self.delivering.lock());
     }
 
-    /// Takes the lock that serializes the application's own calls.
+    /// A share of the engine, while there is one.
     ///
-    /// It is never held while a callback runs, so a handler may call back in.
-    fn serialize(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
-        self.calling.lock().ok()
-    }
-
-    /// The engine, while there is one.
-    fn manager(&self) -> Option<&HostManager> {
-        self.manager.as_ref()
+    /// The lock is let go before this returns: what is done with the engine
+    /// is done without it, so a slow call holds nobody else up.
+    fn manager(&self) -> Option<Arc<HostManager>> {
+        self.manager.lock().ok()?.clone()
     }
 
     /// Begins watching a pane, and gives back whoever was watching it.
@@ -178,7 +175,12 @@ impl Drop for Client {
         // stream the thread below is reading is what lets that thread end, and
         // a binding that held it to the end of this block would have the join
         // wait for a thread waiting for it.
-        drop(self.manager.take());
+        drop(
+            self.manager
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
         if let Some(pump) = self.pump.take() {
             let _joined = pump.join();
         }
@@ -337,8 +339,7 @@ fn started(manager: HostManager) -> Client {
     let pump = std::thread::spawn(move || deliver(&telling, &watching, &busy, &events));
     let delivers = pump.thread().id();
     Client {
-        manager: Some(manager),
-        calling: Mutex::new(()),
+        manager: Mutex::new(Some(Arc::new(manager))),
         listening,
         attached,
         delivering,
@@ -781,11 +782,6 @@ pub unsafe extern "C" fn iznik_command(
             return INVALID_ARGUMENT;
         }
     };
-    let Some(_serialized) = held.serialize() else {
-        // SAFETY: the caller's obligation, above.
-        unsafe { error::fill(error, REFUSED, Layer::Client, "the client is broken") };
-        return REFUSED;
-    };
     let Some(manager) = held.manager() else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
@@ -815,8 +811,11 @@ pub unsafe extern "C" fn iznik_command(
     }
 }
 
-/// Runs one operation that names a host, with the calls serialized and the
-/// error filled in.
+/// Runs one operation that names a host, with the error filled in.
+///
+/// The operation runs on a share of the engine and under no lock of this
+/// crate's, so an uninstall that takes minutes on one host leaves every other
+/// call — on this host or another — free to run beside it.
 ///
 /// # Safety
 ///
@@ -841,17 +840,12 @@ unsafe fn with_host(
         unsafe { error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
         return INVALID_ARGUMENT;
     };
-    let Some(_serialized) = held.serialize() else {
-        // SAFETY: the caller's obligation, above.
-        unsafe { error::fill(error, REFUSED, Layer::Client, "the client is broken") };
-        return REFUSED;
-    };
     let Some(manager) = held.manager() else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
         return REFUSED;
     };
-    match doing(manager, named) {
+    match doing(&manager, named) {
         Ok(()) => DONE,
         Err(refusal) => {
             // SAFETY: the caller's obligation, above.

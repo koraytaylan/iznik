@@ -97,8 +97,8 @@ pub struct Event {
 ///
 /// It is called on one thread and only that thread, so an application that
 /// keeps state in its handler needs no lock of its own for it. It may call
-/// back into iznik: the calls the application makes are serialized among
-/// themselves, and nothing holds that lock while a callback runs.
+/// back into iznik: no call holds a lock of iznik's while it works, and none
+/// is held while a callback runs.
 ///
 /// Replacing it, or taking it away with a null, waits for a call that is
 /// already running before it returns — so the context the application gave

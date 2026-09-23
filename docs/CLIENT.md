@@ -25,8 +25,10 @@ It draws nothing. There is one user interface and it is your application.
 
 ## Threading
 
-Every function is safe to call from any thread. Calls are serialized inside,
-so two threads calling at once is allowed and one of them waits.
+Every function is safe to call from any thread, and two threads calling at
+once is allowed. No call holds a lock of iznik's while it does its work, so a
+slow one — an uninstall can take minutes — holds no other call up: credit,
+input and every other host go on beside it.
 
 **Every callback arrives on one thread, and always the same one.** State your
 handler keeps needs no lock of its own against other callbacks. It does need

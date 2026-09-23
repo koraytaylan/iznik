@@ -246,8 +246,10 @@ pub unsafe extern "C" fn iznik_pane_focus(
     }
 }
 
-/// Runs one operation that names a host, with the calls serialized and the
-/// error filled in.
+/// Runs one operation that names a host, with the error filled in.
+///
+/// Under no lock of this crate's: each operation takes its own share of the
+/// engine, as every other call does.
 ///
 /// # Safety
 ///
@@ -271,18 +273,6 @@ unsafe fn with_pane(
         // SAFETY: the caller's obligation, above.
         unsafe { crate::error::fill(error, INVALID_ARGUMENT, Layer::Client, "no host named") };
         return INVALID_ARGUMENT;
-    };
-    let Some(_serialized) = held.serialize() else {
-        // SAFETY: the caller's obligation, above.
-        unsafe {
-            crate::error::fill(
-                error,
-                crate::error::REFUSED,
-                Layer::Client,
-                "the client is broken",
-            );
-        };
-        return crate::error::REFUSED;
     };
     match doing(held, named) {
         Ok(()) => DONE,
