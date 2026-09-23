@@ -12,7 +12,7 @@ use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
 use iznik_protocol::model::{HostModel, LayoutNode, SplitDirection, Weighted};
 use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
 use iznik_server::pty::spawn::Program;
-use iznik_server::session::commands::apply;
+use iznik_server::session::commands::{apply, settle, settle_within};
 use iznik_server::session::registry::{Numbered, Registry, RegistryDefaults};
 use iznik_server::terminal::mirror::{MirrorError, MirrorThread};
 use tokio::sync::broadcast;
@@ -541,4 +541,53 @@ async fn session_commands_a_pane_starts_where_and_how_it_was_asked() {
     tokio::time::timeout(DEADLINE, case)
         .await
         .expect("the spawn-parameters case finishes");
+}
+
+/// The directory a creating command carries, whichever one it is.
+fn directory_of(command: &SessionCommand) -> Option<String> {
+    match command {
+        SessionCommand::CreateSession {
+            working_directory, ..
+        }
+        | SessionCommand::CreateTab {
+            working_directory, ..
+        }
+        | SessionCommand::CreatePane {
+            working_directory, ..
+        } => working_directory.clone(),
+        _other => None,
+    }
+}
+
+/// A working directory is looked at before the command is applied: one that
+/// is there is kept, and one that is missing, is not a directory, or does
+/// not answer in time is dropped so the pane starts in the home directory.
+///
+/// # Panics
+///
+/// When a directory is kept that should have been dropped, or dropped that
+/// should have been kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_commands_a_working_directory_is_settled_first() {
+    let asking = |directory: &str| SessionCommand::CreateSession {
+        name: "work".to_owned(),
+        columns: COLUMNS,
+        rows: ROWS,
+        working_directory: Some(directory.to_owned()),
+    };
+    let there = settle(asking("/tmp")).await;
+    assert_eq!(directory_of(&there).as_deref(), Some("/tmp"), "kept");
+    let missing = settle(asking("/nowhere/at/all")).await;
+    assert_eq!(directory_of(&missing), None, "a missing one is dropped");
+    let file = settle(asking("/bin/sh")).await;
+    assert_eq!(directory_of(&file), None, "a file is dropped");
+    let late = settle_within(asking("/tmp"), Duration::ZERO).await;
+    assert_eq!(directory_of(&late), None, "a late one is dropped");
+    let mut registry = registry().expect("a registry");
+    let outcome = apply(&mut registry, missing).await;
+    assert!(
+        matches!(made(&outcome), Ok(Created::Session(_named))),
+        "a settled command starts its pane: {outcome:?}"
+    );
+    registry.close_all().await;
 }

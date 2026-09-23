@@ -11,8 +11,68 @@
 //! waited for, and says why when nothing was made, by a code rather than a
 //! sentence — the sentence is for a log.
 
+use std::time::Duration;
+
 use crate::session::registry::{Registry, RegistryError};
 use iznik_protocol::command::{CommandOutcome, Created, RejectionCode, SessionCommand};
+
+/// How long a client-supplied working directory may take to be looked at
+/// before the pane starts in the home directory instead. A local directory
+/// answers in microseconds; one on a stale network mount may never answer,
+/// and the look must not hold up the command — or the registry lock the
+/// command is applied under — for as long as the mount takes to give up.
+pub const WORKING_DIRECTORY_DEADLINE: Duration = Duration::from_millis(500);
+
+/// A creating command with its working directory looked at first, off the
+/// runtime's workers and under [`WORKING_DIRECTORY_DEADLINE`]: kept when it is
+/// a directory, and dropped — so the pane starts in the home directory — when
+/// it is not one, cannot be reached, or does not answer in time. Every other
+/// command is returned as it came.
+///
+/// Called before the registry lock is taken, so a directory that hangs holds
+/// up nobody else, and the spawn that follows is given only a directory that
+/// has just answered.
+pub async fn settle(command: SessionCommand) -> SessionCommand {
+    settle_within(command, WORKING_DIRECTORY_DEADLINE).await
+}
+
+/// [`settle`] under a deadline of the caller's choosing.
+pub async fn settle_within(mut command: SessionCommand, deadline: Duration) -> SessionCommand {
+    let slot = match &mut command {
+        SessionCommand::CreateSession {
+            working_directory, ..
+        }
+        | SessionCommand::CreateTab {
+            working_directory, ..
+        }
+        | SessionCommand::CreatePane {
+            working_directory, ..
+        } => working_directory,
+        _other => return command,
+    };
+    if let Some(asked) = slot.take() {
+        // An answer that came after the deadline is as late as none, so the
+        // rule is the same whichever of the two the timer noticed first.
+        let started = tokio::time::Instant::now();
+        let looked = tokio::time::timeout(deadline, tokio::fs::metadata(&asked))
+            .await
+            .ok()
+            .filter(|_answered| started.elapsed() <= deadline);
+        match looked {
+            Some(Ok(metadata)) if metadata.is_dir() => *slot = Some(asked),
+            Some(Ok(_other)) => {
+                tracing::info!("a pane asked to start in something that is not a directory");
+            }
+            Some(Err(error)) => {
+                tracing::info!(%error, "a pane asked to start in a directory that is not there");
+            }
+            None => {
+                tracing::warn!("a pane's working directory did not answer in time");
+            }
+        }
+    }
+    command
+}
 
 /// The answer a refusal becomes: the code a client acts on, and the words a
 /// log keeps.

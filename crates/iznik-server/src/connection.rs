@@ -574,7 +574,12 @@ async fn answer(
             // would take every pane on the link with it, and those panes are
             // somebody's running sessions.
             let outcome = match decode_session_command(&payload) {
-                Ok(command) => commands::apply(&mut *registry.write().await, command).await,
+                Ok(command) => {
+                    // Before the lock: a directory on a mount that hangs
+                    // must not hang every other client with it.
+                    let command = commands::settle(command).await;
+                    commands::apply(&mut *registry.write().await, command).await
+                }
                 Err(refused) => CommandOutcome::Rejected {
                     code: RejectionCode::UnknownCommand,
                     message: refused.to_string(),

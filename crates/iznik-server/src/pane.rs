@@ -223,8 +223,20 @@ impl Pane {
     ) -> Result<Pane, PaneError> {
         let columns = options.columns;
         let rows = options.rows;
-        let process = spawn(options)?;
-        let (output, input) = streams(&process)?;
+        // Off the runtime's workers: a fork, an exec and the directory checks
+        // on the way to them are blocking system calls, however quick.
+        let owned = options.clone();
+        let (process, output, input) = tokio::task::spawn_blocking(move || {
+            let process = spawn(&owned)?;
+            let (output, input) = streams(&process)?;
+            Ok::<_, PtyError>((process, output, input))
+        })
+        .await
+        .map_err(|source| {
+            PaneError::Pty(PtyError::Open {
+                source: source.into(),
+            })
+        })??;
         let process = Arc::new(Mutex::new(process));
         let (exit_tx, exit) = watch::channel(None);
         reap_on_exit(Arc::clone(&process), exit_tx)?;
