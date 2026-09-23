@@ -14,7 +14,7 @@ const ONE_DIGIT_NUMBERS: u64 = 9;
 
 use crate::soak::{
     BASE64_BYTES, BASE64_CHARACTERS, ENDING, LEAST_SAMPLES, SECONDS_PER_HOUR, SECONDS_PER_MINUTE,
-    SIDES, SOAK_GROWTH_CEILING_PER_HOUR, TEN,
+    SIDES, SOAK_GROWTH_CEILING_PER_HOUR, SOAK_GROWTH_CEILING_PER_ROUND, TEN,
 };
 
 /// One weighing of one side.
@@ -291,7 +291,8 @@ pub fn rendered(report: &Report) -> String {
          - **Cuts:** {}, each seen to have stopped the daemon it named\n\
          - **Pane churn:** {} sessions made and unmade\n\
          - **Held client:** {} deliveries, {} bytes, {} screens, attached at byte {}\n\
-         - **Growth ceiling:** {SOAK_GROWTH_CEILING_PER_HOUR} bytes an hour, after the warmup\n",
+         - **Growth ceiling:** {SOAK_GROWTH_CEILING_PER_HOUR} bytes an hour, and \
+         {SOAK_GROWTH_CEILING_PER_ROUND} bytes a round, after the warmup\n",
         report.machine,
         minutes(report.duration),
         minutes(report.warmup),

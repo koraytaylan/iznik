@@ -16,6 +16,7 @@ diluted
 drained
 draining
 earlier
+few
 fewest
 filling
 floods
@@ -60,6 +61,7 @@ stale
 steep
 strange
 streak
+stretched
 swallows
 swept
 ten

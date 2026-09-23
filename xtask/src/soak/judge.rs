@@ -8,8 +8,9 @@
 use core::time::Duration;
 
 use crate::soak::{
-    FAILING_STREAK, FINISHED_SHARE, FLOOD_LINES, MEASURABLE_SPAN, OPENING_FLOOD_LINES, Report,
-    SOAK_GROWTH_CEILING_PER_HOUR, STALE_AFTER, SoakError, grown, poured,
+    FAILING_STREAK, FINISHED_PERCENT, FLOOD_LINES, MEASURABLE_SPAN, OPENING_FLOOD_LINES,
+    PER_ROUND_SPAN, PERCENT, Report, SECONDS_PER_HOUR, SOAK_GROWTH_CEILING_PER_HOUR,
+    SOAK_GROWTH_CEILING_PER_ROUND, STALE_AFTER, SoakError, grown, poured,
 };
 
 /// Whether a soak proved anything, and what it proved.
@@ -26,11 +27,10 @@ use crate::soak::{
 /// the ceiling after the warmup.
 pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakError> {
     let lost = |detail: String| SoakError::Lost { detail };
-    // A soak in which most rounds did not finish is a soak that proved
-    // nothing, however flat the series it took while nothing was happening.
-    // Half rather than all of them, because a stack that stopped answering an
-    // hour in leaves the rest of the run measuring a corpse.
-    if report.drops.saturating_mul(FINISHED_SHARE) < report.rounds {
+    // A soak in which rounds did not finish is a soak that proved nothing,
+    // however flat the series it took while nothing was happening. Nearly all
+    // rather than all of them, because a busy machine drops one now and then.
+    if finished_too_few(report.drops, report.rounds) {
         return Err(lost(format!(
             "only {} of {} rounds finished; the last to fail said: {refused}",
             report.drops, report.rounds
@@ -51,7 +51,7 @@ pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakEr
     // The churn is the only thing making and unmaking sessions, and the
     // second daemon is weighed for exactly that reason. A run where it never
     // ran weighs an idle daemon and calls it no leak.
-    if report.churn.saturating_mul(FINISHED_SHARE) < report.rounds {
+    if finished_too_few(report.churn, report.rounds) {
         return Err(lost(format!(
             "only {} of {} rounds churned a session, so what the second daemon weighs is idle",
             report.churn, report.rounds
@@ -141,7 +141,9 @@ pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakEr
             }
             continue;
         };
-        if rate > SOAK_GROWTH_CEILING_PER_HOUR {
+        if rate > SOAK_GROWTH_CEILING_PER_HOUR
+            || per_round(rate, report).is_some_and(|each| each > SOAK_GROWTH_CEILING_PER_ROUND)
+        {
             return Err(SoakError::Grew {
                 side: side.to_owned(),
                 rate,
@@ -149,4 +151,30 @@ pub fn judged(report: &Report, refused: &str, living: bool) -> Result<(), SoakEr
         }
     }
     Ok(())
+}
+
+/// Whether fewer than [`FINISHED_PERCENT`] of `rounds` were `done`.
+fn finished_too_few(done: usize, rounds: usize) -> bool {
+    done.saturating_mul(PERCENT) < rounds.saturating_mul(FINISHED_PERCENT)
+}
+
+/// What an hourly growth `rate` comes to for each round that finished after
+/// the warmup, or nothing when no round did or less than [`PER_ROUND_SPAN`]
+/// was measured.
+///
+/// The rounds are spread evenly over the run, so the share of them after the
+/// warmup is the share of the run after it.
+fn per_round(rate: u64, report: &Report) -> Option<u64> {
+    let span = report.duration.saturating_sub(report.warmup);
+    if span < PER_ROUND_SPAN {
+        return None;
+    }
+    let measured = u128::from(span.as_secs());
+    let whole = u128::from(report.duration.as_secs());
+    let rounds = u128::try_from(report.drops).ok()?;
+    let after = rounds.saturating_mul(measured).checked_div(whole)?;
+    let grown = u128::from(rate)
+        .saturating_mul(measured)
+        .checked_div(u128::from(SECONDS_PER_HOUR))?;
+    u64::try_from(grown.checked_div(after)?).ok()
 }

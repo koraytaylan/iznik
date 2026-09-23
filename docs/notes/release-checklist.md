@@ -24,8 +24,9 @@ second host beside all of it. The sampling has a schedule; the work does not.
 It refuses a run for any of these, and each of them is a real outcome to read
 rather than a formality:
 
-- either the held client or either daemon growing by more than four mebibytes
-  an hour after the warmup;
+- either the held client or either daemon growing by more than four
+  mebibytes an hour, or — once an hour has been measured — by more than a
+  quarter of a kibibyte for each round that finished, after the warmup;
 - a side never weighed at all, or last weighed long before the run ended, or
   with too few samples after the warmup to read a line through — each of which
   is a census that stopped finding something, and each of which would
@@ -35,10 +36,10 @@ rather than a formality:
 - the held client hearing fewer bytes than its pane was made to say;
 - a screen count that is not exactly one: the first is the attachment, and any
   after it are bytes the host could not carry the client on from;
-- fewer than half the rounds finishing, or more than three failing one after
+- fewer than nine rounds in ten finishing, or more than three failing one after
   another, which is what a stack that has stopped answering looks like — a
   failing round is slower than a healthy one, so counting them is not enough;
-- fewer than half of them churning a session, since the second daemon is
+- fewer than nine in ten of them churning a session, since the second daemon is
   weighed for the churn and an idle one is flat for a reason that is not the
   absence of a leak.
 

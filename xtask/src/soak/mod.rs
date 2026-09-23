@@ -55,14 +55,14 @@ pub const SOAK_WARMUP: Duration = Duration::from_mins(10);
 /// How much any side may grow, per hour, after the warmup.
 ///
 /// Four mebibytes: far above what an hour of arithmetic and buffers moves on
-/// a stack that is behaving, and low enough that anything growing steadily is
-/// caught long before a day of it would matter.
+/// a stack that is behaving, high enough that one sample taken mid-flood in a
+/// short run does not read as a leak, and low enough that anything growing
+/// steadily is caught long before a day of it would matter.
 ///
 /// What it is not: a floor under every leak worth finding. A soak reconnects
 /// its held client a few hundred times an hour, so a leak of a kilobyte per
-/// reconnection is a few hundred kilobytes an hour and passes this ceiling —
-/// what catches that one is the six-hour run's series, read by a person, not
-/// the ceiling. The ceiling is what fails a run without anybody looking.
+/// reconnection is a few hundred kilobytes an hour and passes this ceiling;
+/// [`SOAK_GROWTH_CEILING_PER_ROUND`] is what catches that one.
 pub const SOAK_GROWTH_CEILING_PER_HOUR: u64 = 4 * 1024 * 1024;
 
 /// How often both sides are weighed, at most.
@@ -72,14 +72,36 @@ pub const SOAK_GROWTH_CEILING_PER_HOUR: u64 = 4 * 1024 * 1024;
 /// them closer together rather than taking one at the end.
 const SAMPLE_INTERVAL: Duration = Duration::from_mins(1);
 
-/// What share of a soak's rounds have to finish for it to have been one.
+/// What share of a soak's rounds have to finish for it to have been one, in
+/// percent.
 ///
-/// Two: half of them. A round is a flood, a drop and a recovery against a
-/// machine that is also building other things, and one that times out is a
-/// busy machine rather than a broken stack — but a stack that has stopped
-/// answering fails every round it is given, and a series taken from one is
-/// exactly as flat as a series with no leak in it.
-const FINISHED_SHARE: usize = 2;
+/// Ninety: a round is a flood, a drop and a recovery against a machine that
+/// may also be building other things, so one that times out now and then is
+/// a busy machine rather than a broken stack. Anything more than one round in
+/// ten failing is a stack that is failing, and a series taken while it fails
+/// is as flat as a series with no leak in it.
+const FINISHED_PERCENT: usize = 90;
+
+/// The whole a percentage is a share of.
+const PERCENT: usize = 100;
+
+/// How much any side may grow for each round, after the warmup.
+///
+/// A quarter of a kibibyte. The hourly ceiling cannot see a leak paid per
+/// reconnection, because a soak reconnects only a few hundred times an hour;
+/// this one divides the growth by the rounds that made it, so a kilobyte kept
+/// for every reconnection fails the run instead of passing under the hourly
+/// ceiling. The release run measured about fifty bytes a round.
+///
+/// Applied only once an hour has been measured: over a shorter run
+/// one sample taken mid-flood moves the fitted line by more than a leak would.
+pub const SOAK_GROWTH_CEILING_PER_ROUND: u64 = 256;
+
+/// How much of a run has to be measured before the per-round ceiling is read.
+///
+/// An hour: over that, a single peak's pull on the fitted line is tens of
+/// kilobytes an hour, a few hundred bytes spread across its rounds.
+const PER_ROUND_SPAN: Duration = Duration::from_hours(1);
 
 /// How long before the end of a run a side's last sample may be.
 ///

@@ -15,7 +15,8 @@ twenty-six thousand deliveries and saw one screen — the attachment — which i
 to say it was carried across every one of those cuts without the host ever
 having to redraw it. The growth: eight thousand three hundred and
 eighty-eight bytes an hour on the held client and none at all on either
-daemon, against a ceiling of four mebibytes.
+daemon, against a ceiling of four mebibytes; the per-round ceiling added
+since (below) passes those figures too, at about fifty bytes a round.
 
 Reproduce it with:
 
@@ -67,7 +68,9 @@ instead, which is the one thing this run reads as a byte lost.
 
 Each of these fails the run, and each of them can:
 
-- **Growth** past four mebibytes an hour on any of the three sides, read as
+- **Growth** past four mebibytes an hour, or — once an hour has been
+  measured — past a quarter of a kibibyte for each round that finished, on
+  any of the three sides, read as
   the slope of the line that fits every measured sample — not as two points,
   which see only what happened between them and are blind to a leak that
   begins late;
@@ -80,10 +83,10 @@ Each of these fails the run, and each of them can:
 - the held client hearing fewer bytes than its pane was made to say;
 - a screen count that is not exactly one: the first is the attachment, and any
   after it are bytes the host could not carry the client on from;
-- fewer than half the rounds finishing, or more than three failing one after
+- fewer than nine rounds in ten finishing, or more than three failing one after
   another, which is what a stack that has stopped answering looks like — a
   failing round is slower than a healthy one, so counting them is not enough;
-- fewer than half of them churning a session, since the second daemon is
+- fewer than nine in ten of them churning a session, since the second daemon is
   weighed for the churn and an idle one is flat for a reason that is not the
   absence of a leak.
 

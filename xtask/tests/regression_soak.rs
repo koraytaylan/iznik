@@ -87,6 +87,23 @@ fn climbing(per_hour: u64) -> Vec<Sample> {
         .collect()
 }
 
+/// A series spread over [`LONG_RUN_SCALE`] times as long, climbing at the
+/// same hourly rate.
+fn stretched(samples: Vec<Sample>) -> Vec<Sample> {
+    samples
+        .into_iter()
+        .map(|sample| Sample {
+            at: sample.at.saturating_mul(LONG_RUN_SCALE),
+            bytes: RESIDENT.saturating_add(
+                sample
+                    .bytes
+                    .saturating_sub(RESIDENT)
+                    .saturating_mul(u64::from(LONG_RUN_SCALE)),
+            ),
+        })
+        .collect()
+}
+
 /// # Panics
 ///
 /// When a series that climbs past the ceiling is not caught, or one that
@@ -425,6 +442,12 @@ fn regression_soak_checklist_names_a_release_in_order() {
 /// How many rounds the report a case spoils stands for.
 const ROUNDS: usize = 10;
 
+/// How many times longer than the passing report a long run is.
+const LONG_RUN_SCALE: u32 = 12;
+
+/// A run long enough that the per-round ceiling is read: two hours.
+const LONG_RUN: Duration = Duration::from_hours(2);
+
 /// A report of a run that passed, which a case then spoils one way at a time.
 fn passing() -> Report {
     let level = climbing(0);
@@ -555,6 +578,27 @@ fn regression_soak_judges_a_run_by_what_it_weighed() {
     let mut gentle = passing();
     gentle.server = climbing(SOAK_GROWTH_CEILING_PER_HOUR.saturating_div(2));
     assert!(judged(&gentle, "", true).is_ok(), "and one under it passes");
+    // The same growth over only a few rounds of a long run is a leak paid per
+    // round, which the hourly ceiling alone would pass.
+    let mut per_round = passing();
+    per_round.duration = LONG_RUN;
+    per_round.server = stretched(climbing(SOAK_GROWTH_CEILING_PER_HOUR.saturating_div(2)));
+    per_round.client = stretched(climbing(0));
+    per_round.churned = stretched(climbing(0));
+    assert!(
+        matches!(judged(&per_round, "", true), Err(SoakError::Grew { .. })),
+        "a side that kept more than the round's ceiling for each round is refused"
+    );
+    // Nine rounds in ten finishing passes; fewer does not.
+    let mut busy = passing();
+    busy.drops = ROUNDS.saturating_sub(1);
+    assert!(judged(&busy, "", true).is_ok(), "one round in ten may fail");
+    let mut failing = passing();
+    failing.drops = ROUNDS.saturating_sub(2);
+    assert!(
+        judged(&failing, "", true).is_err(),
+        "two rounds in ten failing is a stack that is failing"
+    );
     // A side never weighed at all, and a side whose samples measure nothing
     // after the warmup — the same silence wearing a series, which would
     // otherwise skip the ceiling entirely.
