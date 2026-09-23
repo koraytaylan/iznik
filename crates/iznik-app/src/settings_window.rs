@@ -17,13 +17,13 @@ use crate::theme::AppTheme;
 use crate::window::WindowShell;
 
 /// Lower bound a font size is clamped to.
-const MIN_FONT_SIZE: f32 = 8.0;
+const MINIMUM_FONT_SIZE: f32 = 8.0;
 /// Upper bound a font size is clamped to.
-const MAX_FONT_SIZE: f32 = 32.0;
+const MAXIMUM_FONT_SIZE: f32 = 32.0;
 /// Tightest row height offered, as a multiple of the font size.
-const MIN_LINE_HEIGHT: f32 = 1.0;
+const MINIMUM_LINE_HEIGHT: f32 = 1.0;
 /// Loosest row height offered.
-const MAX_LINE_HEIGHT: f32 = 2.0;
+const MAXIMUM_LINE_HEIGHT: f32 = 2.0;
 /// How far one step of the font size field moves it.
 const FONT_SIZE_STEP: f32 = 1.0;
 /// How far one step of the row height field moves it.
@@ -142,8 +142,8 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
                 "Font Size",
                 SettingField::number_input(
                     NumberFieldOptions {
-                        min: f64::from(MIN_FONT_SIZE),
-                        max: f64::from(MAX_FONT_SIZE),
+                        min: f64::from(MINIMUM_FONT_SIZE),
+                        max: f64::from(MAXIMUM_FONT_SIZE),
                         step: f64::from(FONT_SIZE_STEP),
                     },
                     {
@@ -153,8 +153,12 @@ fn appearance_page(shell: &WeakEntity<WindowShell>, current: &App) -> SettingPag
                     {
                         let shell = shell.clone();
                         move |value, app| {
-                            let font_size =
-                                nearest_step(value, MIN_FONT_SIZE, MAX_FONT_SIZE, FONT_SIZE_STEP);
+                            let font_size = nearest_step(
+                                value,
+                                MINIMUM_FONT_SIZE,
+                                MAXIMUM_FONT_SIZE,
+                                FONT_SIZE_STEP,
+                            );
                             edit_theme(&shell, app, |theme| theme.font_size = font_size);
                         }
                     },
@@ -200,8 +204,8 @@ fn line_height_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
         "Line Height",
         SettingField::number_input(
             NumberFieldOptions {
-                min: f64::from(MIN_LINE_HEIGHT),
-                max: f64::from(MAX_LINE_HEIGHT),
+                min: f64::from(MINIMUM_LINE_HEIGHT),
+                max: f64::from(MAXIMUM_LINE_HEIGHT),
                 step: f64::from(LINE_HEIGHT_STEP),
             },
             {
@@ -215,8 +219,12 @@ fn line_height_item(shell: &WeakEntity<WindowShell>) -> SettingItem {
             {
                 let shell = shell.clone();
                 move |value, app| {
-                    let line_height =
-                        nearest_step(value, MIN_LINE_HEIGHT, MAX_LINE_HEIGHT, LINE_HEIGHT_STEP);
+                    let line_height = nearest_step(
+                        value,
+                        MINIMUM_LINE_HEIGHT,
+                        MAXIMUM_LINE_HEIGHT,
+                        LINE_HEIGHT_STEP,
+                    );
                     edit_theme(&shell, app, |theme| theme.line_height = line_height);
                 }
             },

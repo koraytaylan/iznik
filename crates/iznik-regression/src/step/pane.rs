@@ -61,7 +61,7 @@ pub fn execute(
     let table = body
         .as_table()
         .ok_or_else(|| malformed("a `pane` step's value is a table"))?;
-    let corpus = required_str(table, "corpus")?;
+    let corpus = required_text(table, "corpus")?;
     let columns = dimension(table, "columns", DEFAULT_COLUMNS)?;
     let rows = dimension(table, "rows", DEFAULT_ROWS)?;
 
@@ -73,7 +73,7 @@ pub fn execute(
     let started = Instant::now();
     let checked = match corpus.as_str() {
         "constructs" => {
-            let check = required_str(table, "check")?;
+            let check = required_text(table, "check")?;
             runtime.block_on(with_deadline(
                 timeout,
                 drive_constructs(check, columns, rows),
@@ -114,7 +114,7 @@ fn malformed(detail: impl Into<String>) -> StepError {
 /// # Errors
 ///
 /// [`StepError::Malformed`] when it is absent or not a string.
-fn required_str(table: &toml::Table, key: &str) -> Result<String, StepError> {
+fn required_text(table: &toml::Table, key: &str) -> Result<String, StepError> {
     table
         .get(key)
         .and_then(toml::Value::as_str)

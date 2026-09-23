@@ -35,10 +35,8 @@ lands
 leftovers
 loosest
 malformed
-max
 mellifluous
 merged
-min
 mirage
 molokai
 monospace

@@ -297,12 +297,12 @@ impl Pane {
             })
         })??;
         let process = Arc::new(Mutex::new(process));
-        let (exit_tx, exit) = watch::channel(None);
-        reap_on_exit(Arc::clone(&process), exit_tx)?;
+        let (exit_sender, exit) = watch::channel(None);
+        reap_on_exit(Arc::clone(&process), exit_sender)?;
 
         let history = Arc::new(Mutex::new(PaneHistory::new(history_bytes)));
-        let (marks, _marks_rx) = broadcast::channel(MARK_CHANNEL_CAPACITY);
-        let (requests, requests_rx) = mpsc::unbounded_channel();
+        let (marks, _marks_receiver) = broadcast::channel(MARK_CHANNEL_CAPACITY);
+        let (requests, requests_receiver) = mpsc::unbounded_channel();
         let initial = PaneState {
             columns,
             rows,
@@ -311,11 +311,11 @@ impl Pane {
             exited: false,
             prompts: 0,
         };
-        let (state_tx, state) = watch::channel(initial);
+        let (state_sender, state) = watch::channel(initial);
 
         // The VT task builds its mirror on the thread and signals readiness, so a
         // mirror that cannot be created fails the spawn rather than dying silently.
-        let (ready_tx, ready_rx) = oneshot::channel();
+        let (ready_sender, ready_receiver) = oneshot::channel();
         let task = VtTask {
             columns,
             rows,
@@ -323,14 +323,14 @@ impl Pane {
             responses: input.clone(),
             history: Arc::clone(&history),
             marks: marks.clone(),
-            state: state_tx,
-            requests: requests_rx,
+            state: state_sender,
+            requests: requests_receiver,
             exit: exit.clone(),
             drain: pane_options.exit_drain,
-            ready: ready_tx,
+            ready: ready_sender,
         };
         thread.spawn(move || task.run());
-        match ready_rx.await {
+        match ready_receiver.await {
             Ok(Ok(())) => {}
             Ok(Err(source)) => return Err(PaneError::Mirror(source)),
             Err(_recv) => return Err(PaneError::Gone),
@@ -453,11 +453,11 @@ impl Pane {
     /// [`PaneError::Screen`] when the emulator's formatter fails, and
     /// [`PaneError::Gone`] when the mirror thread has ended.
     pub async fn screen(&self) -> Result<SerializedScreen, PaneError> {
-        let (reply_tx, reply_rx) = oneshot::channel();
+        let (reply_sender, reply_receiver) = oneshot::channel();
         self.requests
-            .send(Request::Screen(reply_tx))
+            .send(Request::Screen(reply_sender))
             .map_err(|_send| PaneError::Gone)?;
-        match reply_rx.await {
+        match reply_receiver.await {
             Ok(Ok(screen)) => Ok(screen),
             Ok(Err(source)) => Err(PaneError::Screen(source)),
             Err(_recv) => Err(PaneError::Gone),
@@ -481,11 +481,11 @@ impl Pane {
     /// serialized, and [`PaneError::Gone`] when the mirror thread has ended.
     /// Either way nothing stays subscribed.
     pub async fn subscribe(&self, screen: bool) -> Result<Attachment, PaneError> {
-        let (reply_tx, reply_rx) = oneshot::channel();
+        let (reply_sender, reply_receiver) = oneshot::channel();
         self.requests
             .send(Request::Subscribe {
                 screen,
-                reply: reply_tx,
+                reply: reply_sender,
             })
             .map_err(|_send| PaneError::Gone)?;
         // Made before the answer is awaited: a caller that gives up, or an
@@ -493,7 +493,7 @@ impl Pane {
         let subscription = Subscription {
             requests: self.requests.clone(),
         };
-        match reply_rx.await {
+        match reply_receiver.await {
             Ok(Ok(begun)) => Ok(Attachment {
                 subscription,
                 answered_through: begun.answered_through,

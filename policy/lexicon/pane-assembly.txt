@@ -21,8 +21,6 @@ repeated
 reply
 requests
 running
-rx
 search
 subscription
 switches
-tx

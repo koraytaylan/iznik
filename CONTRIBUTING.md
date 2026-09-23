@@ -277,24 +277,18 @@ Every place the rules above do not hold, found by searching the tree rather
 than remembered. Adding to this list is a reviewed change like adding a word
 to the lexicon; removing an entry is always welcome.
 
-- **Abbreviations the lexicon admits.** Section 3.1 bans `max`, `min`,
-  `config`, `err`, `len`, `tx`, `rx`, `fmt`, `cfg` and `str`, yet each is in
-  a file under `policy/lexicon/`, because an identifier the workspace
-  declares still uses it:
+- **Abbreviations the lexicon admits.** Section 3.1 bans `config`, `err`,
+  `len`, `fmt`, `cfg` and `str`, yet each is in a file under
+  `policy/lexicon/`, because each is the canonical name of a thing rather
+  than a shortening of one:
   - `fmt`, `len`, `from_str` and `Err` are names the standard library gives
     trait methods and variants that an implementation must use as written.
-  - `max` and `min` are in `MAX_FONT_SIZE`, `MIN_FONT_SIZE`,
-    `MAX_LINE_HEIGHT` and `MIN_LINE_HEIGHT` in `iznik-app`; `config` is in
-    `CARGO_CONFIG` and `CONFIG_NAME` (the files `.cargo/config.toml` and
-    `~/.ssh/config` are named that) and in `ssh_config.rs`; `cfg` is in
-    `CFG_TEST_RULE`, the policy that names Rust's `cfg` attribute; `str` is in
-    `required_str`; `tx` and `rx` are in the channel ends `closed_tx`,
-    `closed_rx`, `ready_tx`, `reply_rx` and their like in
-    `crates/iznik-server/src/pane.rs`.
+  - `config` is the name of the files `.cargo/config.toml` and `~/.ssh/config`
+    and of the `ssh_config` format, in `CARGO_CONFIG`, `CONFIG_NAME` and
+    `ssh_config.rs`; `cfg` is Rust's attribute, named by `CFG_TEST_RULE`.
 
-  These last are ordinary abbreviations that slipped through. They are to be
-  renamed — `maximum_font_size`, `closed_sender` — and the words dropped from
-  the lexicon when nothing uses them; until then this entry is the record.
+  The ordinary abbreviations that had slipped through — `max`, `min`, `tx`,
+  `rx` and a `required_str` — have been renamed and dropped from the lexicon.
 - **Build noise silenced in `.cargo/config.toml`.** `-A linker_messages` is
   passed for the two musl targets, because Zig's `zig cc` reports the `-O1`
   rustc hands the linker as deprecated while honouring it, and nothing in
