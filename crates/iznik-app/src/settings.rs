@@ -1,9 +1,12 @@
 //! Validated application settings, stored as one file and applied while running.
 //!
 //! The file lives at `$XDG_CONFIG_HOME/iznik/settings`, or
-//! `~/.config/iznik/settings` when that variable is unset. A missing file is
-//! the built-in default. A malformed file is refused, with the previous
-//! values kept and the field named.
+//! `~/.config/iznik/settings` when that variable is unset, or
+//! `%APPDATA%\iznik\settings` on Windows when neither home is set. A missing
+//! file is the built-in default. A malformed file is refused once per change,
+//! with the previous values kept and the field named. A line this version
+//! does not know — a newer setting, a comment — is ignored, reported once,
+//! and kept when the application writes the file.
 
 use gpui_kit::Context;
 use gpui_kit::component::Theme;
@@ -20,24 +23,30 @@ use crate::theme::AppTheme;
 use crate::vt::{MAXIMUM_SCROLLBACK_BYTES, MINIMUM_SCROLLBACK_BYTES, SCROLLBACK_BYTES};
 use crate::window::WindowShell;
 
-/// The directory name under `$HOME` when `XDG_CONFIG_HOME` is unset.
-const CONFIGURATION_DIRECTORY: &str = ".config";
-
-/// The directory under the configuration home that holds this file.
-const APPLICATION_DIRECTORY: &str = "iznik";
-
 /// The file name of the settings.
 const SETTINGS_FILE: &str = "settings";
 
-/// The environment variable that names the configuration home.
-const CONFIGURATION_HOME: &str = "XDG_CONFIG_HOME";
-
-/// The environment variable that names the home directory.
-const HOME: &str = "HOME";
-
-/// The extension of the temporary file settings are written to before they
-/// replace the file a launch reads.
-const TEMPORARY_EXTENSION: &str = "temporary";
+/// Smallest font size a setting may ask for, in logical pixels.
+const MINIMUM_FONT_SIZE: f32 = 4.0;
+/// Largest font size a setting may ask for, in logical pixels.
+const MAXIMUM_FONT_SIZE: f32 = 200.0;
+/// Smallest row height a setting may ask for, as a multiple of the font size.
+const MINIMUM_LINE_HEIGHT: f32 = 0.5;
+/// Largest row height a setting may ask for, as a multiple of the font size.
+const MAXIMUM_LINE_HEIGHT: f32 = 4.0;
+/// Every field this version reads and writes; any other line is kept as it is.
+const OWNED_FIELDS: &[&str] = &[
+    "foreground",
+    "background",
+    "font_family",
+    "font_size",
+    "line_height",
+    "tabs_in_title_bar",
+    "theme_name",
+    "scrollback_bytes",
+];
+/// The prefix of a keybinding override's field.
+const KEYBINDING_PREFIX: &str = "keybinding.";
 
 /// Settings held by the application after validation.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +60,9 @@ pub struct Settings {
     /// Per-pane emulator history budget in bytes, read when the application
     /// starts; clamped between the emulator's minimum and maximum.
     pub scrollback_bytes: usize,
+    /// Lines of the file this version does not own — unknown fields, comments
+    /// and blank lines — written back as they were.
+    pub unowned: Vec<String>,
 }
 
 impl Default for Settings {
@@ -60,6 +72,7 @@ impl Default for Settings {
             theme_name: String::new(),
             keybindings: BTreeMap::new(),
             scrollback_bytes: SCROLLBACK_BYTES,
+            unowned: Vec::new(),
         }
     }
 }
@@ -79,20 +92,13 @@ pub fn read(path: &Path) -> Result<Settings, SettingsError> {
 }
 
 /// The file this machine keeps: `$XDG_CONFIG_HOME/iznik/settings`, or
-/// `~/.config/iznik/settings` when that variable is unset.
+/// `~/.config/iznik/settings` when that variable is unset, or
+/// `%APPDATA%\iznik\settings` on Windows when neither home is set.
 ///
 /// `None` when neither home is known, which is when there is nowhere to write.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    let directory = std::env::var_os(CONFIGURATION_HOME)
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os(HOME)
-                .filter(|home| !home.is_empty())
-                .map(|home| PathBuf::from(home).join(CONFIGURATION_DIRECTORY))
-        })?;
-    Some(directory.join(APPLICATION_DIRECTORY).join(SETTINGS_FILE))
+    crate::configuration_file::default_path(SETTINGS_FILE)
 }
 
 /// A settings update that preserves the previous values on refusal.
@@ -109,8 +115,10 @@ pub struct SettingsError {
 pub struct Watcher {
     /// File whose changes are observed.
     pub path: PathBuf,
-    /// Modification stamp last applied.
+    /// Modification stamp last read, applied or refused.
     stamp: Option<SystemTime>,
+    /// Unknown fields already reported, so each set is reported once.
+    reported: Vec<String>,
 }
 
 impl Watcher {
@@ -120,10 +128,14 @@ impl Watcher {
         Self {
             path: path.into(),
             stamp: None,
+            reported: Vec::new(),
         }
     }
 
     /// Reload a changed file, returning whether a new settings value was applied.
+    ///
+    /// The stamp advances before the file is decoded, so a file that is
+    /// refused is refused once, and read again only when it changes.
     ///
     /// # Errors
     ///
@@ -140,27 +152,45 @@ impl Watcher {
         if self.stamp == Some(modified) {
             return Ok(false);
         }
+        self.stamp = Some(modified);
         let candidate = decode(
             &std::fs::read_to_string(&self.path)
                 .map_err(|io_error| error("file", &io_error.to_string()))?,
         )?;
         replace(current, candidate)?;
-        self.stamp = Some(modified);
         Ok(true)
+    }
+
+    /// The unknown fields of `settings`, when they are not the ones already
+    /// reported; `None` once they have been.
+    pub fn unreported(&mut self, settings: &Settings) -> Option<SettingsError> {
+        let unknown = settings.unknown_fields();
+        if unknown.is_empty() || unknown == self.reported {
+            return None;
+        }
+        self.reported.clone_from(&unknown);
+        Some(error(
+            &unknown.join(", "),
+            "unknown setting, ignored and kept in the file",
+        ))
     }
 
     /// Replace the settings file and remember its modification stamp.
     ///
-    /// The stamp is the one just written, so the next poll does not apply the
-    /// same change a second time. The previous file stays in place when the
-    /// temporary file cannot be written.
+    /// Lines of the file on disk that this version does not own are kept,
+    /// including ones added since it was read. The stamp is the one just
+    /// written, so the next poll does not apply the same change a second time.
     ///
     /// # Errors
     ///
     /// Returns a file error when the directory cannot be created or the file
     /// cannot be replaced.
     pub fn write(&mut self, settings: &Settings) -> Result<(), SettingsError> {
-        write(&self.path, settings)?;
+        let mut merged = settings.clone();
+        if let Ok(text) = std::fs::read_to_string(&self.path) {
+            merged.unowned = unowned_lines(&text);
+        }
+        write(&self.path, &merged)?;
         let modified = std::fs::metadata(&self.path)
             .and_then(|metadata| metadata.modified())
             .map_err(|io_error| error("file", &io_error.to_string()))?;
@@ -176,32 +206,8 @@ impl Watcher {
 /// Returns the operating system's error when the directory cannot be created
 /// or the file cannot be replaced.
 pub fn write(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent).map_err(|io_error| error("file", &io_error.to_string()))?;
-    }
-    let temporary = path.with_extension(TEMPORARY_EXTENSION);
-    std::fs::write(&temporary, encode(settings))
-        .map_err(|io_error| error("file", &io_error.to_string()))?;
-    replace_file(&temporary, path)
-}
-
-/// Move `temporary` onto `path`. A rename that cannot replace an existing
-/// file removes that file and tries once more.
-///
-/// # Errors
-///
-/// Returns a file error when the settings cannot be replaced.
-fn replace_file(temporary: &Path, path: &Path) -> Result<(), SettingsError> {
-    if std::fs::rename(temporary, path).is_ok() {
-        return Ok(());
-    }
-    if path.is_file() {
-        std::fs::remove_file(path).map_err(|io_error| error("file", &io_error.to_string()))?;
-    }
-    std::fs::rename(temporary, path).map_err(|io_error| error("file", &io_error.to_string()))
+    crate::configuration_file::replace(path, encode(settings).as_bytes())
+        .map_err(|io_error| error("file", &io_error.to_string()))
 }
 
 /// Apply a validated update, retaining the old settings when validation fails.
@@ -259,12 +265,87 @@ pub fn encode(settings: &Settings) -> String {
         settings.scrollback_bytes
     );
     for (action, chord) in &settings.keybindings {
-        let _written = writeln!(text, "keybinding.{action}={chord}");
+        let _written = writeln!(text, "{KEYBINDING_PREFIX}{action}={chord}");
+    }
+    for line in &settings.unowned {
+        let _written = writeln!(text, "{line}");
     }
     text
 }
 
+/// Whether `line` holds a field this version reads and writes.
+fn owned(line: &str) -> bool {
+    line.split_once('=').is_some_and(|(field, _value)| {
+        OWNED_FIELDS.contains(&field) || field.starts_with(KEYBINDING_PREFIX)
+    })
+}
+
+/// Every line of `text` this version does not own, in order.
+fn unowned_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| !owned(line))
+        .map(str::to_owned)
+        .collect()
+}
+
+impl Settings {
+    /// Fields in the file that this version does not know.
+    #[must_use]
+    pub fn unknown_fields(&self) -> Vec<String> {
+        self.unowned
+            .iter()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter_map(|line| line.split_once('='))
+            .map(|(field, _value)| field.to_owned())
+            .collect()
+    }
+}
+
+/// A number the field accepts: finite, and clamped to `range`.
+///
+/// # Errors
+///
+/// Returns a field-specific error when the value is not a finite number.
+fn bounded(field: &str, value: &str, range: (f32, f32)) -> Result<f32, SettingsError> {
+    let number: f32 = value
+        .parse()
+        .map_err(|_parse_error| error(field, "not a number"))?;
+    if !number.is_finite() {
+        return Err(error(field, "not a finite number"));
+    }
+    Ok(number.clamp(range.0, range.1))
+}
+
+/// `theme` with its font size and row height inside the ranges the grid can
+/// draw; a value that is not finite becomes the default.
+#[must_use]
+pub fn drawable(theme: &AppTheme) -> AppTheme {
+    let fallback = AppTheme::default();
+    let fit = |value: f32, default: f32, range: (f32, f32)| {
+        if value.is_finite() {
+            value.clamp(range.0, range.1)
+        } else {
+            default
+        }
+    };
+    AppTheme {
+        font_size: fit(
+            theme.font_size,
+            fallback.font_size,
+            (MINIMUM_FONT_SIZE, MAXIMUM_FONT_SIZE),
+        ),
+        line_height: fit(
+            theme.line_height,
+            fallback.line_height,
+            (MINIMUM_LINE_HEIGHT, MAXIMUM_LINE_HEIGHT),
+        ),
+        ..theme.clone()
+    }
+}
+
 /// Parse settings while naming the malformed field and preserving no partial result.
+/// A comment, a blank line or a field this version does not know is kept
+/// in [`Settings::unowned`] rather than refused.
 ///
 /// # Errors
 ///
@@ -272,6 +353,10 @@ pub fn encode(settings: &Settings) -> String {
 pub fn decode(text: &str) -> Result<Settings, SettingsError> {
     let mut settings = Settings::default();
     for line in text.lines() {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            settings.unowned.push(line.to_owned());
+            continue;
+        }
         let Some((field, value)) = line.split_once('=') else {
             return Err(error("file", "line has no equals sign"));
         };
@@ -286,9 +371,8 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
                     .map_err(|_parse_error| error(field, "not true or false"))?;
             }
             "line_height" => {
-                settings.theme.line_height = value
-                    .parse()
-                    .map_err(|_parse_error| error(field, "not a number"))?;
+                settings.theme.line_height =
+                    bounded(field, value, (MINIMUM_LINE_HEIGHT, MAXIMUM_LINE_HEIGHT))?;
             }
             "scrollback_bytes" => {
                 settings.scrollback_bytes = value
@@ -297,12 +381,11 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
                     .clamp(MINIMUM_SCROLLBACK_BYTES, MAXIMUM_SCROLLBACK_BYTES);
             }
             "font_size" => {
-                settings.theme.font_size = value
-                    .parse()
-                    .map_err(|_parse_error| error(field, "not a number"))?;
+                settings.theme.font_size =
+                    bounded(field, value, (MINIMUM_FONT_SIZE, MAXIMUM_FONT_SIZE))?;
             }
-            key if key.starts_with("keybinding.") => {
-                let action = key.trim_start_matches("keybinding.");
+            key if key.starts_with(KEYBINDING_PREFIX) => {
+                let action = key.trim_start_matches(KEYBINDING_PREFIX);
                 if action.is_empty() {
                     return Err(error(field, "action name is empty"));
                 }
@@ -310,7 +393,7 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
                     .keybindings
                     .insert(action.to_owned(), value.to_owned());
             }
-            _ => return Err(error(field, "unknown field")),
+            _ => settings.unowned.push(line.to_owned()),
         }
     }
     Ok(settings)
@@ -366,11 +449,26 @@ pub(crate) fn load_into(shell: &mut WindowShell, context: &mut Context<'_, Windo
         watcher.reload(&mut settings)
     };
     match outcome {
-        Ok(true) => shell.settings = settings,
+        Ok(true) => {
+            shell.settings = settings;
+            report_unknown(shell, context);
+        }
         Err(refusal) => refuse(shell, &refusal, context),
         Ok(false) => {}
     }
     apply_saved(shell, context);
+}
+
+/// Report the file's unknown fields, once for each set of them.
+pub(crate) fn report_unknown(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
+    let settings = shell.settings.clone();
+    let unreported = shell
+        .settings_watcher
+        .as_mut()
+        .and_then(|watcher| watcher.unreported(&settings));
+    if let Some(warning) = unreported {
+        refuse(shell, &warning, context);
+    }
 }
 
 /// Apply the shell's saved theme name and typography to every surface.

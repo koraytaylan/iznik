@@ -301,3 +301,67 @@ fn assert_saved(settings: &Settings, source: &str) {
         "{source} keeps the theme"
     );
 }
+
+#[test]
+/// A field this version does not know is kept, not refused, and a font size
+/// the grid cannot draw is brought into range.
+///
+/// # Panics
+///
+/// Panics when an unknown field refuses the file, is lost on encoding, or a
+/// zero or non-finite size is accepted as it is.
+fn unknown_fields_are_kept_and_sizes_bounded() {
+    let settings = decode("# mine\nfuture_option=on\nfont_size=0\n").expect("decodes");
+    assert_eq!(settings.unknown_fields(), ["future_option"]);
+    assert!(
+        settings.theme.font_size > 0.0,
+        "zero is raised to the minimum"
+    );
+    let written = encode(&settings);
+    assert!(written.contains("# mine\n"), "comment kept: {written}");
+    assert!(
+        written.contains("future_option=on\n"),
+        "field kept: {written}"
+    );
+    assert_eq!(decode("font_size=NaN").expect_err("NaN").field, "font_size");
+    let theme = AppTheme {
+        font_size: f32::NAN,
+        line_height: 0.0,
+        ..AppTheme::default()
+    };
+    let drawable = iznik_app::settings::drawable(&theme);
+    assert!(drawable.font_size.is_finite() && drawable.font_size > 0.0);
+    assert!(drawable.line_height > 0.0);
+}
+
+#[test]
+/// A refused file is refused once, not on every poll; writing keeps lines
+/// another version added since the file was read.
+///
+/// # Panics
+///
+/// Panics when a refused file is refused again unchanged, or a write drops a
+/// line it does not own.
+fn refused_once_and_foreign_lines_survive_a_write() {
+    let directory =
+        std::env::temp_dir().join(format!("iznik-settings-robust-{}", std::process::id()));
+    let _stale = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("directory");
+    let path = directory.join("settings");
+    fs::write(&path, "font_size=big\n").expect("bad file");
+    let mut watcher = Watcher::new(&path);
+    let mut current = Settings::default();
+    assert!(watcher.reload(&mut current).is_err(), "refused");
+    assert!(
+        matches!(watcher.reload(&mut current), Ok(false)),
+        "not refused again until it changes"
+    );
+    fs::write(&path, "newer_setting=1\n").expect("foreign line");
+    watcher.write(&Settings::default()).expect("write");
+    let text = fs::read_to_string(&path).expect("read");
+    assert!(text.contains("newer_setting=1"), "kept: {text}");
+    assert!(text.contains("font_size="), "owned fields written: {text}");
+    let leftovers = fs::read_dir(&directory).expect("list").count();
+    assert_eq!(leftovers, 1, "no temporary file is left behind");
+    let _removed = fs::remove_dir_all(&directory);
+}

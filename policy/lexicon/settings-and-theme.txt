@@ -12,6 +12,7 @@ configured
 conversion
 current
 defaults
+drawable
 emulator
 everforest
 fahrenheit
@@ -25,9 +26,11 @@ hybrid
 invalid
 jellybeans
 kibble
+leftovers
 malformed
 max
 mellifluous
+merged
 min
 mirage
 molokai
@@ -41,8 +44,11 @@ solarized
 spaceduck
 spacing
 stamp
+synchronized
 theme
 themes
 tokyonight
 twilight
 typography
+unowned
+unreported

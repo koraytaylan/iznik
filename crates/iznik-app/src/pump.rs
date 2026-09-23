@@ -104,7 +104,10 @@ impl WindowShell {
             watcher.reload(&mut self.settings)
         };
         match outcome {
-            Ok(true) => crate::settings::apply_saved(self, context),
+            Ok(true) => {
+                crate::settings::report_unknown(self, context);
+                crate::settings::apply_saved(self, context);
+            }
             Ok(false) => {}
             Err(refusal) => crate::settings::refuse(self, &refusal, context),
         }

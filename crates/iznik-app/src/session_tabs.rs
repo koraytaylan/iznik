@@ -5,8 +5,8 @@
 //! that was on screen. The host is the rest of the line, so a name may
 //! contain spaces. A line that is not one of those two, or whose host holds
 //! a control character, is skipped; the lines that parse still apply. The
-//! file is replaced by renaming a temporary beside it, so a launch never
-//! reads a half-written record.
+//! file is replaced atomically, so a launch never reads a half-written
+//! record.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -17,20 +17,8 @@ use iznik_protocol::identity::{SessionId, TabId};
 
 use crate::window::{SessionKey, TabKey};
 
-/// The directory name under `$HOME` when `XDG_CONFIG_HOME` is unset.
-const CONFIGURATION_DIRECTORY: &str = ".config";
-
-/// The directory under the configuration home that holds this record.
-const APPLICATION_DIRECTORY: &str = "iznik";
-
 /// The file name of the record.
 const SELECTION_FILE: &str = "session-tabs";
-
-/// The environment variable that names the configuration home.
-const CONFIGURATION_HOME: &str = "XDG_CONFIG_HOME";
-
-/// The environment variable that names the home directory.
-const HOME: &str = "HOME";
 
 /// The word that marks the tab that was on screen.
 const OPEN_MARK: &str = "open";
@@ -42,10 +30,6 @@ const SHOWN_MARK: &str = "shown";
 /// host. The host is the last field and keeps every space it contains.
 const RECORD_FIELDS: usize = 4;
 
-/// The extension of the temporary file a record is written to before it
-/// replaces the one a launch reads.
-const TEMPORARY_EXTENSION: &str = "temporary";
-
 /// The tabs a window left behind.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionTabs {
@@ -56,20 +40,13 @@ pub struct SessionTabs {
 }
 
 /// The record this machine keeps: `$XDG_CONFIG_HOME/iznik/session-tabs`, or
-/// `~/.config/iznik/session-tabs` when that variable is unset.
+/// `~/.config/iznik/session-tabs` when that variable is unset, or
+/// `%APPDATA%\iznik\session-tabs` on Windows when neither home is set.
 ///
 /// `None` when neither home is known, which is when there is nowhere to write.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    let directory = std::env::var_os(CONFIGURATION_HOME)
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os(HOME)
-                .filter(|home| !home.is_empty())
-                .map(|home| PathBuf::from(home).join(CONFIGURATION_DIRECTORY))
-        })?;
-    Some(directory.join(APPLICATION_DIRECTORY).join(SELECTION_FILE))
+    crate::configuration_file::default_path(SELECTION_FILE)
 }
 
 /// Read a record. A missing or unreadable file is an empty record: the window
@@ -87,15 +64,7 @@ pub fn load(path: &Path) -> SessionTabs {
 /// or the file cannot be replaced. The previous record is left in place when
 /// the temporary file cannot be written.
 pub fn write(path: &Path, tabs: &SessionTabs) -> Result<(), std::io::Error> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension(TEMPORARY_EXTENSION);
-    std::fs::write(&temporary, encode(tabs))?;
-    replace(&temporary, path)
+    crate::configuration_file::replace(path, encode(tabs).as_bytes())
 }
 
 /// The record as the file holds it.
@@ -175,20 +144,4 @@ fn session_of(key: &TabKey) -> SessionKey {
         host: key.host.clone(),
         session: key.session,
     }
-}
-
-/// Move `temporary` onto `path`. A rename that cannot replace an existing
-/// file removes that file and tries once more.
-///
-/// # Errors
-///
-/// Returns the operating system's error when the record cannot be replaced.
-fn replace(temporary: &Path, path: &Path) -> Result<(), std::io::Error> {
-    if std::fs::rename(temporary, path).is_ok() {
-        return Ok(());
-    }
-    if path.is_file() {
-        std::fs::remove_file(path)?;
-    }
-    std::fs::rename(temporary, path)
 }

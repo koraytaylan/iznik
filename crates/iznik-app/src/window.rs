@@ -406,7 +406,10 @@ impl WindowShell {
         crate::settings::persist(self, context);
     }
     /// Apply application theme defaults to the shell and every retained emulator.
+    /// A size or row height the grid cannot draw is brought into range
+    /// first, so no setting can blank the panes or stall their output.
     pub fn apply_theme(&mut self, theme: &AppTheme, context: &mut Context<'_, Self>) {
+        let theme = &crate::settings::drawable(theme);
         let terminal = terminal_theme(theme);
         self.options.theme = terminal.clone();
         let installed = context.text_system().all_font_names();

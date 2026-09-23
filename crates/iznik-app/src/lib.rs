@@ -9,6 +9,7 @@ pub mod bars;
 pub mod bridge;
 pub mod bundle;
 pub mod chrome;
+pub mod configuration_file;
 pub mod follow;
 pub mod grid;
 pub mod host_ui;
