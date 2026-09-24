@@ -461,8 +461,9 @@ async fn dispatch(
     // starve every request, and a keystroke would wait for the flood to end.
     // One round per turn is what the scheduler's own promise means — a
     // keystroke waits behind at most one frame per active pane — and every
-    // request already waiting is answered each turn, keystrokes first, so a
-    // keystroke never queues behind a line of credits that arrived with it.
+    // request already waiting is answered each turn, credits and pings last,
+    // so a keystroke never queues behind a line of credits that arrived with
+    // it.
     let mut sending = false;
     loop {
         let first = if sending {
@@ -495,9 +496,10 @@ async fn dispatch(
     }
 }
 
-/// `first`, if any, and every request already waiting behind it, input
-/// first and otherwise in the order they came; and whether the reader has
-/// gone, which is said only once every request it sent has been taken.
+/// `first`, if any, and every request already waiting behind it, in the order
+/// they came except that those which [`commutes`] go last; and whether the
+/// reader has gone, which is said only once every request it sent has been
+/// taken.
 fn waiting_requests(
     asked: &mut mpsc::Receiver<ToServer>,
     first: Option<ToServer>,
@@ -510,10 +512,20 @@ fn waiting_requests(
             Err(mpsc::error::TryRecvError::Disconnected) => break true,
         }
     };
-    // A stable sort: keystrokes keep their order among themselves, and so
-    // does everything else.
-    waiting.sort_by_key(|request| !matches!(request, ToServer::Input { .. }));
+    // A stable sort: each kind keeps its order among its own.
+    waiting.sort_by_key(commutes);
     (waiting, gone)
+}
+
+/// Whether a request's answer is the same whenever in a turn it is given:
+/// credit, a ping, a channel released. Anything else changes a pane or what
+/// this client watches — a keystroke must not overtake the resize it was
+/// typed after, nor reach a pane closed before it — and keeps its place.
+fn commutes(request: &ToServer) -> bool {
+    matches!(
+        request,
+        ToServer::Credit { .. } | ToServer::Ping | ToServer::ChannelReleased { .. }
+    )
 }
 
 /// Answers a refusal the client can act on with an `Error` and leaves the

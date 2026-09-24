@@ -907,3 +907,74 @@ async fn a_silent_peer_is_let_go() {
     .await
     .unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a keystroke sent after the command that closes its pane reaches the
+/// pane anyway, as it would if keystrokes were answered ahead of commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_keystroke_after_its_pane_closes_is_refused() {
+    bounded(async {
+        let mut host = Host::new()?;
+        let mut link = raw(&mut host)?;
+        let greeting = ToServer::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_version: "ordered".to_owned(),
+            capabilities: Capabilities::from_bits(0),
+        };
+        link.send(CHANNEL_CONTROL, &encode_to_server(&greeting)?)
+            .await?;
+        let create = SessionCommand::CreateSession {
+            name: "work".to_owned(),
+            columns: COLUMNS,
+            rows: ROWS,
+            working_directory: None,
+        };
+        let close = SessionCommand::ClosePane { pane: PaneId(0) };
+        for (number, command) in [(1, create), (2, close)] {
+            let request = ToServer::Command {
+                command_id: CommandId(number),
+                payload: iznik_protocol::command::encode_session_command(&command)?,
+            };
+            link.send(CHANNEL_CONTROL, &encode_to_server(&request)?)
+                .await?;
+            if number == 1 {
+                // The pane exists before the close and the keystroke are sent
+                // back to back.
+                loop {
+                    let frame = tokio::time::timeout(PROMPT, link.next_frame())
+                        .await??
+                        .ok_or("the connection closed")?;
+                    if matches!(
+                        decode_to_client(frame.payload)?,
+                        ToClient::CommandResult { .. }
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+        let keystroke = ToServer::Input {
+            pane: PaneId(0),
+            bytes: b"x".to_vec(),
+        };
+        link.send(CHANNEL_CONTROL, &encode_to_server(&keystroke)?)
+            .await?;
+        let refused = loop {
+            let frame = tokio::time::timeout(PROMPT, link.next_frame())
+                .await??
+                .ok_or("the connection closed")?;
+            if let ToClient::Error { code, .. } = decode_to_client(frame.payload)? {
+                break code;
+            }
+        };
+        assert_eq!(
+            refused,
+            ErrorCode::UnknownPane,
+            "the keystroke went after the close, to no pane"
+        );
+        Ok::<(), Failed>(())
+    })
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+}
