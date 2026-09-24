@@ -261,6 +261,7 @@ async fn remote_launch_names_the_handshake_when_the_server_disagrees() {
                 server_version: "scripted".to_owned(),
                 capabilities: Capabilities::from_bits(0),
                 instance: None,
+                build: None,
             },
         )?;
         let transport = local(&held, &socket)?;
@@ -508,35 +509,49 @@ fn remote_launch_knows_an_upgrade_by_the_run_that_answers() {
     use iznik_client::bootstrap::launch::bundled;
     use iznik_client::bootstrap::replaced;
     use iznik_client::transport::channel::ServerHello;
-    use iznik_protocol::identity::DaemonInstance;
+    use iznik_protocol::identity::{BuildDigest, DaemonInstance};
     let first = DaemonInstance(0x0111);
     let greeting = |instance: Option<DaemonInstance>| ServerHello {
         protocol_version: PROTOCOL_VERSION,
         server_version: bundled().crate_version,
         capabilities: Capabilities::INSTANCE,
         instance,
+        build: None,
     };
     assert!(
-        replaced("host0", Some(first), &greeting(Some(first))).is_err(),
+        replaced("host0", Some(first), None, &greeting(Some(first))).is_err(),
         "the run that was there still answering is no upgrade, whatever its version"
     );
     assert!(
         replaced(
             "host0",
             Some(first),
+            None,
             &greeting(Some(DaemonInstance(0x0222)))
         )
         .is_ok(),
         "another run of this build answering is"
     );
+    let installing = BuildDigest([0x11; 32]);
+    let mut built = greeting(Some(DaemonInstance(0x0222)));
+    built.build = Some(BuildDigest([0x22; 32]));
     assert!(
-        replaced("host0", None, &greeting(None)).is_ok(),
+        replaced("host0", Some(first), Some(installing), &built).is_err(),
+        "a new run that says it is another build than the one installed is no upgrade"
+    );
+    built.build = Some(installing);
+    assert!(
+        replaced("host0", Some(first), Some(installing), &built).is_ok(),
+        "and one that says it is the one installed is"
+    );
+    assert!(
+        replaced("host0", None, None, &greeting(None)).is_ok(),
         "and with no run named either side, this build's version is all there is to go on"
     );
     let mut other = greeting(None);
     other.server_version = "0.0.0-other".to_owned();
     assert!(
-        replaced("host0", None, &other).is_err(),
+        replaced("host0", None, None, &other).is_err(),
         "which a server of another version fails"
     );
 }

@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use iznik_protocol::command::Placement;
 use iznik_protocol::delta::{Delta, RemovalReason};
-use iznik_protocol::identity::{DaemonInstance, Generation, PaneId, SessionId, TabId};
+use iznik_protocol::identity::{BuildDigest, DaemonInstance, Generation, PaneId, SessionId, TabId};
 use iznik_protocol::model;
 use iznik_protocol::model::{HostModel, LayoutNode, ModelError, Session, Tab, Weighted};
 use iznik_protocol::reconcile::{ReconcileError, apply};
@@ -137,6 +137,8 @@ pub struct Registry {
     programs: Option<program::ProgramWatch>,
     /// Which run of the daemon this is, picked when it was made.
     instance: DaemonInstance,
+    /// The build of the binary the daemon was started from, when it knows.
+    build: Option<BuildDigest>,
     /// What each identified client's recent commands were answered, kept
     /// across its connections.
     remembered: RememberedCommands,
@@ -177,6 +179,7 @@ impl Registry {
             signal,
             programs,
             instance: fresh_instance(),
+            build: None,
             remembered: RememberedCommands::default(),
         }
     }
@@ -194,6 +197,21 @@ impl Registry {
     #[must_use]
     pub fn instance(&self) -> DaemonInstance {
         self.instance
+    }
+
+    /// Says which build of the server this daemon runs: what the daemon read
+    /// beside its binary when it started, and what a connection announces to
+    /// a client that asks.
+    #[must_use]
+    pub fn built_from(mut self, build: Option<BuildDigest>) -> Registry {
+        self.build = build;
+        self
+    }
+
+    /// The build this daemon runs, when it knows.
+    #[must_use]
+    pub fn build(&self) -> Option<BuildDigest> {
+        self.build
     }
 
     /// Raised whenever a pane has something to report: a caller waits on it

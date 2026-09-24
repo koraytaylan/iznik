@@ -143,7 +143,7 @@ Server to client:
 
 | Message | Purpose |
 |---|---|
-| `Hello { protocol_version, server_version, capabilities, instance }` | Handshake reply; `instance`, the daemon instance, only when the client advertised `INSTANCE` (§4.3). |
+| `Hello { protocol_version, server_version, capabilities, instance, build }` | Handshake reply; `instance`, the daemon instance, only when the client advertised `INSTANCE` (§4.3); `build`, the digest of the binary the daemon started from, after it and only when the client advertised `BUILD` too and the daemon knows it (§6.2). |
 | `Snapshot { generation, payload }` | The complete host model. |
 | `Delta { generation, payload }` | One change to the model, numbered. |
 | `CommandResult { command_id, payload }` | `Applied { generation, created }` or `Rejected { code, message }`. |
@@ -463,7 +463,19 @@ Because the daemon *is* the sessions, it is never replaced quietly: a host
 running another version is connected to as it is and the offer rides back with
 the connection. An upgrade refuses while the daemon holds panes and says how
 many; forced, it stops the daemon, installs, and refuses to call itself done
-unless the version that answers afterwards is the one this build carries. It is
+while the daemon run that answered before still answers, or while the one that
+answers names another build than the one just installed — or, from a server
+that names neither, gives another version than this build's.
+
+Every build of one version gives the same version, so a daemon says which
+build it runs: when it starts it reads the digest the bootstrap wrote beside
+its binary, `<binary>.sha256`, once — the file is replaced with the next
+build's while it runs — and its `Hello` names it to a client that asks. A
+client trusts a same-version daemon's capabilities, and offers nothing, only
+when that digest is one of the servers it carries; any other is another build,
+offered its replacement for the build. A daemon that names no build is judged
+as before: another build is assumed only of the run a bootstrap found another
+build's binary under. It is
 an order to the host's own task rather than a handle taken out of the manager:
 the task stops its channel, runs the replacement and reconnects while the host
 stays held, so the sizes and subscriptions a still-drawing window sends

@@ -21,7 +21,9 @@ use core::fmt::{self, Display, Formatter};
 
 use crate::capabilities::Capabilities;
 use crate::frame::MAXIMUM_PAYLOAD_LENGTH;
-use crate::identity::{ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence};
+use crate::identity::{
+    BuildDigest, ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence,
+};
 use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_pane, unknown};
 
 /// The channel control messages travel on; every other channel carries pane
@@ -255,6 +257,14 @@ pub enum ToClient {
         /// `Hello` carried [`Capabilities::INSTANCE`]: a decoder reads it when
         /// sixteen more bytes follow and reports `None` when none do.
         instance: Option<DaemonInstance>,
+        /// The build of the binary the daemon was started from, when the
+        /// client asked to be told and the daemon knows.
+        ///
+        /// Appended after the instance, and only after one: for a client
+        /// whose own `Hello` carried [`Capabilities::BUILD`], thirty-two more
+        /// bytes follow the instance. An encoder given a build and no instance
+        /// writes neither.
+        build: Option<BuildDigest>,
     },
     /// The complete host model.
     Snapshot {
@@ -638,6 +648,7 @@ fn put_to_client(sink: &mut dyn Sink, message: &ToClient) {
             server_version,
             capabilities,
             instance,
+            build,
         } => {
             sink.put(&[client_tag::HELLO]);
             sink.put(&protocol_version.to_le_bytes());
@@ -645,6 +656,9 @@ fn put_to_client(sink: &mut dyn Sink, message: &ToClient) {
             sink.put(&capabilities.bits().to_le_bytes());
             if let Some(instance) = instance {
                 sink.put(&instance.0.to_le_bytes());
+                if let Some(build) = build {
+                    sink.put(&build.0);
+                }
             }
         }
         ToClient::Snapshot {
@@ -850,6 +864,11 @@ pub fn decode_to_client(payload: &[u8]) -> Result<ToClient, MessageError> {
                 None
             } else {
                 Some(DaemonInstance(u128::from_le_bytes(reader.array()?)))
+            },
+            build: if reader.exhausted() {
+                None
+            } else {
+                Some(BuildDigest(reader.array()?))
             },
         },
         client_tag::SNAPSHOT => ToClient::Snapshot {

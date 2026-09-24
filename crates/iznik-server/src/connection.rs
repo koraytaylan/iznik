@@ -26,7 +26,7 @@ use std::time::Duration;
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::identity::{ClientIdentity, DaemonInstance, PaneId};
+use iznik_protocol::identity::{BuildDigest, ClientIdentity, DaemonInstance, PaneId};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_server, encode_to_client,
@@ -53,7 +53,8 @@ const CAPABILITIES: Capabilities = Capabilities::from_bits(
         | Capabilities::REORDER_SESSIONS.bits()
         | Capabilities::INSTANCE.bits()
         | Capabilities::ANSWERED.bits()
-        | Capabilities::IDENTIFY.bits(),
+        | Capabilities::IDENTIFY.bits()
+        | Capabilities::BUILD.bits(),
 );
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
@@ -241,7 +242,7 @@ struct Greeted<Stream: AsyncRead + AsyncWrite + Unpin> {
 async fn greet<Stream>(
     mut link: FramedLink<Stream>,
     deadline: Duration,
-    instance: DaemonInstance,
+    daemon: (DaemonInstance, Option<BuildDigest>),
 ) -> Result<Option<Greeted<Stream>>, ConnectionError>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
@@ -285,14 +286,21 @@ where
     // read it: an older one refuses a message longer than the fields it
     // knows, and would never connect. Such a client is told the capability is
     // absent too, so what it is sent and what it was told agree.
-    let unreadable = Capabilities::APPENDED.bits() & !capabilities.bits();
+    // The build goes after the instance and only after it, and only from a
+    // daemon that knows it: a reply claims the bit exactly when it carries it.
+    let (instance, known) = daemon;
+    let told_instance = capabilities.contains(Capabilities::INSTANCE);
+    let build = known.filter(|_known| told_instance && capabilities.contains(Capabilities::BUILD));
+    let mut unreadable = Capabilities::APPENDED.bits() & !capabilities.bits();
+    if build.is_none() {
+        unreadable |= Capabilities::BUILD.bits();
+    }
     let reply = ToClient::Hello {
         protocol_version: PROTOCOL_VERSION,
         server_version: SERVER_VERSION.to_owned(),
         capabilities: Capabilities::from_bits(CAPABILITIES.bits() & !unreadable),
-        instance: capabilities
-            .contains(Capabilities::INSTANCE)
-            .then_some(instance),
+        instance: told_instance.then_some(instance),
+        build,
     };
     link.send(CHANNEL_CONTROL, &encode_to_client(&reply)?)
         .await?;
@@ -339,8 +347,11 @@ pub async fn serve_with_options<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let instance = registry.read().await.instance();
-    let Some(greeted) = greet(FramedLink::new(stream), options.greeting_deadline, instance).await?
+    let daemon = {
+        let held = registry.read().await;
+        (held.instance(), held.build())
+    };
+    let Some(greeted) = greet(FramedLink::new(stream), options.greeting_deadline, daemon).await?
     else {
         return Ok(());
     };

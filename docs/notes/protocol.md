@@ -135,7 +135,7 @@ that way, and no other client's.
 
 | Message | Constant | Value | Fields after the discriminant |
 |---|---|---|---|
-| `Hello` | `client_tag::HELLO` | 0 | `u16` protocol version, `bytes` server version, `u32` capability bits, then *(capability `INSTANCE`)* 16 bytes: the daemon instance, a little-endian `u128` |
+| `Hello` | `client_tag::HELLO` | 0 | `u16` protocol version, `bytes` server version, `u32` capability bits, then *(capability `INSTANCE`)* 16 bytes: the daemon instance, a little-endian `u128`, then *(capability `BUILD`, and only after the instance)* 32 bytes: the SHA-256 of the binary the daemon was started from |
 | `Snapshot` | `client_tag::SNAPSHOT` | 1 | `generation`, `bytes` payload (§7) |
 | `Delta` | `client_tag::DELTA` | 2 | `generation`, `bytes` payload (§8) |
 | `CommandResult` | `client_tag::COMMAND_RESULT` | 3 | `id` command id, `bytes` payload (§6.3) |
@@ -147,8 +147,8 @@ that way, and no other client's.
 | `Error` | `client_tag::ERROR` | 9 | `u8` error code (§5.1), `bytes` message |
 
 *Fixtures:* `message.jsonl`, "Hello reply with both known capabilities"
-through "Error with an empty message"; "a daemon instance cut short" and "an
-answered-through sequence cut short".
+through "Error with an empty message"; "a daemon instance cut short", "a
+build digest cut short" and "an answered-through sequence cut short".
 
 ### 5.1 Error codes
 
@@ -523,6 +523,7 @@ Capabilities are a `u32` bit set:
 | `INSTANCE` | 4 | 16 |
 | `ANSWERED` | 5 | 32 |
 | `IDENTIFY` | 6 | 64 |
+| `BUILD` | 7 | 128 |
 
 Bit 3 is unassigned.
 
@@ -572,6 +573,20 @@ is a `Screen`, and forgets everything it held from the other daemon. A reply
 without the field is a daemon that cannot say, and a client can then only
 guess from the model's generation. *Fixtures:* `message.jsonl`, "Hello reply
 naming the daemon instance it comes from".
+
+**The build.** Every build of one version gives the same version, so a
+version does not say which build a daemon runs; its bytes do. A daemon reads,
+once and when it starts, the SHA-256 the bootstrap wrote beside its binary as
+`<binary>.sha256` — once, because the file is replaced with the next build's
+while the daemon goes on running the bytes it started from. A client that sets
+both `INSTANCE` and `BUILD` in its `Hello` is answered, by a daemon that read
+one, with `BUILD` set and those thirty-two bytes appended after the instance;
+a daemon that read none, or a client that did not ask for both, gets neither
+the bit nor the field. A client compares the digest with the servers it
+carries: the same is this build, whose capabilities it reads; another is
+another build of the same version, whose capability bits it does not read and
+whose replacement it offers. *Fixtures:* `message.jsonl`, "Hello reply naming
+the daemon instance and the build it runs".
 
 When **both** `Hello`s carried `ZSTD`, everything after them is a single zstd
 stream in each direction — one context per connection, not per frame, so the

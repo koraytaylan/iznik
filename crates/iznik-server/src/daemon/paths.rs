@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use core::fmt::{self, Display, Formatter};
 
 #[cfg(unix)]
+use iznik_protocol::identity::BuildDigest;
 use nix::unistd::Uid;
 
 use super::{agent, socket};
@@ -221,3 +222,46 @@ pub fn terminfo_beside(executable: &Path) -> Option<PathBuf> {
         .any(|entry| entry.path().join(TERMINFO_ENTRY).is_file());
     compiled.then_some(directory)
 }
+
+/// What the bootstrap names the digest it wrote beside a binary: the binary's
+/// own name with this after it.
+const DIGEST_SUFFIX: &str = ".sha256";
+
+/// The base the digest's hexadecimal is written in.
+const HEXADECIMAL: u32 = 16;
+
+/// The build of this binary, as the bootstrap that installed it wrote it
+/// beside it: `<executable>.sha256`, the SHA-256 of the binary's bytes in
+/// lowercase hexadecimal on its first line — the file the upload writes and
+/// the probe reads.
+///
+/// Read once, when the daemon starts, and never again: the file is replaced
+/// with the binary when another build is installed, while this daemon goes on
+/// running the bytes it started from — and what a client must be told is
+/// those. A binary run from anywhere else has no such file, and its daemon
+/// says nothing about its build.
+#[must_use]
+pub fn build_beside(executable: &Path) -> Option<BuildDigest> {
+    let mut named = executable.as_os_str().to_owned();
+    named.push(DIGEST_SUFFIX);
+    let written = std::fs::read_to_string(PathBuf::from(named)).ok()?;
+    let line = written.lines().next()?.trim();
+    let mut digest = [0_u8; DIGEST_LENGTH];
+    if line.len() != DIGEST_LENGTH.checked_mul(DIGITS_PER_BYTE)? || !line.is_ascii() {
+        return None;
+    }
+    for (byte, pair) in digest
+        .iter_mut()
+        .zip(line.as_bytes().chunks(DIGITS_PER_BYTE))
+    {
+        let pair = core::str::from_utf8(pair).ok()?;
+        *byte = u8::from_str_radix(pair, HEXADECIMAL).ok()?;
+    }
+    Some(BuildDigest(digest))
+}
+
+/// How many bytes a SHA-256 is.
+const DIGEST_LENGTH: usize = iznik_protocol::identity::BUILD_DIGEST_LENGTH;
+
+/// How many hexadecimal digits a byte is written as.
+const DIGITS_PER_BYTE: usize = 2;

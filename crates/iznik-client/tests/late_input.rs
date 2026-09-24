@@ -77,6 +77,7 @@ async fn slow_host(listener: UnixListener, counting: Arc<AtomicUsize>) {
                     server_version: "scripted".to_owned(),
                     capabilities: Capabilities::from_bits(0),
                     instance: None,
+                    build: None,
                 })
             }
             Ok(ToServer::SnapshotRequest) => {

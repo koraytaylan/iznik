@@ -362,6 +362,15 @@ impl ArtifactSet {
         self.held.keys().map(String::as_str).collect()
     }
 
+    /// Whether it holds an artifact whose bytes have this digest: whether a
+    /// server that says it was built from those bytes is one of this build's.
+    #[must_use]
+    pub fn carries(&self, digest: &[u8; DIGEST_BYTES]) -> bool {
+        self.held
+            .values()
+            .any(|artifact| artifact.digest == *digest)
+    }
+
     /// Whether it holds nothing at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {

@@ -494,6 +494,7 @@ fn skips_a_number(
                         server_version: "scripted".to_owned(),
                         capabilities: Capabilities::from_bits(0),
                         instance: None,
+                        build: None,
                     }) else {
                         return;
                     };

@@ -16,6 +16,7 @@ fresh
 home
 host
 installed
+installing
 layers
 linux
 machine

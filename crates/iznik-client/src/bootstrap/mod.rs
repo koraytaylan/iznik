@@ -17,7 +17,7 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use iznik_protocol::identity::DaemonInstance;
+use iznik_protocol::identity::{BuildDigest, DaemonInstance};
 
 use crate::bootstrap::launch::{
     BootstrapError, BootstrapOptions, Bootstrapped, Cause, Decision, Stage, UpgradeError, bundled,
@@ -365,7 +365,11 @@ pub async fn upgrade(
     let (channel, _held) = launch(transport, Some(&installed.server), options, expires).await?;
     let answering = channel.greeting().clone();
     channel.close();
-    replaced(&host, before, &answering)
+    let installing = artifacts
+        .for_triple(&triple_of(&found))
+        .ok()
+        .map(|artifact| BuildDigest(artifact.digest));
+    replaced(&host, before, installing, &answering)
 }
 
 /// Whether an upgrade happened, from the greeting of the daemon answering
@@ -376,8 +380,10 @@ pub async fn upgrade(
 /// with nothing running is a host with nothing to stop; but if the old daemon
 /// survived it, the new binary's relay has just attached to it and the upgrade
 /// did not happen. The run it names says so exactly: the same run answering
-/// is the old daemon, whatever version it gives. A version not this build's
-/// says so too, and is all there is to go on with a server that names no run.
+/// is the old daemon, whatever version it gives. A daemon that names the build
+/// it runs must name `installing`, the one just put there: any other is a
+/// daemon of another build still answering. A version not this build's says
+/// so too, and is all there is to go on with a server that names neither.
 ///
 /// # Errors
 ///
@@ -386,14 +392,25 @@ pub async fn upgrade(
 pub fn replaced(
     host: &str,
     before: Option<DaemonInstance>,
+    installing: Option<BuildDigest>,
     answering: &ServerHello,
 ) -> Result<(), UpgradeError> {
     let carried = bundled().crate_version;
     let unchanged = before.is_some() && answering.instance == before;
+    let other_build = matches!(
+        (installing, answering.build),
+        (Some(wanted), Some(running)) if wanted != running
+    );
     let detail = if unchanged {
         format!(
             "the server was replaced but the daemon that was there is still answering, as \
              {}: it did not stop",
+            answering.server_version
+        )
+    } else if other_build {
+        format!(
+            "the server was replaced but a daemon of another build of {} is answering: the \
+             daemon that was there did not stop",
             answering.server_version
         )
     } else if answering.server_version != carried {

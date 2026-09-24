@@ -95,7 +95,7 @@ fn reached(
 ) -> Reached {
     let greeting = channel.greeting();
     let instance = greeting.instance;
-    let (stale, superseded) = superseded(host, shared, decision, instance);
+    let (stale, superseded) = superseded(host, shared, decision, greeting);
     let offer = offer_for(greeting, decision, stale);
     let version = greeting.server_version.clone();
     let capabilities = trusted_capabilities(greeting, stale);
@@ -118,12 +118,24 @@ fn reached(
 /// on answering, as the old build, under the version this build has. That run
 /// is remembered, so a later connection that finds the binary right — and the
 /// same run still answering — does not take it for this build either.
+///
+/// A daemon that names its build says it for itself, and nothing needs to be
+/// guessed or remembered: it is this build exactly when the digest it read
+/// beside its binary when it started is the digest of a server this build
+/// carries. A build that carries none has nothing to compare, and guesses.
 fn superseded(
     host: &HostId,
     shared: &Shared,
     decision: &Decision,
-    instance: Option<DaemonInstance>,
+    greeting: &ServerHello,
 ) -> (bool, Option<DaemonInstance>) {
+    let instance = greeting.instance;
+    if let Some(build) = greeting.build
+        && !shared.artifacts.is_empty()
+    {
+        let stale = !shared.artifacts.carries(&build.0);
+        return (stale, instance.filter(|_named| stale));
+    }
     if matches!(decision, Decision::Replace) {
         // A server that does not say which run it is cannot be told apart
         // from the next one, and is taken for the old build on this

@@ -266,8 +266,9 @@ An `iznik_host_status` says, without words to parse:
   many times a reconnecting host has failed since it was last connected.
 - `upgrade`, an `iznik_upgrade_kind` — `IZNIK_UPGRADE_KIND_NONE`,
   `IZNIK_UPGRADE_KIND_VERSION`, `IZNIK_UPGRADE_KIND_CAPABILITIES`, or
-  `IZNIK_UPGRADE_KIND_BUILD` for a daemon still running another build of this
-  version after its binary was replaced — for a
+  `IZNIK_UPGRADE_KIND_BUILD` for a daemon running another build of this
+  version than the one your library carries — which it says itself, from the
+  digest of the binary it was started from — for a
   connected host a newer server is on offer for, with `installed_version` and
   `bundled_version` naming both ends of it (null when there is no offer).
 

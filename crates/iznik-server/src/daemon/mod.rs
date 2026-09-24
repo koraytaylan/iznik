@@ -43,7 +43,7 @@ use crate::daemon::idle::{
     IDLE_CHECK_INTERVAL, IDLE_SHUTDOWN, Idle, SOCKET_POLL_INTERVAL, SOCKET_READY_CAP, STOP_CAP,
 };
 use crate::daemon::lock::{Lock, LockError};
-pub use crate::daemon::paths::{PathsError, RuntimePaths, terminfo_beside};
+pub use crate::daemon::paths::{PathsError, RuntimePaths, build_beside, terminfo_beside};
 use crate::daemon::socket::SocketError;
 use crate::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
 use crate::pty::spawn::Program;
@@ -283,12 +283,13 @@ pub async fn serve(
 ) -> Result<(), DaemonError> {
     let held = Lock::acquire(&paths.lock).await?;
     let listener = owner_only(|| socket::bind(&paths.socket))?;
-    let registry = Arc::new(RwLock::new(Registry::new(
+    let executable = std::env::current_exe().ok();
+    let registry = Registry::new(
         RegistryDefaults {
             program: options.program.clone(),
-            terminfo_directory: std::env::current_exe()
-                .ok()
-                .and_then(|executable| terminfo_beside(&executable)),
+            terminfo_directory: executable
+                .as_deref()
+                .and_then(terminfo_beside),
             agent_socket: Some(paths.agent.clone()),
             program_interval: crate::pty::program::PROGRAM_INTERVAL,
         },
@@ -296,7 +297,11 @@ pub async fn serve(
             DEFAULT_HISTORY_BUDGET_BYTES,
         ))),
         MirrorThread::start()?,
-    )));
+    )
+    // Read now, once: the file may be replaced by the next build's upload
+    // while this daemon goes on running the bytes it started from.
+    .built_from(executable.as_deref().and_then(build_beside));
+    let registry = Arc::new(RwLock::new(registry));
     tracing::info!(socket = %paths.socket.display(), "the daemon is listening");
     let outcome = accept_until(&listener, &registry, &options, shutdown).await;
     let _removed = std::fs::remove_file(&paths.socket);

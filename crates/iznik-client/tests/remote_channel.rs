@@ -141,6 +141,7 @@ fn scripted(
             server_version: "scripted".to_owned(),
             capabilities,
             instance: None,
+            build: None,
         }) else {
             return;
         };

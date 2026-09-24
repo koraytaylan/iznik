@@ -67,6 +67,7 @@ fn frames() -> Result<Vec<u8>, Failed> {
         server_version: "cancellation-fixture".to_owned(),
         capabilities: Capabilities::from_bits(0),
         instance: None,
+        build: None,
     })?;
     let mut bytes = Vec::new();
     for (channel, payload) in std::iter::once((CHANNEL_CONTROL, hello.as_slice())).chain(

@@ -115,6 +115,7 @@ fn snapshot_requests_are_asked_once_for_a_run_of_gaps() {
                         server_version: "scripted".to_owned(),
                         capabilities: Capabilities::from_bits(0),
                         instance: None,
+                        build: None,
                     }]),
                     Ok(ToServer::SnapshotRequest) => {
                         answer(counting.fetch_add(1, Ordering::AcqRel) == 0)

@@ -10,7 +10,7 @@ use std::path::Path;
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
 use iznik_protocol::identity::{
-    ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence,
+    BuildDigest, ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence,
 };
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MAXIMUM_INPUT_LENGTH, MarkKind, MessageError, PROTOCOL_VERSION,
@@ -103,6 +103,21 @@ fn instance_field(object: &Value, name: &str) -> Result<Option<DaemonInstance>, 
         .try_into()
         .map_err(|_wrong| format!("`{name}` is not sixteen bytes"))?;
     Ok(Some(DaemonInstance(u128::from_le_bytes(bytes))))
+}
+
+/// An optional build digest, written as thirty-two bytes of hexadecimal.
+///
+/// # Errors
+///
+/// When the field is there and is not thirty-two bytes.
+fn build_field(object: &Value, name: &str) -> Result<Option<BuildDigest>, Failure> {
+    if object.get(name).is_none() {
+        return Ok(None);
+    }
+    let bytes: [u8; 32] = bytes_field(object, name)?
+        .try_into()
+        .map_err(|_wrong| format!("`{name}` is not thirty-two bytes"))?;
+    Ok(Some(BuildDigest(bytes)))
 }
 
 /// A variant: a bare name for a unit variant, or `{"Name": fields}`.
@@ -251,6 +266,7 @@ fn to_client(value: &Value) -> Result<ToClient, Failure> {
             server_version: string_field(&fields, "server_version")?,
             capabilities: Capabilities::from_bits(narrow_field(&fields, "capabilities")?),
             instance: instance_field(&fields, "instance")?,
+            build: build_field(&fields, "build")?,
         },
         "Snapshot" => ToClient::Snapshot {
             generation: Generation(integer_field(&fields, "generation")?),
@@ -499,6 +515,7 @@ fn message_golden_a_foreign_protocol_version_is_a_value() {
         server_version: "iznik-server 9".to_owned(),
         capabilities: Capabilities::from_bits(0),
         instance: None,
+        build: None,
     };
     let wire = encode_to_client(&hello).expect("a Hello encodes");
     match decode_to_client(&wire) {

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameReader, FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::identity::DaemonInstance;
+use iznik_protocol::identity::{BuildDigest, DaemonInstance};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, RELAY_READY, ToClient, ToServer,
     decode_to_client, encode_to_server,
@@ -267,6 +267,12 @@ pub struct ServerHello {
     /// A server that does not is one built before it could, and a client can
     /// then only guess whether it is talking to the daemon it last spoke to.
     pub instance: Option<DaemonInstance>,
+    /// Which build of the server its daemon runs, when it says: the digest
+    /// of the binary the daemon was started from.
+    ///
+    /// Every build of one version gives the same version, so this is the one
+    /// thing that says whether the daemon answering is this build's own.
+    pub build: Option<BuildDigest>,
 }
 
 /// A stream to the server, before anything has been said on it.
@@ -498,14 +504,15 @@ fn offers_zstd(capabilities: Capabilities) -> bool {
 }
 
 /// What this client asks for: compression, resuming where it left off, to be
-/// told which run of the daemon it reached, and how far the host answered each
-/// pane's terminal queries itself.
+/// told which run of the daemon it reached and which build it runs, and how
+/// far the host answered each pane's terminal queries itself.
 fn wanted() -> Capabilities {
     Capabilities::from_bits(
         Capabilities::ZSTD.bits()
             | Capabilities::RESUME.bits()
             | Capabilities::INSTANCE.bits()
-            | Capabilities::ANSWERED.bits(),
+            | Capabilities::ANSWERED.bits()
+            | Capabilities::BUILD.bits(),
     )
 }
 
@@ -701,13 +708,20 @@ impl RemoteChannel {
             });
         }
         let message = decode_to_client(frame.payload).map_err(ChannelError::Message)?;
-        let (protocol_version, server_version, capabilities, instance) = match message {
+        let (protocol_version, server_version, capabilities, instance, build) = match message {
             ToClient::Hello {
                 protocol_version,
                 server_version,
                 capabilities,
                 instance,
-            } => (protocol_version, server_version, capabilities, instance),
+                build,
+            } => (
+                protocol_version,
+                server_version,
+                capabilities,
+                instance,
+                build,
+            ),
             // What a server of another version answers a `Hello` with: its
             // refusal, which is the version mismatch this client exists to
             // report by name — not something unexpected.
@@ -739,6 +753,7 @@ impl RemoteChannel {
             server_version,
             capabilities,
             instance,
+            build,
         })
     }
 

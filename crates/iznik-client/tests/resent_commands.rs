@@ -102,6 +102,7 @@ fn said(asked: &ToServer, first: bool) -> Script {
                 Capabilities::known().bits() & !Capabilities::ZSTD.bits(),
             ),
             instance: Some(DaemonInstance(42)),
+            build: None,
         }),
         ToServer::SnapshotRequest => {
             let model = one_session();

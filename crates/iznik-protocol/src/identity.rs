@@ -37,6 +37,18 @@ pub struct Sequence(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DaemonInstance(pub u128);
 
+/// The SHA-256 of the server binary a daemon was started from, as the
+/// bootstrap that installed it wrote it beside the binary.
+///
+/// Every build of one version gives the same version, so this is what tells
+/// two builds apart: a client compares it with the digest of the server it
+/// carries to know whether the daemon answering is its own build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BuildDigest(pub [u8; BUILD_DIGEST_LENGTH]);
+
+/// How many bytes a [`BuildDigest`] is: a SHA-256.
+pub const BUILD_DIGEST_LENGTH: usize = 32;
+
 /// One client's hold on a host, chosen at random by the client when it
 /// starts holding it.
 ///

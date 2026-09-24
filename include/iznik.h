@@ -226,8 +226,8 @@ typedef enum {
    */
   IZNIK_UPGRADE_KIND_CAPABILITIES = 2,
   /**
-   * The host's daemon runs another build of this version, from before its
-   * binary was replaced with this build's.
+   * The host's daemon runs another build of this version than the one
+   * this library carries.
    */
   IZNIK_UPGRADE_KIND_BUILD = 3,
 } iznik_upgrade_kind;

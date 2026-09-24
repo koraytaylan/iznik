@@ -139,6 +139,7 @@ async fn one_connection(
                 server_version: "scripted".to_owned(),
                 capabilities: Capabilities::INSTANCE,
                 instance: Some(instance),
+                build: None,
             }],
             ToServer::SnapshotRequest => {
                 let model = one_pane();

@@ -57,10 +57,23 @@ impl Capabilities {
     /// is sent before the client knows what the server can read.
     pub const IDENTIFY: Capabilities = Capabilities { bits: 1 << 6 };
 
+    /// The server's `Hello` ends, after the [`DaemonInstance`], with the
+    /// [`BuildDigest`] of the binary its daemon was started from.
+    ///
+    /// Appended like [`Capabilities::INSTANCE`], and only after it: a server
+    /// sends it to a client whose `Hello` carried both bits, and only when
+    /// its daemon knows its own digest — read once, when it started, from the
+    /// file the bootstrap wrote beside the binary. A reply that sets the bit
+    /// is one that carries the field.
+    ///
+    /// [`DaemonInstance`]: crate::identity::DaemonInstance
+    /// [`BuildDigest`]: crate::identity::BuildDigest
+    pub const BUILD: Capabilities = Capabilities { bits: 1 << 7 };
+
     /// The bits that append a field to a server message, and so are claimed
     /// in the server's reply only when the client's `Hello` claimed them too.
     pub const APPENDED: Capabilities = Capabilities {
-        bits: Capabilities::INSTANCE.bits | Capabilities::ANSWERED.bits,
+        bits: Capabilities::INSTANCE.bits | Capabilities::ANSWERED.bits | Capabilities::BUILD.bits,
     };
 
     /// Every bit this version of the protocol knows.
@@ -69,7 +82,8 @@ impl Capabilities {
         | Capabilities::REORDER_SESSIONS.bits
         | Capabilities::INSTANCE.bits
         | Capabilities::ANSWERED.bits
-        | Capabilities::IDENTIFY.bits;
+        | Capabilities::IDENTIFY.bits
+        | Capabilities::BUILD.bits;
 
     /// The bits that gate something a person uses, as opposed to something an
     /// optimization is made of.

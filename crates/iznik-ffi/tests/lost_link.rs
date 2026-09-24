@@ -125,6 +125,7 @@ async fn one_connection(stream: tokio::net::UnixStream) {
                 server_version: "scripted".to_owned(),
                 capabilities: Capabilities::from_bits(0),
                 instance: None,
+                build: None,
             },
             Ok(ToServer::SnapshotRequest) => {
                 let model = HostModel {

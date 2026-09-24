@@ -91,9 +91,10 @@ pub enum UpgradeReason {
     /// this build knows, so features gated on them are unavailable until it is
     /// replaced.
     Capabilities,
-    /// The host runs the same version, but another build of it: its binary
-    /// was replaced with this build's while its daemon went on running the
-    /// old one, whose capability bits are not this build's to read.
+    /// The host runs the same version, but another build of it — its daemon
+    /// said so, naming the digest of the binary it started from, or went on
+    /// running after its binary was replaced with this build's — whose
+    /// capability bits are not this build's to read.
     Build,
 }
 
