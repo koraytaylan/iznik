@@ -133,6 +133,21 @@ pub(super) fn keep(kept: &mut Vec<Order>, order: Order) {
     }
 }
 
+/// A held order as it is to be carried to a daemon other than the one it was
+/// given against.
+///
+/// A resume names a byte of one daemon's pane, and pane numbers begin again
+/// with every daemon: carried to another run it would splice whatever pane
+/// now has that number onto the old one's screen. It is asked for afresh
+/// instead, which the host answers with a screen. Every other order is about
+/// the pane as it now is, and goes as it was given.
+pub(super) fn afresh(order: Order) -> Order {
+    match order {
+        Order::Resume { pane, .. } => Order::Subscribe { pane },
+        other => other,
+    }
+}
+
 /// Whether the pile would hold this kind of order.
 ///
 /// The same four kinds [`keep`] keeps, asked before an order is given away, so

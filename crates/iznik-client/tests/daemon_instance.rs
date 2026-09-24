@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
-use iznik_client::host::state::BackoffPolicy;
+use iznik_client::host::state::{BackoffPolicy, HostState};
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_link::framed::FramedLink;
@@ -30,6 +30,17 @@ type Failed = Box<dyn std::error::Error>;
 
 /// How long a case waits for something that should happen at once.
 const PROMPT: Duration = Duration::from_secs(10);
+
+/// How long a host waits to be tried again when nothing is asked meanwhile.
+const QUICK: Duration = Duration::from_millis(20);
+
+/// How long it waits when something is asked while its link is down: long
+/// enough that the asking lands before the next connection.
+const HELD_DOWN: Duration = Duration::from_millis(500);
+
+/// How long a case lets a connection go on being asked after its first ask
+/// about the pane.
+const SETTLE: Duration = Duration::from_millis(300);
 
 /// The pane both daemons hold under the same number.
 const PANE: PaneId = PaneId(1);
@@ -189,19 +200,19 @@ fn scripted(
     Ok(())
 }
 
-/// A manager that reconnects in milliseconds.
+/// A manager that reconnects after `backoff`.
 ///
 /// # Errors
 ///
 /// When it cannot be built.
-fn manager(held: &Scratch) -> Result<HostManager, Failed> {
+fn manager(held: &Scratch, backoff: Duration) -> Result<HostManager, Failed> {
     let artifacts = held.path.join("artifacts");
     std::fs::create_dir_all(&artifacts)?;
     let paths = ClientRuntimePaths::under(&held.path.join("runtime"))?;
     let mut options = ManagerOptions::new(artifacts, paths);
     options.backoff = BackoffPolicy {
-        initial: Duration::from_millis(20),
-        maximum: Duration::from_millis(200),
+        initial: backoff,
+        maximum: backoff,
         ..BackoffPolicy::default()
     };
     options.channel = ChannelOptions {
@@ -213,25 +224,68 @@ fn manager(held: &Scratch) -> Result<HostManager, Failed> {
     Ok(HostManager::new(options)?)
 }
 
+/// What a case does while the host has no link.
+#[derive(Clone, Copy)]
+enum WhileDown {
+    /// Nothing.
+    Nothing,
+    /// Asks for the pane to be resumed from this byte — as an application
+    /// showing a hidden pane again does.
+    Resume(Sequence),
+}
+
+/// Whether a message asks for the pane.
+fn about_the_pane(asked: &ToServer) -> bool {
+    matches!(
+        asked,
+        ToServer::Subscribe { pane } | ToServer::Resume { pane, .. } if *pane == PANE
+    )
+}
+
+/// What every connection after the first asked about the pane.
+fn asked_later(heard: &Heard) -> Vec<ToServer> {
+    heard
+        .lock()
+        .map(|recorded| {
+            recorded
+                .iter()
+                .filter(|(number, asked)| *number > 0 && about_the_pane(asked))
+                .map(|(_number, asked)| asked.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Subscribes to the pane on a host whose daemon is replaced after the first
-/// connection by `later`, and gives back what the second connection was asked
-/// about the pane.
+/// connection by `later`, does `down` while the link is gone, and gives back
+/// everything the later connections were asked about the pane.
 ///
 /// # Errors
 ///
 /// When the host cannot be stood up or the second connection never asks.
-fn asked_again(case: &str, later: DaemonInstance) -> Result<ToServer, Failed> {
+fn asked_again(
+    case: &str,
+    later: DaemonInstance,
+    down: WhileDown,
+) -> Result<Vec<ToServer>, Failed> {
     let held = scratch(case)?;
     let runtime = RuntimeBuilder::new_multi_thread().enable_all().build()?;
     let socket = held.path.join("scripted.sock");
     let heard: Heard = Arc::new(Mutex::new(Vec::new()));
     scripted(&runtime, &socket, later, &heard)?;
-    let manager = manager(&held)?;
+    // Long enough, when something is to be asked while the link is down, that
+    // it is asked before the next connection rather than after.
+    let backoff = match down {
+        WhileDown::Nothing => QUICK,
+        WhileDown::Resume(_) => HELD_DOWN,
+    };
+    let manager = manager(&held, backoff)?;
     let events = manager.events();
     let host = format!("{LOCAL_PREFIX}{}", socket.display());
     manager.add_host(&host)?;
     let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
     let mut subscribed = false;
+    let mut connected = false;
     while Instant::now() < expires {
         let left = expires.saturating_duration_since(Instant::now());
         let Ok(event) = events.recv_timeout(left) else {
@@ -241,22 +295,22 @@ fn asked_again(case: &str, later: DaemonInstance) -> Result<ToServer, Failed> {
             manager.subscribe(&host, PANE)?;
             subscribed = true;
         }
-        let again = heard.lock().ok().and_then(|recorded| {
-            recorded
-                .iter()
-                .find(|(number, asked)| {
-                    *number > 0
-                        && matches!(
-                            asked,
-                            ToServer::Subscribe { pane } | ToServer::Resume { pane, .. }
-                                if *pane == PANE
-                        )
-                })
-                .map(|(_number, asked)| asked.clone())
-        });
-        if let Some(asked) = again {
+        if let ManagerEvent::Moved { state, .. } = &event {
+            if matches!(state, HostState::Connected { .. }) {
+                connected = true;
+            } else if connected
+                && let (HostState::Reconnecting { .. }, WhileDown::Resume(from)) = (state, down)
+            {
+                connected = false;
+                manager.resume(&host, PANE, from)?;
+            }
+        }
+        if !asked_later(&heard).is_empty() {
+            // Whatever else the connection is going to be asked about the
+            // pane, it is asked in the same breath.
+            std::thread::sleep(SETTLE);
             drop(manager);
-            return Ok(asked);
+            return Ok(asked_later(&heard));
         }
     }
     Err("the second connection was never asked for the pane".into())
@@ -267,10 +321,11 @@ fn asked_again(case: &str, later: DaemonInstance) -> Result<ToServer, Failed> {
 /// When a pane of a daemon that is gone is resumed from the byte it reached.
 #[test]
 fn daemon_instance_a_replaced_daemon_is_asked_for_every_pane_afresh() {
-    let asked = asked_again("replaced", SECOND).unwrap_or_else(|error| panic!("{error}"));
+    let asked = asked_again("replaced", SECOND, WhileDown::Nothing)
+        .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
-        asked,
-        ToServer::Subscribe { pane: PANE },
+        asked.first(),
+        Some(&ToServer::Subscribe { pane: PANE }),
         "a pane number of another daemon is subscribed afresh, never resumed"
     );
 }
@@ -280,14 +335,32 @@ fn daemon_instance_a_replaced_daemon_is_asked_for_every_pane_afresh() {
 /// When the same daemon is not resumed from the byte this client holds.
 #[test]
 fn daemon_instance_the_same_daemon_is_resumed_where_it_left_off() {
-    let asked = asked_again("same", FIRST).unwrap_or_else(|error| panic!("{error}"));
+    let asked =
+        asked_again("same", FIRST, WhileDown::Nothing).unwrap_or_else(|error| panic!("{error}"));
     let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
     assert_eq!(
-        asked,
-        ToServer::Resume {
+        asked.first(),
+        Some(&ToServer::Resume {
             pane: PANE,
             from_sequence: Sequence(reached),
-        },
+        }),
         "the same daemon carries on from the byte this client reached"
+    );
+}
+
+/// # Panics
+///
+/// When a resume asked for while the link was down is carried, as a resume,
+/// to a daemon other than the one its byte came from.
+#[test]
+fn daemon_instance_a_resume_held_through_a_restart_is_asked_afresh() {
+    let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
+    let asked = asked_again("held", SECOND, WhileDown::Resume(Sequence(reached)))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        asked
+            .iter()
+            .all(|message| matches!(message, ToServer::Subscribe { .. })),
+        "a held resume is asked afresh of a daemon that is another run: {asked:?}"
     );
 }

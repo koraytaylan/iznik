@@ -24,7 +24,8 @@ use iznik_protocol::message::ToServer;
 
 use crate::commands::withdraw;
 use crate::host::identity::HostId;
-use crate::host::manager::task::{trusted_capabilities, write};
+use crate::host::manager::reach::trusted_capabilities;
+use crate::host::manager::task::write;
 use crate::host::manager::{ManagerEvent, Shared};
 use crate::reduce::Notification;
 use crate::transport::channel::RemoteChannel;

@@ -8,31 +8,26 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::encode_session_command;
-use iznik_protocol::identity::{CommandId, DaemonInstance, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, PaneId, Sequence};
 use iznik_protocol::message::{CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, encode_to_server};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::bootstrap::launch::{
-    BootstrapError, Cause, Decision, Stage, UpgradeError, bundled, expiry, launch,
-};
-use crate::bootstrap::probe::InstalledServer;
-use crate::bootstrap::{bootstrap_watched, upgrade};
+use crate::bootstrap::launch::{Cause, UpgradeError};
+use crate::bootstrap::upgrade;
 use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
 use crate::host::manager::hearing::{heard, told_the_model};
+use crate::host::manager::reach::{Reached, reach};
 use crate::host::manager::unanswered::{Unanswered, still_asked};
-use crate::host::manager::waiting::{Waiting, Woken, hold_until, keep, keeps, waiting};
+use crate::host::manager::waiting::{Waiting, Woken, afresh, hold_until, keep, keeps, waiting};
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
-use crate::host::state::{
-    Action, HostEvent, HostState, HostStateMachine, UpgradeOffer, UpgradeReason,
-};
+use crate::host::state::{Action, HostEvent, HostState, HostStateMachine};
 use crate::model::HostView;
 use crate::reduce::Notification;
 use crate::transport::Transport;
-use crate::transport::channel::{ChannelError, RemoteChannel, ServerHello};
+use crate::transport::channel::{ChannelError, RemoteChannel};
 
 /// How one turn of a host's life ended.
 enum Ended {
@@ -167,7 +162,7 @@ async fn replace(
 
 /// Moves the host's machine, tells anyone watching when it moved, and gives
 /// back what must be done about it.
-fn advance(
+pub(super) fn advance(
     shared: &Shared,
     host: &HostId,
     machine: &Mutex<HostStateMachine>,
@@ -249,13 +244,18 @@ async fn connect(
         match reach(host, shared, machine).await {
             Ok(reached) => {
                 let linked = Instant::now();
-                let mut channel = accept(host, shared, machine, reached).await;
+                let (mut channel, fresh) = accept(host, shared, machine, reached).await;
                 let carried = unanswered.link_began(host, shared, &mut channel).await;
                 // Everything asked for while there was nowhere to send it.
                 // What the link would not take stays held: the next
                 // connection is the one that will carry it, and a write that
-                // failed is a link that has just died.
-                let standing = std::mem::take(kept);
+                // failed is a link that has just died. A daemon other than the
+                // one a held resume's byte came from is asked for the pane
+                // afresh, as `resume` asks for every other.
+                let standing: Vec<Order> = std::mem::take(kept)
+                    .into_iter()
+                    .map(|order| if fresh { afresh(order) } else { order })
+                    .collect();
                 let mut sent = 0_usize;
                 for order in &standing {
                     match carry(&mut channel, order.clone(), shared).await {
@@ -289,155 +289,17 @@ async fn connect(
     }
 }
 
-/// What reaching a host got: its channel, what it holds, what its server says
-/// it is, and a newer one if this build carries it.
-struct Reached {
-    /// The channel.
-    channel: RemoteChannel,
-    /// The model the host answered with.
-    snapshot: iznik_protocol::model::HostModel,
-    /// What its server says it is.
-    version: String,
-    /// What its server advertised it can decode.
-    capabilities: Capabilities,
-    /// Which run of the daemon answered, when it said.
-    instance: Option<DaemonInstance>,
-    /// A newer one, when this build carries one.
-    offer: Option<UpgradeOffer>,
-}
-
-/// Bootstraps a host and opens a channel to it.
-///
-/// # Errors
-///
-/// The [`BootstrapError`] naming the stage that failed.
-async fn reach(
-    host: &HostId,
-    shared: &Arc<Shared>,
-    machine: &Mutex<HostStateMachine>,
-) -> Result<Reached, BootstrapError> {
-    let transport = Transport::for_alias(
-        &host.0,
-        &shared.options.runtime_paths,
-        shared.options.ssh.clone(),
-    );
-    let options = bootstrapping(&shared.options);
-    let deadline = shared.options.bootstrap_deadline;
-    if host.local_socket().is_some() {
-        // A socket on this machine: there is nothing to probe and nothing to
-        // install, and `unix:` is the alias this crate owns.
-        let (channel, snapshot) = launch(&transport, None, &options, expiry(deadline)).await?;
-        let greeting = channel.greeting();
-        // A socket on this machine is a daemon too, and it may be one this
-        // build did not start: its greeting says whether anything is missing,
-        // and an offer is the only honest thing to make of that.
-        let offer = offer_for(greeting, &Decision::UpToDate);
-        let version = greeting.server_version.clone();
-        let capabilities = trusted_capabilities(greeting);
-        let instance = greeting.instance;
-        return Ok(Reached {
-            channel,
-            snapshot,
-            version,
-            capabilities,
-            instance,
-            offer,
-        });
-    }
-    let watching = |stage: Stage| {
-        let _reported = advance(shared, host, machine, HostEvent::Reached { stage });
-    };
-    let connected =
-        bootstrap_watched(&transport, &shared.artifacts, &options, deadline, &watching).await?;
-    let greeting = connected.channel.greeting();
-    let offer = offer_for(greeting, &connected.decision);
-    let version = greeting.server_version.clone();
-    let capabilities = trusted_capabilities(greeting);
-    let instance = greeting.instance;
-    Ok(Reached {
-        channel: connected.channel,
-        snapshot: connected.snapshot,
-        version,
-        capabilities,
-        instance,
-        offer,
-    })
-}
-
-/// The capabilities of a greeting this build may act on.
-///
-/// A capability bit means what the build that assigned it says it means, and
-/// the only thing that identifies a build is its version. Two servers that both
-/// say "protocol 1" may have given one bit number two different jobs — an
-/// unreleased local build did exactly that — so a server that is not this
-/// build's own version is not interpreted at all: its advertisement is dropped
-/// and every feature gated on a bit is unavailable to it. That is the
-/// conservative answer, and it costs nothing real, because a host of another
-/// version is offered an upgrade on that ground alone.
-pub(super) fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
-    if greeting.server_version == bundled().crate_version {
-        greeting.capabilities
-    } else {
-        Capabilities::from_bits(0)
-    }
-}
-
-/// The upgrade offer a connection puts on the table, if any.
-///
-/// Four things offer one. A host the probe found another version on is offered
-/// it for the version. A host reached over a local socket — where no probe ran
-/// — is offered it when its greeting names another version. A host of this
-/// build's version whose server is nevertheless missing capabilities is offered
-/// it for the gap. The installed server is always read from what the greeting
-/// said, never assumed to equal what the build carries.
-fn offer_for(greeting: &ServerHello, decision: &Decision) -> Option<UpgradeOffer> {
-    // What the greeting said the host runs, which is never assumed to be what
-    // this build carries.
-    let what_the_host_said = InstalledServer {
-        crate_version: greeting.server_version.clone(),
-        protocol_version: greeting.protocol_version,
-    };
-    // The probe's own answer is the one to offer when it found a version this
-    // build does not carry.
-    if let Decision::UpgradeAvailable {
-        installed: found,
-        bundled: carried,
-    } = decision
-    {
-        return Some(UpgradeOffer {
-            installed: found.clone(),
-            bundled: carried.clone(),
-            reason: UpgradeReason::Version,
-        });
-    }
-    let carried = bundled();
-    if what_the_host_said.crate_version != carried.crate_version {
-        // A local socket, or a probe the greeting disagreed with: the version
-        // alone is reason enough, and it is the honest one.
-        return Some(UpgradeOffer {
-            installed: what_the_host_said,
-            bundled: carried,
-            reason: UpgradeReason::Version,
-        });
-    }
-    if trusted_capabilities(greeting).missing_features().bits() != 0 {
-        return Some(UpgradeOffer {
-            installed: what_the_host_said,
-            bundled: carried,
-            reason: UpgradeReason::Capabilities,
-        });
-    }
-    None
-}
-
 /// Takes what the host answered into the model, tells the machine it is
 /// connected, and resumes every pane the model holds a byte for.
+///
+/// Gives back, with the channel, whether the daemon it reached is another run
+/// than the one this client's cursors came from.
 async fn accept(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     reached: Reached,
-) -> RemoteChannel {
+) -> (RemoteChannel, bool) {
     let Reached {
         mut channel,
         snapshot,
@@ -502,7 +364,7 @@ async fn accept(
     if taken.contains(&Action::Resume) {
         resume(host, shared, &mut channel, fresh).await;
     }
-    channel
+    (channel, fresh)
 }
 
 /// Asks the host to carry on every subscribed pane from the byte this client
