@@ -334,11 +334,21 @@ impl WindowShell {
     /// Move each pane's standing on what a host said about carrying it.
     pub(crate) fn note_answer(&mut self, said: &ManagerEvent, context: &mut Context<'_, Self>) {
         match said {
-            ManagerEvent::Carried { host, pane, .. } | ManagerEvent::Screen { host, pane, .. } => {
-                self.subscriptions.carried(&PaneKey {
-                    host: host.clone(),
-                    pane: *pane,
-                });
+            ManagerEvent::Carried {
+                host,
+                pane,
+                sequence,
+            } => {
+                let key = pane_key(host, *pane);
+                self.subscriptions.carried(&key);
+                // Carried from the byte the emulator will stand at, the host
+                // sends no screen: a gap after this asks for one at once.
+                if self.subscriptions.resume_from(&key) == Some(*sequence) {
+                    self.hosts.bridge().forget_screen(&key);
+                }
+            }
+            ManagerEvent::Screen { host, pane, .. } => {
+                self.subscriptions.carried(&pane_key(host, *pane));
             }
             ManagerEvent::Detached { host, pane } => self.subscriptions.detached(&PaneKey {
                 host: host.clone(),

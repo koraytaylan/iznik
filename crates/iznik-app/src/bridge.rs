@@ -401,7 +401,9 @@ impl EngineBridge {
     pub fn subscribe(&self, alias: &str, pane: PaneId) -> Result<(), EngineError> {
         self.engine()?
             .subscribe(alias, pane)
-            .map_err(EngineError::Manager)
+            .map_err(EngineError::Manager)?;
+        self.screen_expected(alias, pane);
+        Ok(())
     }
 
     /// Subscribe from `from`, the byte this pane's emulator already stands at;
@@ -412,7 +414,30 @@ impl EngineBridge {
     pub fn resume(&self, alias: &str, pane: PaneId, from: Sequence) -> Result<(), EngineError> {
         self.engine()?
             .resume(alias, pane, from)
-            .map_err(EngineError::Manager)
+            .map_err(EngineError::Manager)?;
+        self.screen_expected(alias, pane);
+        Ok(())
+    }
+
+    /// Count a subscription just asked for as a screen asked for: its answer
+    /// is a screen, or the host's word that it continues from where the
+    /// emulator stands, and a keystroke typed meanwhile must not ask again.
+    fn screen_expected(&self, alias: &str, pane: PaneId) {
+        let key = PaneKey {
+            host: HostId(alias.to_owned()),
+            pane,
+        };
+        let _asked = self
+            .screens_requested
+            .borrow_mut()
+            .insert(key, Instant::now());
+    }
+
+    /// Stop waiting for a pane's screen: the host said it continues the
+    /// stream without one, or the pane is gone. A gap after this asks for a
+    /// screen at once rather than when an old request would have expired.
+    pub fn forget_screen(&self, key: &PaneKey) {
+        let _forgotten = self.screens_requested.borrow_mut().remove(key);
     }
 
     /// Stop carrying a pane when its surface leaves the visible tab.

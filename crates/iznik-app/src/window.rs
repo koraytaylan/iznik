@@ -833,6 +833,7 @@ impl WindowShell {
         for key in removed {
             self.panes.remove(&key);
             self.subscriptions.forget(&key);
+            self.hosts.bridge().forget_screen(&key);
             if let Err(error) = self.thread.send(VtCommand::Close(key.clone())) {
                 self.failure(&key.host, error.to_string(), context);
             }
