@@ -442,10 +442,12 @@ the runtime directory, `tic`, and whether the terminfo is already there — then
 upload the server binary and the `xterm-ghostty` terminfo source down the
 standard input of one remote shell, verified by a `SHA-256` this client
 computed and renamed into place only once the host agrees, then launch or adopt
-the daemon and negotiate. A matching version skips the upload entirely, which
-is the common case and must be fast: a second connection finishes inside
-`FAST_RECONNECT_BUDGET`. The prefix is the first candidate the host says this
-user both owns and may write, and nothing is created to find out.
+the daemon and negotiate. A matching digest — the probe reports the `SHA-256`
+of the server already installed, and it equals this build's — skips the upload
+entirely, which is the common case and must be fast: a second connection
+finishes inside `FAST_RECONNECT_BUDGET`. The prefix is the first candidate the
+host says this user both owns and may write, and nothing is created to find
+out.
 
 Because the daemon *is* the sessions, it is never replaced quietly: a host
 running another version is connected to as it is and the offer rides back with

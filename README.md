@@ -132,8 +132,10 @@ The daemon outlives the SSH session that started it — that is the point of it
 `SSH_TTY` or `XDG_SESSION_ID`, and its `SSH_AUTH_SOCK` is the agent link above
 rather than the first session's agent, which would be dead after a reconnect.
 The daemon exits on its own once it has held no panes and no clients for ten
-minutes. Connecting again to a host that already has the version this build
-carries uploads nothing at all.
+minutes. Connecting again to a host whose installed server has the same
+SHA-256 digest as the one this build carries uploads nothing at all; a server of
+the same version but other bytes is uploaded again, and a daemon already
+running is left alone until it is upgraded.
 
 Taking it off removes the binary, the terminfo, the runtime directory and the
 prefix itself where iznik made it. A prefix iznik was lent rather than made —

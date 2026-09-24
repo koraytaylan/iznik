@@ -53,10 +53,11 @@ are already there.
 names a directory of servers instead. With no server found, the application
 says so on standard error at start: a `unix:` socket still connects, and an
 ssh host without a server fails naming the machine it needed and the servers
-the build does carry. A server rebuilt without a version change is not
-reinstalled on a host that already has that version, because the bootstrap
-compares versions, not bytes; `host: uninstall` takes it off so the next
-connection installs the new one.
+the build does carry. A server rebuilt without a version change is still
+installed on the next connection, because the bootstrap compares the installed
+server's SHA-256 digest with the one the application carries, not versions; a
+daemon already running keeps its sessions, and the old build, until
+`host: upgrade` replaces it.
 
 ## Adding a host
 
