@@ -201,7 +201,9 @@ reconnection now rather than after the backoff.
   `command_id` carrying the number you were given.
 - `IZNIK_EVENT_KIND_MARK` — a shell-integration event in a pane.
 - `IZNIK_EVENT_KIND_NOTIFICATION` — words for a person. When it is about a
-  command, `command_id` carries that command's number.
+  command — never answered, answered unreadably, or of unknown outcome because
+  the link went — `command_id` carries that command's number; when it is about
+  keystrokes that were dropped, `pane` names their pane.
 
 Keystrokes you send with `iznik_pane_input` while a host has no link — it is
 reconnecting, or being bootstrapped, which can take minutes — are not held and

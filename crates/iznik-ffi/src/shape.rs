@@ -216,7 +216,9 @@ fn pane_of(event: &ManagerEvent) -> u64 {
         ManagerEvent::Bytes { pane, .. }
         | ManagerEvent::Screen { pane, .. }
         | ManagerEvent::Detached { pane, .. }
-        | ManagerEvent::Notify(Notification::Mark { pane, .. }) => pane.0,
+        | ManagerEvent::Notify(
+            Notification::Mark { pane, .. } | Notification::InputDropped { pane, .. },
+        ) => pane.0,
         _elsewhere => 0,
     }
 }
@@ -264,7 +266,8 @@ fn command_of(event: &ManagerEvent) -> u64 {
         ManagerEvent::Notify(
             Notification::CommandFinished { command, .. }
             | Notification::CommandTimedOut { command, .. }
-            | Notification::CommandUnreadable { command, .. },
+            | Notification::CommandUnreadable { command, .. }
+            | Notification::CommandOutcomeUnknown { command, .. },
         ) => command.0,
         _elsewhere => 0,
     }

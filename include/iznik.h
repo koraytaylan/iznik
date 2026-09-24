@@ -105,10 +105,12 @@ typedef enum {
   /**
    * Something worth telling a person, as UTF-8.
    *
-   * When it is about a command — one the host never answered, or one whose
-   * answer could not be read — that command's own number is in
-   * `command_id`, so whoever is waiting on it is released rather than left
-   * waiting on an answer that will not come in the shape they expected.
+   * When it is about a command — one the host never answered, one whose
+   * answer could not be read, or one whose link went before its answer
+   * came — that command's own number is in `command_id`, so whoever is
+   * waiting on it is released rather than left waiting on an answer that
+   * will not come in the shape they expected. When it is about keystrokes
+   * that were dropped, the pane they were for is in `pane`.
    */
   IZNIK_EVENT_KIND_NOTIFICATION = 5,
   /**

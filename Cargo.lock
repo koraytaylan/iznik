@@ -3697,6 +3697,7 @@ name = "iznik-ffi"
 version = "0.0.0"
 dependencies = [
  "iznik-client",
+ "iznik-link",
  "iznik-protocol",
  "iznik-testkit",
  "tokio",

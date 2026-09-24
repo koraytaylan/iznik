@@ -21,6 +21,8 @@ iznik-protocol = { path = "../iznik-protocol" }
 
 [dev-dependencies]
 iznik-testkit = { path = "../iznik-testkit" }
+# For the host a case scripts on a socket, to lose a link on cue.
+iznik-link = { path = "../iznik-link" }
 # For the runtime the cases stand a daemon up on. Nothing in `src/` uses it:
 # the boundary owns no runtime, the engine behind it does.
-tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "net"] }
