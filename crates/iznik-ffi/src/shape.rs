@@ -182,6 +182,14 @@ fn told(notification: &Notification) -> Option<(EventKind, String, Vec<u8>)> {
             )
             .into_bytes(),
         )),
+        Notification::DaemonRestarted { host } => Some((
+            EventKind::Notification,
+            host.0.clone(),
+            "the host's daemon was restarted: every pane is started again, and one that was \
+             let go of is to be reset rather than resumed"
+                .to_owned()
+                .into_bytes(),
+        )),
         Notification::CommandOutcomeUnknown { host, command } => Some((
             EventKind::Notification,
             host.0.clone(),

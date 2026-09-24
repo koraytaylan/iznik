@@ -236,6 +236,12 @@ command again — a creation sent twice is two panes. A command that is simply n
 different notification: it was never answered, and after five seconds it is
 given up on.
 
+When a host's daemon was restarted while its link was down, the connection
+that finds out says so in a notification before it carries any pane. Pane
+numbers begin again with every daemon: every pane still attached is sent a
+screen, and a surface you kept for a pane you had let go of holds another
+pane's past — start it again rather than feeding it more.
+
 **The events carry what the host has said, and never what the client is
 showing ahead of it.** If you want a rename on screen before the host has
 agreed to it, make that change yourself and put it back when the

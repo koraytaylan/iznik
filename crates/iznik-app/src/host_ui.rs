@@ -482,6 +482,11 @@ fn read(notification: &Notification) -> (HostId, NoticeKind, String) {
                 pane.0
             ),
         ),
+        Notification::DaemonRestarted { host } => (
+            host.clone(),
+            NoticeKind::Connection,
+            "the host's daemon was restarted; every pane is drawn afresh".to_owned(),
+        ),
         Notification::CommandOutcomeUnknown { host, command } => (
             host.clone(),
             NoticeKind::Failure,

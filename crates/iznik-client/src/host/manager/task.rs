@@ -244,17 +244,17 @@ async fn connect(
         match reach(host, shared, machine).await {
             Ok(reached) => {
                 let linked = Instant::now();
-                let (mut channel, fresh) = accept(host, shared, machine, reached).await;
+                let mut channel = accept(host, shared, machine, reached).await;
                 let carried = unanswered.link_began(host, shared, &mut channel).await;
                 // Everything asked for while there was nowhere to send it.
                 // What the link would not take stays held: the next
                 // connection is the one that will carry it, and a write that
-                // failed is a link that has just died. A daemon other than the
-                // one a held resume's byte came from is asked for the pane
-                // afresh, as `resume` asks for every other.
+                // failed is a link that has just died. A resume held from
+                // before a restart is asked for afresh, as `resume` asks for
+                // every other pane.
                 let standing: Vec<Order> = std::mem::take(kept)
                     .into_iter()
-                    .map(|order| if fresh { afresh(order) } else { order })
+                    .map(|order| current(host, shared, order))
                     .collect();
                 let mut sent = 0_usize;
                 for order in &standing {
@@ -289,17 +289,32 @@ async fn connect(
     }
 }
 
+/// An order as it is to be carried to the daemon the host has now.
+///
+/// A resume names a byte of the run of the daemon that last carried its pane;
+/// to any other run it is asked for afresh. Every other order goes as given.
+fn current(host: &HostId, shared: &Shared, order: Order) -> Order {
+    let Order::Resume {
+        instance: Some(from),
+        ..
+    } = &order
+    else {
+        return order;
+    };
+    let restarted = shared
+        .with(host, |view| view.instance.is_some_and(|now| now != *from))
+        .unwrap_or(false);
+    if restarted { afresh(order) } else { order }
+}
+
 /// Takes what the host answered into the model, tells the machine it is
 /// connected, and resumes every pane the model holds a byte for.
-///
-/// Gives back, with the channel, whether the daemon it reached is another run
-/// than the one this client's cursors came from.
 async fn accept(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     reached: Reached,
-) -> (RemoteChannel, bool) {
+) -> RemoteChannel {
     let Reached {
         mut channel,
         snapshot,
@@ -360,11 +375,17 @@ async fn accept(
             "the host's daemon is another than the one this client last reached; \
              every pane is asked for afresh rather than resumed"
         );
+        // Said, so that whatever draws a pane this client has let go of can
+        // start it again rather than resume it from a byte of a pane that is
+        // gone; the panes still subscribed are answered with screens.
+        shared.publish(ManagerEvent::Notify(Notification::DaemonRestarted {
+            host: host.clone(),
+        }));
     }
     if taken.contains(&Action::Resume) {
         resume(host, shared, &mut channel, fresh).await;
     }
-    (channel, fresh)
+    channel
 }
 
 /// Asks the host to carry on every subscribed pane from the byte this client
@@ -605,6 +626,7 @@ async fn serve_link(
                 if !admitted(host, shared, &order, record) {
                     continue;
                 }
+                let order = current(host, shared, order);
                 let holdable = keeps(&order).then(|| order.clone());
                 let carrying = carry(&mut channel, order, shared).await;
                 if let Err(ChannelError::Message(refusal)) = &carrying {
@@ -763,7 +785,7 @@ async fn carry(
 ) -> Result<(), ChannelError> {
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
-        Order::Resume { pane, from } => ToServer::Resume {
+        Order::Resume { pane, from, .. } => ToServer::Resume {
             pane,
             from_sequence: from,
         },

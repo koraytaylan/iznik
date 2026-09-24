@@ -99,6 +99,12 @@ pub enum ManagerEvent {
         sequence: Sequence,
     },
     /// Something worth telling whoever is watching.
+    ///
+    /// Among them [`Notification::DaemonRestarted`], when a connection finds
+    /// the host's daemon is another run than the last one reached: whatever
+    /// draws a pane should start it again then rather than keep what it holds,
+    /// because pane numbers begin again with every daemon and a resume from a
+    /// byte of the old run is asked for afresh.
     Notify(Notification),
     /// A host is no longer held at all.
     Removed {

@@ -102,6 +102,19 @@ pub enum Notification {
         /// This client's number for the command.
         command: CommandId,
     },
+    /// The host's daemon is another run than the one this client last
+    /// reached: it was restarted, and its pane numbers begin again.
+    ///
+    /// Said once, when the connection that finds it out is made, before any
+    /// pane is carried on it. Every pane still subscribed is asked for afresh
+    /// and answered with a screen; a pane that was let go of is not, and
+    /// whatever draws it should be started again rather than resumed — a
+    /// resume of it is asked for afresh anyway, because its byte is a
+    /// position in a pane that is gone.
+    DaemonRestarted {
+        /// The host.
+        host: HostId,
+    },
     /// Keystrokes that were not delivered, because the host had no link when
     /// they were given.
     ///
@@ -201,6 +214,9 @@ pub fn reduce(model: &mut ClientModel, host: &HostId, message: &ToClient) -> Vec
             answered_through,
         } => {
             let _opened = view.subscribe(*pane, *channel, *sequence);
+            if let Some(instance) = view.instance {
+                let _before = view.carried_from.insert(*pane, instance);
+            }
             let _before = view
                 .answered
                 .insert(*pane, answered_through.unwrap_or(Sequence(0)));

@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use iznik_client::host::manager::{HostManager, ManagerEvent, ManagerOptions};
 use iznik_client::host::state::{BackoffPolicy, HostState};
+use iznik_client::reduce::Notification;
 use iznik_client::transport::channel::ChannelOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX};
 use iznik_link::framed::FramedLink;
@@ -110,12 +111,15 @@ fn one_pane() -> HostModel {
 
 /// Serves one connection as the daemon `instance`, recording what it is asked
 /// under `number`, and closes it once a subscribed pane has said [`SAID`] —
-/// the first time — or never, the second.
+/// the first time — or never, the second. When `hide`, the first connection
+/// closes only once the pane has been let go of, which it answers as a host
+/// does.
 async fn one_connection(
     stream: tokio::net::UnixStream,
     number: usize,
     instance: DaemonInstance,
     heard: &Heard,
+    hide: bool,
 ) {
     let mut link = FramedLink::new(stream);
     loop {
@@ -154,8 +158,15 @@ async fn one_connection(
                     answered_through: None,
                 }]
             }
+            ToServer::Unsubscribe { pane } => vec![ToClient::PaneDetached {
+                pane,
+                channel: CHANNEL,
+            }],
             _otherwise => Vec::new(),
         };
+        let detached = said
+            .iter()
+            .any(|message| matches!(message, ToClient::PaneDetached { .. }));
         let subscribed = said
             .iter()
             .any(|message| matches!(message, ToClient::PaneChannel { .. }));
@@ -169,7 +180,9 @@ async fn one_connection(
         }
         if subscribed && number == 0 {
             let _said = link.send(CHANNEL, SAID).await;
-            // Gone, as a daemon that is restarted goes.
+        }
+        // Gone, as a daemon that is restarted goes.
+        if number == 0 && ((subscribed && !hide) || detached) {
             return;
         }
     }
@@ -186,6 +199,7 @@ fn scripted(
     socket: &std::path::Path,
     later: DaemonInstance,
     heard: &Heard,
+    hide: bool,
 ) -> Result<(), Failed> {
     let listener = runtime.block_on(async { UnixListener::bind(socket) })?;
     let keeping = Arc::clone(heard);
@@ -193,7 +207,7 @@ fn scripted(
         let mut number = 0_usize;
         while let Ok((stream, _from)) = listener.accept().await {
             let instance = if number == 0 { FIRST } else { later };
-            one_connection(stream, number, instance, &keeping).await;
+            one_connection(stream, number, instance, &keeping, hide).await;
             number = number.saturating_add(1);
         }
     });
@@ -224,14 +238,26 @@ fn manager(held: &Scratch, backoff: Duration) -> Result<HostManager, Failed> {
     Ok(HostManager::new(options)?)
 }
 
-/// What a case does while the host has no link.
+/// What an application does in a case, besides subscribing to the pane.
 #[derive(Clone, Copy)]
-enum WhileDown {
+enum Doing {
     /// Nothing.
     Nothing,
-    /// Asks for the pane to be resumed from this byte — as an application
-    /// showing a hidden pane again does.
-    Resume(Sequence),
+    /// Asks for the pane to be resumed from this byte while the host has no
+    /// link — as an application showing a hidden pane again does.
+    ResumeWhileDown(Sequence),
+    /// Lets the pane go once its bytes arrive, and once the host is reached
+    /// again asks for it to be resumed from this byte: a pane hidden before
+    /// the daemon restarted, shown again after.
+    HideThenResume(Sequence),
+}
+
+/// What a case saw.
+struct Seen {
+    /// Everything the later connections were asked about the pane.
+    asked: Vec<ToServer>,
+    /// Whether the application was told the daemon had been restarted.
+    told: bool,
 }
 
 /// Whether a message asks for the pane.
@@ -256,28 +282,60 @@ fn asked_later(heard: &Heard) -> Vec<ToServer> {
         .unwrap_or_default()
 }
 
+/// Does what `doing` asks at `event`, having seen `connected` connections.
+///
+/// # Errors
+///
+/// When the manager refuses.
+fn act(
+    manager: &HostManager,
+    host: &str,
+    event: &ManagerEvent,
+    doing: Doing,
+    connected: &mut usize,
+) -> Result<(), Failed> {
+    let ManagerEvent::Moved { state, .. } = event else {
+        if let (ManagerEvent::Bytes { pane, .. }, Doing::HideThenResume(_)) = (event, doing)
+            && *pane == PANE
+            && *connected == 1
+        {
+            manager.unsubscribe(host, PANE)?;
+        }
+        return Ok(());
+    };
+    match (state, doing) {
+        (HostState::Connected { .. }, _) => {
+            *connected = connected.saturating_add(1);
+            if let (Doing::HideThenResume(from), 2) = (doing, *connected) {
+                manager.resume(host, PANE, from)?;
+            }
+        }
+        (HostState::Reconnecting { .. }, Doing::ResumeWhileDown(from)) if *connected == 1 => {
+            manager.resume(host, PANE, from)?;
+        }
+        _otherwise => {}
+    }
+    Ok(())
+}
+
 /// Subscribes to the pane on a host whose daemon is replaced after the first
-/// connection by `later`, does `down` while the link is gone, and gives back
-/// everything the later connections were asked about the pane.
+/// connection by `later`, does what `doing` says, and gives back what it saw.
 ///
 /// # Errors
 ///
 /// When the host cannot be stood up or the second connection never asks.
-fn asked_again(
-    case: &str,
-    later: DaemonInstance,
-    down: WhileDown,
-) -> Result<Vec<ToServer>, Failed> {
+fn asked_again(case: &str, later: DaemonInstance, doing: Doing) -> Result<Seen, Failed> {
     let held = scratch(case)?;
     let runtime = RuntimeBuilder::new_multi_thread().enable_all().build()?;
     let socket = held.path.join("scripted.sock");
     let heard: Heard = Arc::new(Mutex::new(Vec::new()));
-    scripted(&runtime, &socket, later, &heard)?;
+    let hide = matches!(doing, Doing::HideThenResume(_));
+    scripted(&runtime, &socket, later, &heard, hide)?;
     // Long enough, when something is to be asked while the link is down, that
     // it is asked before the next connection rather than after.
-    let backoff = match down {
-        WhileDown::Nothing => QUICK,
-        WhileDown::Resume(_) => HELD_DOWN,
+    let backoff = match doing {
+        Doing::ResumeWhileDown(_) => HELD_DOWN,
+        Doing::Nothing | Doing::HideThenResume(_) => QUICK,
     };
     let manager = manager(&held, backoff)?;
     let events = manager.events();
@@ -285,7 +343,8 @@ fn asked_again(
     manager.add_host(&host)?;
     let expires = Instant::now().checked_add(PROMPT).ok_or("no clock")?;
     let mut subscribed = false;
-    let mut connected = false;
+    let mut connected = 0_usize;
+    let mut told = false;
     while Instant::now() < expires {
         let left = expires.saturating_duration_since(Instant::now());
         let Ok(event) = events.recv_timeout(left) else {
@@ -295,22 +354,26 @@ fn asked_again(
             manager.subscribe(&host, PANE)?;
             subscribed = true;
         }
-        if let ManagerEvent::Moved { state, .. } = &event {
-            if matches!(state, HostState::Connected { .. }) {
-                connected = true;
-            } else if connected
-                && let (HostState::Reconnecting { .. }, WhileDown::Resume(from)) = (state, down)
-            {
-                connected = false;
-                manager.resume(&host, PANE, from)?;
-            }
-        }
+        told |= matches!(
+            event,
+            ManagerEvent::Notify(Notification::DaemonRestarted { .. })
+        );
+        act(&manager, &host, &event, doing, &mut connected)?;
         if !asked_later(&heard).is_empty() {
             // Whatever else the connection is going to be asked about the
             // pane, it is asked in the same breath.
             std::thread::sleep(SETTLE);
+            told |= events.try_iter().any(|pending| {
+                matches!(
+                    pending,
+                    ManagerEvent::Notify(Notification::DaemonRestarted { .. })
+                )
+            });
             drop(manager);
-            return Ok(asked_later(&heard));
+            return Ok(Seen {
+                asked: asked_later(&heard),
+                told,
+            });
         }
     }
     Err("the second connection was never asked for the pane".into())
@@ -318,34 +381,40 @@ fn asked_again(
 
 /// # Panics
 ///
-/// When a pane of a daemon that is gone is resumed from the byte it reached.
+/// When a pane of a daemon that is gone is resumed from the byte it reached,
+/// or the application is not told the daemon was restarted.
 #[test]
 fn daemon_instance_a_replaced_daemon_is_asked_for_every_pane_afresh() {
-    let asked = asked_again("replaced", SECOND, WhileDown::Nothing)
-        .unwrap_or_else(|error| panic!("{error}"));
+    let seen =
+        asked_again("replaced", SECOND, Doing::Nothing).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
-        asked.first(),
+        seen.asked.first(),
         Some(&ToServer::Subscribe { pane: PANE }),
         "a pane number of another daemon is subscribed afresh, never resumed"
+    );
+    assert!(
+        seen.told,
+        "and the application is told the daemon restarted"
     );
 }
 
 /// # Panics
 ///
-/// When the same daemon is not resumed from the byte this client holds.
+/// When the same daemon is not resumed from the byte this client holds, or is
+/// said to have restarted.
 #[test]
 fn daemon_instance_the_same_daemon_is_resumed_where_it_left_off() {
-    let asked =
-        asked_again("same", FIRST, WhileDown::Nothing).unwrap_or_else(|error| panic!("{error}"));
+    let seen = asked_again("same", FIRST, Doing::Nothing).unwrap_or_else(|error| panic!("{error}"));
     let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
     assert_eq!(
-        asked.first(),
+        seen.asked.first(),
         Some(&ToServer::Resume {
             pane: PANE,
             from_sequence: Sequence(reached),
         }),
         "the same daemon carries on from the byte this client reached"
     );
+    assert!(!seen.told, "and nothing says it restarted");
 }
 
 /// # Panics
@@ -355,12 +424,48 @@ fn daemon_instance_the_same_daemon_is_resumed_where_it_left_off() {
 #[test]
 fn daemon_instance_a_resume_held_through_a_restart_is_asked_afresh() {
     let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
-    let asked = asked_again("held", SECOND, WhileDown::Resume(Sequence(reached)))
+    let seen = asked_again("held", SECOND, Doing::ResumeWhileDown(Sequence(reached)))
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(
-        asked
+        seen.asked
             .iter()
             .all(|message| matches!(message, ToServer::Subscribe { .. })),
-        "a held resume is asked afresh of a daemon that is another run: {asked:?}"
+        "a held resume is asked afresh of a daemon that is another run: {:?}",
+        seen.asked
+    );
+}
+
+/// # Panics
+///
+/// When a pane hidden before the daemon restarted, and shown again after, is
+/// resumed from a byte of the daemon that is gone.
+#[test]
+fn daemon_instance_a_pane_hidden_through_a_restart_is_asked_afresh() {
+    let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
+    let seen = asked_again("hidden", SECOND, Doing::HideThenResume(Sequence(reached)))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        seen.asked,
+        vec![ToServer::Subscribe { pane: PANE }],
+        "the pane is asked for afresh, never resumed from the old daemon's byte"
+    );
+}
+
+/// # Panics
+///
+/// When a pane hidden and shown again on the same daemon is not resumed from
+/// the byte the application holds.
+#[test]
+fn daemon_instance_a_pane_hidden_on_the_same_daemon_is_resumed() {
+    let reached = u64::try_from(SAID.len()).unwrap_or(u64::MAX);
+    let seen = asked_again("unhidden", FIRST, Doing::HideThenResume(Sequence(reached)))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        seen.asked,
+        vec![ToServer::Resume {
+            pane: PANE,
+            from_sequence: Sequence(reached),
+        }],
+        "the same daemon carries on from the application's byte"
     );
 }

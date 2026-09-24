@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::{SessionCommand, encode_session_command};
-use iznik_protocol::identity::{CommandId, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, DaemonInstance, PaneId, Sequence};
 use iznik_protocol::message::{ToServer, encode_to_server};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -140,6 +140,9 @@ pub(crate) enum Order {
         pane: PaneId,
         /// The first byte it does not hold.
         from: Sequence,
+        /// The run of the daemon that byte is a position in, when known: to
+        /// any other, the pane is subscribed afresh instead.
+        instance: Option<DaemonInstance>,
     },
     /// End it.
     Unsubscribe {
@@ -552,11 +555,31 @@ impl HostManager {
     /// sends a screen when it does not; [`ManagerEvent::Carried`] says it has
     /// begun, either way.
     ///
+    /// `from` is a position in the run of the daemon that last carried the
+    /// pane. When the daemon has been restarted since — which
+    /// [`Notification::DaemonRestarted`](crate::reduce::Notification::DaemonRestarted)
+    /// says — the pane is subscribed afresh instead, and the host answers with
+    /// a screen: its number may name another pane now, whose bytes must not be
+    /// spliced onto this one's.
+    ///
     /// # Errors
     ///
     /// As [`HostManager::reconnect`].
     pub fn resume(&self, alias: &str, pane: PaneId, from: Sequence) -> Result<(), ManagerError> {
-        self.order(alias, Order::Resume { pane, from })
+        let instance = self
+            .shared
+            .with(&HostId(alias.to_owned()), |view| {
+                view.carried_from.get(&pane).copied().or(view.instance)
+            })
+            .flatten();
+        self.order(
+            alias,
+            Order::Resume {
+                pane,
+                from,
+                instance,
+            },
+        )
     }
 
     /// Ends it.

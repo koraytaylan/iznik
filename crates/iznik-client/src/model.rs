@@ -150,6 +150,16 @@ pub struct HostView {
     /// in one daemon's pane and in no other's: a connection that reaches a
     /// different instance resumes nothing.
     pub instance: Option<DaemonInstance>,
+    /// For each pane this client has been carried, the run of the daemon that
+    /// last carried it, when its server said.
+    ///
+    /// Kept after the pane is let go, because that is when it matters: an
+    /// application showing a hidden pane again resumes it from the byte its
+    /// own emulator reached, and that byte is a position in that daemon's
+    /// pane. Carried to another run it would splice whatever pane now has the
+    /// number onto the old screen; the manager asks for the pane afresh
+    /// instead.
+    pub carried_from: BTreeMap<PaneId, DaemonInstance>,
     /// For each subscribed pane, the sequence before which the host's own
     /// emulator answered every terminal query, as its latest `PaneChannel`
     /// said — zero when the host did not say.
@@ -189,6 +199,7 @@ impl HostView {
             minted: CommandId(0),
             capabilities: Capabilities::from_bits(0),
             instance: None,
+            carried_from: BTreeMap::new(),
             answered: BTreeMap::new(),
             snapshot_asked: false,
         }
