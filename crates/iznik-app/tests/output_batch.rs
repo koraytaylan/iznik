@@ -153,3 +153,43 @@ fn pending_output_is_published_before_a_later_command() {
     let resized = snapshot(&thread).expect("resize snapshot");
     assert_eq!(resized.consumed_bytes, 0, "the resize carries no credit");
 }
+
+/// Replayed output, each chunk said after how far the host answered, is
+/// batched like live output: the position publishes nothing of its own and
+/// does not split the pending snapshot.
+///
+/// # Panics
+/// Fails when the position publishes a result or the replay loses credit.
+#[test]
+fn replayed_output_shares_snapshots_like_live_output() {
+    let thread = VtThread::start(VtOptions::default()).expect("thread");
+    open(&thread, Sequence(0), COLUMNS, ROWS).expect("open");
+    let total = u64::try_from(CHUNKS).expect("total");
+    for index in 0..total {
+        thread
+            .send(VtCommand::Answered {
+                key: key(),
+                through: Sequence(total),
+            })
+            .expect("answered");
+        thread
+            .send(VtCommand::Feed {
+                key: key(),
+                sequence: Sequence(index),
+                bytes: CHUNK.to_vec(),
+                receipt: None,
+            })
+            .expect("feed");
+    }
+    let mut consumed = 0_u64;
+    loop {
+        let frame = snapshot(&thread).expect("every result is a snapshot");
+        consumed = consumed
+            .checked_add(u64::from(frame.consumed_bytes))
+            .expect("credit total");
+        if frame.sequence == Sequence(total) {
+            break;
+        }
+    }
+    assert_eq!(consumed, total, "every replayed byte is credited once");
+}

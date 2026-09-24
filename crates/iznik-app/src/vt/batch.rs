@@ -75,6 +75,14 @@ impl Owner {
                 bytes,
                 receipt,
             } => self.feed(key, sequence, bytes, receipt, results),
+            // Said before every chunk a resume sends again: it changes only
+            // what the chunks after it answer, so it neither publishes the
+            // pane's pending snapshot nor publishes anything of its own.
+            VtCommand::Answered { key, through } => {
+                if let Some(pane) = self.panes.get_mut(&key) {
+                    pane.answered = pane.answered.max(through);
+                }
+            }
             VtCommand::Input { key, input } if self.waiting(&key) && typed(&input) => {
                 self.flush(&key, results);
                 let queue = self.queued.entry(key.clone()).or_default();

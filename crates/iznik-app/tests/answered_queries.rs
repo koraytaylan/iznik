@@ -7,7 +7,7 @@ use iznik_client::host::manager::ManagerEvent;
 use iznik_protocol::identity::Sequence;
 
 mod support;
-use support::{key, open, receive, snapshot};
+use support::{key, open, snapshot};
 
 /// A cursor position request, which every emulator answers.
 const QUERY: &[u8] = b"\x1b[6n";
@@ -36,10 +36,7 @@ fn replies(answered: u64) -> Result<String, Box<dyn std::error::Error>> {
         },
         &TerminalTheme::default(),
     )?;
-    if answered > 0 {
-        // The position is said on its own, before the feed it applies to.
-        let _said = receive(&thread);
-    }
+    // The position, said before the feed it applies to, publishes nothing.
     Ok(String::from_utf8(snapshot(&thread)?.responses)?)
 }
 
