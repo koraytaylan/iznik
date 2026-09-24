@@ -643,10 +643,12 @@ impl WindowShell {
                 if self.sizes_pending {
                     self.synchronize_sizes(context);
                 }
-                if let Err(error) =
-                    EngineBridge::feed_terminal(&self.thread, said, &self.options.theme)
-                {
-                    self.failure(&key.host, error.to_string(), context);
+                match EngineBridge::feed_terminal(&self.thread, said, &self.options.theme) {
+                    Ok(()) => self.subscriptions.forwarded(said),
+                    Err(error) => {
+                        self.subscriptions.lost(&key);
+                        self.failure(&key.host, error.to_string(), context);
+                    }
                 }
             }
             // Output changes no model and no selection: the grid redraws the

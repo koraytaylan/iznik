@@ -30,7 +30,7 @@ use gpui_kit::Context;
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_client::reduce::Notification;
-use iznik_protocol::identity::Sequence;
+use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::ErrorCode;
 
 use crate::bridge::EngineBridge;
@@ -85,6 +85,10 @@ pub struct Subscriptions {
     panes: BTreeMap<PaneKey, Standing>,
     /// When each pane was last shown, which decides the hidden ones kept.
     last_shown: BTreeMap<PaneKey, Instant>,
+    /// Where each pane's emulator will stand once the terminal thread has
+    /// taken everything handed to it: the byte after the last screen or
+    /// output forwarded there. Absent when unknown, or after a gap.
+    next: BTreeMap<PaneKey, Sequence>,
 }
 
 impl Subscriptions {
@@ -104,6 +108,59 @@ impl Subscriptions {
     pub fn forget(&mut self, key: &PaneKey) {
         let _gone = self.panes.remove(key);
         let _forgotten = self.last_shown.remove(key);
+        let _position = self.next.remove(key);
+    }
+
+    /// Note a screen or output handed to a pane's emulator, so that asking
+    /// for the pane again resumes from the byte after it — not from what the
+    /// emulator has published so far, which lags what is queued to it.
+    /// Output that does not continue from the known position is a gap the
+    /// emulator will not take, and leaves the position unknown.
+    pub fn forwarded(&mut self, said: &ManagerEvent) {
+        match said {
+            ManagerEvent::Screen {
+                host,
+                pane,
+                sequence,
+                ..
+            } => {
+                let _replaced = self.next.insert(pane_key(host, *pane), *sequence);
+            }
+            ManagerEvent::Bytes {
+                host,
+                pane,
+                sequence,
+                bytes,
+                ..
+            } => {
+                let key = pane_key(host, *pane);
+                let after = u64::try_from(bytes.len())
+                    .ok()
+                    .and_then(|length| sequence.0.checked_add(length));
+                match (self.next.get(&key), after) {
+                    (Some(at), Some(after)) if at == sequence => {
+                        let _advanced = self.next.insert(key, Sequence(after));
+                    }
+                    _ => {
+                        let _gap = self.next.remove(&key);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A pane's emulator failed or found a gap: where it stands is no longer
+    /// known, and it is asked for afresh rather than resumed.
+    pub fn lost(&mut self, key: &PaneKey) {
+        let _unknown = self.next.remove(key);
+    }
+
+    /// The byte to resume a pane from: the one after everything forwarded to
+    /// its emulator, when that is known.
+    #[must_use]
+    pub fn resume_from(&self, key: &PaneKey) -> Option<Sequence> {
+        self.next.get(key).copied()
     }
 
     /// The host began carrying a pane — its screen arrived, or it said it is
@@ -227,6 +284,14 @@ impl Subscriptions {
     }
 }
 
+/// A pane's key from the host and pane an event names.
+fn pane_key(host: &HostId, pane: PaneId) -> PaneKey {
+    PaneKey {
+        host: host.clone(),
+        pane,
+    }
+}
+
 /// A refused pane's standing: ask again after `wait`, and wait longer the
 /// next time, up to [`LONGEST_RETRY`].
 fn put_off(wait: Duration, now: Instant) -> Standing {
@@ -239,20 +304,19 @@ fn put_off(wait: Duration, now: Instant) -> Standing {
 /// Hands each order to the engine. An order it would not take puts the pane
 /// off as a refusal does, and is answered with the host and what was said.
 ///
-/// A pane whose emulator already stands at a byte — shown before, then let go
-/// — is resumed from there rather than subscribed afresh, so showing it again
-/// needs no screen when the host still holds what it missed.
+/// A pane whose emulator will stand at a known byte — shown before, then let
+/// go — is resumed from there rather than subscribed afresh, so showing it
+/// again needs no screen when the host still holds what it missed.
 pub(crate) fn send(
     subscriptions: &mut Subscriptions,
     bridge: &EngineBridge,
     orders: &[Order],
-    standing_at: impl Fn(&PaneKey) -> Option<Sequence>,
     now: Instant,
 ) -> Vec<(HostId, String)> {
     let mut failures = Vec::new();
     for order in orders {
         let (key, result) = match order {
-            Order::Subscribe(key) => match standing_at(key) {
+            Order::Subscribe(key) => match subscriptions.resume_from(key) {
                 Some(from) => (key, bridge.resume(&key.host.0, key.pane, from)),
                 None => (key, bridge.subscribe(&key.host.0, key.pane)),
             },
@@ -293,19 +357,10 @@ impl WindowShell {
 
     /// Hand subscription orders to the engine, reporting any it would not take.
     pub(crate) fn send_orders(&mut self, orders: &[Order], context: &mut Context<'_, Self>) {
-        let panes = &self.panes;
-        let standing_at = |key: &PaneKey| {
-            let held = panes.get(key)?;
-            let grid = held.surface.read(context).grid().clone();
-            grid.read(context)
-                .snapshot()
-                .map(|snapshot| snapshot.sequence)
-        };
         let failures = send(
             &mut self.subscriptions,
             self.hosts.bridge(),
             orders,
-            standing_at,
             Instant::now(),
         );
         for (host, detail) in failures {

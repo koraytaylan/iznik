@@ -10,7 +10,8 @@ use iznik_app::subscription::{
 };
 use iznik_app::vt::PaneKey;
 use iznik_client::host::identity::HostId;
-use iznik_protocol::identity::PaneId;
+use iznik_client::host::manager::ManagerEvent;
+use iznik_protocol::identity::{PaneId, Sequence};
 use iznik_protocol::message::ErrorCode;
 
 /// The host every fixture pane is on.
@@ -282,5 +283,84 @@ fn a_recently_hidden_pane_stays_carried() {
         subscriptions.standing(&first),
         Standing::Carried,
         "the pane shown a moment ago is kept"
+    );
+}
+
+/// Output for `pane` starting at `sequence`.
+fn output(pane: &PaneKey, sequence: u64, bytes: &[u8]) -> ManagerEvent {
+    ManagerEvent::Bytes {
+        host: pane.host.clone(),
+        pane: pane.pane,
+        sequence: Sequence(sequence),
+        answered_through: Sequence(0),
+        bytes: bytes.to_vec(),
+        receipt: None,
+    }
+}
+
+/// A screen for `pane` after which the emulator stands at `sequence`.
+fn screen(pane: &PaneKey, sequence: u64) -> ManagerEvent {
+    ManagerEvent::Screen {
+        host: pane.host.clone(),
+        pane: pane.pane,
+        sequence: Sequence(sequence),
+        columns: 80,
+        rows: 24,
+        bytes: Vec::new(),
+    }
+}
+
+/// A pane asked for again resumes from the byte after everything handed to
+/// its emulator — output still queued to the terminal thread included — and
+/// is asked for afresh when a gap or a failure leaves that byte unknown.
+///
+/// # Panics
+///
+/// When the resume position lags what was forwarded or survives a gap.
+#[test]
+fn a_pane_resumes_from_the_last_byte_forwarded() {
+    let pane = key(HOST, 1);
+    let mut subscriptions = Subscriptions::new();
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        None,
+        "a pane never shown has no byte"
+    );
+    subscriptions.forwarded(&output(&pane, 0, b"early"));
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        None,
+        "output before any screen is a gap"
+    );
+    subscriptions.forwarded(&screen(&pane, 10));
+    assert_eq!(subscriptions.resume_from(&pane), Some(Sequence(10)));
+    subscriptions.forwarded(&output(&pane, 10, b"abc"));
+    subscriptions.forwarded(&output(&pane, 13, b"de"));
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        Some(Sequence(15)),
+        "the byte after the last output forwarded, not the last one published"
+    );
+    subscriptions.forwarded(&output(&pane, 20, b"late"));
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        None,
+        "a gap leaves the position unknown"
+    );
+    subscriptions.forwarded(&screen(&pane, 30));
+    subscriptions.lost(&pane);
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        None,
+        "a failed emulator is asked for afresh"
+    );
+    subscriptions.forwarded(&output(&pane, 30, b"x"));
+    assert_eq!(subscriptions.resume_from(&pane), None);
+    subscriptions.forwarded(&screen(&pane, 40));
+    subscriptions.forget(&pane);
+    assert_eq!(
+        subscriptions.resume_from(&pane),
+        None,
+        "a pane the model no longer holds has no byte"
     );
 }

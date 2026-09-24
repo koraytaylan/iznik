@@ -79,6 +79,11 @@ impl WindowShell {
                 continue;
             };
             let key = event.key.clone();
+            if event.result.is_err() {
+                // Where its emulator stands is no longer known, so asking for
+                // the pane again must not resume from it.
+                self.subscriptions.lost(&key);
+            }
             let focused = surface
                 .read(context)
                 .focus_handle(context)
