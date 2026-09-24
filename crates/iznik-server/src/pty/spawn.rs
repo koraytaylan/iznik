@@ -10,8 +10,8 @@
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 #[cfg(unix)]
 use nix::sys::signal::{self, Signal as NixSignal};
@@ -23,7 +23,7 @@ use nix::unistd::Pid;
 use portable_pty::ChildKiller;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 #[cfg(windows)]
-use std::sync::{Arc as Shared, Mutex};
+use std::sync::Arc as Shared;
 
 /// The `TERM` variable's name.
 const TERM_VARIABLE: &str = "TERM";
@@ -544,6 +544,17 @@ impl ProcessReaper {
     }
 }
 
+/// Held while a command is built and spawned.
+///
+/// `portable_pty` reads the password database with the C library's `getpwuid`
+/// when the daemon's environment names no `SHELL` or `HOME` — building the
+/// command and starting it both may — and `getpwuid` answers in one buffer
+/// the whole process shares. Two panes spawned at once on the blocking pool
+/// then read and rewrite that buffer together, which on musl crashed the
+/// daemon and every session in it. Spawning is rare and quick, so it is done
+/// one pane at a time.
+static SPAWNING: Mutex<()> = Mutex::new(());
+
 /// Spawns a program on a fresh pseudoterminal in its own session.
 ///
 /// # Errors
@@ -576,15 +587,18 @@ pub fn spawn(options: &SpawnOptions) -> Result<PtyProcess, PtyError> {
         .map_err(|source| PtyError::Open {
             source: source.into(),
         })?;
-    let command = command_of(options);
     let program = program_name(&options.program);
-    let child = pair
-        .slave
-        .spawn_command(command)
-        .map_err(|source| PtyError::Spawn {
-            program: program.clone(),
-            source: source.into(),
-        })?;
+    let child = {
+        // One spawn at a time: see [`SPAWNING`].
+        let _one_at_a_time = SPAWNING.lock().unwrap_or_else(PoisonError::into_inner);
+        let command = command_of(options);
+        pair.slave
+            .spawn_command(command)
+            .map_err(|source| PtyError::Spawn {
+                program: program.clone(),
+                source: source.into(),
+            })?
+    };
     // A child with no process id cannot be signalled or reaped by pid, and a
     // zero would make `killpg`/`kill` target the daemon's own group; refuse it.
     let process_id = child.process_id().ok_or_else(|| PtyError::Spawn {

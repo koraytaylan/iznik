@@ -15,6 +15,7 @@ panes
 remnant
 remnants
 sent
+spawning
 tell
 term
 terminate
