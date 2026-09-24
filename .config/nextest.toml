@@ -119,6 +119,20 @@ threads-required = 'num-cpus'
 filter = 'test(manager_traffic_carries_a_burst_as_fast_as_it_is_given)'
 threads-required = 'num-cpus'
 
+# Cases that start real daemons and relays as child processes and wait for
+# their sockets under ten-second deadlines. Beside the rest of the suite on a
+# busy machine a daemon's start alone can take longer than that — on macOS a
+# freshly built binary's first launch is held while it is scanned — so these
+# run a few at a time and each has room for its children.
+#
+# Before the server's rule below, because nextest takes a setting from the
+# first override that matches and sets it: after it, the server's own
+# `daemon_lifecycle`, `stdio_relay` and `readme_commands` stayed in `shells`.
+[[profile.default.overrides]]
+filter = 'binary(daemon_lifecycle) | binary(stdio_relay) | binary(readme_commands)'
+test-group = 'daemons'
+threads-required = 2
+
 # Every test in the server crate drives a real shell on a real pseudoterminal
 # and waits on what it prints, so what it measures is not its own work but the
 # machine's willingness to run a shell. Sixteen of those at once, beside the
@@ -160,16 +174,6 @@ threads-required = 'num-cpus'
 [[profile.default.overrides]]
 filter = 'binary(ffi_surface) + binary(pane_byte_pipe)'
 test-group = 'shells'
-
-# Cases that start real daemons and relays as child processes and wait for
-# their sockets under ten-second deadlines. Beside the rest of the suite on a
-# busy machine a daemon's start alone can take longer than that — on macOS a
-# freshly built binary's first launch is held while it is scanned — so these
-# run a few at a time and each has room for its children.
-[[profile.default.overrides]]
-filter = 'binary(daemon_lifecycle) | binary(stdio_relay) | binary(readme_commands)'
-test-group = 'daemons'
-threads-required = 2
 
 # The fixture reaper removes every labelled container and network, a sibling
 # test's live fixture included, so it runs with the machine to itself.
