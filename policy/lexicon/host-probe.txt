@@ -34,6 +34,7 @@ probed
 refused
 refuses
 remotely
+replacing
 round
 runs
 said
@@ -42,6 +43,7 @@ server
 serves
 shells
 spaced
+superseded
 system
 taken
 terminal

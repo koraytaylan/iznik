@@ -160,6 +160,14 @@ pub struct HostView {
     /// number onto the old screen; the manager asks for the pane afresh
     /// instead.
     pub carried_from: BTreeMap<PaneId, DaemonInstance>,
+    /// The run of the host's daemon that is another build of this version,
+    /// started before the binary under it was replaced, while it is the one
+    /// answering.
+    ///
+    /// Its capability bits are not this build's to read, and it is offered an
+    /// upgrade for the build, on every connection it answers — not only the
+    /// one whose bootstrap replaced the binary and so found it out.
+    pub superseded: Option<DaemonInstance>,
     /// For each subscribed pane, the sequence before which the host's own
     /// emulator answered every terminal query, as its latest `PaneChannel`
     /// said — zero when the host did not say.
@@ -200,6 +208,7 @@ impl HostView {
             capabilities: Capabilities::from_bits(0),
             instance: None,
             carried_from: BTreeMap::new(),
+            superseded: None,
             answered: BTreeMap::new(),
             snapshot_asked: false,
         }

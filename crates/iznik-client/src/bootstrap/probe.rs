@@ -65,7 +65,10 @@ const PROTOCOL_WORD: &str = "protocol";
 /// version answers `--version` alike. So each candidate also says the SHA-256
 /// of the server there — read from the `iznik-server.sha256` the upload wrote
 /// beside it when that is no older than the binary, so a reconnection does
-/// not hash a binary it has hashed before, and computed otherwise.
+/// not hash a binary it has hashed before, and computed otherwise — and then
+/// written there, so that a server whose record is missing or stale is hashed
+/// once and not on every probe. A record that cannot be written is no failure:
+/// the next probe hashes again.
 pub const PROBE_SCRIPT: &str = r#"
 writable() {
   if [ -e "$1" ]; then
@@ -103,6 +106,9 @@ do
     then digest=$(sha256sum < "$server" | cut -d' ' -f1)
     elif command -v shasum >/dev/null 2>&1
     then digest=$(shasum -a 256 < "$server" | cut -d' ' -f1); fi
+    if [ -n "$digest" ] && [ "$digest" != - ] && { [ ! -f "$kept" ] || [ "$server" -nt "$kept" ]; }
+    then { printf '%s\n' "$digest" > "$kept.$$" && mv -f "$kept.$$" "$kept"; } 2>/dev/null || rm -f "$kept.$$" 2>/dev/null
+    fi
   fi
   entry=no
   for compiled in "$candidate"/terminfo/*/xterm-ghostty

@@ -524,3 +524,28 @@ fn probe_script_says_which_bytes_a_server_is() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a probe that had to hash a server — its record missing — does not
+/// write down what it found, so that every later probe hashes it again.
+#[test]
+fn probe_script_keeps_the_digest_it_took() {
+    let case = || -> Result<(), Failed> {
+        let (held, _payload) = scratch("kept")?;
+        let bin = held.path.join("iznik").join("bin");
+        std::fs::create_dir_all(&bin)?;
+        let bytes = b"a build nobody wrote a digest for".to_vec();
+        std::fs::write(bin.join(BINARY_NAME), &bytes)?;
+        let said = parse(&probe_under(&held.path)?)?;
+        assert_eq!(said.server_digest, Some(digest_of(&bytes)), "it hashed");
+        let written = std::fs::read_to_string(bin.join("iznik-server.sha256"))?;
+        assert_eq!(
+            written.trim(),
+            digest_of(&bytes),
+            "and wrote what it found where the next probe reads it"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

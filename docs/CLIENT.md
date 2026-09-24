@@ -265,7 +265,9 @@ An `iznik_host_status` says, without words to parse:
 - `retrying`, whether it will be tried again by itself, and `attempt`, how
   many times a reconnecting host has failed since it was last connected.
 - `upgrade`, an `iznik_upgrade_kind` — `IZNIK_UPGRADE_KIND_NONE`,
-  `IZNIK_UPGRADE_KIND_VERSION` or `IZNIK_UPGRADE_KIND_CAPABILITIES` — for a
+  `IZNIK_UPGRADE_KIND_VERSION`, `IZNIK_UPGRADE_KIND_CAPABILITIES`, or
+  `IZNIK_UPGRADE_KIND_BUILD` for a daemon still running another build of this
+  version after its binary was replaced — for a
   connected host a newer server is on offer for, with `installed_version` and
   `bundled_version` naming both ends of it (null when there is no offer).
 

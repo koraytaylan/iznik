@@ -13,7 +13,7 @@ use iznik_client::bootstrap::launch::{
     live_panes,
 };
 use iznik_client::bootstrap::upload::ArtifactSet;
-use iznik_client::bootstrap::{bootstrap, uninstall, upgrade};
+use iznik_client::bootstrap::{Replacement, bootstrap, uninstall, upgrade};
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, Transport};
 use serde::Deserialize;
@@ -191,7 +191,11 @@ async fn replace(
     deadline: Duration,
 ) -> Result<String, String> {
     let held = artifacts(body)?;
-    match upgrade(transport, &held, options, body.force, deadline).await {
+    let replacing = Replacement {
+        force: body.force,
+        ..Replacement::default()
+    };
+    match upgrade(transport, &held, options, replacing, deadline).await {
         Ok(()) => {
             if let Some(wanted) = body.expect.live_panes {
                 return Err(format!(

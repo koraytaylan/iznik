@@ -280,14 +280,28 @@ async fn may_replace(
     Ok(())
 }
 
+/// What an upgrade is asked to replace, beyond what the probe finds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Replacement {
+    /// Replace it even though it holds panes, which ends them — and even
+    /// though it is this build's version.
+    pub force: bool,
+    /// The daemon running is another build of this version than this one,
+    /// though the binary under it is already this build's: a bootstrap put it
+    /// there while the old daemon went on running. The probe cannot see that,
+    /// so it is said here, and the daemon is replaced as another build's is.
+    pub stale: bool,
+}
+
 /// Replaces the server on a host with the one this build carries.
 ///
-/// A host that already runs this build's version is left alone unless `force`
-/// says otherwise: the version does not distinguish a same-version server that
+/// A host that already runs this build is left alone unless `replacing` says
+/// otherwise: the version does not distinguish a same-version server that
 /// predates a command from one that has it, so a capability gap is only ever
-/// closed by somebody asking, with `force`, for exactly that. A host holding
-/// panes is refused unless `force` says otherwise either, because those panes
-/// are what the daemon is.
+/// closed by somebody asking, with `force`, for exactly that — and a daemon
+/// still running another build over this build's binary only by saying it is
+/// `stale`. A host holding panes is refused unless `force` says otherwise,
+/// because those panes are what the daemon is.
 ///
 /// # Errors
 ///
@@ -297,9 +311,10 @@ pub async fn upgrade(
     transport: &Transport,
     artifacts: &upload::ArtifactSet,
     options: &BootstrapOptions,
-    force: bool,
+    replacing: Replacement,
     deadline: Duration,
 ) -> Result<(), UpgradeError> {
+    let Replacement { force, stale } = replacing;
     let host = transport.alias();
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
@@ -307,8 +322,9 @@ pub async fn upgrade(
         .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
     match decide(&found, artifacts, &bundled()) {
         // Nothing to do — unless somebody forced it, which is the only way a
-        // same-version server missing a capability is ever replaced.
-        Decision::UpToDate if !force => return Ok(()),
+        // same-version server missing a capability is ever replaced, or the
+        // daemon running is another build than the binary under it.
+        Decision::UpToDate if !force && !stale => return Ok(()),
         Decision::Unsupported { triple } => {
             return Err(no_artifact(&host, &triple, &artifacts.triples()).into());
         }

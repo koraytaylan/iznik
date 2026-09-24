@@ -14,7 +14,7 @@ use iznik_protocol::message::{CHANNEL_CONTROL, MAXIMUM_INPUT_LENGTH, ToServer, e
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bootstrap::launch::{Cause, UpgradeError};
-use crate::bootstrap::upgrade;
+use crate::bootstrap::{Replacement, upgrade};
 use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
@@ -124,11 +124,20 @@ async fn replace(
         &shared.options.runtime_paths,
         shared.options.ssh.clone(),
     );
+    // A daemon still running another build over this build's binary is
+    // replaced even though the probe finds nothing to do: that is what its
+    // offer was for.
+    let superseded = shared
+        .with(host, |view| view.superseded.is_some())
+        .unwrap_or(false);
     let replaced = upgrade(
         &transport,
         &shared.artifacts,
         &bootstrapping(&shared.options),
-        force,
+        Replacement {
+            force,
+            stale: superseded,
+        },
         shared.options.bootstrap_deadline,
     )
     .await;
@@ -322,6 +331,7 @@ async fn accept(
         capabilities,
         instance,
         offer,
+        superseded,
     } = reached;
     // The snapshot a connection begins with is taken inside the launch, before
     // there is a loop to hear it in, so it is announced from here: what is
@@ -350,11 +360,13 @@ async fn accept(
             given_up = view.settle(snapshot);
             given_up.extend(view.forget_answered());
             view.capabilities = capabilities;
+            view.superseded = superseded;
             replay(view);
         } else {
             let mut view = HostView::of(snapshot);
             view.capabilities = capabilities;
             view.instance = instance;
+            view.superseded = superseded;
             let _first = model.insert(host.clone(), view);
         }
     }

@@ -24,7 +24,6 @@ use iznik_protocol::message::ToServer;
 
 use crate::commands::withdraw;
 use crate::host::identity::HostId;
-use crate::host::manager::reach::trusted_capabilities;
 use crate::host::manager::task::write;
 use crate::host::manager::{ManagerEvent, Shared};
 use crate::reduce::Notification;
@@ -99,8 +98,12 @@ impl Unanswered {
         channel: &mut RemoteChannel,
     ) -> Vec<CommandId> {
         let greeting = channel.greeting();
-        let remembering = trusted_capabilities(greeting).contains(Capabilities::IDENTIFY)
-            && greeting.instance.is_some();
+        // What the connection took this server's capabilities to be, which is
+        // what may be acted on: nothing, for another build than this one.
+        let trusted = shared
+            .with(host, |view| view.capabilities)
+            .unwrap_or(Capabilities::from_bits(0));
+        let remembering = trusted.contains(Capabilities::IDENTIFY) && greeting.instance.is_some();
         let same = remembering && greeting.instance == self.instance;
         self.instance = greeting.instance;
         self.remembering = remembering;

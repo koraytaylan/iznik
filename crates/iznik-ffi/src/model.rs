@@ -113,6 +113,9 @@ pub enum UpgradeKind {
     Version = 1,
     /// The host runs this version, missing features this build has.
     Capabilities = 2,
+    /// The host's daemon runs another build of this version, from before its
+    /// binary was replaced with this build's.
+    Build = 3,
 }
 
 /// A host's state, as a `HostStatus` event carries it.

@@ -91,6 +91,10 @@ pub enum UpgradeReason {
     /// this build knows, so features gated on them are unavailable until it is
     /// replaced.
     Capabilities,
+    /// The host runs the same version, but another build of it: its binary
+    /// was replaced with this build's while its daemon went on running the
+    /// old one, whose capability bits are not this build's to read.
+    Build,
 }
 
 /// A server this build could put on a host, offered rather than installed.
@@ -119,6 +123,10 @@ impl UpgradeOffer {
             ),
             UpgradeReason::Capabilities => format!(
                 "upgrade {host}: its iznik {} is missing features this build has",
+                self.installed.crate_version
+            ),
+            UpgradeReason::Build => format!(
+                "upgrade {host}: its daemon is still another build of iznik {} than this one",
                 self.installed.crate_version
             ),
         }

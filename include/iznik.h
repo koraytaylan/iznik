@@ -225,6 +225,11 @@ typedef enum {
    * The host runs this version, missing features this build has.
    */
   IZNIK_UPGRADE_KIND_CAPABILITIES = 2,
+  /**
+   * The host's daemon runs another build of this version, from before its
+   * binary was replaced with this build's.
+   */
+  IZNIK_UPGRADE_KIND_BUILD = 3,
 } iznik_upgrade_kind;
 
 /**

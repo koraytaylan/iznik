@@ -64,6 +64,7 @@ fn held(state: &HostState) -> Held {
                 status.upgrade = match offer.reason {
                     UpgradeReason::Version => UpgradeKind::Version,
                     UpgradeReason::Capabilities => UpgradeKind::Capabilities,
+                    UpgradeReason::Build => UpgradeKind::Build,
                 };
                 status.installed_version = installed.as_ptr();
                 status.bundled_version = bundled.as_ptr();

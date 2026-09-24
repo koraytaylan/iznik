@@ -33,6 +33,9 @@ pub(super) struct Reached {
     pub(super) instance: Option<DaemonInstance>,
     /// A newer one, when this build carries one.
     pub(super) offer: Option<UpgradeOffer>,
+    /// The run that answered, when it is another build of this version still
+    /// running from before the binary under it was replaced.
+    pub(super) superseded: Option<DaemonInstance>,
 }
 
 /// Bootstraps a host and opens a channel to it.
@@ -54,57 +57,99 @@ pub(super) async fn reach(
     let deadline = shared.options.bootstrap_deadline;
     if host.local_socket().is_some() {
         // A socket on this machine: there is nothing to probe and nothing to
-        // install, and `unix:` is the alias this crate owns.
+        // install, and `unix:` is the alias this crate owns. It is a daemon
+        // too, and it may be one this build did not start: its greeting says
+        // whether anything is missing, and an offer is the only honest thing
+        // to make of that.
         let (channel, snapshot) = launch(&transport, None, &options, expiry(deadline)).await?;
-        let greeting = channel.greeting();
-        // A socket on this machine is a daemon too, and it may be one this
-        // build did not start: its greeting says whether anything is missing,
-        // and an offer is the only honest thing to make of that.
-        let offer = offer_for(greeting, &Decision::UpToDate);
-        let version = greeting.server_version.clone();
-        let capabilities = trusted_capabilities(greeting);
-        let instance = greeting.instance;
-        return Ok(Reached {
+        return Ok(reached(
+            host,
+            shared,
             channel,
             snapshot,
-            version,
-            capabilities,
-            instance,
-            offer,
-        });
+            &Decision::UpToDate,
+        ));
     }
     let watching = |stage: Stage| {
         let _reported = advance(shared, host, machine, HostEvent::Reached { stage });
     };
     let connected =
         bootstrap_watched(&transport, &shared.artifacts, &options, deadline, &watching).await?;
-    let greeting = connected.channel.greeting();
-    let offer = offer_for(greeting, &connected.decision);
-    let version = greeting.server_version.clone();
-    let capabilities = trusted_capabilities(greeting);
+    Ok(reached(
+        host,
+        shared,
+        connected.channel,
+        connected.snapshot,
+        &connected.decision,
+    ))
+}
+
+/// What a channel the host answered on says, read against what the bootstrap
+/// decided about it.
+fn reached(
+    host: &HostId,
+    shared: &Shared,
+    channel: RemoteChannel,
+    snapshot: iznik_protocol::model::HostModel,
+    decision: &Decision,
+) -> Reached {
+    let greeting = channel.greeting();
     let instance = greeting.instance;
-    Ok(Reached {
-        channel: connected.channel,
-        snapshot: connected.snapshot,
+    let (stale, superseded) = superseded(host, shared, decision, instance);
+    let offer = offer_for(greeting, decision, stale);
+    let version = greeting.server_version.clone();
+    let capabilities = trusted_capabilities(greeting, stale);
+    Reached {
+        channel,
+        snapshot,
         version,
         capabilities,
         instance,
         offer,
-    })
+        superseded,
+    }
+}
+
+/// Whether the run of the daemon that answered is another build of this
+/// version than this one, and the run to remember as such.
+///
+/// A bootstrap that found another build of this version on the host replaces
+/// its binary, and a daemon that was already running does not notice: it goes
+/// on answering, as the old build, under the version this build has. That run
+/// is remembered, so a later connection that finds the binary right — and the
+/// same run still answering — does not take it for this build either.
+fn superseded(
+    host: &HostId,
+    shared: &Shared,
+    decision: &Decision,
+    instance: Option<DaemonInstance>,
+) -> (bool, Option<DaemonInstance>) {
+    if matches!(decision, Decision::Replace) {
+        // A server that does not say which run it is cannot be told apart
+        // from the next one, and is taken for the old build on this
+        // connection only.
+        return (true, instance);
+    }
+    let before = shared.with(host, |view| view.superseded).flatten();
+    match (before, instance) {
+        (Some(remembered), Some(now)) if remembered == now => (true, Some(remembered)),
+        _otherwise => (false, None),
+    }
 }
 
 /// The capabilities of a greeting this build may act on.
 ///
 /// A capability bit means what the build that assigned it says it means, and
-/// the only thing that identifies a build is its version. Two servers that both
-/// say "protocol 1" may have given one bit number two different jobs — an
-/// unreleased local build did exactly that — so a server that is not this
-/// build's own version is not interpreted at all: its advertisement is dropped
-/// and every feature gated on a bit is unavailable to it. That is the
-/// conservative answer, and it costs nothing real, because a host of another
-/// version is offered an upgrade on that ground alone.
-pub(super) fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
-    if greeting.server_version == bundled().crate_version {
+/// the only thing that identifies a build is its version — and, within one
+/// version, its bytes. Two servers that both say "protocol 1" may have given
+/// one bit number two different jobs — an unreleased local build did exactly
+/// that — so a server that is not this build's own version, or is `stale`,
+/// another build of it, is not interpreted at all: its advertisement is
+/// dropped and every feature gated on a bit is unavailable to it. That is the
+/// conservative answer, and it costs nothing real, because such a host is
+/// offered an upgrade on that ground alone.
+fn trusted_capabilities(greeting: &ServerHello, stale: bool) -> Capabilities {
+    if greeting.server_version == bundled().crate_version && !stale {
         greeting.capabilities
     } else {
         Capabilities::from_bits(0)
@@ -113,13 +158,14 @@ pub(super) fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
 
 /// The upgrade offer a connection puts on the table, if any.
 ///
-/// Four things offer one. A host the probe found another version on is offered
+/// Five things offer one. A host the probe found another version on is offered
 /// it for the version. A host reached over a local socket — where no probe ran
-/// — is offered it when its greeting names another version. A host of this
-/// build's version whose server is nevertheless missing capabilities is offered
-/// it for the gap. The installed server is always read from what the greeting
-/// said, never assumed to equal what the build carries.
-fn offer_for(greeting: &ServerHello, decision: &Decision) -> Option<UpgradeOffer> {
+/// — is offered it when its greeting names another version. A host whose
+/// daemon is `stale`, another build of this version, is offered it for the
+/// build. A host of this build whose server is nevertheless missing
+/// capabilities is offered it for the gap. The installed server is always read
+/// from what the greeting said, never assumed to equal what the build carries.
+fn offer_for(greeting: &ServerHello, decision: &Decision, stale: bool) -> Option<UpgradeOffer> {
     // What the greeting said the host runs, which is never assumed to be what
     // this build carries.
     let what_the_host_said = InstalledServer {
@@ -140,21 +186,24 @@ fn offer_for(greeting: &ServerHello, decision: &Decision) -> Option<UpgradeOffer
         });
     }
     let carried = bundled();
-    if what_the_host_said.crate_version != carried.crate_version {
+    let reason = if what_the_host_said.crate_version != carried.crate_version {
         // A local socket, or a probe the greeting disagreed with: the version
         // alone is reason enough, and it is the honest one.
-        return Some(UpgradeOffer {
-            installed: what_the_host_said,
-            bundled: carried,
-            reason: UpgradeReason::Version,
-        });
-    }
-    if trusted_capabilities(greeting).missing_features().bits() != 0 {
-        return Some(UpgradeOffer {
-            installed: what_the_host_said,
-            bundled: carried,
-            reason: UpgradeReason::Capabilities,
-        });
-    }
-    None
+        UpgradeReason::Version
+    } else if stale {
+        UpgradeReason::Build
+    } else if trusted_capabilities(greeting, stale)
+        .missing_features()
+        .bits()
+        != 0
+    {
+        UpgradeReason::Capabilities
+    } else {
+        return None;
+    };
+    Some(UpgradeOffer {
+        installed: what_the_host_said,
+        bundled: carried,
+        reason,
+    })
 }
