@@ -37,9 +37,9 @@ test = "iznik-server::client_connections::input_reaches_the_pane_and_comes_back"
 because = "the shell is a real process here; only the wire between it and the client is shortened"
 
 [[claim]]
-id = "connection-reports-a-backlog"
-statement = "Input beyond what a pane whose shell has stopped reading can hold is answered with `Error { InputBacklog }` naming the pane, and the connection stays open: nothing is dropped and nothing is lost."
-test = "iznik-server::client_connections::a_backlog_is_reported_and_the_connection_stays_open"
+id = "connection-holds-input-past-the-backlog"
+statement = "Input beyond what a pane whose shell is not reading can hold is held, not refused: the connection stops taking that pane's keystrokes until the shell reads, keeps answering credit and pings meanwhile, and a paste larger than the backlog arrives whole and in order."
+test = "iznik-server::held_input::held_input_a_paste_past_the_backlog_arrives_whole"
 because = "the backlog is the pane's own limit against a real pseudoterminal that is not being read"
 
 [[claim]]
