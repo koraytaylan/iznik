@@ -497,3 +497,46 @@ fn remote_launch_tells_builds_of_one_version_apart_by_their_bytes() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When an upgrade whose old daemon survived is taken for done because the
+/// survivor gives this build's version — every build of one version does — or
+/// one that brought another run up is refused.
+#[test]
+fn remote_launch_knows_an_upgrade_by_the_run_that_answers() {
+    use iznik_client::bootstrap::launch::bundled;
+    use iznik_client::bootstrap::replaced;
+    use iznik_client::transport::channel::ServerHello;
+    use iznik_protocol::identity::DaemonInstance;
+    let first = DaemonInstance(0x0111);
+    let greeting = |instance: Option<DaemonInstance>| ServerHello {
+        protocol_version: PROTOCOL_VERSION,
+        server_version: bundled().crate_version,
+        capabilities: Capabilities::INSTANCE,
+        instance,
+    };
+    assert!(
+        replaced("host0", Some(first), &greeting(Some(first))).is_err(),
+        "the run that was there still answering is no upgrade, whatever its version"
+    );
+    assert!(
+        replaced(
+            "host0",
+            Some(first),
+            &greeting(Some(DaemonInstance(0x0222)))
+        )
+        .is_ok(),
+        "another run of this build answering is"
+    );
+    assert!(
+        replaced("host0", None, &greeting(None)).is_ok(),
+        "and with no run named either side, this build's version is all there is to go on"
+    );
+    let mut other = greeting(None);
+    other.server_version = "0.0.0-other".to_owned();
+    assert!(
+        replaced("host0", None, &other).is_err(),
+        "which a server of another version fails"
+    );
+}

@@ -127,9 +127,11 @@ async fn replace(
     // A daemon still running another build over this build's binary is
     // replaced even though the probe finds nothing to do: that is what its
     // offer was for.
-    let superseded = shared
-        .with(host, |view| view.superseded.is_some())
-        .unwrap_or(false);
+    // And the run this client last reached is what the upgrade must end: a
+    // forced one cannot ask the daemon which run it is before stopping it.
+    let (superseded, running) = shared
+        .with(host, |view| (view.superseded.is_some(), view.instance))
+        .unwrap_or((false, None));
     let replaced = upgrade(
         &transport,
         &shared.artifacts,
@@ -137,6 +139,7 @@ async fn replace(
         Replacement {
             force,
             stale: superseded,
+            running,
         },
         shared.options.bootstrap_deadline,
     )

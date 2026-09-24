@@ -17,6 +17,8 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use iznik_protocol::identity::DaemonInstance;
+
 use crate::bootstrap::launch::{
     BootstrapError, BootstrapOptions, Bootstrapped, Cause, Decision, Stage, UpgradeError, bundled,
     decide, expiry, launch, left, live_panes, refused, refused_probe, server_path, triple_of,
@@ -26,6 +28,7 @@ use crate::bootstrap::upload::{
     Installed, PREFIX_VARIABLE, TERMINFO_DIRECTORY, posix_command, upload,
 };
 use crate::transport::Transport;
+use crate::transport::channel::ServerHello;
 
 /// The remote script that ends a daemon before its server is replaced.
 ///
@@ -254,13 +257,15 @@ async fn stop(
 /// [`UpgradeError::LivePanes`] when it holds panes, and
 /// [`UpgradeError::Bootstrap`] when it could not be asked at all. Neither when
 /// `force` is set, which is what makes an unreachable daemon replaceable.
+///
+/// Gives back which run of the daemon answered, when it was asked and said.
 async fn may_replace(
     transport: &Transport,
     found: &HostProbe,
     options: &BootstrapOptions,
     force: bool,
     expires: Instant,
-) -> Result<(), UpgradeError> {
+) -> Result<Option<DaemonInstance>, UpgradeError> {
     if force {
         // Somebody has already said they mean it, so the count would change
         // nothing — and asking for it must not be what stops them. The case a
@@ -268,16 +273,17 @@ async fn may_replace(
         // speak to at all: one whose protocol version is not this one's,
         // whose binary will not start, whose handshake never comes. Every one
         // of those fails the very channel that would have counted the panes.
-        return Ok(());
+        return Ok(None);
     }
     let host = transport.alias();
     let (channel, held) = launch(transport, Some(&server_path(found)), options, expires).await?;
     let count = live_panes(&held);
+    let answered = channel.greeting().instance;
     channel.close();
     if count > 0 {
         return Err(UpgradeError::LivePanes { host, count });
     }
-    Ok(())
+    Ok(answered)
 }
 
 /// What an upgrade is asked to replace, beyond what the probe finds.
@@ -291,6 +297,9 @@ pub struct Replacement {
     /// there while the old daemon went on running. The probe cannot see that,
     /// so it is said here, and the daemon is replaced as another build's is.
     pub stale: bool,
+    /// The run of the daemon the caller last reached, when it said: what the
+    /// upgrade must have ended, when the daemon itself could not be asked.
+    pub running: Option<DaemonInstance>,
 }
 
 /// Replaces the server on a host with the one this build carries.
@@ -314,12 +323,17 @@ pub async fn upgrade(
     replacing: Replacement,
     deadline: Duration,
 ) -> Result<(), UpgradeError> {
-    let Replacement { force, stale } = replacing;
+    let Replacement {
+        force,
+        stale,
+        running,
+    } = replacing;
     let host = transport.alias();
     let expires = expiry(deadline);
     let found = probe(transport, left(expires, options.probe_deadline))
         .await
         .map_err(|source| refused_probe(&host, Stage::Probe, &source))?;
+    let mut before = running;
     match decide(&found, artifacts, &bundled()) {
         // Nothing to do — unless somebody forced it, which is the only way a
         // same-version server missing a capability is ever replaced, or the
@@ -335,7 +349,9 @@ pub async fn upgrade(
         // go, and then it is stopped before the new binary is put where it
         // was.
         Decision::UpgradeAvailable { .. } | Decision::Replace | Decision::UpToDate => {
-            may_replace(transport, &found, options, force, expires).await?;
+            before = may_replace(transport, &found, options, force, expires)
+                .await?
+                .or(before);
             stop(transport, &found, left(expires, options.command_deadline)).await?;
         }
     }
@@ -347,26 +363,54 @@ pub async fn upgrade(
     )
     .await?;
     let (channel, _held) = launch(transport, Some(&installed.server), options, expires).await?;
-    // The daemon *is* the sessions, so what matters is which one is answering
-    // — not which binary is on disk. `--stop` is allowed to fail, because a
-    // host with nothing running is a host with nothing to stop; but if the old
-    // daemon survived it, the new binary's relay has just attached to it and
-    // the upgrade did not happen.
-    let answering = channel.greeting().server_version.clone();
+    let answering = channel.greeting().clone();
     channel.close();
+    replaced(&host, before, &answering)
+}
+
+/// Whether an upgrade happened, from the greeting of the daemon answering
+/// after it and the run that answered before it.
+///
+/// The daemon *is* the sessions, so what matters is which one is answering —
+/// not which binary is on disk. `--stop` is allowed to fail, because a host
+/// with nothing running is a host with nothing to stop; but if the old daemon
+/// survived it, the new binary's relay has just attached to it and the upgrade
+/// did not happen. The run it names says so exactly: the same run answering
+/// is the old daemon, whatever version it gives. A version not this build's
+/// says so too, and is all there is to go on with a server that names no run.
+///
+/// # Errors
+///
+/// [`UpgradeError::Bootstrap`] at the launch, saying which daemon is still
+/// answering.
+pub fn replaced(
+    host: &str,
+    before: Option<DaemonInstance>,
+    answering: &ServerHello,
+) -> Result<(), UpgradeError> {
     let carried = bundled().crate_version;
-    if answering != carried {
-        return Err(UpgradeError::Bootstrap(BootstrapError {
-            host,
-            stage: Stage::Launch,
-            cause: Cause::Transient,
-            detail: format!(
-                "the server was replaced but {answering} is still answering, not {carried}: \
-                 the daemon that was there did not stop"
-            ),
-        }));
-    }
-    Ok(())
+    let unchanged = before.is_some() && answering.instance == before;
+    let detail = if unchanged {
+        format!(
+            "the server was replaced but the daemon that was there is still answering, as \
+             {}: it did not stop",
+            answering.server_version
+        )
+    } else if answering.server_version != carried {
+        format!(
+            "the server was replaced but {} is still answering, not {carried}: the daemon \
+             that was there did not stop",
+            answering.server_version
+        )
+    } else {
+        return Ok(());
+    };
+    Err(UpgradeError::Bootstrap(BootstrapError {
+        host: host.to_owned(),
+        stage: Stage::Launch,
+        cause: Cause::Transient,
+        detail,
+    }))
 }
 
 /// Takes iznik off a host: the daemon stopped, the server, the terminfo and
