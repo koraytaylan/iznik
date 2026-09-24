@@ -6,15 +6,18 @@ use std::rc::Rc;
 
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext as _, Context, TestAppContext, Window};
+use iznik_app::actions::ActionId;
 use iznik_app::bridge::{EngineBridge, EngineEvent};
-use iznik_app::vt::{VtOptions, VtThread};
+use iznik_app::prompt;
+use iznik_app::surface::PasteConfirmation;
+use iznik_app::vt::{PaneKey, VtOptions, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_client::reduce::Notification;
 use iznik_client::transport::ClientRuntimePaths;
 use iznik_protocol::command::{CommandOutcome, RejectionCode};
-use iznik_protocol::identity::CommandId;
+use iznik_protocol::identity::{CommandId, PaneId};
 
 /// Fixture failures.
 type Failed = Box<dyn std::error::Error>;
@@ -47,6 +50,44 @@ fn a_refused_command_is_shown(context: &mut TestAppContext) {
             },
         },
     ));
+}
+
+/// A multi-line paste that arrives while another question is open is not
+/// asked about over it: the open question stays, and the person is told.
+#[gpui_kit::test]
+fn a_paste_does_not_replace_an_open_question(context: &mut TestAppContext) {
+    check(&banner_after(context, "engine-paste", ask_then_paste));
+}
+
+/// Open a question, then have a multi-line paste arrive.
+///
+/// # Panics
+/// Fails when the paste replaces the open question.
+fn ask_then_paste(
+    shell: &mut WindowShell,
+    _window: &mut Window,
+    application: &mut Context<'_, WindowShell>,
+) {
+    shell.palette_mut().ask(prompt::add_host_prompt(Vec::new()));
+    shell.confirm_paste(
+        &PasteConfirmation {
+            key: PaneKey {
+                host: HostId("devbox".to_owned()),
+                pane: PaneId(1),
+            },
+            text: "one\ntwo".to_owned(),
+        },
+        application,
+    );
+    assert_eq!(
+        shell
+            .palette()
+            .prompt
+            .as_ref()
+            .and_then(|prompt| prompt.action),
+        Some(ActionId::AddHost),
+        "the open question is kept"
+    );
 }
 
 /// Convert fixture failures into a named assertion outside the GPUI macro.

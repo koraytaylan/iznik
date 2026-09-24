@@ -561,10 +561,19 @@ pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bri
     }
 }
 
+/// What a person is told when a paste arrives while another question is open.
+const PASTE_WHILE_ASKING: &str =
+    "the paste was not sent: another question is open; answer it, then paste again";
+
 impl WindowShell {
     /// Ask a person to confirm a multi-line paste, or send it at once when
     /// the `confirm_multiline_paste` setting is off.
-    pub(crate) fn confirm_paste(
+    ///
+    /// While another question is open — a tab's close, a host to add — the
+    /// paste is not sent and not asked about: asking would throw away the
+    /// question already open. The person is told, and pastes again after
+    /// answering it.
+    pub fn confirm_paste(
         &mut self,
         paste: &crate::surface::PasteConfirmation,
         context: &mut Context<'_, Self>,
@@ -580,6 +589,10 @@ impl WindowShell {
             ) {
                 self.failure(&key.host, error.to_string(), context);
             }
+            return;
+        }
+        if self.palette.prompt.is_some() {
+            self.failure(&key.host, PASTE_WHILE_ASKING.to_owned(), context);
             return;
         }
         self.palette
