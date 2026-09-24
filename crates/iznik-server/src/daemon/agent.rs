@@ -31,18 +31,32 @@ pub async fn point(link: &Path, agent: &Path) -> io::Result<()> {
     staged.push(format!(".{}", std::process::id()));
     let staged = std::path::PathBuf::from(staged);
     let _stale = tokio::fs::remove_file(&staged).await;
-    #[cfg(unix)]
-    tokio::fs::symlink(agent, &staged).await?;
-    #[cfg(windows)]
-    {
-        let _agent = agent;
-        return Err(io::Error::from(io::ErrorKind::Unsupported));
-    }
+    stage(agent, &staged).await?;
     if let Err(error) = tokio::fs::rename(&staged, link).await {
         let _removed = tokio::fs::remove_file(&staged).await;
         return Err(error);
     }
     Ok(())
+}
+
+/// Makes `staged` a symbolic link to `agent`.
+///
+/// # Errors
+///
+/// When the link cannot be made.
+#[cfg(unix)]
+async fn stage(agent: &Path, staged: &Path) -> io::Result<()> {
+    tokio::fs::symlink(agent, staged).await
+}
+
+/// There is no SSH agent socket to link to on Windows.
+///
+/// # Errors
+///
+/// Always: the operation is unsupported there.
+#[cfg(windows)]
+fn stage(_agent: &Path, _staged: &Path) -> std::future::Ready<io::Result<()>> {
+    std::future::ready(Err(io::Error::from(io::ErrorKind::Unsupported)))
 }
 
 /// Points `link` at the agent this process was given, if it was given one:

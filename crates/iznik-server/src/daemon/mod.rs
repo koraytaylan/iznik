@@ -607,7 +607,7 @@ fn owner_only<Made>(work: impl FnOnce() -> Made) -> Made {
     }
     #[cfg(windows)]
     {
-        making()
+        work()
     }
 }
 
