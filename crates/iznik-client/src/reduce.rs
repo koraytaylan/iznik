@@ -302,6 +302,12 @@ fn replace(
     let held = match decode_host_model(payload) {
         Ok(held) => held,
         Err(source) => {
+            // The snapshot that was asked for came, even if it could not be
+            // read: the next gap asks again rather than waiting, for the rest
+            // of the connection, on an answer that has already arrived.
+            if let Some(view) = model.host_mut(host) {
+                view.snapshot_asked = false;
+            }
             return vec![Effect::Notify(Notification::Malformed {
                 host: host.clone(),
                 detail: format!("the host's model could not be read: {source}"),

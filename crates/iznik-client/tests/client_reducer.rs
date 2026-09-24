@@ -615,3 +615,37 @@ fn client_reducer_keeps_how_far_the_host_answered() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a snapshot that arrived and could not be read leaves the client
+/// believing one is still on its way, so that no gap after it asks again.
+#[test]
+fn client_reducer_asks_again_after_a_snapshot_it_could_not_read() {
+    let host = work();
+    let start = ModelGenerator::new(SEED).model();
+    let mut model = knowing(&host, start.clone());
+    if let Some(view) = model.host_mut(&host) {
+        view.snapshot_asked = true;
+    }
+    let taken = reduce(
+        &mut model,
+        &host,
+        &ToClient::Snapshot {
+            generation: start.generation,
+            payload: vec![0xff, 0xff, 0xff],
+        },
+    );
+    assert!(
+        matches!(
+            taken.first(),
+            Some(Effect::Notify(Notification::Malformed { .. }))
+        ),
+        "the snapshot that could not be read is said: {taken:?}"
+    );
+    assert_eq!(
+        model.host(&host).map(|view| view.snapshot_asked),
+        Some(false),
+        "and the snapshot asked for has come, so the next gap asks again"
+    );
+}
