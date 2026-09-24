@@ -596,11 +596,10 @@ async fn serve_link(
             }
             Turn::Ordered(Some(Order::Credit { receipt })) => {
                 let (carrying, after) = carry_credit(&mut channel, &receipt, orders, shared).await;
-                pending = after;
                 if carrying.is_err() {
-                    let _dead = advance(shared, host, machine, dead("the link would not take it"));
-                    return Ended::Gone;
+                    return credit_failed(host, shared, machine, kept, after);
                 }
+                pending = after;
             }
             Turn::Ordered(Some(order)) => {
                 if !admitted(host, shared, &order, record) {
@@ -629,6 +628,36 @@ async fn serve_link(
             }
         }
     }
+}
+
+/// How a link ends whose credit would not go, with `after` — the order taken
+/// off the queue from behind the credit — not lost with it.
+///
+/// A stop is still a stop, and an upgrade still an upgrade; keystrokes are
+/// dropped and said so, as any given with no link to carry them; the rest is
+/// held for the next connection under [`keep`]'s rule.
+fn credit_failed(
+    host: &HostId,
+    shared: &Shared,
+    machine: &Mutex<HostStateMachine>,
+    kept: &mut Vec<Order>,
+    after: Option<Order>,
+) -> Ended {
+    match after {
+        Some(Order::Stop) => {
+            let _torn = advance(shared, host, machine, HostEvent::Removed);
+            return Ended::Stopped;
+        }
+        Some(Order::Upgrade { force }) => {
+            let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
+            return Ended::Upgrade { force };
+        }
+        Some(Order::Input { pane, bytes, .. }) => dropped_input(host, shared, pane, bytes.len()),
+        Some(held) => keep(kept, held),
+        None => {}
+    }
+    let _dead = advance(shared, host, machine, dead("the link would not take it"));
+    Ended::Gone
 }
 
 /// The next turn: an order that is already waiting, or whatever the link says.
