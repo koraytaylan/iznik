@@ -795,16 +795,15 @@ async fn the_scheduler_shares_the_link_and_follows_focus() {
             .saturating_sub(rig.sink.count(background));
         assert_eq!(gained, increment, "the focused pane's window is larger");
 
-        // Focusing what is already focused gives the pane its window back —
-        // a client that says so again may have lost track of what it owes —
-        // but only up to the ceiling: never the increment on top of it.
+        // Focusing what is already focused changes nothing about its window:
+        // the bytes it has spent are still outstanding at the client.
         rig.sink.reset_counts();
         rig.multiplexer.focus(rig.pane(0)?).await?;
         rig.drain(None).await?;
         let twice = rig.sink.count(watched);
         assert_eq!(
-            twice, ceiling,
-            "focusing twice restores, never widens twice: {twice}"
+            twice, 0,
+            "focusing twice neither widens nor restores: {twice}"
         );
 
         rig.sink.reset_counts();

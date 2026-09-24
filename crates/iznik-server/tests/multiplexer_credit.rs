@@ -198,9 +198,11 @@ async fn a_channel_announced_again_starts_with_its_whole_window() {
 
 /// # Panics
 ///
-/// When focusing the pane already focused does not give back its window.
+/// When focusing the pane already focused gives it more window while the
+/// bytes it has spent are still outstanding at the client, which, repeated,
+/// would let the server pass the ceiling the window holds it to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn focus_on_the_focused_pane_restores_its_window() {
+async fn focus_on_the_focused_pane_gives_no_more_window() {
     let case = async {
         let mut rig = Rig::new().await?;
         rig.multiplexer
@@ -219,8 +221,17 @@ async fn focus_on_the_focused_pane_restores_its_window() {
         );
 
         rig.multiplexer.focus(rig.pane).await?;
+        rig.multiplexer.focus(rig.pane).await?;
         let again = rig.drain(channel).await?;
-        assert!(again > 0, "focusing it again gives its window back");
+        assert_eq!(again, 0, "focusing it again sends nothing uncredited");
+
+        rig.multiplexer.credit(channel, INITIAL_CREDIT_BYTES)?;
+        let credited = rig.drain(channel).await?;
+        assert_eq!(
+            credited,
+            u64::from(INITIAL_CREDIT_BYTES),
+            "credit returned is what may be sent"
+        );
         Ok::<(), Failed>(())
     };
     tokio::time::timeout(DEADLINE, case)

@@ -464,9 +464,13 @@ ceiling.
 
 Every `PaneChannel` starts the window again, whole: a client begins a new
 stream on each one and returns credit only for bytes of the stream it is on,
-so credit spent before the announcement is never coming back. A `Focus` for
-the pane already focused gives that pane its whole focused window back too —
-at the ceiling, never past it.
+so credit spent before the announcement is never coming back. A `Credit` the
+client sent for the old stream before it saw the announcement still refills
+the new window; a window never grows past its ceiling, so what that can add
+is at most one window, once per announcement — within the four windows a
+client allows before it drops the link. A `Focus` for the pane already
+focused changes nothing about its window: only a `PaneChannel` starts one
+again.
 
 A channel at zero credit is skipped, never waited on. A background channel
 that falls further behind than the stale threshold stops being streamed

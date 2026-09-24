@@ -541,16 +541,13 @@ impl<Sink: FrameSink> Multiplexer<Sink> {
             return Err(MultiplexerError::NotSubscribed { pane });
         }
         self.registry.read().await.touch(pane);
-        // Widening twice would add the increment twice, and a client that
-        // says what it is already looking at — after a reconnect, or on every
-        // window activation — would push the server past the ceiling the
-        // window exists to hold it to. It is given its whole window back
-        // instead: a client saying so again is a client that may have lost
-        // track of what it owes, and a window at the ceiling cannot pass it.
+        // A client says what it is already looking at on every window
+        // activation, and that changes nothing about its window. Widening
+        // twice would add the increment twice, and handing back the whole
+        // window would forget the bytes already in flight on this stream:
+        // either way, repeated, the server would pass the ceiling the window
+        // exists to hold it to. Only a `PaneChannel` starts the window again.
         if self.focused == Some(pane) {
-            if let Some(cursor) = self.cursors.get_mut(&pane) {
-                cursor.credit = CreditWindow::focused();
-            }
             self.wake.notify_one();
             return Ok(());
         }
