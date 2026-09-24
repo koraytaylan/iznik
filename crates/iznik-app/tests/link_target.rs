@@ -72,3 +72,53 @@ fn local_documents_open_and_programs_do_not() {
     );
     let _removed = fs::remove_dir_all(&directory);
 }
+
+/// Only a plain file whose extension names a document opens: files the
+/// platform runs that no list of programs names, directories, bundles, and
+/// links to elsewhere stay text.
+///
+/// # Panics
+/// Fails when anything but a plain document is opened.
+#[test]
+fn only_plain_documents_open() {
+    let directory = std::env::temp_dir().join(format!("iznik-link-kinds-{}", std::process::id()));
+    let _stale = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("directory");
+    let target = |name: &str| format!("file://{}", directory.join(name).display());
+    for name in [
+        "Shell.terminal",
+        "place.fileloc",
+        "place.inetloc",
+        "page.webloc",
+        "script.scpt",
+        "script.applescript",
+        "page.html",
+        "no-extension",
+    ] {
+        fs::write(directory.join(name), "content").expect("file");
+        assert!(!safe_to_open(&target(name)), "{name} is not a document");
+    }
+    for name in ["Run.workflow", "Pane.prefPane", "Saver.saver", "folder"] {
+        fs::create_dir_all(directory.join(name)).expect("bundle");
+        assert!(!safe_to_open(&target(name)), "{name} is a directory");
+    }
+    fs::create_dir_all(directory.join("folder.txt")).expect("folder");
+    assert!(
+        !safe_to_open(&target("folder.txt")),
+        "a directory named like a document"
+    );
+    for name in ["notes.md", "picture.PNG", "paper.pdf", "main.rs"] {
+        fs::write(directory.join(name), "content").expect("document");
+        assert!(safe_to_open(&target(name)), "{name} is a document");
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(directory.join("Shell.terminal"), directory.join("link.txt"))
+            .expect("symbolic link");
+        assert!(
+            !safe_to_open(&target("link.txt")),
+            "a link named like a document"
+        );
+    }
+    let _removed = fs::remove_dir_all(&directory);
+}

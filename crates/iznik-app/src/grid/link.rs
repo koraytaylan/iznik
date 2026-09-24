@@ -2,9 +2,13 @@
 //!
 //! A program names a link's target, and the person sees only its label, so
 //! the target is checked before the platform opens it: web and mail
-//! addresses, and local files that are not programs. A `file:` target on
-//! another host, a program, a script or an application bundle stays text,
-//! because the platform would run it rather than show it.
+//! addresses, and local documents. A local file opens only when its
+//! extension names a kind of document the platform shows — text, an image,
+//! a PDF, source code — and it is a plain file that nobody may run. Anything
+//! else stays text: a `file:` target on another host, a directory or bundle,
+//! a link to elsewhere, and every kind of file not known to be only shown,
+//! because a list of what the platform runs is never complete (`.terminal`,
+//! `.webloc`, `.workflow`, `.scpt` and many more).
 
 use std::path::{Path, PathBuf};
 
@@ -18,10 +22,15 @@ const FILE_SCHEME: &str = "file";
 const LOCAL_HOST: &str = "localhost";
 /// The start of a hierarchical part.
 const HIERARCHY: &str = "//";
-/// Extensions the platform runs, or opens as an application, rather than shows.
-const RUN_EXTENSIONS: &[&str] = &[
-    "app", "exe", "com", "bat", "cmd", "msi", "ps1", "vbs", "scr", "lnk", "command", "tool", "sh",
-    "jar", "pkg",
+/// Extensions of the documents a platform shows rather than runs: text,
+/// images, PDFs, sound and video, and source code no platform runs by
+/// opening it. Scripts a platform may run when opened (`.js`, `.py`, `.html`
+/// and `.svg`, which carry script) are not here.
+const SHOWN_EXTENSIONS: &[&str] = &[
+    "txt", "text", "md", "markdown", "rst", "log", "csv", "tsv", "json", "yaml", "yml", "toml",
+    "ini", "conf", "xml", "diff", "patch", "pdf", "png", "jpg", "jpeg", "gif", "bmp", "tif",
+    "tiff", "webp", "heic", "mp3", "wav", "m4a", "mp4", "mov", "rs", "c", "h", "cc", "cpp", "hpp",
+    "go", "java", "swift", "kt",
 ];
 /// Permission bits that let any user run a file.
 #[cfg(unix)]
@@ -92,32 +101,34 @@ fn percent_decoded(text: &str) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-/// Whether an existing local file would be shown rather than run: not an
-/// application bundle, not a program or script by extension, and not a file
-/// with a permission to run it.
+/// Whether an existing local file would be shown rather than run: its
+/// extension names a document, and it is a plain file — not a directory or
+/// bundle, not a symbolic link to something else — with no permission to run
+/// it. The extension is checked first, so a target that is not a document
+/// costs no look at the file system; the look that follows is one `lstat`.
 fn shown(path: &Path) -> bool {
-    let runs = path
+    let document = path
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            RUN_EXTENSIONS
+            SHOWN_EXTENSIONS
                 .iter()
-                .any(|run| extension.eq_ignore_ascii_case(run))
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
         });
-    if runs {
+    if !document {
         return false;
     }
-    let Ok(metadata) = std::fs::metadata(path) else {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return false;
     };
-    metadata.is_dir() || !runnable(&metadata)
+    metadata.is_file() && !runnable(&metadata)
 }
 
 /// Whether the file's permissions let someone run it.
 #[cfg(unix)]
 fn runnable(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
-    metadata.is_file() && metadata.permissions().mode() & RUN_PERMISSIONS != 0
+    metadata.permissions().mode() & RUN_PERMISSIONS != 0
 }
 
 /// Whether the file's permissions let someone run it. Windows decides by
