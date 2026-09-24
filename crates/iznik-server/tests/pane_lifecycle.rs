@@ -311,3 +311,46 @@ async fn pane_lifecycle_a_job_ignoring_the_hangup_does_not_keep_a_pane_alive() {
     );
     let _removed = std::fs::remove_dir_all(&directory);
 }
+
+/// A pane whose spawn fails after its shell has started — here because its
+/// mirror thread has ended — ends that shell rather than leaving it running
+/// with nothing to answer to.
+///
+/// # Panics
+///
+/// When the spawn succeeds, or the shell outlives it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_lifecycle_a_failed_spawn_leaves_no_shell_behind() {
+    let directory = scratch("failed").expect("a scratch directory");
+    let shell = directory.join("shell");
+    let script = format!("echo $$ > \"{}\"; exec sleep 1000", shell.display());
+    let mut thread = MirrorThread::start().expect("the mirror thread");
+    thread.stop();
+    let spawned = Pane::spawn(
+        &running_script(script),
+        DEFAULT_HISTORY_BUDGET_BYTES,
+        &thread,
+    )
+    .await;
+    assert!(spawned.is_err(), "a pane without its mirror does not spawn");
+    // A shell killed before it wrote its number is one that did not survive.
+    let written = tokio::time::timeout(Duration::from_secs(1), written_process(&shell)).await;
+    let Ok(Ok(process)) = written else {
+        let _removed = std::fs::remove_dir_all(&directory);
+        return;
+    };
+    let gone = tokio::time::timeout(DEADLINE, async {
+        while running(process) {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    })
+    .await;
+    if gone.is_err() {
+        let _killed = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(process),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(gone.is_ok(), "the shell of the failed spawn was ended");
+    let _removed = std::fs::remove_dir_all(&directory);
+}

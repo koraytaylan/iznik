@@ -354,16 +354,23 @@ impl MirrorThread {
             let _sent = constructors.send(constructor);
         }
     }
-}
 
-impl Drop for MirrorThread {
-    fn drop(&mut self) {
+    /// Ends the thread and waits for it: every pane task on it is dropped,
+    /// and a pane spawned on it afterwards fails with its mirror gone rather
+    /// than starting. Dropping the thread does the same.
+    pub fn stop(&mut self) {
         // Dropping the sender ends the thread's receive loop, which returns from
         // `block_on` and drops the `LocalSet` and every task on it.
         self.constructors = None;
         if let Some(handle) = self.handle.take() {
             let _joined = handle.join();
         }
+    }
+}
+
+impl Drop for MirrorThread {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

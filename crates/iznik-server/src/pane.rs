@@ -301,6 +301,10 @@ impl Pane {
             })
         })??;
         let process = Arc::new(Mutex::new(process));
+        // The reaper holds the child from here until it exits, so a spawn that
+        // fails below would never drop the last handle — and the child would
+        // run on with nothing to end it. The guard ends it on every such path.
+        let mut unkept = KilledUnlessKept(Some(Arc::clone(&process)));
         let (exit_sender, exit) = watch::channel(None);
         reap_on_exit(Arc::clone(&process), exit_sender)?;
 
@@ -339,6 +343,7 @@ impl Pane {
             Ok(Err(source)) => return Err(PaneError::Mirror(source)),
             Err(_recv) => return Err(PaneError::Gone),
         }
+        unkept.keep();
 
         Ok(Pane {
             input,
@@ -605,6 +610,29 @@ impl Drop for Pane {
         }
         // The child wait owns no process mutex, so cleanup cannot wait behind it.
         self.kill();
+    }
+}
+
+/// A child being made into a pane: dropped before [`KilledUnlessKept::keep`],
+/// it kills the child's process group and the terminal's foreground group,
+/// so a spawn that fails after starting the child leaves nothing running.
+struct KilledUnlessKept(Option<Arc<Mutex<PtyProcess>>>);
+
+impl KilledUnlessKept {
+    /// The pane was made and owns the child now; nothing is killed.
+    fn keep(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for KilledUnlessKept {
+    fn drop(&mut self) {
+        if let Some(process) = self.0.take() {
+            process
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .kill_terminal_groups();
+        }
     }
 }
 
