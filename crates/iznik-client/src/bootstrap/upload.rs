@@ -90,6 +90,12 @@ pub(crate) const DIGEST_VARIABLE: &str = "IZNIK_DIGEST";
 /// standing between a truncated download and an executable, so it fails closed
 /// rather than comparing against a value nothing computed.
 ///
+/// It reads the artifact from its standard input: the last `IZNIK_LENGTH`
+/// bytes of it when that is set, which is how a bootstrap sends it — after the
+/// script itself and [`PAYLOAD_PADDING`], as [`posix_feeding`] says why — and
+/// all of it when it is not, which is how a scenario that runs the script
+/// directly sends it.
+///
 /// Once the server is in place it writes the digest it checked beside it, as
 /// `iznik-server.sha256`: the probe reads that rather than hashing the whole
 /// binary on every connection, and hashes only when the binary is newer than
@@ -113,7 +119,9 @@ own "$into"
 find "$into" -name '.partial-*' -type f -mmin +60 -exec rm -f {} + 2>/dev/null || true
 partial=$(mktemp "$into/.partial-XXXXXX")
 trap 'rm -f "$partial"' EXIT
-cat > "$partial"
+if [ -n "${IZNIK_LENGTH:-}" ]
+then tail -c "$IZNIK_LENGTH" > "$partial"
+else cat > "$partial"; fi
 if command -v sha256sum >/dev/null 2>&1
 then got=$(sha256sum < "$partial" | cut -d' ' -f1)
 elif command -v shasum >/dev/null 2>&1
@@ -156,7 +164,9 @@ mkdir -p "$into"
 own "$into"
 entry=$(mktemp "$IZNIK_PREFIX/.terminfo-XXXXXX")
 trap 'rm -f "$entry"' EXIT
-cat > "$entry"
+if [ -n "${IZNIK_LENGTH:-}" ]
+then tail -c "$IZNIK_LENGTH" > "$entry"
+else cat > "$entry"; fi
 tic -x -o "$into" "$entry"
 printf 'compiled %s\n' "$into"
 "#;
@@ -360,40 +370,96 @@ impl ArtifactSet {
 }
 
 /// The command that runs `script` on a host with the prefix and the digest it
-/// needs.
+/// needs, and `length` bytes of payload fed after it.
 #[must_use]
-pub fn remote_command(script: &str, prefix: &Path, digest: &str) -> String {
-    posix_command(
+pub fn remote_command(script: &str, prefix: &Path, digest: &str, length: usize) -> RemoteScript {
+    posix_feeding(
         script,
         &[
             (PREFIX_VARIABLE, &prefix.display().to_string()),
             (DIGEST_VARIABLE, digest),
         ],
+        length,
     )
 }
 
-/// A POSIX script as the one command `ssh` hands to the host's login shell:
-/// `sh -c` and the script as a single quoted word, with every variable it
-/// reads assigned and exported at its top.
+/// The one command a POSIX script is run with, whatever the host's login
+/// shell: `sh`, reading the script from its standard input.
 ///
-/// The login shell is whatever the person chose, and only the `sh` it starts
-/// reads the script — so a host whose shell is fish, which cannot parse a
-/// POSIX function, is asked in a language it can. The assignments are inside
-/// the quoted word rather than before `sh` for the same reason: `NAME=value
-/// command` is a Bourne-shell form, not something every login shell reads.
-/// What the login shell must still read is one single-quoted word, which may
-/// span lines; a C shell cannot, and a host whose login shell is `csh` or
-/// `tcsh` is not one iznik can bootstrap.
+/// Two plain words, and so a command every login shell reads the same — a
+/// Bourne shell, fish, nushell, and a C shell, which cannot read a quoted
+/// argument that spans lines and so could never run `sh -c '<script>'`.
+pub const POSIX_SHELL: &str = "sh -s";
+
+/// How many newlines stand between a script and the payload fed after it.
+///
+/// A shell reading its script from a pipe may read ahead of the command it is
+/// running — `dash`, the `sh` of Debian and Ubuntu, reads a kibibyte at a
+/// time — and whatever it read is gone from the pipe before the script's own
+/// reader starts. So the payload is not put straight after the script: this
+/// many newlines are, far more than any shell reads ahead, and the script
+/// takes the payload as the last `IZNIK_LENGTH` bytes of what is left.
+pub const PAYLOAD_PADDING: usize = 64 * 1024;
+
+/// The variable the length of a payload is passed in.
+pub(crate) const LENGTH_VARIABLE: &str = "IZNIK_LENGTH";
+
+/// What a host is asked to run: a command its login shell reads, and the
+/// text written to that command's standard input before anything else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteScript {
+    /// The command, as `ssh` hands it to the login shell.
+    pub command: String,
+    /// What goes on its standard input first: for a POSIX script, the script.
+    pub input: String,
+}
+
+impl RemoteScript {
+    /// A command that is the whole of what is asked, reading nothing it is
+    /// not fed — a Windows host's.
+    #[must_use]
+    pub fn alone(command: String) -> RemoteScript {
+        RemoteScript {
+            command,
+            input: String::new(),
+        }
+    }
+}
+
+/// A POSIX script as a host is asked to run it: [`POSIX_SHELL`], with the
+/// script on its standard input and every variable it reads assigned and
+/// exported at its top, in POSIX quoting that only that `sh` reads.
+///
+/// The script is one brace group, ending in `exit`, so that `sh` has read the
+/// whole of it before it runs any of it — a payload fed after it is never
+/// taken for more script — and stops without reading further.
 #[must_use]
-pub fn posix_command(script: &str, variables: &[(&str, &str)]) -> String {
+pub fn posix_command(script: &str, variables: &[(&str, &str)]) -> RemoteScript {
     use core::fmt::Write as _;
-    let mut whole = String::new();
+    let mut whole = String::from("{\n");
     for (name, value) in variables {
         // Writing to a `String` cannot fail.
         let _written = writeln!(whole, "{name}={}\nexport {name}", quoted(value));
     }
     whole.push_str(script);
-    format!("sh -c {}", quoted(&whole))
+    whole.push_str("\nexit\n}\n");
+    RemoteScript {
+        command: POSIX_SHELL.to_owned(),
+        input: whole,
+    }
+}
+
+/// A POSIX script that reads a payload of `length` bytes fed after it, as
+/// [`posix_command`] makes one, with the length in `IZNIK_LENGTH` and
+/// [`PAYLOAD_PADDING`] after it.
+#[must_use]
+pub fn posix_feeding(script: &str, variables: &[(&str, &str)], length: usize) -> RemoteScript {
+    let counted = length.to_string();
+    let mut every: Vec<(&str, &str)> = variables.to_vec();
+    every.push((LENGTH_VARIABLE, &counted));
+    let mut asked = posix_command(script, &every);
+    asked.input.push_str(&"\n".repeat(PAYLOAD_PADDING));
+    asked
 }
 
 /// One argument as a shell will read it back unchanged.
@@ -407,8 +473,8 @@ pub(crate) fn quoted(held: &str) -> String {
 /// A trait rather than the transport itself, so that what is sent and what is
 /// run can be watched by a test without a host.
 pub trait FeedsRemotely {
-    /// Runs `command` there, writing `bytes` to its standard input in
-    /// [`UPLOAD_CHUNK_LENGTH`] pieces.
+    /// Runs `asked` there, writing its input and then `bytes` to its standard
+    /// input, the bytes in [`UPLOAD_CHUNK_LENGTH`] pieces.
     ///
     /// # Errors
     ///
@@ -416,7 +482,7 @@ pub trait FeedsRemotely {
     /// [`UploadError::Refused`] when it does not succeed.
     fn feed(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         bytes: &[u8],
         stage: &'static str,
         deadline: Duration,
@@ -426,16 +492,16 @@ pub trait FeedsRemotely {
 impl FeedsRemotely for Transport {
     fn feed(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         bytes: &[u8],
         stage: &'static str,
         deadline: Duration,
     ) -> impl Future<Output = Result<String, UploadError>> + Send {
         let host = self.alias();
-        let asked = command.to_owned();
+        let script = asked.input.clone().into_bytes();
         let payload = bytes.to_vec();
         let spawned = match self {
-            Transport::Ssh(ssh) => ssh.spawn(&[asked]),
+            Transport::Ssh(ssh) => ssh.spawn(core::slice::from_ref(&asked.command)),
             Transport::Local { socket } => Err(SshError::Unreachable {
                 host: host.clone(),
                 detail: format!(
@@ -452,6 +518,9 @@ impl FeedsRemotely for Transport {
                 let Some(mut writing) = writing else {
                     return;
                 };
+                if writing.write_all(&script).await.is_err() {
+                    return;
+                }
                 for piece in payload.chunks(UPLOAD_CHUNK_LENGTH) {
                     if writing.write_all(piece).await.is_err() {
                         return;
@@ -523,12 +592,12 @@ pub async fn upload(
     unchanged(artifact, &bytes)?;
     let expected = hexadecimal(&artifact.digest);
     let command = match probe.operating_system {
-        crate::bootstrap::probe::OperatingSystem::Windows => {
-            crate::bootstrap::windows::upload_command(&probe.prefix, &expected)
-        }
+        crate::bootstrap::probe::OperatingSystem::Windows => RemoteScript::alone(
+            crate::bootstrap::windows::upload_command(&probe.prefix, &expected),
+        ),
         crate::bootstrap::probe::OperatingSystem::Linux
         | crate::bootstrap::probe::OperatingSystem::Darwin => {
-            remote_command(REMOTE_UPLOAD_SCRIPT, &probe.prefix, &expected)
+            remote_command(REMOTE_UPLOAD_SCRIPT, &probe.prefix, &expected, bytes.len())
         }
     };
     let said = transport
@@ -602,7 +671,12 @@ async fn terminfo_for(
     if !probe.tic_available {
         return without("the host has no `tic` to compile one with".to_owned());
     }
-    let compiling = remote_command(REMOTE_TERMINFO_SCRIPT, &probe.prefix, expected);
+    let compiling = remote_command(
+        REMOTE_TERMINFO_SCRIPT,
+        &probe.prefix,
+        expected,
+        XTERM_GHOSTTY_TERMINFO.len(),
+    );
     match transport
         .feed(
             &compiling,

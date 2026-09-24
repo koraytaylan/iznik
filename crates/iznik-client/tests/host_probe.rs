@@ -20,6 +20,7 @@ use iznik_client::bootstrap::probe::{
     RunsRemotely, parse, probe, probe_command,
 };
 use iznik_client::bootstrap::terminfo::TERMINAL_NAME;
+use iznik_client::bootstrap::upload::RemoteScript;
 use iznik_client::transport::ssh::SshError;
 
 /// The deadline these cases hand the probe; nothing here waits for anything.
@@ -98,12 +99,12 @@ struct Counted {
 impl RunsRemotely for Counted {
     fn run(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         _deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
         self.asked.fetch_add(1, Ordering::Relaxed);
         let said = self.said.clone();
-        let script = command.to_owned();
+        let script = asked.clone();
         async move {
             if script == probe_command() {
                 Ok(said)
@@ -522,14 +523,15 @@ struct WindowsShell {
 impl RunsRemotely for WindowsShell {
     fn run(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         _deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
-        let command = command.to_owned();
+        let command = asked.command.clone();
+        let posix = *asked == probe_command();
         let shell = Arc::clone(&self.shell);
         let second = Arc::clone(&self.second);
         async move {
-            if command == probe_command() {
+            if posix {
                 shell.fetch_add(1, Ordering::Relaxed);
                 Err(ProbeError::Ssh(SshError::RemoteCommandFailed {
                     host: "host0".to_owned(),
@@ -597,17 +599,18 @@ struct PosixOnWindows;
 impl RunsRemotely for PosixOnWindows {
     fn run(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         _deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
-        let answered = if command == probe_command() {
+        let command = &asked.command;
+        let answered = if *asked == probe_command() {
             Ok(answer(
                 "MINGW64_NT-10.0-19045",
                 "x86_64",
                 "no",
                 &three(["yes", "yes", "yes"], None),
             ))
-        } else if command == iznik_client::bootstrap::windows::probe_command() {
+        } else if *command == iznik_client::bootstrap::windows::probe_command() {
             Ok(answer(
                 "Windows_NT",
                 "AMD64",
@@ -616,7 +619,7 @@ impl RunsRemotely for PosixOnWindows {
             ))
         } else {
             Err(ProbeError::Malformed {
-                detail: command.to_owned(),
+                detail: command.clone(),
             })
         };
         async move { answered }
@@ -646,7 +649,7 @@ struct AlwaysRefused {
 impl RunsRemotely for AlwaysRefused {
     fn run(
         &self,
-        _command: &str,
+        _asked: &RemoteScript,
         _deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
         self.asked.fetch_add(1, Ordering::Relaxed);

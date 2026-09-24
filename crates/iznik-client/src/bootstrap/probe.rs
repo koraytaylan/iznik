@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::bootstrap::upload::posix_command;
+use crate::bootstrap::upload::{RemoteScript, posix_command};
 use crate::transport::Transport;
 use crate::transport::ssh::SshError;
 
@@ -132,10 +132,10 @@ done
 /// is a Windows host all the same, and is asked again as one.
 const WINDOWS_POSIX_LAYERS: &[&str] = &["MINGW", "MSYS", "CYGWIN"];
 
-/// The command the probe asks a POSIX host to run: [`PROBE_SCRIPT`] under
-/// `sh`, whatever the person's login shell is.
+/// What the probe asks a POSIX host to run: [`PROBE_SCRIPT`], read by `sh`
+/// from its standard input, whatever the person's login shell is.
 #[must_use]
-pub fn probe_command() -> String {
+pub fn probe_command() -> RemoteScript {
     posix_command(PROBE_SCRIPT, &[])
 }
 
@@ -284,7 +284,8 @@ impl ProbeError {
 /// A trait rather than the transport itself, so that "the probe is one round
 /// trip" is a property a test can count rather than a claim a comment makes.
 pub trait RunsRemotely {
-    /// Runs `command` there and gives back its standard output.
+    /// Runs `asked` there — its command, with its input on the command's
+    /// standard input — and gives back its standard output.
     ///
     /// # Errors
     ///
@@ -292,7 +293,7 @@ pub trait RunsRemotely {
     /// and [`ProbeError::Transport`] when it cannot be waited for.
     fn run(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send;
 }
@@ -300,15 +301,15 @@ pub trait RunsRemotely {
 impl RunsRemotely for Transport {
     fn run(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         deadline: Duration,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
-        self.run_for(command, deadline, "probing")
+        self.run_for(asked, deadline, "probing")
     }
 }
 
 impl Transport {
-    /// Runs `command` on the host and gives back its standard output, naming
+    /// Runs `asked` on the host and gives back its standard output, naming
     /// what it was for — `doing` — in the refusal a deadline becomes, so a
     /// daemon that would not stop is not reported as a host that would not
     /// answer a probe.
@@ -318,14 +319,14 @@ impl Transport {
     /// As [`RunsRemotely::run`].
     pub fn run_for(
         &self,
-        command: &str,
+        asked: &RemoteScript,
         deadline: Duration,
         doing: &'static str,
     ) -> impl Future<Output = Result<String, ProbeError>> + Send {
-        let asked = command.to_owned();
+        let input = asked.input.clone().into_bytes();
         let host = self.alias();
         let spawned = match self {
-            Transport::Ssh(ssh) => ssh.spawn(&[asked]),
+            Transport::Ssh(ssh) => ssh.spawn(core::slice::from_ref(&asked.command)),
             Transport::Local { socket } => Err(SshError::Unreachable {
                 host: host.clone(),
                 detail: format!(
@@ -335,8 +336,22 @@ impl Transport {
             }),
         };
         async move {
-            let spawned = spawned?;
-            let waited = tokio::time::timeout(deadline, spawned.child.wait_with_output()).await;
+            let mut spawned = spawned?;
+            // Written beside the wait rather than before it: a script that
+            // prints more than a pipe holds before it has read all of itself
+            // would otherwise wait on this, and this on it.
+            let writing = spawned.child.stdin.take();
+            let feeding = async move {
+                use tokio::io::AsyncWriteExt as _;
+                let Some(mut writing) = writing else {
+                    return;
+                };
+                if writing.write_all(&input).await.is_ok() {
+                    let _closed = writing.shutdown().await;
+                }
+            };
+            let ended = tokio::time::timeout(deadline, spawned.child.wait_with_output());
+            let ((), waited) = tokio::join!(feeding, ended);
             let Ok(output) = waited else {
                 return Err(ProbeError::from(SshError::Timeout {
                     host,
@@ -389,10 +404,8 @@ pub async fn probe(
     // not a machine iznik serves. The failure is kept when the PowerShell
     // probe fails too, so a Unix host that could not be asked is not
     // reported as a Windows one.
-    match transport
-        .run(&crate::bootstrap::windows::probe_command(), deadline)
-        .await
-    {
+    let asked = RemoteScript::alone(crate::bootstrap::windows::probe_command());
+    match transport.run(&asked, deadline).await {
         Ok(output) => parse(&output),
         Err(_windows) => posix.and_then(|output| parse(&output)),
     }

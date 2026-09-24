@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use iznik_client::bootstrap::probe::{Architecture, HostProbe, OperatingSystem};
 use iznik_client::bootstrap::upload::{
-    ArtifactSet, BINARY_NAME, FeedsRemotely, REMOTE_UPLOAD_SCRIPT, TERMINFO_DIRECTORY,
-    UPLOAD_CHUNK_LENGTH, UploadError, hexadecimal, remote_command, upload,
+    ArtifactSet, BINARY_NAME, FeedsRemotely, REMOTE_UPLOAD_SCRIPT, RemoteScript,
+    TERMINFO_DIRECTORY, UPLOAD_CHUNK_LENGTH, UploadError, hexadecimal, remote_command, upload,
 };
 
 /// Anything a case can fail on.
@@ -137,11 +137,13 @@ fn payload_upload_loads_an_empty_directory_as_empty() {
 #[test]
 fn payload_upload_sends_a_script_that_names_the_digest_and_nothing_early() {
     let digest = "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed";
-    let command = remote_command(
+    let asked = remote_command(
         REMOTE_UPLOAD_SCRIPT,
         std::path::Path::new("/home/iznik/.local/share/iznik"),
         digest,
+        1,
     );
+    let command = &asked.input;
     assert!(
         command.contains(digest),
         "the host is told the digest to check against: {command}"
@@ -207,7 +209,7 @@ struct Fed {
 impl FeedsRemotely for Fed {
     fn feed(
         &self,
-        _command: &str,
+        _asked: &RemoteScript,
         _bytes: &[u8],
         stage: &'static str,
         _deadline: Duration,

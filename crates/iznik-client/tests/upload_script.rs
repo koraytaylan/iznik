@@ -17,7 +17,8 @@ use std::time::{Duration, SystemTime};
 
 use iznik_client::bootstrap::probe::{ProbeError, parse, probe_command};
 use iznik_client::bootstrap::upload::{
-    BINARY_NAME, REMOTE_UPLOAD_SCRIPT, hexadecimal, posix_command,
+    BINARY_NAME, POSIX_SHELL, REMOTE_TERMINFO_SCRIPT, REMOTE_UPLOAD_SCRIPT, RemoteScript,
+    hexadecimal, posix_command, remote_command,
 };
 use iznik_harness::process::{self, Completed, Deadline, Output, ProcessError};
 
@@ -34,6 +35,10 @@ const REFUSED: i32 = 1;
 /// The bytes these cases install, which are a program so that the executable
 /// bit means something.
 const ARTIFACT: &[u8] = b"#!/bin/sh\nexit 0\n";
+
+/// How many bytes the artifact a bootstrap feeds after its script is, in the
+/// case about that: far more than any shell reads ahead.
+const ARTIFACT_LENGTH: usize = 200_000;
 
 /// The places a tool this script needs is found on a host.
 const TOOL_DIRECTORIES: [&str; 4] = ["/usr/bin", "/bin", "/usr/local/bin", "/usr/sbin"];
@@ -389,33 +394,64 @@ fn upload_script_refuses_a_prefix_this_user_does_not_own() {
 }
 
 /// The login shells a host may hand iznik's command to, as `ssh` does: the
-/// shell's own `-c` and the whole command as one string.
-const LOGIN_SHELLS: [&str; 4] = ["sh", "bash", "zsh", "fish"];
+/// shell's own `-c` and the whole command as one string — C shells and
+/// nushell among them, which read far less than a Bourne shell does.
+const LOGIN_SHELLS: [&str; 6] = ["sh", "bash", "zsh", "fish", "csh", "tcsh"];
 
-/// Runs `command` the way `sshd` does, under every login shell this machine
-/// has, and gives back what each printed.
+/// Where a login shell that is not a system one may be.
+const MORE_SHELL_DIRECTORIES: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+/// Where a shell is on this machine, if it is.
+fn shell_named(name: &str) -> Option<PathBuf> {
+    located(name).ok().or_else(|| {
+        MORE_SHELL_DIRECTORIES
+            .iter()
+            .map(|directory| Path::new(directory).join(name))
+            .find(|held| held.exists())
+    })
+}
+
+/// Runs what `asked` asks the way `sshd` does — `<login shell> -c <command>`,
+/// with its input on standard input — under every login shell this machine
+/// has, `nu` among them when it is here, and gives back what each printed.
 ///
 /// # Errors
 ///
 /// When `sh` is not here, or a shell that is here cannot run it.
-fn as_a_login_shell(command: &str) -> Result<Vec<(String, String)>, Failed> {
+fn as_a_login_shell(asked: &RemoteScript) -> Result<Vec<(String, String)>, Failed> {
+    let (held, _payload) = scratch("login")?;
+    let input = held.path.join("input");
+    std::fs::write(&input, &asked.input)?;
     let mut said = Vec::new();
-    for shell in LOGIN_SHELLS {
-        let Ok(found) = located(shell) else {
-            if shell == "sh" {
+    for shell in LOGIN_SHELLS.iter().chain(["nu"].iter()) {
+        let Some(found) = shell_named(shell) else {
+            if *shell == "sh" {
                 return Err("no `sh` on this machine".into());
             }
             continue;
         };
         let mut running = Command::new(found);
-        running.arg("-c").arg(command).stdin(Stdio::null());
+        running
+            .arg("-c")
+            .arg(&asked.command)
+            .stdin(Stdio::from(File::open(&input)?));
         let done = process::run(running, Deadline(RUN_DEADLINE), Output::Capture)?;
         said.push((
-            shell.to_owned(),
+            (*shell).to_owned(),
             String::from_utf8_lossy(&done.stdout).into_owned(),
         ));
     }
+    drop(held);
     Ok(said)
+}
+
+/// Whether a command is one every login shell reads alike: no line break, no
+/// quote, no escape, nothing a C shell or nushell reads differently from a
+/// Bourne shell.
+fn plain_words(command: &str) -> bool {
+    command
+        .chars()
+        .all(|held| held.is_ascii_alphanumeric() || matches!(held, ' ' | '-' | '/' | '.' | '_'))
 }
 
 /// # Panics
@@ -426,15 +462,44 @@ fn as_a_login_shell(command: &str) -> Result<Vec<(String, String)>, Failed> {
 #[test]
 fn posix_command_runs_the_same_under_any_login_shell() {
     let case = || -> Result<(), Failed> {
-        let prefix = "/tmp/it's a \"prefix\"";
+        let prefix = "/tmp/it's a \"prefix\" with a `tick` and a $dollar";
         let script = "said() { printf '%s|%s' \"$IZNIK_PREFIX\" \"$IZNIK_DIGEST\"; }\nsaid\n";
-        let command = posix_command(script, &[("IZNIK_PREFIX", prefix), ("IZNIK_DIGEST", "abc")]);
-        for (shell, printed) in as_a_login_shell(&command)? {
-            assert_eq!(printed, format!("{prefix}|abc"), "under {shell}: {command}");
+        let asked = posix_command(script, &[("IZNIK_PREFIX", prefix), ("IZNIK_DIGEST", "abc")]);
+        for (shell, printed) in as_a_login_shell(&asked)? {
+            assert_eq!(printed, format!("{prefix}|abc"), "under {shell}: {asked:?}");
         }
         Ok(())
     };
     case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When a command a POSIX host is asked to run holds a line break, a quote or
+/// anything else a C shell or nushell would read otherwise — the script and
+/// its variables belong on standard input, where only `sh` reads them.
+#[test]
+fn posix_command_is_plain_words_for_any_login_shell() {
+    let prefix = Path::new("/home/it's me/.local/share/iznik");
+    for asked in [
+        probe_command(),
+        posix_command(REMOTE_UPLOAD_SCRIPT, &[("IZNIK_PREFIX", "/x\n'y'")]),
+        remote_command(REMOTE_UPLOAD_SCRIPT, prefix, "abc", ARTIFACT.len()),
+        remote_command(REMOTE_TERMINFO_SCRIPT, prefix, "abc", ARTIFACT.len()),
+    ] {
+        assert_eq!(asked.command, POSIX_SHELL, "{asked:?}");
+        assert!(plain_words(&asked.command), "{asked:?}");
+        assert!(
+            asked.input.starts_with("{\n") && asked.input.contains("\nexit\n}\n"),
+            "and the script is what `sh` reads, whole before any of it runs: {asked:?}"
+        );
+    }
+    // The relay's standard input is the link, so it is the one command the
+    // login shell parses: plain words, for the paths the probe offers.
+    let relay = iznik_client::transport::channel::relay_command(Some(Path::new(
+        "/home/me/.local/share/iznik/bin/iznik-server",
+    )));
+    assert!(plain_words(&relay), "{relay}");
 }
 
 /// # Panics
@@ -444,14 +509,64 @@ fn posix_command_runs_the_same_under_any_login_shell() {
 #[test]
 fn probe_command_is_read_by_any_login_shell() {
     let case = || -> Result<(), Failed> {
-        let command = probe_command();
-        assert!(command.starts_with("sh -c '"), "{command}");
-        for (shell, printed) in as_a_login_shell(&command)? {
+        let asked = probe_command();
+        for (shell, printed) in as_a_login_shell(&asked)? {
             let read = parse(&printed);
             assert!(
                 !matches!(read, Err(ProbeError::Malformed { .. })),
                 "under {shell} the probe answered: {printed}"
             );
+        }
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// # Panics
+///
+/// When the upload, sent as a bootstrap sends it — the script on `sh`'s
+/// standard input and the artifact after it — does not install the artifact
+/// byte for byte under every `sh` this machine has, `dash` among them, which
+/// reads its script a kibibyte at a time and so past where the script ends.
+#[test]
+fn upload_script_takes_its_payload_after_itself_under_every_sh() {
+    let case = || -> Result<(), Failed> {
+        // Larger than any read-ahead, so a shell that swallowed some of it
+        // would be caught by the digest.
+        let artifact: Vec<u8> = (0_u8..=u8::MAX).cycle().take(ARTIFACT_LENGTH).collect();
+        for shell in ["sh", "dash", "bash"] {
+            let Some(found) = shell_named(shell) else {
+                continue;
+            };
+            let (held, payload) = scratch(&format!("fed-{shell}"))?;
+            let asked = remote_command(
+                REMOTE_UPLOAD_SCRIPT,
+                &held.prefix(),
+                &digest_of(&artifact),
+                artifact.len(),
+            );
+            let mut fed = asked.input.clone().into_bytes();
+            fed.extend_from_slice(&artifact);
+            std::fs::write(&payload, &fed)?;
+            // Through a pipe, as `ssh` gives it: a shell reading a file may
+            // seek back to where its script ended, and one reading a pipe
+            // cannot.
+            let mut running = Command::new(located("sh")?);
+            running
+                .arg("-c")
+                .arg("cat \"$0\" | \"$1\" -s")
+                .arg(&payload)
+                .arg(&found)
+                .stdin(Stdio::null());
+            let done = process::run(running, Deadline(RUN_DEADLINE), Output::Capture)?;
+            let said = String::from_utf8_lossy(&done.stdout).into_owned();
+            assert!(said.contains("installed"), "under {shell}: {said}");
+            assert_eq!(
+                std::fs::read(held.server())?,
+                artifact,
+                "under {shell}, byte for byte"
+            );
+            drop(held);
         }
         Ok(())
     };

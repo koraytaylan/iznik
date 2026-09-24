@@ -25,7 +25,7 @@ use crate::bootstrap::launch::{
 };
 use crate::bootstrap::probe::{HostProbe, probe};
 use crate::bootstrap::upload::{
-    Installed, PREFIX_VARIABLE, TERMINFO_DIRECTORY, posix_command, upload,
+    Installed, PREFIX_VARIABLE, RemoteScript, TERMINFO_DIRECTORY, posix_command, upload,
 };
 use crate::transport::Transport;
 use crate::transport::channel::ServerHello;
@@ -89,7 +89,7 @@ pub struct Removed {
 
 /// One remote script, with the prefix in the variable the script reads it
 /// from.
-fn with_prefix(script: &str, prefix: &Path) -> String {
+fn with_prefix(script: &str, prefix: &Path) -> RemoteScript {
     posix_command(script, &[(PREFIX_VARIABLE, &prefix.display().to_string())])
 }
 
@@ -236,7 +236,7 @@ async fn stop(
     let host = transport.alias();
     let asked = match found.operating_system {
         probe::OperatingSystem::Windows => {
-            windows::command_for(windows::STOP_SCRIPT, &found.prefix)
+            RemoteScript::alone(windows::command_for(windows::STOP_SCRIPT, &found.prefix))
         }
         probe::OperatingSystem::Linux | probe::OperatingSystem::Darwin => {
             with_prefix(REMOTE_STOP_SCRIPT, &found.prefix)
@@ -436,7 +436,9 @@ pub async fn uninstall(
     // taking iznik off the wrong prefix would leave it where it is.
     let prefix = found.installed_at.as_ref().unwrap_or(&found.prefix);
     let asked = match found.operating_system {
-        probe::OperatingSystem::Windows => windows::command_for(windows::UNINSTALL_SCRIPT, prefix),
+        probe::OperatingSystem::Windows => {
+            RemoteScript::alone(windows::command_for(windows::UNINSTALL_SCRIPT, prefix))
+        }
         probe::OperatingSystem::Linux | probe::OperatingSystem::Darwin => {
             with_prefix(REMOTE_UNINSTALL_SCRIPT, prefix)
         }

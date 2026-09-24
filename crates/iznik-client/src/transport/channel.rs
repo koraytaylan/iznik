@@ -70,18 +70,29 @@ const DEFAULT_SERVER: &str = "iznik-server";
 
 /// The command a channel asks a host to run.
 ///
-/// The path is quoted, because it is a path the *host* chose: the probe
-/// offers `$XDG_DATA_HOME` and `$TMPDIR` among its candidates and both are
-/// whatever somebody set them to. `ssh` hands its argument to a remote shell,
-/// so an unquoted `/mnt/My Data/iznik/bin/iznik-server` would be split into a
-/// program that does not exist and two arguments.
+/// Its standard input is the link, so unlike a bootstrap script it cannot be
+/// read by `sh` from there: it is the one command the login shell itself
+/// parses. So it is plain words whenever it can be — a path of letters,
+/// digits and `/._-` reads the same to a Bourne shell, fish, nushell and a C
+/// shell. A path with anything else in it is quoted, because it is a path the
+/// *host* chose: the probe offers `$XDG_DATA_HOME` and `$TMPDIR` among its
+/// candidates and both are whatever somebody set them to, and an unquoted
+/// `/mnt/My Data/iznik/bin/iznik-server` would be split into a program that
+/// does not exist and two arguments.
 #[must_use]
 pub fn relay_command(server: Option<&Path>) -> String {
-    let named = server.unwrap_or_else(|| Path::new(DEFAULT_SERVER));
-    format!(
-        "{} {STDIO_FLAG}",
-        crate::bootstrap::upload::quoted(&named.display().to_string())
-    )
+    let named = server
+        .unwrap_or_else(|| Path::new(DEFAULT_SERVER))
+        .display()
+        .to_string();
+    let plain = named
+        .chars()
+        .all(|held| held.is_ascii_alphanumeric() || matches!(held, '/' | '.' | '_' | '-'));
+    if plain {
+        format!("{named} {STDIO_FLAG}")
+    } else {
+        format!("{} {STDIO_FLAG}", crate::bootstrap::upload::quoted(&named))
+    }
 }
 
 /// Every timing a channel runs under, so a test can shorten any of them.
