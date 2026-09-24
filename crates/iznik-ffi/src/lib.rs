@@ -161,6 +161,18 @@ impl Client {
         self.manager.lock().ok()?.clone()
     }
 
+    /// Counts one call in and gives it a share of the engine — in that
+    /// order, and the share only once the call is in.
+    ///
+    /// A call refused entry must touch nothing more of the client: the client
+    /// may be being freed on another thread, which waits only for the calls
+    /// it counted.
+    fn engaged(&self) -> Option<(Call<'_>, Arc<HostManager>)> {
+        let call = self.enter()?;
+        let manager = self.manager()?;
+        Some((call, manager))
+    }
+
     /// Begins watching a pane, and gives back whoever was watching it.
     fn attach(
         &self,
@@ -224,13 +236,16 @@ impl Drop for Client {
         // The manager next, and dropped rather than merely taken: closing the
         // stream the thread below is reading is what lets that thread end, and
         // a binding that held it to the end of this block would have the join
-        // wait for a thread waiting for it.
-        drop(
-            self.manager
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take(),
-        );
+        // wait for a thread waiting for it. Taken under the lock, not through
+        // `get_mut`: a call that was refused entry may still be on its way
+        // out on another thread, and nothing but the lock orders the two.
+        let shared: &Client = self;
+        let taken = shared
+            .manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(taken);
         let Some(pump) = self.pump.take() else {
             return;
         };
@@ -779,7 +794,7 @@ pub unsafe extern "C" fn iznik_command(
             return INVALID_ARGUMENT;
         }
     };
-    let (Some(_call), Some(manager)) = (held.calls.enter(), held.manager()) else {
+    let Some((_call, manager)) = held.engaged() else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
         return REFUSED;
@@ -840,7 +855,7 @@ unsafe fn with_host(
             return INVALID_ARGUMENT;
         }
     };
-    let (Some(_call), Some(manager)) = (held.calls.enter(), held.manager()) else {
+    let Some((_call, manager)) = held.engaged() else {
         // SAFETY: the caller's obligation, above.
         unsafe { error::fill(error, REFUSED, Layer::Client, "the client is ending") };
         return REFUSED;
