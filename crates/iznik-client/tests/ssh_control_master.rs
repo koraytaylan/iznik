@@ -509,3 +509,21 @@ fn ssh_quotes_a_control_path_it_did_not_choose() {
         "quoted whole, with what ssh would read otherwise escaped"
     );
 }
+
+/// # Panics
+///
+/// When a control socket `ssh` could not bind — whose warning says
+/// "Permission denied" too — is taken for a refused key, which parks a host
+/// until somebody changes a credential that was never wrong.
+#[test]
+fn ssh_does_not_take_a_socket_it_could_not_bind_for_a_refused_key() {
+    let case = || -> Result<(), Failed> {
+        let classified = classify("host0", Some(255), &captured("control-path-denied")?);
+        assert!(
+            matches!(classified, SshError::Unreachable { .. }),
+            "a socket that could not be bound is not a key the host refused: {classified:?}"
+        );
+        Ok(())
+    };
+    case().unwrap_or_else(|error| panic!("{error}"));
+}

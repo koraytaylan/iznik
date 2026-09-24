@@ -273,8 +273,13 @@ impl Display for SshError {
 impl core::error::Error for SshError {}
 
 /// What `ssh` says when the key it was offered is not one the host accepts.
+///
+/// A refusal of credentials in the form authentication gives it — `Permission
+/// denied (publickey,password).` — and not the bare words, which `ssh` also
+/// says of a file it could not open or a control socket it could not bind.
+/// Those are no reason to park a host until somebody changes a key.
 const REFUSED_MARKERS: &[&str] = &[
-    "permission denied",
+    "permission denied (",
     "too many authentication failures",
     "no supported authentication methods",
 ];
