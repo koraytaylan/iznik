@@ -96,9 +96,9 @@ pub(super) async fn hold_until(
 /// and credit belongs to a channel that no longer exists.
 pub(super) fn keep(kept: &mut Vec<Order>, order: Order) {
     match order {
-        Order::Subscribe { pane } => {
+        Order::Subscribe { pane } | Order::Resume { pane, .. } => {
             kept.retain(|held| !about(held, pane));
-            kept.push(Order::Subscribe { pane });
+            kept.push(order);
         }
         // Kept, not merely cancelling: the resume that follows a
         // reconnection asks for every pane the model still holds, so a pane
@@ -143,6 +143,7 @@ pub(super) fn keeps(order: &Order) -> bool {
     matches!(
         order,
         Order::Subscribe { .. }
+            | Order::Resume { .. }
             | Order::Unsubscribe { .. }
             | Order::Resize { .. }
             | Order::Focus { .. }
@@ -155,7 +156,9 @@ pub(super) fn keeps(order: &Order) -> bool {
 /// A size is not: a pane subscribed again is still the size it was told.
 fn about(order: &Order, pane: PaneId) -> bool {
     match order {
-        Order::Subscribe { pane: named } | Order::Unsubscribe { pane: named } => *named == pane,
+        Order::Subscribe { pane: named }
+        | Order::Resume { pane: named, .. }
+        | Order::Unsubscribe { pane: named } => *named == pane,
         _otherwise => false,
     }
 }

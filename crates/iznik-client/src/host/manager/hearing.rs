@@ -216,6 +216,13 @@ fn announced(host: &HostId, shared: &Arc<Shared>, message: &iznik_protocol::mess
             generation: *generation,
             payload: payload.clone(),
         },
+        iznik_protocol::message::ToClient::PaneChannel { pane, sequence, .. } => {
+            ManagerEvent::Carried {
+                host: host.clone(),
+                pane: *pane,
+                sequence: *sequence,
+            }
+        }
         iznik_protocol::message::ToClient::PaneDetached { pane, .. } => ManagerEvent::Detached {
             host: host.clone(),
             pane: *pane,

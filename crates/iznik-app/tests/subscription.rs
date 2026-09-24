@@ -91,7 +91,7 @@ fn a_refused_subscription_is_asked_again_after_a_growing_wait() {
             "no wait is longer than the longest"
         );
     }
-    subscriptions.screen(&pane);
+    subscriptions.carried(&pane);
     assert_eq!(
         subscriptions.standing(&pane),
         Standing::Carried,
@@ -121,7 +121,7 @@ fn a_detached_pane_is_asked_for_again() {
         matches!(subscriptions.standing(&pane), Standing::Asked { .. }),
         "a detach before the answer ends an older stream"
     );
-    subscriptions.screen(&pane);
+    subscriptions.carried(&pane);
     subscriptions.detached(&pane);
     assert_eq!(
         subscriptions.standing(&pane),
@@ -152,7 +152,7 @@ fn running_out_of_channels_frees_hidden_panes_first() {
     let carried = shown(&[&shown_pane, &hidden_pane, &elsewhere]);
     let _asked = subscriptions.plan(&carried, now);
     for pane in [&shown_pane, &hidden_pane, &elsewhere] {
-        subscriptions.screen(pane);
+        subscriptions.carried(pane);
     }
     let _hidden_too = subscriptions.plan(
         &shown(&[&shown_pane, &hidden_pane, &elsewhere, &waiting_pane]),
@@ -241,7 +241,7 @@ fn a_recently_hidden_pane_stays_carried() {
     let mut subscriptions = Subscriptions::new();
     let mut now = Instant::now();
     let _shown = subscriptions.plan(&shown(&[&first]), now);
-    subscriptions.screen(&first);
+    subscriptions.carried(&first);
     let mut panes = Vec::new();
     for pane in 1..=HIDDEN_KEPT {
         let next = key(HOST, u64::try_from(pane).unwrap_or(u64::MAX));
@@ -252,7 +252,7 @@ fn a_recently_hidden_pane_stays_carried() {
             vec![Order::Subscribe(next.clone())],
             "switching tabs subscribes the new pane and keeps the old"
         );
-        subscriptions.screen(&next);
+        subscriptions.carried(&next);
         panes.push(next);
     }
     assert_eq!(

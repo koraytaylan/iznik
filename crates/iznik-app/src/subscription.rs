@@ -4,8 +4,8 @@
 //! channel is free, or the pane is not one it holds — and it may stop
 //! carrying a pane on its own, with a `PaneDetached`. A window that counted
 //! the order as the answer would show those panes blank for good. So each
-//! pane's standing here moves only on what the engine says back: a screen is
-//! the answer to a subscribe, a detach ends the carrying, and a refusal puts
+//! pane's standing here moves only on what the engine says back: the host
+//! saying it carries the pane is the answer, a detach ends the carrying, and a refusal puts
 //! the asking off for a while and asks again, waiting longer each time.
 //!
 //! The host's refusal names no pane, so a refusal is taken to be about every
@@ -25,11 +25,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+use gpui_kit::Context;
+
 use iznik_client::host::identity::HostId;
+use iznik_client::host::manager::ManagerEvent;
+use iznik_client::reduce::Notification;
+use iznik_protocol::identity::Sequence;
 use iznik_protocol::message::ErrorCode;
 
 use crate::bridge::EngineBridge;
 use crate::vt::PaneKey;
+use crate::window::WindowShell;
 
 /// How long the first refusal puts a pane's asking off.
 pub const FIRST_RETRY: Duration = Duration::from_millis(250);
@@ -100,8 +106,9 @@ impl Subscriptions {
         let _forgotten = self.last_shown.remove(key);
     }
 
-    /// A screen arrived for a pane: whatever was asked for is being carried.
-    pub fn screen(&mut self, key: &PaneKey) {
+    /// The host began carrying a pane — its screen arrived, or it said it is
+    /// continuing from where the window's emulator stands.
+    pub fn carried(&mut self, key: &PaneKey) {
         if let Some(standing) = self.panes.get_mut(key) {
             *standing = Standing::Carried;
         }
@@ -231,16 +238,24 @@ fn put_off(wait: Duration, now: Instant) -> Standing {
 
 /// Hands each order to the engine. An order it would not take puts the pane
 /// off as a refusal does, and is answered with the host and what was said.
+///
+/// A pane whose emulator already stands at a byte — shown before, then let go
+/// — is resumed from there rather than subscribed afresh, so showing it again
+/// needs no screen when the host still holds what it missed.
 pub(crate) fn send(
     subscriptions: &mut Subscriptions,
     bridge: &EngineBridge,
     orders: &[Order],
+    standing_at: impl Fn(&PaneKey) -> Option<Sequence>,
     now: Instant,
 ) -> Vec<(HostId, String)> {
     let mut failures = Vec::new();
     for order in orders {
         let (key, result) = match order {
-            Order::Subscribe(key) => (key, bridge.subscribe(&key.host.0, key.pane)),
+            Order::Subscribe(key) => match standing_at(key) {
+                Some(from) => (key, bridge.resume(&key.host.0, key.pane, from)),
+                None => (key, bridge.subscribe(&key.host.0, key.pane)),
+            },
             Order::Unsubscribe(key) => (key, bridge.unsubscribe(&key.host.0, key.pane)),
         };
         if let Err(error) = result {
@@ -249,4 +264,52 @@ pub(crate) fn send(
         }
     }
     failures
+}
+
+impl WindowShell {
+    /// Move each pane's standing on what a host said about carrying it.
+    pub(crate) fn note_answer(&mut self, said: &ManagerEvent, context: &mut Context<'_, Self>) {
+        match said {
+            ManagerEvent::Carried { host, pane, .. } | ManagerEvent::Screen { host, pane, .. } => {
+                self.subscriptions.carried(&PaneKey {
+                    host: host.clone(),
+                    pane: *pane,
+                });
+            }
+            ManagerEvent::Detached { host, pane } => self.subscriptions.detached(&PaneKey {
+                host: host.clone(),
+                pane: *pane,
+            }),
+            ManagerEvent::Notify(Notification::Refused { host, code, .. }) => {
+                let shown = self.shown_panes();
+                let orders = self
+                    .subscriptions
+                    .refused(host, *code, &shown, Instant::now());
+                self.send_orders(&orders, context);
+            }
+            _ => {}
+        }
+    }
+
+    /// Hand subscription orders to the engine, reporting any it would not take.
+    pub(crate) fn send_orders(&mut self, orders: &[Order], context: &mut Context<'_, Self>) {
+        let panes = &self.panes;
+        let standing_at = |key: &PaneKey| {
+            let held = panes.get(key)?;
+            let grid = held.surface.read(context).grid().clone();
+            grid.read(context)
+                .snapshot()
+                .map(|snapshot| snapshot.sequence)
+        };
+        let failures = send(
+            &mut self.subscriptions,
+            self.hosts.bridge(),
+            orders,
+            standing_at,
+            Instant::now(),
+        );
+        for (host, detail) in failures {
+            self.failure(&host, detail, context);
+        }
+    }
 }

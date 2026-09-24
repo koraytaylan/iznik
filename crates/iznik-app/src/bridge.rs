@@ -48,7 +48,7 @@ use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::{HostManager, ManagerError, ManagerEvent, ManagerOptions};
 use iznik_client::transport::ClientRuntimePaths;
 use iznik_protocol::command::SessionCommand;
-use iznik_protocol::identity::PaneId;
+use iznik_protocol::identity::{PaneId, Sequence};
 
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtError, VtEvent, VtOutput, VtThread};
 use crate::wake::WakeSignal;
@@ -401,6 +401,17 @@ impl EngineBridge {
     pub fn subscribe(&self, alias: &str, pane: PaneId) -> Result<(), EngineError> {
         self.engine()?
             .subscribe(alias, pane)
+            .map_err(EngineError::Manager)
+    }
+
+    /// Subscribe from `from`, the byte this pane's emulator already stands at;
+    /// the host continues from there, or sends a screen when it cannot.
+    ///
+    /// # Errors
+    /// Reports that the engine thread or requested host is unavailable.
+    pub fn resume(&self, alias: &str, pane: PaneId, from: Sequence) -> Result<(), EngineError> {
+        self.engine()?
+            .resume(alias, pane, from)
             .map_err(EngineError::Manager)
     }
 

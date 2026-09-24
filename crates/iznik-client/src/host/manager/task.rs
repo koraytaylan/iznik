@@ -893,6 +893,10 @@ async fn carry(
 ) -> Result<(), ChannelError> {
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
+        Order::Resume { pane, from } => ToServer::Resume {
+            pane,
+            from_sequence: from,
+        },
         Order::Unsubscribe { pane } => ToServer::Unsubscribe { pane },
         Order::Input { pane, bytes, .. } => return carry_input(channel, pane, bytes).await,
         Order::Resize {

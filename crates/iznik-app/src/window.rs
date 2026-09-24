@@ -13,7 +13,6 @@ use gpui_kit::{
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
-use iznik_client::reduce::Notification;
 use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{SessionId, TabId};
 use iznik_protocol::model::{LayoutNode, Session, Tab};
@@ -30,7 +29,7 @@ use crate::settings::{Preferences, Settings, Watcher};
 use crate::splits;
 use crate::ssh_config::SshFiles;
 use crate::status::{self, Notices};
-use crate::subscription::{self, Subscriptions};
+use crate::subscription::Subscriptions;
 use crate::surface::{PaneSurface, PasteConfirmation, SurfaceFailure};
 use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme};
@@ -148,7 +147,7 @@ pub struct WindowShell {
     /// Stable pane entities, keyed by host as well as pane number.
     pub(crate) panes: BTreeMap<PaneKey, HeldPane>,
     /// Which panes the hosts are carrying, as they have answered.
-    subscriptions: Subscriptions,
+    pub(crate) subscriptions: Subscriptions,
     /// The tab whose layout is currently visible.
     selected: Option<TabKey>,
     /// Latest authoritative tree for that tab.
@@ -803,39 +802,6 @@ impl WindowShell {
         let shown = self.shown_panes();
         let orders = self.subscriptions.plan(&shown, Instant::now());
         self.send_orders(&orders, context);
-    }
-    /// Move each pane's standing on what a host said about carrying it.
-    fn note_answer(&mut self, said: &ManagerEvent, context: &mut Context<'_, Self>) {
-        match said {
-            ManagerEvent::Screen { host, pane, .. } => self.subscriptions.screen(&PaneKey {
-                host: host.clone(),
-                pane: *pane,
-            }),
-            ManagerEvent::Detached { host, pane } => self.subscriptions.detached(&PaneKey {
-                host: host.clone(),
-                pane: *pane,
-            }),
-            ManagerEvent::Notify(Notification::Refused { host, code, .. }) => {
-                let shown = self.shown_panes();
-                let orders = self
-                    .subscriptions
-                    .refused(host, *code, &shown, Instant::now());
-                self.send_orders(&orders, context);
-            }
-            _ => {}
-        }
-    }
-    /// Hand subscription orders to the engine, reporting any it would not take.
-    fn send_orders(&mut self, orders: &[subscription::Order], context: &mut Context<'_, Self>) {
-        let failures = subscription::send(
-            &mut self.subscriptions,
-            self.hosts.bridge(),
-            orders,
-            Instant::now(),
-        );
-        for (host, detail) in failures {
-            self.failure(&host, detail, context);
-        }
     }
     /// Retire surfaces only when their pane disappears from the complete host model.
     fn remove_missing(&mut self, context: &mut Context<'_, Self>) {

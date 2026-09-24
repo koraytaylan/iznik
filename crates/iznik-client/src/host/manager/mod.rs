@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::command::{SessionCommand, encode_session_command};
-use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence};
+use iznik_protocol::identity::{CommandId, PaneId, Sequence};
 use iznik_protocol::message::{ToServer, encode_to_server};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -30,9 +30,8 @@ use crate::bootstrap::upload::ArtifactSet;
 use crate::commands::{PENDING_COMMAND_TIMEOUT, Submission, submit, withdraw};
 use crate::host::identity::HostId;
 use crate::host::manager::task::{give_up, serve};
-use crate::host::state::{BackoffPolicy, HostState};
+use crate::host::state::BackoffPolicy;
 use crate::model::{ClientModel, HostView};
-use crate::reduce::Notification;
 use crate::transport::channel::ChannelOptions;
 use crate::transport::ssh::SshOptions;
 use crate::transport::{ClientRuntimePaths, Transport};
@@ -53,11 +52,13 @@ pub const ORDERS_PER_TURN: usize = 64;
 
 pub mod credit;
 mod error;
+mod event;
 mod hearing;
 mod task;
 mod waiting;
 
 pub use crate::host::manager::error::ManagerError;
+pub use crate::host::manager::event::{ManagerEvent, answered_length};
 
 /// How long a caller waits for a host's task to end before it is cut short.
 ///
@@ -123,105 +124,6 @@ impl ManagerOptions {
     }
 }
 
-/// Something the manager says happened.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ManagerEvent {
-    /// A host moved from one state to another.
-    Moved {
-        /// The host.
-        host: HostId,
-        /// Where it is now.
-        state: HostState,
-    },
-    /// A host sent a screen for a pane; whatever is drawn is replaced by it.
-    Screen {
-        /// The host.
-        host: HostId,
-        /// The pane.
-        pane: PaneId,
-        /// The byte the screen is exact at.
-        sequence: Sequence,
-        /// Its width in cells.
-        columns: u16,
-        /// Its height in cells.
-        rows: u16,
-        /// The bytes that reproduce it, which is what a caller redraws from.
-        bytes: Vec<u8>,
-    },
-    /// The host's whole model, as it said it.
-    ///
-    /// Carried in the protocol's own encoding rather than as a value of this
-    /// crate's, because what is above the manager is a C boundary and one
-    /// schema is better than two. `model()` holds the same thing, decoded.
-    Snapshot {
-        /// The host.
-        host: HostId,
-        /// The generation it stands at.
-        generation: Generation,
-        /// The model, as `decode_host_model` reads it.
-        payload: Vec<u8>,
-    },
-    /// One numbered change to it, in the same encoding.
-    Delta {
-        /// The host.
-        host: HostId,
-        /// The generation this change produces.
-        generation: Generation,
-        /// The change, as `decode_delta` reads it.
-        payload: Vec<u8>,
-    },
-    /// A pane's output has stopped arriving on the channel it was on.
-    Detached {
-        /// The host.
-        host: HostId,
-        /// The pane.
-        pane: PaneId,
-    },
-    /// A subscribed pane's output, as it arrives.
-    ///
-    /// The sequence is the byte the first of them is, so a caller that cares
-    /// can see for itself that a stream carried on across a reconnection
-    /// rather than starting again.
-    Bytes {
-        /// The host.
-        host: HostId,
-        /// The pane.
-        pane: PaneId,
-        /// The byte the first of these is.
-        sequence: Sequence,
-        /// Every terminal query in the pane's bytes before this sequence was
-        /// already answered by the host's own emulator.
-        ///
-        /// An emulator fed these bytes must not send the answers it produces
-        /// from the ones before it — the first `answered_through − sequence`
-        /// of them, when that is positive — because the program has had them
-        /// once. It is only ever ahead of `sequence` for bytes a resume sends
-        /// again; a live stream starts at or past it.
-        answered_through: Sequence,
-        /// What arrived.
-        bytes: Vec<u8>,
-        /// Delivery-bound credit for these bytes. Engine deliveries always carry it;
-        /// synthetic/offline events may omit it and have only current-stream credit semantics.
-        receipt: Option<credit::CreditReceipt>,
-    },
-    /// Something worth telling whoever is watching.
-    Notify(Notification),
-    /// A host is no longer held at all.
-    Removed {
-        /// The host.
-        host: HostId,
-    },
-}
-
-/// How many of the `length` bytes starting at `sequence` come before
-/// `answered_through`: the leading bytes of a delivery whose terminal queries
-/// the host already answered, and whose answers an emulator must not send.
-#[must_use]
-pub fn answered_length(sequence: Sequence, answered_through: Sequence, length: usize) -> usize {
-    let before = answered_through.0.saturating_sub(sequence.0);
-    usize::try_from(before).map_or(length, |before| before.min(length))
-}
-
 /// What an operation asks a host's own task to do.
 #[derive(Clone, Debug)]
 pub(crate) enum Order {
@@ -229,6 +131,13 @@ pub(crate) enum Order {
     Subscribe {
         /// The pane.
         pane: PaneId,
+    },
+    /// Begin it again from a byte the application already holds.
+    Resume {
+        /// The pane.
+        pane: PaneId,
+        /// The first byte it does not hold.
+        from: Sequence,
     },
     /// End it.
     Unsubscribe {
@@ -633,6 +542,21 @@ impl HostManager {
         self.order(alias, Order::Subscribe { pane })
     }
 
+    /// Begins delivery of a pane's output from `from`, a byte the
+    /// application's emulator for it already stands at, so a pane shown again
+    /// continues where it was instead of being drawn from a fresh screen.
+    ///
+    /// The host continues from there when it still holds those bytes and
+    /// sends a screen when it does not; [`ManagerEvent::Carried`] says it has
+    /// begun, either way.
+    ///
+    /// # Errors
+    ///
+    /// As [`HostManager::reconnect`].
+    pub fn resume(&self, alias: &str, pane: PaneId, from: Sequence) -> Result<(), ManagerError> {
+        self.order(alias, Order::Resume { pane, from })
+    }
+
     /// Ends it.
     ///
     /// # Errors
@@ -646,7 +570,7 @@ impl HostManager {
     ///
     /// Only on a link that was up when they were given. Keystrokes given while
     /// the host has no link — reconnecting, or bootstrapping, which may take
-    /// minutes — are dropped, and a [`Notification::InputDropped`] says so: a
+    /// minutes — are dropped, and a [`Notification::InputDropped`](crate::reduce::Notification::InputDropped) says so: a
     /// key delivered a minute after it was pressed is worse than one that
     /// went nowhere.
     ///

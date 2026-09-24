@@ -364,6 +364,7 @@ impl Watched {
             }
             ManagerEvent::Notify(_)
             | ManagerEvent::Removed { .. }
+            | ManagerEvent::Carried { .. }
             | ManagerEvent::Detached { .. }
             | ManagerEvent::Snapshot { .. }
             | ManagerEvent::Delta { .. } => {}

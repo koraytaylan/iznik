@@ -226,7 +226,8 @@ impl EngineState {
             EngineEvent::Said(
                 ManagerEvent::Screen { .. }
                 | ManagerEvent::Bytes { .. }
-                | ManagerEvent::Detached { .. },
+                | ManagerEvent::Detached { .. }
+                | ManagerEvent::Carried { .. },
             ) => {}
             EngineEvent::Finished { operation, answer } => self.finished(&operation, answer),
         }
