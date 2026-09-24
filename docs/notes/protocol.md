@@ -34,12 +34,6 @@ A decoder refuses, rather than guesses:
 |---|---|
 | Truncated | A field ends before its bytes do. It names the discriminant it was reading, how many bytes it needed and how many were left. |
 | TrailingBytes | Bytes follow the last field of a message. A message is exactly its fields. |
-
-A field a capability added after a message was first pinned is appended at
-its end, marked *(capability)* in the tables below. A sender writes it only to
-a peer that advertised the capability (§12), because an older decoder refuses
-the extra bytes; a decoder reads it when bytes remain after the fields before
-it, and otherwise reports it absent.
 | UnknownDiscriminant | A tag no variant claims — a message, a mark kind, an error code, a layout node, a split direction, a delta, a removal reason, an exit status, a command, an outcome, a created thing or a rejection code. |
 | Utf8 | A string field is not UTF-8. |
 | Oversize | An encoding would exceed the maximum payload length. It is refused before anything is allocated. |
@@ -48,6 +42,12 @@ it, and otherwise reports it absent.
 A refusal that arises before any discriminant has been read — inside a
 `Snapshot`'s model, say, which carries no tag of its own — reports the
 discriminant `NO_DISCRIMINANT` (255) rather than pretending to be message 0.
+
+A field a capability added after a message was first pinned is appended at
+its end, marked *(capability)* in the tables below. A sender writes it only to
+a peer that advertised the capability (§12), because an older decoder refuses
+the extra bytes; a decoder reads it when bytes remain after the fields before
+it, and otherwise reports it absent.
 
 ## 2. Limits
 
