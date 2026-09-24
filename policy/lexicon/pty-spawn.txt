@@ -10,8 +10,10 @@ leads
 login
 marked
 nix
+outlive
 panes
 remnant
+remnants
 sent
 tell
 term

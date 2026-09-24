@@ -407,10 +407,16 @@ impl PtyProcess {
     /// shell's number, that number is not this pane's group — it is somebody
     /// else's process, the group long empty — and nothing is sent; while none
     /// has it, the group is this pane's remnant or nobody at all.
+    ///
+    /// The same holds for the shell's session, whose id is also the shell's
+    /// process id: a job that job control put in a group of its own is still
+    /// in the session, and on Linux every group left in it is killed too.
     fn kill_remnant(&self) {
         #[cfg(unix)]
         if nix::unistd::getpgid(Some(self.pid())) == Err(nix::errno::Errno::ESRCH) {
             let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
+            #[cfg(target_os = "linux")]
+            kill_session_remnants(self.pid());
         }
     }
 
@@ -679,5 +685,59 @@ fn nix_signal(signal: Signal) -> NixSignal {
         Signal::Hangup => NixSignal::SIGHUP,
         Signal::Terminate => NixSignal::SIGTERM,
         Signal::Kill => NixSignal::SIGKILL,
+    }
+}
+
+/// Where Linux lists its processes.
+#[cfg(target_os = "linux")]
+const PROCESS_ROOT: &str = "/proc";
+
+/// The file under a process's directory that names its group and session.
+#[cfg(target_os = "linux")]
+const PROCESS_STATUS: &str = "stat";
+
+/// Kills every process group still in `session`, a reaped shell's session.
+///
+/// Read from each `/proc/<pid>/stat`: after the command name's closing
+/// parenthesis come the state, the parent, the group and the session. Only a
+/// process in this session is touched, and the caller has made sure no live
+/// process carries the session's id, so the session is the pane's own.
+#[cfg(target_os = "linux")]
+fn kill_session_remnants(session: Pid) {
+    let Ok(entries) = std::fs::read_dir(PROCESS_ROOT) else {
+        return;
+    };
+    let mut groups = std::collections::BTreeSet::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(number) = name
+            .to_str()
+            .filter(|text| text.bytes().all(|byte| byte.is_ascii_digit()))
+        else {
+            continue;
+        };
+        let path = std::path::Path::new(PROCESS_ROOT)
+            .join(number)
+            .join(PROCESS_STATUS);
+        let Ok(status) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Some((_command, rest)) = status.rsplit_once(')') else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let (Some(_state), Some(_parent), Some(group), Some(owner)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if owner.parse::<i32>().ok() == Some(session.as_raw())
+            && let Ok(group) = group.parse::<i32>()
+        {
+            let _held = groups.insert(group);
+        }
+    }
+    for group in groups {
+        let _killed = signal::killpg(Pid::from_raw(group), NixSignal::SIGKILL);
     }
 }

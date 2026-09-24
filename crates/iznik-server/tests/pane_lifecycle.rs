@@ -326,6 +326,53 @@ async fn pane_lifecycle_a_job_ignoring_the_hangup_does_not_keep_a_pane_alive() {
     let _removed = std::fs::remove_dir_all(&directory);
 }
 
+/// A job that job control moved into a group of its own, ignoring the hangup,
+/// is still in the shell's session, and does not outlive the pane either.
+///
+/// # Panics
+///
+/// When the job survives the pane.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pane_lifecycle_a_job_in_its_own_group_does_not_outlive_the_pane() {
+    let directory = scratch("own-group").expect("a scratch directory");
+    let job = directory.join("job");
+    let script = format!(
+        "set -m; (trap '' HUP; exec sleep 1000) & echo $! > \"{}\"; exit 0",
+        job.display()
+    );
+    let thread = MirrorThread::start().expect("the mirror thread");
+    let pane = Pane::spawn(
+        &running_script(script),
+        DEFAULT_HISTORY_BUDGET_BYTES,
+        &thread,
+    )
+    .await
+    .expect("the pane spawns");
+    let process = written_process(&job).await.expect("the job's process id");
+    let own_group = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(process)))
+        .is_ok_and(|group| group.as_raw() == process);
+    let mut state = pane.state_updates();
+    let _ended = tokio::time::timeout(DEADLINE, state.wait_for(|state| state.exited))
+        .await
+        .is_ok();
+    drop(state);
+    drop(pane);
+    let gone = tokio::time::timeout(DEADLINE, async {
+        while running(process) {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    })
+    .await;
+    let _killed = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(process),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    assert!(own_group, "job control put the job in a group of its own");
+    assert!(gone.is_ok(), "and the job is killed when the pane goes");
+    let _removed = std::fs::remove_dir_all(&directory);
+}
+
 /// A pane whose spawn fails after its shell has started — here because its
 /// mirror thread has ended — ends that shell rather than leaving it running
 /// with nothing to answer to.
