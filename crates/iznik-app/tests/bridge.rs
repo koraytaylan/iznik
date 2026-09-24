@@ -294,7 +294,7 @@ fn engine_bridge_leaves_the_mirror_alone_when_a_command_is_refused() {
         let notices = state.take_notices();
         let refusal = notices
             .iter()
-            .find(|notice| notice.kind == NoticeKind::Refusal)
+            .find(|notice| notice.kind == NoticeKind::Rejection)
             .ok_or_else(|| format!("no refusal was said aloud: {notices:?}"))?;
         assert_eq!(
             refusal.host, host,
@@ -369,7 +369,8 @@ fn engine_bridge_holds_the_upgrade_offer_as_state() {
             !notices
                 .iter()
                 .any(|notice| notice.kind == NoticeKind::Failure
-                    || notice.kind == NoticeKind::Refusal),
+                    || notice.kind == NoticeKind::Refusal
+                    || notice.kind == NoticeKind::Rejection),
             "an offer is neither a failure nor a refusal: {notices:?}"
         );
 
@@ -634,13 +635,13 @@ fn refuse_a_rename(
                         && mirrored.settled.generation > Generation(0)
                 }) && notices
                     .iter()
-                    .any(|notice| notice.kind == NoticeKind::Refusal)
+                    .any(|notice| notice.kind == NoticeKind::Rejection)
             })
         })
     })?;
     assert!(
         told.iter().any(|notice| {
-            notice.kind == NoticeKind::Refusal && notice.detail.contains("UnknownSession")
+            notice.kind == NoticeKind::Rejection && notice.detail.contains("UnknownSession")
         }),
         "the refusal surfaced as a notice naming it: {told:?}"
     );

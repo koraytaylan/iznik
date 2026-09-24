@@ -116,7 +116,10 @@ impl WindowShell {
     /// the window is open.
     fn show_failures(&mut self, context: &mut Context<'_, Self>) {
         for notice in self.hosts.take_notices() {
-            if notice.kind == NoticeKind::Failure {
+            // A refusal of a command a person issued is theirs to see; the
+            // host's refusals of what the window asked for itself — a
+            // subscription it will ask for again — are not.
+            if matches!(notice.kind, NoticeKind::Failure | NoticeKind::Rejection) {
                 self.failure(&notice.host, notice.detail, context);
             }
         }

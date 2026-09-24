@@ -79,8 +79,11 @@ pub enum NoticeKind {
     Connection,
     /// A newer server is on offer. State, not a failure and not a refusal.
     Offer,
-    /// A host refused something this client asked for, and said why.
+    /// A host refused something this client asked for on its own account —
+    /// a subscription, a channel — and said why.
     Refusal,
+    /// A host refused a command a person issued, and said why.
+    Rejection,
     /// Something failed: a command nobody answered, a host that could not be
     /// reached, an operation that would not be performed, or something the host
     /// said that could not be read.
@@ -509,7 +512,7 @@ fn read(notification: &Notification) -> (HostId, NoticeKind, String) {
 fn kind_of(outcome: &CommandOutcome) -> NoticeKind {
     match outcome {
         CommandOutcome::Applied { .. } => NoticeKind::Command,
-        CommandOutcome::Rejected { .. } => NoticeKind::Refusal,
+        CommandOutcome::Rejected { .. } => NoticeKind::Rejection,
     }
 }
 
