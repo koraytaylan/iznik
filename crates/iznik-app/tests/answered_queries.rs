@@ -66,3 +66,49 @@ fn a_replayed_query_is_not_answered_twice() {
         "nothing the host answered is answered: {all:?}"
     );
 }
+
+/// A copy a program made in replayed bytes, then one begun in the replayed
+/// bytes and ended in the fresh ones, then one in the fresh bytes: what the
+/// feed puts on the clipboard.
+///
+/// # Errors
+/// Returns thread or emulator failures.
+///
+/// # Panics
+/// Fails if the thread misses a reply deadline.
+fn copies() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let thread = VtThread::start(VtOptions::default())?;
+    open(&thread, Sequence(0), 80, 24)?;
+    let stale: &[u8] = b"\x1b]52;c;c3RhbGU=\x07";
+    let split: &[u8] = b"\x1b]52;c;c3Bs";
+    let rest: &[u8] = b"aXQ=\x07";
+    let fresh: &[u8] = b"\x1b]52;c;ZnJlc2g=\x07";
+    let answered = u64::try_from([stale, split].concat().len())?;
+    EngineBridge::feed_terminal(
+        &thread,
+        &ManagerEvent::Bytes {
+            host: key().host,
+            pane: key().pane,
+            sequence: Sequence(0),
+            bytes: [stale, split, rest, fresh].concat(),
+            receipt: None,
+            answered_through: Sequence(answered),
+        },
+        &TerminalTheme::default(),
+    )?;
+    Ok(snapshot(&thread)?.clipboard)
+}
+
+/// A copy completed in bytes replayed after a resume was made while nobody
+/// was attached, and is not written again; a copy the fresh bytes complete is.
+///
+/// # Panics
+/// Fails when a replayed copy reaches the clipboard or a fresh one does not.
+#[test]
+fn a_replayed_copy_is_not_written_again() {
+    assert_eq!(
+        copies().expect("copies"),
+        vec!["split".to_owned(), "fresh".to_owned()],
+        "only the copies the fresh bytes complete"
+    );
+}

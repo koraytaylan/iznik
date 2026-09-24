@@ -619,9 +619,15 @@ impl PaneTerminal {
         let credit = u32::try_from(bytes.len()).map_err(|_large| VtError::Overflow)?;
         let next = sequence.0.checked_add(length).ok_or(VtError::Overflow)?;
         let follow = self.viewport()?.at_bottom();
-        self.scan.observe(bytes, &mut self.clipboard.borrow_mut());
         let answered = answered_length(sequence, self.answered, bytes.len());
         let (replayed, fresh) = bytes.split_at_checked(answered).unwrap_or((bytes, &[]));
+        // The scan sees every byte, so a copy begun in the replayed bytes and
+        // ended in the fresh ones is still whole; but a copy the replayed
+        // bytes complete was made while nobody was attached, and writing it
+        // now would put stale text on the clipboard.
+        let mut stale = Vec::new();
+        self.scan.observe(replayed, &mut stale);
+        self.scan.observe(fresh, &mut self.clipboard.borrow_mut());
         // The host answered the queries in these bytes while nobody was
         // attached; answering them again would type stray replies.
         let kept = self.responses.borrow().len();
