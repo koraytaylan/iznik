@@ -5,6 +5,7 @@ arriving
 closes
 comes
 commutes
+commuting
 connections
 dispatcher
 garbage
@@ -23,6 +24,7 @@ sized
 speak
 speaking
 spoken
+such
 unsubscribed
 woken
 writing

@@ -16,11 +16,13 @@ lengths
 lively
 queue
 reserve
+reserved
 settle
 stall
 stalled
 stay
 stop
 subslice
+unsent
 wedged
 writers

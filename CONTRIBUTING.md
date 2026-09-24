@@ -176,13 +176,13 @@ runs off the runtime's workers:
   one blocked reading the pseudoterminal and one blocked writing it, bridged
   to the runtime by channels; that file is exempt from the policy check by
   name. The third is the pane's `pty-reaper` thread in
-  `crates/iznik-server/src/pane.rs`, blocked in the child's `waitpid` from
+  `crates/iznik-server/src/pane/mod.rs`, blocked in the child's `waitpid` from
   the moment it is spawned — a thread of its own rather than the blocking
   pool, because the wait lasts as long as the pane and the pool is shared
   and bounded.
 - **The spawn itself** — the fork, the exec and the directory checks before
   them — which runs on the runtime's blocking pool through `spawn_blocking`
-  (`crates/iznik-server/src/pane.rs`).
+  (`crates/iznik-server/src/pane/mod.rs`).
 - **One mirror thread**, a `LocalSet` holding every pane's emulator, because
   the emulator's handles are `!Send`.
 - **Small synchronous file operations** — the lock file, the runtime

@@ -118,6 +118,17 @@ naming channel 0 decodes to exactly that, and it is the server's connection
 loop that refuses it. `message.jsonl` pins this in "Credit naming channel 0,
 which the codec does not police".
 
+**Input is never refused part way.** A paste longer than one `Input` is
+several, and a pane's input holds only so much before its program reads it;
+refusing the one that did not fit and taking the next once the program had
+caught up would deliver the paste with a hole in its middle. So the server
+holds an `Input` its pane has no room for, and everything the client sent
+after it but credit, pings and released channels, until the pane has room —
+still answering those three meanwhile. Past a few held requests it stops
+reading the connection altogether, and the client's writes back up behind
+it. A program that never reads its input stalls its own client's requests
+that way, and no other client's.
+
 ## 5. Server to client
 
 | Message | Constant | Value | Fields after the discriminant |
@@ -142,7 +153,7 @@ answered-through sequence cut short".
 | Code | Constant | Value | Meaning |
 |---|---|---|---|
 | `ProtocolVersion` | `error_tag::PROTOCOL_VERSION` | 0 | The client's protocol version is not the server's. |
-| `InputBacklog` | `error_tag::INPUT_BACKLOG` | 1 | The client sent input faster than the pane consumes it. |
+| `InputBacklog` | `error_tag::INPUT_BACKLOG` | 1 | The client sent input faster than the pane consumes it. A server of this version never sends it: it holds such input instead (§4). |
 | `UnknownPane` | `error_tag::UNKNOWN_PANE` | 2 | The pane does not exist. |
 | `ChannelsExhausted` | `error_tag::CHANNELS_EXHAUSTED` | 3 | No channel number is free. |
 | `NotSubscribed` | `error_tag::NOT_SUBSCRIBED` | 4 | The client acted on a pane it is not subscribed to. |

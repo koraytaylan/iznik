@@ -18,6 +18,7 @@
 //! terminal queries themselves again — ends every watcher task and frees every
 //! channel; nothing about the sessions changes.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +29,7 @@ use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{
     CommandOutcome, RejectionCode, decode_session_command, encode_command_outcome,
 };
-use iznik_protocol::identity::DaemonInstance;
+use iznik_protocol::identity::{DaemonInstance, PaneId};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_server, encode_to_client,
@@ -40,7 +41,7 @@ use tokio::task::JoinHandle;
 use crate::multiplexer::channel::{MultiplexerError, SinkError};
 use crate::multiplexer::{FrameSink, Multiplexer};
 use crate::pane::PaneError;
-use crate::pty::streams::InputError;
+use crate::pty::streams::{InputError, InputRoom, Offer};
 use crate::resume::StartRequest;
 use crate::session::commands;
 use crate::session::registry::Registry;
@@ -435,6 +436,50 @@ where
     }
 }
 
+/// How many requests may wait behind keystrokes whose pane has no room for
+/// them before the dispatcher stops taking more from the reader. Credit and
+/// pings are still answered while they wait; past this, the reader stops too,
+/// and the client's own writes back up behind it — which is what holding a
+/// paste rather than dropping part of it costs. Each may be a whole frame of
+/// keystrokes, so this bounds what one connection holds at a few megabytes.
+const HELD_REQUESTS: usize = 8;
+
+/// Keystrokes their pane had no room for, and the way to wait for some.
+struct Blocked {
+    /// The pane.
+    pane: PaneId,
+    /// The keystrokes, untouched.
+    bytes: Vec<u8>,
+    /// Resolves once the pane's input has taken some of what it held.
+    room: InputRoom,
+}
+
+/// The requests this connection has taken and not yet answered, in order.
+#[derive(Default)]
+struct Held {
+    /// Waiting behind `blocked`, or not yet reached.
+    requests: VecDeque<ToServer>,
+    /// Keystrokes waiting for their pane to make room, ahead of everything
+    /// in `requests`.
+    blocked: Option<Blocked>,
+}
+
+impl Held {
+    /// Whether another request may be taken from the reader.
+    fn has_room(&self) -> bool {
+        self.requests.len() < HELD_REQUESTS
+    }
+
+    /// Resolves once the pane blocking the queue may have room; never, when
+    /// nothing is blocked.
+    async fn room(&mut self) {
+        match &mut self.blocked {
+            Some(blocked) => blocked.room.wait().await,
+            None => std::future::pending().await,
+        }
+    }
+}
+
 /// What woke the dispatcher.
 enum Woken {
     /// The client asked for something, or its reader ended.
@@ -465,13 +510,16 @@ async fn dispatch(
     // so a keystroke never queues behind a line of credits that arrived with
     // it.
     let mut sending = false;
+    let mut held = Held::default();
     loop {
         let first = if sending {
             None
         } else {
+            let taking = held.has_room();
             let woken = tokio::select! {
                 biased;
-                received = asked.recv() => Woken::Asked(received),
+                received = asked.recv(), if taking => Woken::Asked(received),
+                () = held.room() => Woken::Ready,
                 () = multiplexer.ready() => Woken::Ready,
                 () = signal.notified() => Woken::Ready,
             };
@@ -481,9 +529,11 @@ async fn dispatch(
                 Woken::Ready => None,
             }
         };
-        let (waiting, gone) = waiting_requests(&mut asked, first);
-        for request in waiting {
-            answer(&mut multiplexer, &registry, request).await?;
+        let (commuting, gone) = take_waiting(&mut asked, first, &mut held);
+        answer_held(&mut multiplexer, &registry, &mut held).await?;
+        for request in commuting {
+            // Nothing that commutes is keystrokes, so nothing here is held.
+            let _held = answer(&mut multiplexer, &registry, request).await?;
         }
         if gone {
             return Ok(());
@@ -496,25 +546,63 @@ async fn dispatch(
     }
 }
 
-/// `first`, if any, and every request already waiting behind it, in the order
-/// they came except that those which [`commutes`] go last; and whether the
-/// reader has gone, which is said only once every request it sent has been
-/// taken.
-fn waiting_requests(
+/// Takes `first`, if any, and every request already waiting behind it: those
+/// which [`commutes`] are given back to be answered at once, after the rest,
+/// and the rest are queued in `held` in the order they came, until it is
+/// full. Says too whether the reader has gone, which is said only once every
+/// request it sent has been taken.
+fn take_waiting(
     asked: &mut mpsc::Receiver<ToServer>,
     first: Option<ToServer>,
+    held: &mut Held,
 ) -> (Vec<ToServer>, bool) {
-    let mut waiting: Vec<ToServer> = first.into_iter().collect();
+    let mut commuting = Vec::new();
+    let mut next = first;
     let gone = loop {
+        if let Some(request) = next.take() {
+            if commutes(&request) {
+                commuting.push(request);
+            } else {
+                held.requests.push_back(request);
+            }
+        }
+        if !held.has_room() {
+            break false;
+        }
         match asked.try_recv() {
-            Ok(request) => waiting.push(request),
+            Ok(request) => next = Some(request),
             Err(mpsc::error::TryRecvError::Empty) => break false,
             Err(mpsc::error::TryRecvError::Disconnected) => break true,
         }
     };
-    // A stable sort: each kind keeps its order among its own.
-    waiting.sort_by_key(commutes);
-    (waiting, gone)
+    (commuting, gone)
+}
+
+/// Answers the requests `held` queues, in order, until one is keystrokes whose
+/// pane has no room for them: those wait, and everything behind them with
+/// them, so a paste reaches its pane whole and nothing overtakes it.
+///
+/// # Errors
+///
+/// As [`answer`].
+async fn answer_held(
+    multiplexer: &mut Multiplexer<Handoff>,
+    registry: &Arc<RwLock<Registry>>,
+    held: &mut Held,
+) -> Result<(), ConnectionError> {
+    if let Some(Blocked { pane, bytes, .. }) = held.blocked.take() {
+        held.blocked = offer(multiplexer, registry, pane, bytes).await?;
+        if held.blocked.is_some() {
+            return Ok(());
+        }
+    }
+    while let Some(request) = held.requests.pop_front() {
+        held.blocked = answer(multiplexer, registry, request).await?;
+        if held.blocked.is_some() {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// Whether a request's answer is the same whenever in a turn it is given:
@@ -559,45 +647,41 @@ async fn refused(
     Ok(())
 }
 
-/// Answers a request that is about a pane rather than about the model.
+/// Answers that the host holds no such pane.
 ///
 /// # Errors
 ///
 /// The link's refusals when the answer cannot be sent.
-async fn touch_pane(
+async fn no_such_pane(
     multiplexer: &mut Multiplexer<Handoff>,
-    registry: &Arc<RwLock<Registry>>,
-    request: ToServer,
+    pane: PaneId,
 ) -> Result<(), ConnectionError> {
-    let pane = match &request {
-        ToServer::Input { pane, .. } | ToServer::Resize { pane, .. } => *pane,
-        _other => return Ok(()),
-    };
-    let held = registry.read().await.pane(pane).cloned();
-    let Some(held) = held else {
-        let message = format!("the host holds no pane {}", pane.0);
-        return multiplexer
-            .reply(&ToClient::Error {
-                code: ErrorCode::UnknownPane,
-                message,
-            })
-            .await
-            .map_err(ConnectionError::from);
-    };
-    let acted = match request {
-        ToServer::Input { bytes, .. } => held.input(bytes),
-        ToServer::Resize { columns, rows, .. } => held.resize(columns, rows),
-        _other => Ok(()),
-    };
-    let Err(refusal) = acted else {
-        return Ok(());
-    };
+    let message = format!("the host holds no pane {}", pane.0);
+    multiplexer
+        .reply(&ToClient::Error {
+            code: ErrorCode::UnknownPane,
+            message,
+        })
+        .await
+        .map_err(ConnectionError::from)
+}
+
+/// Answers a pane's refusal of a request.
+///
+/// # Errors
+///
+/// The link's refusals when the answer cannot be sent.
+async fn pane_refused(
+    multiplexer: &mut Multiplexer<Handoff>,
+    pane: PaneId,
+    refusal: &PaneError,
+) -> Result<(), ConnectionError> {
     // Five codes exist and none of them says "this pane's terminal failed",
     // so the nearest is used and the message carries the truth. What exists is
     // the model's to say: a client learns a pane has gone from `PaneRemoved`,
     // never from a refusal's code.
     tracing::warn!(pane = pane.0, %refusal, "a pane refused a request");
-    let code = match &refusal {
+    let code = match refusal {
         PaneError::Input(InputError::Backlog { .. }) => ErrorCode::InputBacklog,
         _other => ErrorCode::UnknownPane,
     };
@@ -606,6 +690,55 @@ async fn touch_pane(
         .reply(&ToClient::Error { code, message })
         .await
         .map_err(ConnectionError::from)
+}
+
+/// Gives keystrokes to their pane, or hands them back to wait when the pane's
+/// input has no room for them yet.
+///
+/// # Errors
+///
+/// The link's refusals when an answer cannot be sent.
+async fn offer(
+    multiplexer: &mut Multiplexer<Handoff>,
+    registry: &Arc<RwLock<Registry>>,
+    pane: PaneId,
+    bytes: Vec<u8>,
+) -> Result<Option<Blocked>, ConnectionError> {
+    let held = registry.read().await.pane(pane).cloned();
+    let Some(held) = held else {
+        no_such_pane(multiplexer, pane).await?;
+        return Ok(None);
+    };
+    match held.offer_input(bytes) {
+        Ok(Offer::Taken) => Ok(None),
+        Ok(Offer::Full { bytes, room }) => Ok(Some(Blocked { pane, bytes, room })),
+        Err(refusal) => {
+            pane_refused(multiplexer, pane, &refusal).await?;
+            Ok(None)
+        }
+    }
+}
+
+/// Resizes a pane.
+///
+/// # Errors
+///
+/// The link's refusals when an answer cannot be sent.
+async fn resize(
+    multiplexer: &mut Multiplexer<Handoff>,
+    registry: &Arc<RwLock<Registry>>,
+    pane: PaneId,
+    columns: u16,
+    rows: u16,
+) -> Result<(), ConnectionError> {
+    let held = registry.read().await.pane(pane).cloned();
+    let Some(held) = held else {
+        return no_such_pane(multiplexer, pane).await;
+    };
+    match held.resize(columns, rows) {
+        Ok(()) => Ok(()),
+        Err(refusal) => pane_refused(multiplexer, pane, &refusal).await,
+    }
 }
 
 /// The requests the multiplexer answers: what this client watches, where each
@@ -651,7 +784,8 @@ async fn watch(
     refused(multiplexer, outcome).await
 }
 
-/// Answers one request.
+/// Answers one request, or — for keystrokes whose pane has no room for them
+/// yet — hands them back to wait.
 ///
 /// # Errors
 ///
@@ -659,6 +793,24 @@ async fn watch(
 /// step rather than one making a request; [`ConnectionError::Multiplexer`] for
 /// a refusal the client cannot act on; and the link's refusals.
 async fn answer(
+    multiplexer: &mut Multiplexer<Handoff>,
+    registry: &Arc<RwLock<Registry>>,
+    request: ToServer,
+) -> Result<Option<Blocked>, ConnectionError> {
+    match request {
+        ToServer::Input { pane, bytes } => offer(multiplexer, registry, pane, bytes).await,
+        other => answer_other(multiplexer, registry, other)
+            .await
+            .map(|()| None),
+    }
+}
+
+/// Answers one request that is not keystrokes.
+///
+/// # Errors
+///
+/// As [`answer`].
+async fn answer_other(
     multiplexer: &mut Multiplexer<Handoff>,
     registry: &Arc<RwLock<Registry>>,
     request: ToServer,
@@ -701,9 +853,11 @@ async fn answer(
             Ok(())
         }
         ToServer::Ping => Ok(multiplexer.reply(&ToClient::Pong).await?),
-        held @ (ToServer::Input { .. } | ToServer::Resize { .. }) => {
-            touch_pane(multiplexer, registry, held).await
-        }
+        ToServer::Resize {
+            pane,
+            columns,
+            rows,
+        } => resize(multiplexer, registry, pane, columns, rows).await,
         watched => watch(multiplexer, watched).await,
     }
 }

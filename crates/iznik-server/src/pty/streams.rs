@@ -6,16 +6,18 @@
 //! a slow terminal applies, confined to one pane. The input writer writes each
 //! submitted message whole before taking the next, so bytes submitted in one
 //! call are never interleaved with another caller's; a paste into a stalled
-//! program backs up to a cap and is refused there, never dropped.
+//! program backs up to a cap, and a caller that finds no room is told how to
+//! wait for some rather than having anything dropped.
 
 use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
 use tokio::sync::mpsc::{Receiver as AsyncReceiver, Sender as AsyncSender};
+use tokio::sync::watch;
 
 use crate::pty::spawn::{PtyError, PtyProcess};
 
@@ -27,7 +29,9 @@ pub const READ_CHUNK_LENGTH: usize = 64 * 1024;
 pub const OUTPUT_CHANNEL_CHUNKS: usize = 16;
 
 /// The most input that may wait to be written before a further write is
-/// refused as a backlog rather than dropped.
+/// refused as a backlog rather than dropped. One write is always taken when
+/// nothing is waiting, however long it is, so a write never waits for room
+/// that cannot come.
 pub const MAXIMUM_PENDING_INPUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// The async stream of a pane's output, in chunks of at most
@@ -55,6 +59,39 @@ pub struct InputHandle {
     /// The bytes now waiting to be written, reserved on submit and released
     /// once written, so a backlog is refused before it grows without bound.
     pending: Arc<AtomicUsize>,
+    /// Told each time the writer releases bytes or ends, so a caller that
+    /// found no room can wait for some.
+    released: Arc<watch::Sender<()>>,
+    /// Whether the writer has ended, after which nothing is written.
+    closed: Arc<AtomicBool>,
+}
+
+/// What became of input offered to a pane.
+#[derive(Debug)]
+pub enum Offer {
+    /// It was enqueued, to be written whole.
+    Taken,
+    /// There was no room for it; nothing was enqueued. The bytes come back,
+    /// with the way to wait until offering them again may find room.
+    Full {
+        /// The bytes offered, untouched.
+        bytes: Vec<u8>,
+        /// Resolves once the writer has released some bytes, or ended.
+        room: InputRoom,
+    },
+}
+
+/// A wait for a pane's input to make room.
+#[derive(Debug)]
+pub struct InputRoom(watch::Receiver<()>);
+
+impl InputRoom {
+    /// Resolves once the writer has released some bytes or ended since the
+    /// offer that handed this out — at once if it already has.
+    pub async fn wait(&mut self) {
+        // A writer gone for good is an answer too: the next offer says so.
+        let _changed = self.0.changed().await;
+    }
 }
 
 /// Why input could not be accepted.
@@ -94,11 +131,45 @@ impl InputHandle {
     /// [`MAXIMUM_PENDING_INPUT_BYTES`], and [`InputError::Closed`] when the
     /// child's terminal has closed.
     pub fn write(&self, bytes: Vec<u8>) -> Result<(), InputError> {
-        let length = bytes.len();
-        self.reserve(length)?;
-        if self.messages.send(bytes).is_err() {
-            self.pending.fetch_sub(length, Ordering::AcqRel);
+        self.write_reserved(bytes)
+            .map_err(|(refusal, _bytes)| refusal)
+    }
+
+    /// Enqueues one message to be written whole if there is room for it, and
+    /// otherwise hands it back with the way to wait for room: input a caller
+    /// has to deliver, in order, is held rather than refused.
+    ///
+    /// # Errors
+    ///
+    /// [`InputError::Closed`] when the child's terminal has closed.
+    pub fn offer(&self, bytes: Vec<u8>) -> Result<Offer, InputError> {
+        // Subscribed before the budget is looked at, so a release between the
+        // two still wakes the wait.
+        let room = InputRoom(self.released.subscribe());
+        if self.closed.load(Ordering::Acquire) {
             return Err(InputError::Closed);
+        }
+        match self.write_reserved(bytes) {
+            Ok(()) => Ok(Offer::Taken),
+            Err((InputError::Backlog { .. }, bytes)) => Ok(Offer::Full { bytes, room }),
+            Err((refusal, _bytes)) => Err(refusal),
+        }
+    }
+
+    /// Reserves room for `bytes` and enqueues them, or hands them back with
+    /// the refusal.
+    ///
+    /// # Errors
+    ///
+    /// [`InputError::Backlog`] and [`InputError::Closed`] as [`Self::write`].
+    fn write_reserved(&self, bytes: Vec<u8>) -> Result<(), (InputError, Vec<u8>)> {
+        let length = bytes.len();
+        if let Err(refusal) = self.reserve(length) {
+            return Err((refusal, bytes));
+        }
+        if let Err(unsent) = self.messages.send(bytes) {
+            self.pending.fetch_sub(length, Ordering::AcqRel);
+            return Err((InputError::Closed, unsent.0));
         }
         Ok(())
     }
@@ -112,7 +183,7 @@ impl InputHandle {
         let mut pending = self.pending.load(Ordering::Acquire);
         loop {
             let next = pending.saturating_add(length);
-            if next > MAXIMUM_PENDING_INPUT_BYTES {
+            if pending > 0 && next > MAXIMUM_PENDING_INPUT_BYTES {
                 return Err(InputError::Backlog { pending });
             }
             match self.pending.compare_exchange_weak(
@@ -159,15 +230,24 @@ pub fn streams(process: &PtyProcess) -> Result<(OutputStream, InputHandle), PtyE
             source: source.into(),
         })?;
     let (messages, queue) = channel();
-    let pending = Arc::new(AtomicUsize::new(0));
-    let writer_pending = Arc::clone(&pending);
+    let input = InputHandle {
+        messages,
+        pending: Arc::new(AtomicUsize::new(0)),
+        released: Arc::new(watch::Sender::new(())),
+        closed: Arc::new(AtomicBool::new(false)),
+    };
+    let writing = Writing {
+        pending: Arc::clone(&input.pending),
+        released: Arc::clone(&input.released),
+        closed: Arc::clone(&input.closed),
+    };
     thread::Builder::new()
         .name("pty-input".to_owned())
-        .spawn(move || write_input(writer, &queue, &writer_pending))
+        .spawn(move || write_input(writer, &queue, &writing))
         .map_err(|source| PtyError::Open {
             source: source.into(),
         })?;
-    Ok((OutputStream { chunks }, InputHandle { messages, pending }))
+    Ok((OutputStream { chunks }, input))
 }
 
 /// The output thread: chunks from the descriptor to the channel, blocking when
@@ -187,17 +267,33 @@ fn read_output(mut reader: Box<dyn Read + Send>, chunks: &AsyncSender<Vec<u8>>) 
     }
 }
 
+/// What the input thread shares with the handles that feed it.
+struct Writing {
+    /// The bytes waiting to be written.
+    pending: Arc<AtomicUsize>,
+    /// Told whenever bytes are released, and when the thread ends.
+    released: Arc<watch::Sender<()>>,
+    /// Set when the thread ends.
+    closed: Arc<AtomicBool>,
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        // However the thread ends, whoever waits for room is told, and finds
+        // the input closed rather than waiting for ever.
+        self.closed.store(true, Ordering::Release);
+        self.released.send_replace(());
+    }
+}
+
 /// The input thread: each message written whole before the next, its bytes
 /// released from the pending budget once written.
-fn write_input(
-    mut writer: Box<dyn Write + Send>,
-    queue: &Receiver<Vec<u8>>,
-    pending: &AtomicUsize,
-) {
+fn write_input(mut writer: Box<dyn Write + Send>, queue: &Receiver<Vec<u8>>, writing: &Writing) {
     while let Ok(message) = queue.recv() {
         let length = message.len();
         let written = writer.write_all(&message).and_then(|()| writer.flush());
-        pending.fetch_sub(length, Ordering::AcqRel);
+        writing.pending.fetch_sub(length, Ordering::AcqRel);
+        writing.released.send_replace(());
         if written.is_err() {
             // The child's terminal is gone. Any messages still queued keep their
             // reservation, but `pending` stays capped and is freed with the

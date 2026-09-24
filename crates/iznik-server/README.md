@@ -30,6 +30,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `multiplexer::credit` | Credit windows in bytes: the focused pane's larger window, refills, consumption, and the stale threshold. | `channel-multiplexer` (plan 0003) |
 | `multiplexer::scheduler` | One scheduling round: the focused cursor first, then round-robin, a cursor at zero credit skipped, a lagging background cursor marked stale. | `multiplexer-assembly` (plan 0003) |
 | `pane` | The pane: pseudoterminal, mirror, history ring and mark observer held together by one VT task, behind one interface. | `pane-assembly` (plan 0002) |
+| `pane::vt` | The VT task a pane's mirror lives in, on the mirror thread: every chunk the child writes fed to the mirror, the history ring and the marks, and the mirror's query answers written back while no client is subscribed. | `server-review` |
 | `pty` | Pseudoterminal ownership: spawning the login shell in its own session and turning its blocking descriptor into async streams. | `pty-spawn` (plan 0002) |
 | `pty::program` | The foreground program and directory of a pane's process, read so a tab can name itself without shell integration. | `session-registry` (plan 0003) |
 | `pty::spawn` | Opening a pseudoterminal pair and spawning the program in its own session, with the environment a pane runs under and faithful exit statuses. | `pty-spawn` (plan 0002) |

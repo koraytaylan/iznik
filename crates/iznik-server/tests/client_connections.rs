@@ -13,7 +13,6 @@ use iznik_link::framed::FramedLink;
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::command::{CommandOutcome, Created, SessionCommand};
 use iznik_protocol::delta::{Delta, decode_delta};
-use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
 use iznik_protocol::identity::{CommandId, Generation, PaneId, Sequence, SessionId};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client,
@@ -22,7 +21,6 @@ use iznik_protocol::message::{
 use iznik_server::connection::{ConnectionError, ConnectionOptions, serve, serve_with_options};
 use iznik_server::history::{DEFAULT_HISTORY_BUDGET_BYTES, HistoryBudget};
 use iznik_server::pty::spawn::Program;
-use iznik_server::pty::streams::MAXIMUM_PENDING_INPUT_BYTES;
 use iznik_server::session::registry::{Registry, RegistryDefaults};
 use iznik_server::terminal::mirror::MirrorThread;
 use iznik_testkit::client::{ClientError, Received, TestClient};
@@ -43,10 +41,6 @@ const PROMPT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// How many looks it takes before it gives up on one.
 const POLL_ATTEMPTS: usize = 400;
-
-/// The bytes an `Input` message spends before its payload: the discriminant,
-/// the pane id and the payload's length.
-const INPUT_OVERHEAD: u32 = 13;
 
 /// How much of a pane's flood the one-writer case waits for before it starts,
 /// and how much must have reached the client by the time it ends.
@@ -490,59 +484,6 @@ async fn input_reaches_the_pane_and_comes_back() {
             watched.windows(8).any(|piece| piece == b"from-one"),
             "one client's input came back on another's channel"
         );
-        Ok::<(), Failed>(())
-    })
-    .await
-    .unwrap_or_else(|error| panic!("{error}"));
-}
-
-/// # Panics
-///
-/// When input past what a stopped pane can hold is dropped rather than
-/// reported, or when reporting it closes the connection.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_backlog_is_reported_and_the_connection_stays_open() {
-    bounded(async {
-        let mut host = Host::new()?;
-        let mut client = host.attach(Capabilities::from_bits(0)).await?;
-        let _made = make_session(&mut client).await?;
-        let pane = *host
-            .panes()
-            .await
-            .first()
-            .ok_or("the session held no pane")?;
-
-        // A shell that reads nothing, so the pending input has nowhere to go.
-        client.input(pane, b"sleep 60\n".to_vec()).await?;
-        host.produced(pane, 1).await?;
-        let piece = MAXIMUM_PAYLOAD_LENGTH.saturating_sub(INPUT_OVERHEAD);
-        let pieces = MAXIMUM_PENDING_INPUT_BYTES
-            .checked_div(usize::try_from(piece)?)
-            .unwrap_or_default()
-            .saturating_add(2);
-        for _turn in 0..pieces {
-            client
-                .input(pane, vec![b'x'; usize::try_from(piece)?])
-                .await?;
-        }
-        let backlog = until(&mut client, PROMPT, |message| match message {
-            ToClient::Error { code, message } => {
-                (*code == ErrorCode::InputBacklog).then(|| message.clone())
-            }
-            _other => None,
-        })
-        .await?;
-        assert!(
-            backlog.contains(&format!("pane {}", pane.0)),
-            "the refusal names the pane: {backlog}"
-        );
-
-        client.ping().await?;
-        let alive = until(&mut client, PROMPT, |message| {
-            matches!(message, ToClient::Pong).then_some(())
-        })
-        .await;
-        assert!(alive.is_ok(), "and the connection stays open");
         Ok::<(), Failed>(())
     })
     .await
