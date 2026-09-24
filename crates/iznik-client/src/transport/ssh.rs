@@ -5,19 +5,21 @@
 //! flags that mean the same things, because every one of those is something a
 //! person may already have written in `~/.ssh/config` and reimplementing that
 //! surface means getting it wrong for the first user whose setup is
-//! interesting. What iznik adds is the four options it owns — a persistent
-//! master so the second command is fast, a control path under its own runtime
-//! directory, keepalives so a dead link is noticed in seconds, and a connect
-//! timeout — plus the three overrides below, and a test asserts the argument
-//! vector against that list.
+//! interesting. What iznik adds is the six settings it owns — a persistent
+//! master so the second command is fast (`ControlMaster`, `ControlPersist`,
+//! and a `ControlPath` under its own runtime directory), keepalives so a dead
+//! link is noticed in seconds (`ServerAliveInterval`, `ServerAliveCountMax`),
+//! and a `ConnectTimeout` — plus the three overrides below and, when the
+//! application gave no askpass program, `BatchMode=yes`; a test asserts the
+//! argument vector against that list.
 //!
-//! Three of the six options iznik does pass are ones a person could also have
-//! written, and a command-line `-o` beats `~/.ssh/config`: a user with
-//! `ServerAliveInterval 60` on a metered link gets five seconds times three
-//! instead, and a `ConnectTimeout` of their own is replaced by fifteen. The
-//! architecture owns those three deliberately — a link iznik cannot notice
-//! dying is a session that hangs — and this note is here so the trade is a
-//! decision on the record rather than a surprise.
+//! Three of those six — the keepalives and the timeout — are ones a person is
+//! likely to have written too, and a command-line `-o` beats `~/.ssh/config`:
+//! a user with `ServerAliveInterval 60` on a metered link gets five seconds
+//! times three instead, and a `ConnectTimeout` of their own is replaced by
+//! fifteen. The architecture owns those three deliberately — a link iznik
+//! cannot notice dying is a session that hangs — and this note is here so the
+//! trade is a decision on the record rather than a surprise.
 //!
 //! Three more are overrides rather than settings, and they exist because a
 //! person's configuration can break iznik's own commands without being wrong
@@ -28,6 +30,11 @@
 //! `ClearAllForwardings=yes`, because a `LocalForward` that cannot bind fails
 //! the connection, and one that can would be held open by every probe and
 //! relay iznik starts. None of them changes how the host is reached.
+//!
+//! The last, `BatchMode=yes`, is there only when nothing can ask a person
+//! anything: a passphrase, a password or a host key nobody has accepted then
+//! fails at once and says which, instead of prompting a terminal nobody is
+//! looking at until the connection's deadline.
 //!
 //! The other half is the classification. "Connection failed" tells a person
 //! nothing, and a changed host key demands an alarming, specific message,

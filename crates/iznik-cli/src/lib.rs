@@ -65,6 +65,35 @@ pub const CLIENT_LAYER: &str = "client";
 /// The layer a failure of the link is from.
 pub const TRANSPORT_LAYER: &str = "transport";
 
+/// The layer a failure to put a server on a host, or start it, is from.
+pub const BOOTSTRAP_LAYER: &str = "bootstrap";
+
+/// The layer a server that would not speak this client's protocol is from.
+pub const PROTOCOL_LAYER: &str = "protocol";
+
+/// The layer a host's failure is from, as its state tells it.
+///
+/// A machine this build has no server for is the bootstrap's answer, not
+/// the link's, even though it is the probe that finds it out; a refused key
+/// or an unaccepted host key is the link's whatever stage met it. Every
+/// other failure is the stage's: the probe is a round trip and nothing else,
+/// an upload or a launch is the bootstrap, and a handshake is the protocol.
+#[must_use]
+pub fn failed_layer(
+    stage: Option<iznik_client::bootstrap::launch::Stage>,
+    cause: iznik_client::bootstrap::launch::Cause,
+) -> &'static str {
+    use iznik_client::bootstrap::launch::{Cause, Stage};
+    match (cause, stage) {
+        (Cause::Credentials | Cause::HostKey, _)
+        | (Cause::Transient, Some(Stage::Probe) | None) => TRANSPORT_LAYER,
+        (Cause::Unsupported, _) | (Cause::Transient, Some(Stage::Upload | Stage::Launch)) => {
+            BOOTSTRAP_LAYER
+        }
+        (Cause::Transient, Some(Stage::Handshake)) => PROTOCOL_LAYER,
+    }
+}
+
 /// A runtime for the commands that wait on a host.
 ///
 /// Multi-threaded and its own: these commands own the process, so nothing is
@@ -154,11 +183,12 @@ pub fn holding(
                 state:
                     HostState::Failed {
                         error,
+                        cause,
+                        stage,
                         retry_at: None,
-                        ..
                     },
                 ..
-            }) => return Err((TRANSPORT_LAYER, error)),
+            }) => return Err((failed_layer(stage, cause), error)),
             // Anything else is not an ending: a host that could not be reached
             // is tried again, and the harness that models this waits through
             // exactly this.

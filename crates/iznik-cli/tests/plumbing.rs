@@ -531,3 +531,38 @@ fn plumbing_every_command_says_what_it_takes() {
     };
     case().unwrap_or_else(|error| panic!("{error}"));
 }
+
+/// # Panics
+///
+/// When a host that gave up for good is reported as the link's failure
+/// whatever failed — a machine with no server, an upload, a handshake.
+#[test]
+fn plumbing_names_the_layer_a_host_failed_in() {
+    use iznik_cli::{BOOTSTRAP_LAYER, PROTOCOL_LAYER, TRANSPORT_LAYER, failed_layer};
+    use iznik_client::bootstrap::launch::{Cause, Stage};
+    assert_eq!(
+        failed_layer(Some(Stage::Probe), Cause::Unsupported),
+        BOOTSTRAP_LAYER,
+        "a machine this build has no server for is the bootstrap's answer"
+    );
+    assert_eq!(
+        failed_layer(Some(Stage::Probe), Cause::Credentials),
+        TRANSPORT_LAYER,
+        "a refused key is the link's"
+    );
+    assert_eq!(
+        failed_layer(Some(Stage::Launch), Cause::HostKey),
+        TRANSPORT_LAYER,
+        "and so is a host key, whatever stage met it"
+    );
+    assert_eq!(
+        failed_layer(Some(Stage::Upload), Cause::Transient),
+        BOOTSTRAP_LAYER,
+        "an upload is the bootstrap's"
+    );
+    assert_eq!(
+        failed_layer(Some(Stage::Handshake), Cause::Transient),
+        PROTOCOL_LAYER,
+        "a handshake is the protocol's"
+    );
+}

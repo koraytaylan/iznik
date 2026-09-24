@@ -4,12 +4,13 @@
 use core::ffi::c_void;
 use std::ffi::CString;
 
-use iznik_client::bootstrap::launch::{Cause, Stage};
+use iznik_client::bootstrap::launch::Cause;
 use iznik_client::host::manager::ManagerEvent;
 use iznik_client::host::state::{HostState, UpgradeReason};
 
 use crate::error::Layer;
 use crate::model::{Event, EventKind, FailureKind, HostStateKind, HostStatus, UpgradeKind};
+use crate::staged;
 
 /// A status and the strings it points into, kept alive together for the call.
 struct Held {
@@ -17,15 +18,6 @@ struct Held {
     status: HostStatus,
     /// The versions an offer names, owned here.
     _versions: Option<(CString, CString)>,
-}
-
-/// The layer a bootstrap's stage belongs to, as a refusal from it reports.
-fn staged(stage: Stage) -> Layer {
-    match stage {
-        Stage::Probe => Layer::Transport,
-        Stage::Upload | Stage::Launch => Layer::Bootstrap,
-        Stage::Handshake => Layer::Protocol,
-    }
 }
 
 /// What kind of failure a cause is.

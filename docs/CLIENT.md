@@ -204,6 +204,15 @@ reconnection now rather than after the backoff.
   command — never answered, answered unreadably, or of unknown outcome because
   the link went — `command_id` carries that command's number; when it is about
   keystrokes that were dropped, `pane` names their pane.
+- `IZNIK_EVENT_KIND_PANE_BYTES` — a pane's own bytes, for a pane nothing is
+  attached to.
+- `IZNIK_EVENT_KIND_SCREEN` — a pane's screen, with `columns` and `rows`.
+- `IZNIK_EVENT_KIND_PANE_DETACHED` — the host has stopped sending a pane's
+  output. There is no payload; `pane` names the pane.
+
+Every other payload is in `iznik/1`'s own encoding — the same schema the wire uses,
+so there is one format and not two. The Rust crate that reads it is
+`iznik_protocol`; the encoding is documented with the protocol.
 
 Keystrokes you send with `iznik_pane_input` while a host has no link — it is
 reconnecting, or being bootstrapped, which can take minutes — are not held and
@@ -226,15 +235,6 @@ begins with says what the host really did. Read that before sending the
 command again — a creation sent twice is two panes. A command that is simply never answered on a live link is a
 different notification: it was never answered, and after five seconds it is
 given up on.
-- `IZNIK_EVENT_KIND_PANE_BYTES` — a pane's own bytes, for a pane nothing is
-  attached to.
-- `IZNIK_EVENT_KIND_SCREEN` — a pane's screen, with `columns` and `rows`.
-- `IZNIK_EVENT_KIND_PANE_DETACHED` — the host has stopped sending a pane's
-  output. There is no payload; `pane` names the pane.
-
-Every other payload is in `iznik/1`'s own encoding — the same schema the wire uses,
-so there is one format and not two. The Rust crate that reads it is
-`iznik_protocol`; the encoding is documented with the protocol.
 
 **The events carry what the host has said, and never what the client is
 showing ahead of it.** If you want a rename on screen before the host has
