@@ -10,6 +10,7 @@
 
 pub mod registry;
 pub mod selection;
+pub mod test_source;
 pub mod verify;
 
 use std::ffi::OsString;

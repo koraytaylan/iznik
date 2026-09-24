@@ -516,7 +516,18 @@ fn workspace_with_a_test_target(tree: &Tree) -> Result<(), std::io::Error> {
         "[workspace]\nmembers = [\"crates/demo\", \"crates/mimic\"]\n",
     )?;
     tree.write("crates/demo/Cargo.toml", "[package]\nname = \"demo\"\n")?;
-    tree.write("crates/demo/tests/unit.rs", "")?;
+    tree.write(
+        "crates/demo/tests/unit.rs",
+        "#[test]\nfn passes() {}\n\n#[path = \"support/shared.rs\"]\nmod shared;\nmod nested;\n",
+    )?;
+    tree.write(
+        "crates/demo/tests/support/shared.rs",
+        "#[test]\nfn shared_passes() {}\n",
+    )?;
+    tree.write(
+        "crates/demo/tests/nested.rs",
+        "#[test]\nfn nested_passes() {}\n",
+    )?;
     tree.write(
         "crates/mimic/Cargo.toml",
         "[package]\nname = \"mimic\"\n\n[[test]]\nname = \"scenarios\"\nharness = false\n",
@@ -555,6 +566,43 @@ fn claims_a_test_proof_names_an_existing_test_target() {
         let error = registry::load(tree.root()).expect_err(missing);
         assert!(
             matches!(error, RegistryError::TestTargetMissing { .. }),
+            "{missing}: {error}"
+        );
+        assert!(error.to_string().contains(missing), "{error}");
+    }
+}
+
+/// A test proof whose target exists but defines no function of the test's
+/// name — a test renamed under a claim that still names the old one — is
+/// rejected naming the proof; one defined in a module the target pulls in,
+/// by `mod` or by `#[path]`, is found.
+///
+/// # Panics
+///
+/// When a defined function is rejected or a missing one is accepted.
+#[test]
+fn claims_a_test_proof_names_an_existing_test_function() {
+    let tree = Tree::new("test-function").expect("a tree");
+    tree.task("alpha").expect("the task");
+    workspace_with_a_test_target(&tree).expect("the workspace");
+    let claim = |test: &str| {
+        format!(
+            "[[claim]]\nid = \"alpha-one\"\nstatement = \"It holds.\"\ntest = \"{test}\"\nbecause = \"a unit proves it\"\n"
+        )
+    };
+    for present in [
+        "demo::unit::passes",
+        "demo::unit::shared::shared_passes",
+        "demo::unit::nested::nested_passes",
+    ] {
+        tree.claims("alpha", &claim(present)).expect("the claims");
+        registry::load(tree.root()).unwrap_or_else(|error| panic!("{present}: {error}"));
+    }
+    for missing in ["demo::unit::renamed", "demo::unit::pass"] {
+        tree.claims("alpha", &claim(missing)).expect("the claims");
+        let error = registry::load(tree.root()).expect_err(missing);
+        assert!(
+            matches!(error, RegistryError::TestFunctionMissing { .. }),
             "{missing}: {error}"
         );
         assert!(error.to_string().contains(missing), "{error}");

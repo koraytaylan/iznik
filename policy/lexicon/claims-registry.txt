@@ -48,6 +48,7 @@ selects
 sorted
 suffix
 trunk
+unchecked
 unions
 unique
 untracked

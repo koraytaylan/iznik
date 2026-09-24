@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::claims::test_source;
+
 /// The registry's directory, under the repository root.
 pub const CLAIMS_DIRECTORY: &str = "regression/claims";
 
@@ -293,6 +295,18 @@ pub enum RegistryError {
         /// The test proof as written.
         test: String,
     },
+    /// A test proof names a test target that exists but whose source defines
+    /// no function of the test's name.
+    TestFunctionMissing {
+        /// The task.
+        task: String,
+        /// The claim.
+        id: String,
+        /// The test proof as written.
+        test: String,
+        /// The target's root file, which the scan started from.
+        file: PathBuf,
+    },
     /// A scenario of a registered task names a claim the registry does not
     /// declare.
     ScenarioClaimUndeclared {
@@ -350,6 +364,16 @@ impl Display for RegistryError {
                 formatter,
                 "claim `{id}` of task `{task}` names test `{test}`, but no workspace package declares that test target"
             ),
+            RegistryError::TestFunctionMissing {
+                task,
+                id,
+                test,
+                file,
+            } => write!(
+                formatter,
+                "claim `{id}` of task `{task}` names test `{test}`, but {} and the modules it pulls in define no such function",
+                file.display()
+            ),
             RegistryError::ScenarioClaimUndeclared {
                 task,
                 scenario,
@@ -380,7 +404,8 @@ impl std::error::Error for RegistryError {
 /// [`RegistryError`] naming the first inconsistency: an unreadable or
 /// unparseable file, a file named for no task, a duplicate id, a malformed
 /// proof, a scenario proof with no scenario, or a scenario of a registered task
-/// naming an undeclared claim, or a test proof naming no test target.
+/// naming an undeclared claim, or a test proof naming no test target or no
+/// function of its target.
 pub fn load(root: &Path) -> Result<Registry, RegistryError> {
     let tasks = task_ids(root);
     let mut claims: Vec<Claim> = Vec::new();
@@ -469,13 +494,18 @@ fn check_scenario_proofs(root: &Path, claims: &[Claim]) -> Result<(), RegistryEr
 
 /// Every test proof names a test target that exists: its package is a
 /// workspace member, and that member has `tests/<binary>.rs`,
-/// `tests/<binary>/main.rs` or a `[[test]]` of that name. The test function
-/// itself is nextest's to find; a proof naming a target that is not there
-/// would otherwise select nothing and be reported only as a missing verdict.
+/// `tests/<binary>/main.rs` or a `[[test]]` of that name. And the target's
+/// source defines the test function, which [`test_source::defines_test`]
+/// scans for; a target without the libtest harness names its tests at run
+/// time, so its tests are not looked for. A proof naming a target or a
+/// function that is not there would otherwise select nothing and be reported
+/// only as a missing verdict.
 ///
 /// # Errors
 ///
-/// [`RegistryError::TestTargetMissing`] for the first proof that names none.
+/// [`RegistryError::TestTargetMissing`] for the first proof that names no
+/// target, [`RegistryError::TestFunctionMissing`] for the first whose target
+/// defines no such function.
 fn check_test_targets(root: &Path, claims: &[Claim]) -> Result<(), RegistryError> {
     let packages = workspace_packages(root);
     for claim in claims {
@@ -483,21 +513,44 @@ fn check_test_targets(root: &Path, claims: &[Claim]) -> Result<(), RegistryError
             continue;
         };
         let mut parts = name.splitn(TEST_PATH_PARTS, TEST_PATH_SEPARATOR);
-        let found = match (parts.next(), parts.next(), parts.next()) {
+        let target = match (parts.next(), parts.next(), parts.next()) {
             (Some(package), Some(binary), Some(test)) if !test.is_empty() => packages
                 .get(package)
-                .is_some_and(|directory| declares_test_target(directory, binary)),
-            _ => false,
+                .and_then(|directory| test_target(directory, binary))
+                .map(|source| (source, test)),
+            _ => None,
         };
-        if !found {
-            return Err(RegistryError::TestTargetMissing {
-                task: claim.task.clone(),
-                id: claim.id.clone(),
-                test: name.clone(),
-            });
+        match target {
+            None => {
+                return Err(RegistryError::TestTargetMissing {
+                    task: claim.task.clone(),
+                    id: claim.id.clone(),
+                    test: name.clone(),
+                });
+            }
+            Some((TargetSource::File(file), test)) if !test_source::defines_test(&file, test) => {
+                return Err(RegistryError::TestFunctionMissing {
+                    task: claim.task.clone(),
+                    id: claim.id.clone(),
+                    test: name.clone(),
+                    file,
+                });
+            }
+            Some(_) => {}
         }
     }
     Ok(())
+}
+
+/// Where a test target's tests are written, as far as the function check
+/// needs to know.
+enum TargetSource {
+    /// The target's root file, which defines its tests or pulls in the
+    /// modules that do.
+    File(PathBuf),
+    /// A target whose tests are not functions to look for: one without the
+    /// libtest harness, or one whose root file is not where it says.
+    Unchecked,
 }
 
 /// Every workspace member's package name and directory, read from the root
@@ -529,22 +582,43 @@ fn workspace_packages(root: &Path) -> BTreeMap<String, PathBuf> {
         .collect()
 }
 
-/// Whether a package directory declares a test target named `binary`.
-fn declares_test_target(directory: &Path, binary: &str) -> bool {
+/// The test target named `binary` a package directory declares, if any: a
+/// `[[test]]` of that name, or else `tests/<binary>.rs` or
+/// `tests/<binary>/main.rs`.
+fn test_target(directory: &Path, binary: &str) -> Option<TargetSource> {
     let tests = directory.join(TESTS_DIRECTORY);
-    if tests.join(format!("{binary}.rs")).is_file() || tests.join(binary).join("main.rs").is_file()
-    {
-        return true;
+    let declared = read_table(&directory.join(MANIFEST)).and_then(|manifest| {
+        manifest
+            .get("test")?
+            .as_array()?
+            .iter()
+            .find(|target| target.get("name").and_then(toml::Value::as_str) == Some(binary))
+            .cloned()
+    });
+    if let Some(target) = declared {
+        if target.get("harness").and_then(toml::Value::as_bool) == Some(false) {
+            return Some(TargetSource::Unchecked);
+        }
+        let file = target
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .map_or_else(
+                || tests.join(format!("{binary}.rs")),
+                |path| directory.join(path),
+            );
+        return Some(if file.is_file() {
+            TargetSource::File(file)
+        } else {
+            TargetSource::Unchecked
+        });
     }
-    read_table(&directory.join(MANIFEST))
-        .and_then(|manifest| {
-            manifest.get("test")?.as_array().map(|targets| {
-                targets
-                    .iter()
-                    .any(|target| target.get("name").and_then(toml::Value::as_str) == Some(binary))
-            })
-        })
-        .unwrap_or(false)
+    [
+        tests.join(format!("{binary}.rs")),
+        tests.join(binary).join("main.rs"),
+    ]
+    .into_iter()
+    .find(|file| file.is_file())
+    .map(TargetSource::File)
 }
 
 /// A TOML file read as a table, or nothing when it cannot be read or parsed.
