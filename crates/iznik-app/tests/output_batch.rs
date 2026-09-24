@@ -193,3 +193,50 @@ fn replayed_output_shares_snapshots_like_live_output() {
     }
     assert_eq!(consumed, total, "every replayed byte is credited once");
 }
+
+/// Chunks with and without receipts, queued together, never share a
+/// snapshot: a snapshot's credit is all receipts or all plain bytes, which is
+/// the only credit a grid accepts.
+///
+/// # Panics
+/// Fails when a snapshot's receipts do not cover exactly its bytes.
+#[test]
+fn chunks_with_and_without_receipts_are_not_mixed() {
+    let thread = VtThread::start(VtOptions::default()).expect("thread");
+    open(&thread, Sequence(0), COLUMNS, ROWS).expect("open");
+    let mut streams = CreditStreams::default();
+    streams.open(&key().host, key().pane, CHANNEL);
+    let length = u32::try_from(CHUNK.len()).expect("chunk length");
+    let total = u64::try_from(CHUNKS).expect("total");
+    for index in 0..total {
+        let receipt = (index % 2 == 0).then(|| {
+            streams
+                .receipt(&key().host, key().pane, length)
+                .expect("receipt")
+        });
+        thread
+            .send(VtCommand::Feed {
+                key: key(),
+                sequence: Sequence(index),
+                bytes: CHUNK.to_vec(),
+                receipt,
+            })
+            .expect("feed");
+    }
+    loop {
+        let frame = snapshot(&thread).expect("snapshot");
+        let covered: u64 = frame
+            .receipts
+            .iter()
+            .map(|receipt| u64::from(receipt.bytes()))
+            .sum();
+        assert!(
+            frame.receipts.is_empty() || covered == u64::from(frame.consumed_bytes),
+            "a snapshot mixes receipts with plain bytes: {covered} of {}",
+            frame.consumed_bytes
+        );
+        if frame.sequence == Sequence(total) {
+            break;
+        }
+    }
+}

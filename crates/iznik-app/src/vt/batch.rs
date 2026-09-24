@@ -149,7 +149,9 @@ impl Owner {
     /// Feed one chunk, adding it to the pane's pending snapshot. A chunk that
     /// cannot join it — a gap, a receipt for other bytes, a count past the
     /// credit field — is applied on its own after that snapshot is published,
-    /// which is where its failure is reported.
+    /// which is where its failure is reported. A chunk with a receipt after
+    /// chunks without one, or the other way round, publishes the pending
+    /// snapshot first and starts the next.
     fn feed(
         &mut self,
         key: PaneKey,
@@ -185,6 +187,15 @@ impl Owner {
             results.push((key, result));
             return;
         };
+        // A snapshot's credit is either all receipts or all plain bytes: a
+        // chunk that differs from the ones pending starts a snapshot of its own.
+        if self
+            .fed
+            .get(&key)
+            .is_some_and(|fed| fed.receipts.is_empty() != delivery.is_none())
+        {
+            self.flush(&key, results);
+        }
         let Some(pane) = self.panes.get_mut(&key) else {
             return;
         };
