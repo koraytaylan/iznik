@@ -11,6 +11,7 @@ login
 marked
 nix
 panes
+remnant
 sent
 tell
 term

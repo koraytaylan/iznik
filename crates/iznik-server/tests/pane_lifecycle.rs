@@ -275,11 +275,11 @@ async fn pane_lifecycle_a_background_job_does_not_keep_a_pane_alive() {
 }
 
 /// A background job that ignores the hangup and keeps the terminal open does
-/// not keep its pane from ending either.
+/// not keep its pane from ending either, and does not outlive the pane.
 ///
 /// # Panics
 ///
-/// When the pane waits for the job.
+/// When the pane waits for the job, or the job survives the pane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pane_lifecycle_a_job_ignoring_the_hangup_does_not_keep_a_pane_alive() {
     let directory = scratch("ignoring").expect("a scratch directory");
@@ -298,17 +298,31 @@ async fn pane_lifecycle_a_job_ignoring_the_hangup_does_not_keep_a_pane_alive() {
     .expect("the pane spawns");
     let process = written_process(&job).await.expect("the job's process id");
     let mut state = pane.state_updates();
-    let ended = tokio::time::timeout(DEADLINE, state.wait_for(|state| state.exited)).await;
+    let ended = tokio::time::timeout(DEADLINE, state.wait_for(|state| state.exited))
+        .await
+        .is_ok();
+    let status = pane.exit_status_now();
+    // The pane let go of: the job still in the shell's group, holding the
+    // terminal open, is killed with it rather than left running for ever.
+    drop(state);
+    drop(pane);
+    let gone = tokio::time::timeout(DEADLINE, async {
+        while running(process) {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    })
+    .await;
     let _killed = nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(process),
         nix::sys::signal::Signal::SIGKILL,
     );
-    assert!(ended.is_ok(), "the pane ended with the job still running");
+    assert!(ended, "the pane ended with the job still running");
     assert_eq!(
-        pane.exit_status_now(),
+        status,
         Some(ExitStatus::Exited(0)),
         "and says how its shell ended"
     );
+    assert!(gone.is_ok(), "and the job is killed when the pane goes");
     let _removed = std::fs::remove_dir_all(&directory);
 }
 

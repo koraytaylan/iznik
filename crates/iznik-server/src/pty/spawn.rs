@@ -371,8 +371,14 @@ impl PtyProcess {
     /// Best-effort forced cleanup of the owned shell and its ordinary foreground
     /// job. Query while the session leader still exists; killing it first can
     /// detach the controlling terminal and lose the foreground identity.
+    ///
+    /// Once the shell has been reaped, what can be left is its own group: a
+    /// job that ignored the hangup the reaper sent, still holding the terminal
+    /// open — and with it the thread that reads the terminal. That group is
+    /// killed, as [`PtyProcess::kill_remnant`] guards it.
     pub(crate) fn kill_terminal_groups(&self) {
         if self.reaped.load(Ordering::Acquire) {
+            self.kill_remnant();
             return;
         }
         #[cfg(unix)]
@@ -391,6 +397,20 @@ impl PtyProcess {
                 Err(poisoned) => poisoned.into_inner(),
             };
             let _killed = child_stop.kill();
+        }
+    }
+
+    /// Kills what is left of the reaped shell's process group.
+    ///
+    /// The group's id is the shell's process id, and the system hands out no
+    /// process id a live group still carries. So while any process has the
+    /// shell's number, that number is not this pane's group — it is somebody
+    /// else's process, the group long empty — and nothing is sent; while none
+    /// has it, the group is this pane's remnant or nobody at all.
+    fn kill_remnant(&self) {
+        #[cfg(unix)]
+        if nix::unistd::getpgid(Some(self.pid())) == Err(nix::errno::Errno::ESRCH) {
+            let _killed = signal::killpg(self.pid(), NixSignal::SIGKILL);
         }
     }
 
@@ -444,11 +464,10 @@ impl PtyProcess {
 impl Drop for PtyProcess {
     /// Stop the foreground job before the shell, then reap the owned child.
     fn drop(&mut self) {
-        if self.reaped.load(Ordering::Acquire) {
-            return;
-        }
         self.kill_terminal_groups();
-        let _reaped = self.reaper().wait();
+        if !self.reaped.load(Ordering::Acquire) {
+            let _reaped = self.reaper().wait();
+        }
     }
 }
 
