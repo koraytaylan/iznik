@@ -518,10 +518,10 @@ static void on_output(void *context, const uint8_t *bytes, size_t length,
     /* Your emulator may have produced an answer to a query the program
      * asked. Forward it as if the person had typed it. */
     const uint8_t *answer = NULL;
-    size_t answered = surface_take_response(held, &answer);
-    if (answered > 0) {
+    size_t replied = surface_take_response(held, &answer);
+    if (replied > 0) {
         iznik_pane_input(held->client, held->alias, held->pane, answer,
-                         answered, NULL);
+                         replied, NULL);
     }
 
     /* And say you have consumed them, or the pane stops. */
