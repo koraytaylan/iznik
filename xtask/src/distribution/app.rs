@@ -1,5 +1,6 @@
 //! `xtask app-bundle`: invoke the product's headless bundle writer, then write
-//! the bundle's `THIRD-PARTY-NOTICES`.
+//! the bundle's `THIRD-PARTY-NOTICES`, then, for a macOS target, sign the
+//! bundle as [`signing`] describes.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::ExitCode;
 
+use crate::distribution::signing::{self, Signature};
 use crate::distribution::{BINARY, DistributionError, notices};
 
 /// Target flag.
@@ -26,7 +28,7 @@ const USAGE_EXIT_CODE: u8 = 2;
 /// The package the bundled executable is built from.
 const APPLICATION_PACKAGE: &str = "iznik-app";
 /// What a macOS target's triple ends in.
-const DARWIN_SUFFIX: &str = "apple-darwin";
+pub const DARWIN_SUFFIX: &str = "apple-darwin";
 /// Where a macOS bundle keeps its resources, under the bundle.
 const DARWIN_RESOURCES: &[&str] = &["Contents", "Resources"];
 /// Number of items needed to read a flag and its value.
@@ -81,18 +83,42 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
     if !status.is_ok_and(|result| result.success()) {
         return ExitCode::FAILURE;
     }
-    match bundle_notices(
-        &crate::distribution::workspace_root(),
-        &target,
-        &servers_path,
-        Path::new(&output),
-    ) {
-        Ok(_written) => ExitCode::SUCCESS,
+    match finish(&target, &servers_path, Path::new(&output)) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let _written = writeln!(std::io::stderr(), "app-bundle: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// What follows the bundle writer: the notices, and for a macOS target the
+/// signature over everything, which must come last because it seals the
+/// bundle's resources.
+///
+/// # Errors
+///
+/// What [`bundle_notices`] and [`signing::sign_bundle`] report.
+fn finish(target: &str, servers: &Path, output: &Path) -> Result<(), DistributionError> {
+    let _written = bundle_notices(
+        &crate::distribution::workspace_root(),
+        target,
+        servers,
+        output,
+    )?;
+    if target.ends_with(DARWIN_SUFFIX) {
+        let signature = Signature::from_environment();
+        signing::sign_bundle(output, target, &signature)?;
+        let how = match &signature {
+            Signature::AdHoc => format!(
+                "ad hoc, with no identity; set {} to sign with one",
+                signing::IDENTITY_VARIABLE
+            ),
+            Signature::Identity(identity) => format!("with {identity}"),
+        };
+        let _said = writeln!(std::io::stdout(), "app-bundle: signed {how}");
+    }
+    Ok(())
 }
 
 /// Writes `THIRD-PARTY-NOTICES` into a bundle: the packages the application is

@@ -167,11 +167,18 @@ jobs:
           if-no-files-found: error
           path: ${{ runner.temp }}/iznik-linux.tar.gz
 
+  # Signed with a Developer ID and notarized when the secrets for both are
+  # there — README.md "Distribution" names them — and ad hoc otherwise, which
+  # the release notes then say. `xtask app-bundle` signs; this job only puts
+  # the certificate where `codesign` finds it, and names it in
+  # IZNIK_CODESIGN_IDENTITY.
   darwin:
     name: macOS application bundles
     needs: [servers-linux, servers-darwin]
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
+    outputs:
+      signature: ${{ steps.notarization.outputs.signature }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -196,22 +203,100 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/servers
 
+      # Into a keychain of this run's own, removed at the end of the job, so
+      # the certificate never reaches the runner's login keychain.
+      - name: Import the Developer ID certificate
+        id: signing
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CERTIFICATE" || -z "$CERTIFICATE_PASSWORD" || -z "$IDENTITY" ]]; then
+            echo "No Developer ID certificate among the secrets: the bundles are signed ad hoc."
+            echo "mode=ad-hoc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/iznik-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -f pkcs12 -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          existing=()
+          while IFS= read -r listed; do
+            existing+=("$(echo "$listed" | tr -d ' "')")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          echo "IZNIK_CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "mode=developer-id" >> "$GITHUB_OUTPUT"
+
+      # Each bundle is `iznik.app` inside its archive, the name Finder and
+      # `stapler` expect of an application.
       - name: Build the Darwin applications
         run: |
-          cargo build --locked --release --package iznik-app --target aarch64-apple-darwin
-          cargo build --locked --release --package iznik-app --target x86_64-apple-darwin
-          cargo xtask app-bundle --target aarch64-apple-darwin \
-            --binary target/aarch64-apple-darwin/release/iznik-app \
-            --output "$RUNNER_TEMP/iznik-aarch64-apple-darwin" \
-            --servers "$RUNNER_TEMP/servers"
-          cargo xtask app-bundle --target x86_64-apple-darwin \
-            --binary target/x86_64-apple-darwin/release/iznik-app \
-            --output "$RUNNER_TEMP/iznik-x86_64-apple-darwin" \
-            --servers "$RUNNER_TEMP/servers"
-          tar -czf "$RUNNER_TEMP/iznik-aarch64-apple-darwin.tar.gz" \
-            -C "$RUNNER_TEMP/iznik-aarch64-apple-darwin" .
-          tar -czf "$RUNNER_TEMP/iznik-x86_64-apple-darwin.tar.gz" \
-            -C "$RUNNER_TEMP/iznik-x86_64-apple-darwin" .
+          set -euo pipefail
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --locked --release --package iznik-app --target "$triple"
+            mkdir -p "$RUNNER_TEMP/iznik-$triple"
+            cargo xtask app-bundle --target "$triple" \
+              --binary "target/$triple/release/iznik-app" \
+              --output "$RUNNER_TEMP/iznik-$triple/iznik.app" \
+              --servers "$RUNNER_TEMP/servers"
+          done
+
+      # Only a Developer ID signature can be notarized. The ticket is stapled
+      # to the bundle, so Gatekeeper accepts it without asking Apple.
+      - name: Notarize the macOS applications
+        id: notarization
+        env:
+          SIGNING: ${{ steps.signing.outputs.mode }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "$SIGNING" != developer-id ]]; then
+            echo "signature=ad-hoc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$APPLE_ID" || -z "$APPLE_TEAM_ID" || -z "$APPLE_APP_PASSWORD" ]]; then
+            echo "No notarization credentials among the secrets: the bundles are signed but not notarized."
+            echo "signature=developer-id" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            bundle="$RUNNER_TEMP/iznik-$triple/iznik.app"
+            ditto -c -k --keepParent "$bundle" "$RUNNER_TEMP/notarize-$triple.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-$triple.zip" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" --wait --timeout 30m
+            xcrun stapler staple "$bundle"
+            xcrun stapler validate "$bundle"
+            rm -f "$RUNNER_TEMP/notarize-$triple.zip"
+          done
+          echo "signature=notarized" >> "$GITHUB_OUTPUT"
+
+      - name: Archive the macOS applications
+        run: |
+          set -euo pipefail
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            tar -czf "$RUNNER_TEMP/iznik-$triple.tar.gz" -C "$RUNNER_TEMP/iznik-$triple" iznik.app
+          done
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/iznik-signing.keychain-db"
+          if [[ -f "$keychain" ]]; then
+            security delete-keychain "$keychain"
+          fi
 
       - name: Upload the macOS applications
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -309,9 +394,15 @@ jobs:
           SNAPSHOT_TAG: develop-snapshot
           SNAPSHOT_TITLE: Iznik develop snapshot
           STAGING: ${{ runner.temp }}/snapshot
+          DARWIN_SIGNATURE: ${{ needs.darwin.outputs.signature }}
         run: |
           set -euo pipefail
-          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA, published after the gates in check.yml passed. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. SHA256SUMS lists the digest of every archive. Each archive carries the Linux and macOS servers the application installs on a remote host; no Windows server is published. The Windows client is an unsigned zip, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
+          case "$DARWIN_SIGNATURE" in
+            notarized) darwin="The macOS applications are signed with a Developer ID and notarized.";;
+            developer-id) darwin="The macOS applications are signed with a Developer ID but not notarized: Gatekeeper asks before the first launch, and right-click > Open allows it.";;
+            *) darwin="The macOS applications are signed ad hoc, not with a Developer ID, and not notarized: Gatekeeper refuses the first launch until it is allowed with right-click > Open, or with xattr -dr com.apple.quarantine iznik.app.";;
+          esac
+          notes="Rolling GPUI application candidate from develop commit $GITHUB_SHA, published after the gates in check.yml passed. Linux, macOS and Windows client archives are replaced after each successful build; this is not a stable release. SHA256SUMS lists the digest of every archive. Each archive carries the Linux and macOS servers the application installs on a remote host; no Windows server is published. $darwin The Windows client is an unsigned zip, and it opens one ssh per command because Win32-OpenSSH cannot multiplex."
           if ! gh release view "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --title "$SNAPSHOT_TITLE" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           fi

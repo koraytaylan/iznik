@@ -1,8 +1,12 @@
+ad
 bundle
 bundler
+codesign
 desktop
+displayed
 executable
 finds
+hoc
 icon
 identifier
 linux
@@ -10,8 +14,13 @@ macos
 packaging
 plist
 property
+seals
 servers
 shippable
+sign
+signing
 stamped
+stand
 svg
 tempfile
+verified

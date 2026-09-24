@@ -266,6 +266,26 @@ authentication, so any local user could reach every shell, and the client
 cannot start it, because the command it sends is quoted for a POSIX shell.
 The workflow is [`.github/workflows/snapshot.yml`](.github/workflows/snapshot.yml).
 
+`cargo xtask app-bundle` signs a macOS bundle as its last step — the macOS
+servers it carries first, then the bundle — and verifies it with
+`codesign --verify --deep --strict`. With `IZNIK_CODESIGN_IDENTITY` naming a
+signing identity in a keychain `codesign` can reach, it signs with that
+identity under the hardened runtime with a secure timestamp; without it, ad
+hoc. The snapshot workflow signs with a Developer ID and notarizes when these
+repository secrets are set, and says in the release notes which it did:
+
+| Secret | What it holds |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | The Developer ID Application certificate and its private key, exported as `.p12` and base64-encoded. |
+| `MACOS_CERTIFICATE_PASSWORD` | The password of that `.p12`. |
+| `MACOS_CODESIGN_IDENTITY` | The identity as `codesign` names it, `Developer ID Application: <name> (<team>)`. |
+| `APPLE_ID` | The Apple ID notarization submits as. |
+| `APPLE_TEAM_ID` | The team the certificate belongs to. |
+| `APPLE_APP_SPECIFIC_PASSWORD` | An app-specific password of that Apple ID. |
+
+Without the first three the bundles are signed ad hoc and not notarized;
+with them but without the last three, signed and not notarized.
+
 ## License
 
 MIT.

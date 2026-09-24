@@ -15,6 +15,7 @@ pub mod launch;
 pub mod linux;
 pub mod notices;
 pub mod shape;
+pub mod signing;
 pub mod windows;
 
 use std::ffi::OsString;
