@@ -171,11 +171,17 @@ That is not the same as "asynchronous end to end", and the server is not.
 Blocking work exists where the operating system offers nothing else, and it
 runs off the runtime's workers:
 
-- **Two threads per pane** in `crates/iznik-server/src/pty/streams.rs`, one
-  blocked reading the pseudoterminal and one blocked writing it, bridged to
-  the runtime by channels. That file is exempt from the policy check by name.
-- **The child's `waitpid`**, which runs on the runtime's blocking pool
-  through `spawn_blocking` (`crates/iznik-server/src/pane.rs`).
+- **Three threads per pane.** Two in `crates/iznik-server/src/pty/streams.rs`,
+  one blocked reading the pseudoterminal and one blocked writing it, bridged
+  to the runtime by channels; that file is exempt from the policy check by
+  name. The third is the pane's `pty-reaper` thread in
+  `crates/iznik-server/src/pane.rs`, blocked in the child's `waitpid` from
+  the moment it is spawned — a thread of its own rather than the blocking
+  pool, because the wait lasts as long as the pane and the pool is shared
+  and bounded.
+- **The spawn itself** — the fork, the exec and the directory checks before
+  them — which runs on the runtime's blocking pool through `spawn_blocking`
+  (`crates/iznik-server/src/pane.rs`).
 - **One mirror thread**, a `LocalSet` holding every pane's emulator, because
   the emulator's handles are `!Send`.
 - **Small synchronous file operations** — the lock file, the runtime
@@ -304,12 +310,13 @@ to the lexicon; removing an entry is always welcome.
 - **Blocking in the asynchronous crates.** `crates/iznik-server/src/pty/streams.rs`
   is exempt by name from the blocking policy of section 3.6, because it is
   where the pseudoterminal's blocking descriptor becomes async streams on two
-  threads per pane. The policy does not check `std::fs` or `std::net` at all:
+  threads per pane; a third per pane, the `pty-reaper` in `pane.rs`, waits
+  for the child. The policy does not check `std::fs` or `std::net` at all:
   both crates make short synchronous `std::fs` calls on local paths (the lock
   file, the runtime directory, the log, the upload's artifact listing), and
   the Windows daemon binds its listener through `std::net` before handing it
-  to the runtime. The child's `waitpid` runs through `spawn_blocking`, which
-  the policy permits.
+  to the runtime. The child's `waitpid` runs on that dedicated reaper thread
+  and the spawn through `spawn_blocking`, both of which the policy permits.
 
 ## 4. Working on a task
 
