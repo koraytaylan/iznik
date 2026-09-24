@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use iznik_client::transport::channel::{
-    ChannelError, ChannelOptions, RemoteChannel, await_greeting, relay_command,
+    ChannelError, ChannelOptions, ReadyWatch, RemoteChannel, await_greeting, relay_command,
 };
 use iznik_client::transport::ssh::SshOptions;
 use iznik_client::transport::{ClientRuntimePaths, LOCAL_PREFIX, Transport};
@@ -25,14 +25,18 @@ use iznik_protocol::command::{
 };
 use iznik_protocol::identity::{CommandId, PaneId, Sequence};
 use iznik_protocol::message::{
-    CHANNEL_CONTROL, PROTOCOL_VERSION, ToClient, ToServer, decode_to_client, decode_to_server,
-    encode_to_client,
+    CHANNEL_CONTROL, PROTOCOL_VERSION, RELAY_READY, ToClient, ToServer, decode_to_client,
+    decode_to_server, encode_to_client,
 };
 use iznik_testkit::stack::{Stack, StackOptions};
 use tokio::net::UnixListener;
 
 /// How long these cases give a channel that should answer at once.
 const PROMPT: Duration = Duration::from_secs(5);
+
+/// How many lines the long login banner is: far more than the complaints a
+/// channel keeps.
+const BANNER_LINES: usize = 64;
 
 /// How often the liveness case pings.
 const QUICK_PING: Duration = Duration::from_millis(50);
@@ -574,5 +578,25 @@ async fn an_opening_and_a_greeting_fail_as_themselves() {
     assert!(
         matches!(silent, Err(ChannelError::Silent { .. })),
         "a server reached and never greeting is silent: {silent:?}"
+    );
+}
+
+/// # Panics
+///
+/// When the relay's ready line is missed behind a long login banner, or when
+/// the pieces standard error arrives in cut it in two.
+#[test]
+fn a_channel_notices_the_relay_behind_a_long_banner() {
+    let banner = "Authorized uses only. All activity may be monitored.\n".repeat(BANNER_LINES);
+    let mut watch = ReadyWatch::default();
+    assert!(!watch.heard(&banner), "a banner is not the relay");
+    assert!(
+        !watch.heard(RELAY_READY),
+        "a line that has not ended is not the line"
+    );
+    assert!(watch.heard("\n"), "the line is heard once it is whole");
+    assert!(
+        !watch.heard("more\n"),
+        "and heard once, not again with whatever follows it"
     );
 }

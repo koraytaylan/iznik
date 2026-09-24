@@ -391,10 +391,41 @@ fn closed(host: &str, said: &str) -> ChannelError {
     }
 }
 
+/// Watches a remote's standard error, piece by piece, for the relay's
+/// [`RELAY_READY`] line — wherever it falls, however much came before it, and
+/// however the pieces cut it.
+#[derive(Clone, Debug, Default)]
+pub struct ReadyWatch {
+    /// The end of what has been heard: as much of it as could still be the
+    /// beginning of the line, and never the whole line.
+    tail: String,
+}
+
+impl ReadyWatch {
+    /// Takes the next piece of standard error, and says whether the ready
+    /// line was completed in it.
+    pub fn heard(&mut self, said: &str) -> bool {
+        let line = format!("{RELAY_READY}\n");
+        let mut window = core::mem::take(&mut self.tail);
+        window.push_str(said);
+        let found = window.contains(&line);
+        // One byte short of the line, so the line is never heard twice.
+        let mut from = window.len().saturating_sub(line.len().saturating_sub(1));
+        while !window.is_char_boundary(from) {
+            from = from.saturating_add(1);
+        }
+        window
+            .get(from..)
+            .unwrap_or_default()
+            .clone_into(&mut self.tail);
+        found
+    }
+}
+
 /// Reads the remote's standard error into `kept` until it ends, holding the
 /// first [`REMOTE_COMPLAINT_BYTES`] of it — and raises `relayed` when the
-/// relay's [`RELAY_READY`] line is among it, which is not a complaint and is
-/// taken out.
+/// relay's [`RELAY_READY`] line comes, however much came before it; the line is
+/// not a complaint, and is taken out of what is kept.
 ///
 /// The first bytes and not the last: what a remote says before it goes is the
 /// reason, and what it says afterwards is consequence.
@@ -407,19 +438,26 @@ fn keep_complaints(
         use tokio::io::AsyncReadExt as _;
         let mut errors = errors;
         let mut buffer = [0_u8; REMOTE_COMPLAINT_BYTES];
+        let mut watch = ReadyWatch::default();
         loop {
             match errors.read(&mut buffer).await {
                 Ok(0) => return,
                 Err(_gone) => return,
                 Ok(count) => {
+                    let said = String::from_utf8_lossy(buffer.get(..count).unwrap_or_default());
+                    // Scanned before anything is capped: a host whose login
+                    // banner runs past what is kept still has its relay heard.
+                    let ready = watch.heard(&said);
                     let mut held = kept.lock().await;
                     if held.len() < REMOTE_COMPLAINT_BYTES {
-                        let said = String::from_utf8_lossy(buffer.get(..count).unwrap_or_default());
                         held.push_str(&said);
                     }
                     let line = format!("{RELAY_READY}\n");
                     if let Some(at) = held.find(&line) {
                         held.replace_range(at..at.saturating_add(line.len()), "");
+                    }
+                    drop(held);
+                    if ready {
                         relayed.notify_one();
                     }
                 }
