@@ -143,7 +143,7 @@ Server to client:
 
 | Message | Purpose |
 |---|---|
-| `Hello { protocol_version, server_version, capabilities }` | Handshake reply. |
+| `Hello { protocol_version, server_version, capabilities, instance }` | Handshake reply; `instance`, the daemon instance, only when the client advertised `INSTANCE` (§4.3). |
 | `Snapshot { generation, payload }` | The complete host model. |
 | `Delta { generation, payload }` | One change to the model, numbered. |
 | `CommandResult { command_id, payload }` | `Applied { generation, created }` or `Rejected { code, message }`. |
@@ -427,8 +427,12 @@ Windows build leaves those options off and opens one connection per command. The
 user's `~/.ssh/config` is authoritative: `ProxyJump`, `Match` blocks, agents,
 certificates and bastions keep working because iznik never reimplements them.
 Failures are classified — unreachable, authentication refused, host key
-changed, remote command failed — because "connection failed" tells a person
-nothing and a changed host key demands an alarming, specific message.
+unknown, host key changed, remote command failed — because "connection
+failed" tells a person nothing, a host key nobody has accepted yet needs to
+be told apart from one that changed, and a changed host key demands an
+alarming, specific message. With no askpass program `ssh` runs in batch mode,
+so a password, a passphrase outside an agent or an unaccepted key fails at
+once rather than waiting on a terminal nobody is looking at.
 
 A host alias of the form `unix:<path>` names a daemon socket on this machine
 and is reached with no SSH at all. It is what every in-process test, the C

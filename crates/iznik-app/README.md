@@ -79,6 +79,18 @@ name that is not one host — and then held like any other. A `unix:<path>`
 socket is offered as itself and writes nothing, because there is nothing for
 `ssh` to resolve.
 
+The application never prompts and names no askpass program, so `ssh` runs in
+batch mode: nothing it would have asked a person is asked. A host whose key is
+not yet in `known_hosts` fails at once as an unknown host key, and the host's
+failure says to run `ssh <alias>` once in a terminal, check the fingerprint,
+accept it, and reconnect. A key with a passphrase must be in an agent
+(`ssh-add`) before connecting, and a host that takes only a password or a
+keyboard-interactive answer cannot be reached from the application at all:
+both fail at once as refused credentials. So a new host is reached once with
+`ssh <alias>` in a terminal first. A key that has *changed* is reported as
+that, with the warning it deserves, and neither failure is retried until the
+person asks.
+
 The tab strip's and the session strip's right-click menus are opened from the
 shell's own state rather than through the kit's `ContextMenu` wrapper: in a
 window that repaints on a timer, that wrapper's element state resets on the
