@@ -223,8 +223,11 @@ development.
 
 **When something is wrong**, one command collects what each layer says — what
 `ssh` would do for this alias, what the probe found, what the server answers,
-what state the host reached, and what a keystroke costs — with secrets
-redacted by construction:
+what state the host reached, and what a keystroke costs — and nothing in it
+that could carry a secret: most sections never collect one (no identity file,
+agent socket, proxy command or environment, and a transport's refusal by its
+kind rather than in its own words), and the daemon's log tail keeps each line's
+shape but replaces every field's value with `<redacted>`:
 
 ```sh
 iznik doctor <host>
