@@ -119,7 +119,7 @@ nothing else:
 | `<runtime>/server.sock` | The daemon's socket. |
 | `<runtime>/server.lock` | The lock that keeps one daemon per user, holding its process id. |
 | `<runtime>/server.log` | What the daemon has to say. |
-| `<runtime>/agent.sock` | A link to the SSH agent of the newest connection, re-pointed by each one as it arrives, and what every pane's `SSH_AUTH_SOCK` names. Made only by a connection that forwards an agent. |
+| `<runtime>/agent.sock` | A link to the SSH agent of the newest connection, re-pointed by each one as it arrives, and what every pane started after it was made has as its `SSH_AUTH_SOCK`. Made only by a connection that forwards an agent; a pane started while there is none has no `SSH_AUTH_SOCK` at all. |
 
 The prefix is the first of `$XDG_DATA_HOME/iznik`, `$HOME/.local/share/iznik`
 and the runtime directory that the host says this user both owns and may

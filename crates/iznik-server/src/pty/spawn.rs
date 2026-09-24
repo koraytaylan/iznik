@@ -53,7 +53,8 @@ const TERM_PROGRAM_VALUE: &str = "iznik";
 /// login it was started from rather than the host: a pane outlives that
 /// login, so what they say is stale for all of its life but the first
 /// minutes. `SSH_AUTH_SOCK` is among them, and is replaced rather than
-/// removed when the daemon has a stable agent link to give.
+/// removed when the daemon has a stable agent link to give and a relay has
+/// made it.
 const SESSION_VARIABLES: &[&str] = &[
     "SSH_CONNECTION",
     "SSH_CLIENT",
@@ -97,9 +98,13 @@ pub struct SpawnOptions {
     /// `TERM` is used and `TERMINFO` is left unset.
     pub terminfo_directory: Option<PathBuf>,
     /// What `SSH_AUTH_SOCK` names in the pane: the daemon's agent link, which
-    /// the newest relay keeps pointed at a live agent. Without it the pane
-    /// has no `SSH_AUTH_SOCK` rather than the daemon's, which died with the
-    /// login that started it.
+    /// the newest relay keeps pointed at a live agent. It is set only when the
+    /// link is there when the pane starts — some connection forwarded an
+    /// agent — so a pane nobody forwarded one to has no `SSH_AUTH_SOCK` and a
+    /// profile's `[ -z "$SSH_AUTH_SOCK" ] && eval "$(ssh-agent)"` still
+    /// starts its own. Without it, or without the link, the pane has no
+    /// `SSH_AUTH_SOCK` rather than the daemon's, which died with the login
+    /// that started it.
     pub agent_socket: Option<PathBuf>,
 }
 
@@ -611,7 +616,13 @@ fn command_of(options: &SpawnOptions) -> CommandBuilder {
     for variable in SESSION_VARIABLES {
         command.env_remove(variable);
     }
-    if let Some(agent) = &options.agent_socket {
+    // The link is looked at, not followed: one whose agent has gone is still
+    // the one the next relay re-points.
+    if let Some(agent) = options
+        .agent_socket
+        .as_ref()
+        .filter(|link| link.symlink_metadata().is_ok())
+    {
         command.env(crate::daemon::agent::AGENT_VARIABLE, agent);
     }
     command.env(COLORTERM_VARIABLE, COLORTERM_VALUE);

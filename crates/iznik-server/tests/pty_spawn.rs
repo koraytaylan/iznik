@@ -287,6 +287,41 @@ fn pty_spawn_the_environment_is_the_panes() {
     }
 }
 
+/// A pane is told of the agent link only when a relay has made it: with no
+/// link, `SSH_AUTH_SOCK` is unset, so a profile that starts its own agent when
+/// the variable is empty still does.
+///
+/// # Panics
+///
+/// When the variable is set without the link, or missing with it.
+#[test]
+fn pty_spawn_the_agent_link_is_named_only_when_it_exists() {
+    let script = "printf 'Z%sZ\\n' \"${SSH_AUTH_SOCK-unset}\"";
+    let directory = std::env::temp_dir().join(format!("iznik-agent-link-{}", std::process::id()));
+    let _stale = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("the directory is made");
+    let link = directory.join("agent.sock");
+    let mut options = sh(script);
+    options.agent_socket = Some(link.clone());
+    {
+        let session = Session::start(&options).expect("sh starts");
+        let output = session.reader.read_until_quiet();
+        assert_eq!(marked(&output), Some("unset"), "no link: {output:?}");
+    }
+    std::os::unix::fs::symlink(directory.join("gone"), &link).expect("the link is made");
+    {
+        let session = Session::start(&options).expect("sh starts");
+        let output = session.reader.read_until_quiet();
+        let named = link.display().to_string();
+        assert_eq!(
+            marked(&output),
+            Some(named.as_str()),
+            "the link: {output:?}"
+        );
+    }
+    let _removed = std::fs::remove_dir_all(&directory);
+}
+
 /// The child starts in the working directory when it exists; a missing one
 /// fails, naming the path and spawning nothing.
 ///
