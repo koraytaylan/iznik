@@ -50,8 +50,9 @@ that is slow is a bug in the gate. `.makina/config.toml` runs the same five
 commands as Makina's quality gates, so a task that passes locally is a task
 that lands. `cargo xtask gate <name>` runs one of them.
 [`.github/workflows/check.yml`](.github/workflows/check.yml) runs the first
-four on every push to `develop` and `main` and on every pull request, and
-the application's tests on macOS as well; the `develop-snapshot` prerelease
+four, and the application's tests on macOS as well, on every push to `main`,
+on every pull request, and on every push to `develop` through `snapshot.yml`,
+which calls it; the `develop-snapshot` prerelease
 is published only after it passes. The `claims` gate needs the Podman fixture
 and is not run there.
 

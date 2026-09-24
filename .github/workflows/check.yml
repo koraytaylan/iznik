@@ -13,6 +13,8 @@
 # crates, use Unix sockets and signals and do not compile for Windows.
 #
 # `snapshot.yml` calls this workflow and publishes nothing unless it passes.
+# That call is how a push to `develop` is checked, so `develop` is not among
+# the pushes below: listed here too, every push to it ran the gates twice.
 name: check
 
 on:
@@ -20,7 +22,6 @@ on:
   workflow_call:
   push:
     branches:
-      - develop
       - main
   pull_request:
 
@@ -57,8 +58,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libfontconfig1-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
 
+      # A prebuilt binary, verified against the checksum the action's own
+      # manifest records, rather than compiling nextest on every run.
       - name: Install the pinned cargo-nextest
-        run: cargo install cargo-nextest --version "$NEXTEST_VERSION" --locked
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
 
       - name: format
         run: cargo fmt --all --check
@@ -90,8 +95,12 @@ jobs:
         shell: bash
         run: bash scripts/ci/install-zig.sh
 
+      # A prebuilt binary, verified against the checksum the action's own
+      # manifest records, rather than compiling nextest on every run.
       - name: Install the pinned cargo-nextest
-        run: cargo install cargo-nextest --version "$NEXTEST_VERSION" --locked
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Point at the SDK
         run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"

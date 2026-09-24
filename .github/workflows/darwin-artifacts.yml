@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The test runner, pinned as check.yml pins it.
+  NEXTEST_VERSION: 0.9.143
+
 jobs:
   build:
     name: aarch64 and x86_64
@@ -43,9 +47,12 @@ jobs:
         run: bash scripts/ci/install-zig.sh
 
       # The case below is run by nextest, which the runner image does not
-      # carry either.
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+      # carry either: a prebuilt binary, verified against the checksum the
+      # action's own manifest records.
+      - name: Install the pinned cargo-nextest
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
 
       # A macOS runner has the SDK but does not export its path, and the
       # distribution refuses to build without SDKROOT rather than discovering
