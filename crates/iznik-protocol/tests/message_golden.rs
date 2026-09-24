@@ -9,7 +9,9 @@ use std::path::Path;
 
 use iznik_protocol::capabilities::Capabilities;
 use iznik_protocol::frame::MAXIMUM_PAYLOAD_LENGTH;
-use iznik_protocol::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
+use iznik_protocol::identity::{
+    ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence,
+};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MAXIMUM_INPUT_LENGTH, MarkKind, MessageError, PROTOCOL_VERSION,
     ToClient, ToServer, decode_to_client, decode_to_server, encode_to_client, encode_to_server,
@@ -173,6 +175,13 @@ fn to_server(value: &Value) -> Result<ToServer, Failure> {
             pane: PaneId(integer_field(&fields, "pane")?),
         },
         "Ping" => ToServer::Ping,
+        "Identify" => ToServer::Identify {
+            client: ClientIdentity(u128::from_le_bytes(
+                bytes_field(&fields, "client")?
+                    .try_into()
+                    .map_err(|_wrong| "`client` is not sixteen bytes")?,
+            )),
+        },
         other => return Err(format!("no ToServer variant `{other}`").into()),
     })
 }

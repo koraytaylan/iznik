@@ -31,6 +31,7 @@ use crate::history::{DEFAULT_PANE_HISTORY_BYTES, HistoryBudget};
 use crate::pane::{Pane, PaneState, bounded_size};
 use crate::pty::spawn::{Program, SpawnOptions};
 use crate::session::instance::fresh_instance;
+use crate::session::remembered::RememberedCommands;
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
 
@@ -136,6 +137,9 @@ pub struct Registry {
     programs: Option<program::ProgramWatch>,
     /// Which run of the daemon this is, picked when it was made.
     instance: DaemonInstance,
+    /// What each identified client's recent commands were answered, kept
+    /// across its connections.
+    remembered: RememberedCommands,
 }
 
 impl Registry {
@@ -173,7 +177,15 @@ impl Registry {
             signal,
             programs,
             instance: fresh_instance(),
+            remembered: RememberedCommands::default(),
         }
+    }
+
+    /// What identified clients' recent commands were answered: consulted and
+    /// kept under the same write lock a command is applied under, so a
+    /// command sent twice at once is still applied once.
+    pub fn remembered(&mut self) -> &mut RememberedCommands {
+        &mut self.remembered
     }
 
     /// Which run of the daemon this registry belongs to: what a connection

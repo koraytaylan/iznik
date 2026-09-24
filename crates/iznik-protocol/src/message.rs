@@ -21,7 +21,7 @@ use core::fmt::{self, Display, Formatter};
 
 use crate::capabilities::Capabilities;
 use crate::frame::MAXIMUM_PAYLOAD_LENGTH;
-use crate::identity::{CommandId, DaemonInstance, Generation, PaneId, Sequence};
+use crate::identity::{ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence};
 use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_pane, unknown};
 
 /// The channel control messages travel on; every other channel carries pane
@@ -90,6 +90,8 @@ mod server_tag {
     pub(super) const FOCUS: u8 = 11;
     /// `Ping`.
     pub(super) const PING: u8 = 12;
+    /// `Identify`.
+    pub(super) const IDENTIFY: u8 = 13;
 }
 
 /// The discriminants of [`ToClient`], in table order.
@@ -227,6 +229,13 @@ pub enum ToServer {
     },
     /// Liveness.
     Ping,
+    /// Which client this is, sent once after the handshake and only to a
+    /// server that advertised [`Capabilities::IDENTIFY`]: the commands it
+    /// sends are remembered under this identity across connections.
+    Identify {
+        /// The client's identity.
+        client: ClientIdentity,
+    },
 }
 
 /// A message from the server to a client.
@@ -614,6 +623,10 @@ fn put_to_server(sink: &mut dyn Sink, message: &ToServer) {
         }
         ToServer::Focus { pane } => put_pane(sink, server_tag::FOCUS, *pane),
         ToServer::Ping => sink.put(&[server_tag::PING]),
+        ToServer::Identify { client } => {
+            sink.put(&[server_tag::IDENTIFY]);
+            sink.put(&client.0.to_le_bytes());
+        }
     }
 }
 
@@ -810,6 +823,9 @@ pub fn decode_to_server(payload: &[u8]) -> Result<ToServer, MessageError> {
             pane: PaneId(u64::from_le_bytes(reader.array()?)),
         },
         server_tag::PING => ToServer::Ping,
+        server_tag::IDENTIFY => ToServer::Identify {
+            client: ClientIdentity(u128::from_le_bytes(reader.array()?)),
+        },
         other => return Err(unknown(other)),
     };
     reader.finish()?;

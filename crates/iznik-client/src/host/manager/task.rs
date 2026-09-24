@@ -19,10 +19,11 @@ use crate::bootstrap::launch::{
 };
 use crate::bootstrap::probe::InstalledServer;
 use crate::bootstrap::{bootstrap_watched, upgrade};
-use crate::commands::{abandoned, expire, replay, withdraw};
+use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
 use crate::host::manager::hearing::{heard, told_the_model};
+use crate::host::manager::unanswered::{Unanswered, still_asked};
 use crate::host::manager::waiting::{Waiting, Woken, hold_until, keep, keeps, waiting};
 use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{
@@ -69,9 +70,17 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
     // a bootstrap that took minutes — are dropped, and the application is told
     // with `InputDropped`; everything else of the kinds `keep` names is held.
     let mut kept: Vec<Order> = Vec::new();
+    let mut unanswered = Unanswered::new();
     loop {
-        let Some((channel, linked)) =
-            connect(&host, &shared, &machine, &mut orders, &mut kept).await
+        let Some(link) = connect(
+            &host,
+            &shared,
+            &machine,
+            &mut orders,
+            &mut kept,
+            &mut unanswered,
+        )
+        .await
         else {
             // It was told to stop while it had no link, and whoever is
             // watching is told so rather than left with a host that simply
@@ -85,8 +94,8 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
             &machine,
             &mut orders,
             &mut kept,
-            channel,
-            linked,
+            link,
+            &mut unanswered,
         )
         .await
         {
@@ -204,15 +213,17 @@ fn advance(
 ///
 /// Answers `None` when the host was told to stop, and never gives up by
 /// itself: a failure retrying cannot mend waits for somebody to ask. With the
-/// channel comes the moment it was reached: a keystroke given before it had no
-/// link to go on, and is not delivered late.
+/// channel comes the moment it was reached — a keystroke given before it had
+/// no link to go on, and is not delivered late — and the commands the last
+/// link left unanswered that it sends again first.
 async fn connect(
     host: &HostId,
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
-) -> Option<(RemoteChannel, Instant)> {
+    unanswered: &mut Unanswered,
+) -> Option<Link> {
     loop {
         let wait = waiting(machine);
         if !matches!(wait, Waiting::Not) {
@@ -239,6 +250,7 @@ async fn connect(
             Ok(reached) => {
                 let linked = Instant::now();
                 let mut channel = accept(host, shared, machine, reached).await;
+                let carried = unanswered.link_began(host, shared, &mut channel).await;
                 // Everything asked for while there was nowhere to send it.
                 // What the link would not take stays held: the next
                 // connection is the one that will carry it, and a write that
@@ -255,7 +267,8 @@ async fn connect(
                     sent = sent.saturating_add(1);
                 }
                 kept.extend(standing.into_iter().skip(sent));
-                return Some((channel, linked));
+                let record = LinkRecord { linked, carried };
+                return Some(Link { channel, record });
             }
             // The machine decides what comes next — a wait, or for a failure
             // trying again cannot mend, a wait for somebody to ask — and the
@@ -361,7 +374,7 @@ async fn reach(
 /// and every feature gated on a bit is unavailable to it. That is the
 /// conservative answer, and it costs nothing real, because a host of another
 /// version is offered an upgrade on that ground alone.
-fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
+pub(super) fn trusted_capabilities(greeting: &ServerHello) -> Capabilities {
     if greeting.server_version == bundled().crate_version {
         greeting.capabilities
     } else {
@@ -589,18 +602,26 @@ async fn pump(
     machine: &Mutex<HostStateMachine>,
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
-    channel: RemoteChannel,
-    linked: Instant,
+    link: Link,
+    unanswered: &mut Unanswered,
 ) -> Ended {
-    let mut record = LinkRecord {
-        linked,
-        carried: Vec::new(),
-    };
+    let Link {
+        channel,
+        mut record,
+    } = link;
     let ended = serve_link(host, shared, machine, orders, kept, channel, &mut record).await;
     if !matches!(ended, Ended::Stopped) {
-        orphaned(host, shared, &record.carried);
+        unanswered.link_ended(host, shared, &record.carried);
     }
     ended
+}
+
+/// A link just reached, and what it already carries.
+struct Link {
+    /// The channel.
+    channel: RemoteChannel,
+    /// What it carries.
+    record: LinkRecord,
 }
 
 /// What one link did that outlives it.
@@ -646,48 +667,6 @@ fn admitted(host: &HostId, shared: &Shared, order: &Order, record: &mut LinkReco
         }
         _otherwise => true,
     }
-}
-
-/// Puts back what every command this link carried and never had answered
-/// showed, and says its outcome is unknown.
-///
-/// A command is answered exactly once per connection. One whose connection
-/// went first may or may not have been applied — the link can die between the
-/// host applying it and the answer arriving — so it is neither applied nor
-/// refused nor timed out: it is unknown, and the snapshot the next connection
-/// begins with is what says which.
-fn orphaned(host: &HostId, shared: &Arc<Shared>, carried: &[CommandId]) {
-    let told: Vec<Notification> = shared
-        .with(host, |view| {
-            carried
-                .iter()
-                .copied()
-                .filter(|command| withdraw(view, *command))
-                .map(|command| Notification::CommandOutcomeUnknown {
-                    host: host.clone(),
-                    command,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for notification in told {
-        shared.publish(ManagerEvent::Notify(notification));
-    }
-}
-
-/// Whether a command is still waiting to be carried: submitted, and not
-/// taken back or given up on while it sat in the queue.
-///
-/// One that was is not sent at all. It was told to the caller as undone —
-/// timed out behind a slow bootstrap, or of unknown outcome — and carrying it
-/// now would apply something the caller was told did not happen.
-fn still_asked(host: &HostId, shared: &Shared, command: CommandId) -> bool {
-    shared
-        .with(host, |view| {
-            view.awaiting(command)
-                .is_some_and(|held| held.answered.is_none())
-        })
-        .unwrap_or(false)
 }
 
 /// The loop [`pump`] runs: what arrived and what was ordered, until the link

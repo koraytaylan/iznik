@@ -26,10 +26,7 @@ use std::time::Duration;
 use iznik_link::compression::compressed;
 use iznik_link::framed::{FrameWriter, FramedLink, LinkError};
 use iznik_protocol::capabilities::Capabilities;
-use iznik_protocol::command::{
-    CommandOutcome, RejectionCode, decode_session_command, encode_command_outcome,
-};
-use iznik_protocol::identity::{DaemonInstance, PaneId};
+use iznik_protocol::identity::{ClientIdentity, DaemonInstance, PaneId};
 use iznik_protocol::message::{
     CHANNEL_CONTROL, ErrorCode, MessageError, PROTOCOL_VERSION, ToClient, ToServer,
     decode_to_server, encode_to_client,
@@ -55,7 +52,8 @@ const CAPABILITIES: Capabilities = Capabilities::from_bits(
         | Capabilities::RESUME.bits()
         | Capabilities::REORDER_SESSIONS.bits()
         | Capabilities::INSTANCE.bits()
-        | Capabilities::ANSWERED.bits(),
+        | Capabilities::ANSWERED.bits()
+        | Capabilities::IDENTIFY.bits(),
 );
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
@@ -462,6 +460,9 @@ struct Held {
     /// Keystrokes waiting for their pane to make room, ahead of everything
     /// in `requests`.
     blocked: Option<Blocked>,
+    /// Who the client said it is, once it has: what its commands are
+    /// remembered under.
+    client: Option<ClientIdentity>,
 }
 
 impl Held {
@@ -533,7 +534,7 @@ async fn dispatch(
         answer_held(&mut multiplexer, &registry, &mut held).await?;
         for request in commuting {
             // Nothing that commutes is keystrokes, so nothing here is held.
-            let _held = answer(&mut multiplexer, &registry, request).await?;
+            let _held = answer(&mut multiplexer, &registry, held.client, request).await?;
         }
         if gone {
             return Ok(());
@@ -597,7 +598,13 @@ async fn answer_held(
         }
     }
     while let Some(request) = held.requests.pop_front() {
-        held.blocked = answer(multiplexer, registry, request).await?;
+        // In order with the commands it names: one sent before it is not
+        // remembered, and every one after it is.
+        if let ToServer::Identify { client } = request {
+            held.client = Some(client);
+            continue;
+        }
+        held.blocked = answer(multiplexer, registry, held.client, request).await?;
         if held.blocked.is_some() {
             return Ok(());
         }
@@ -795,11 +802,12 @@ async fn watch(
 async fn answer(
     multiplexer: &mut Multiplexer<Handoff>,
     registry: &Arc<RwLock<Registry>>,
+    client: Option<ClientIdentity>,
     request: ToServer,
 ) -> Result<Option<Blocked>, ConnectionError> {
     match request {
         ToServer::Input { pane, bytes } => offer(multiplexer, registry, pane, bytes).await,
-        other => answer_other(multiplexer, registry, other)
+        other => answer_other(multiplexer, registry, client, other)
             .await
             .map(|()| None),
     }
@@ -813,6 +821,7 @@ async fn answer(
 async fn answer_other(
     multiplexer: &mut Multiplexer<Handoff>,
     registry: &Arc<RwLock<Registry>>,
+    client: Option<ClientIdentity>,
     request: ToServer,
 ) -> Result<(), ConnectionError> {
     match request {
@@ -824,26 +833,10 @@ async fn answer_other(
             command_id,
             payload,
         } => {
-            // A `Command` whose payload will not decode is refused, not fatal.
-            // Two peers of one protocol version are not necessarily one build —
-            // a released server and a local one both say "protocol 1" — so a
-            // tag this codec does not know is a request this server cannot
-            // serve, not a peer speaking garbage. Ending the connection over it
-            // would take every pane on the link with it, and those panes are
-            // somebody's running sessions.
-            let outcome = match decode_session_command(&payload) {
-                Ok(command) => {
-                    // Before the lock: a directory on a mount that hangs
-                    // must not hang every other client with it.
-                    let command = commands::settle(command).await;
-                    commands::apply(&mut *registry.write().await, command).await
-                }
-                Err(refused) => CommandOutcome::Rejected {
-                    code: RejectionCode::UnknownCommand,
-                    message: refused.to_string(),
-                },
-            };
-            let answered = encode_command_outcome(&outcome)?;
+            // A payload that will not decode is refused, not fatal: ending the
+            // connection over it would take every pane on the link with it,
+            // and those panes are somebody's running sessions.
+            let answered = commands::answer(registry, client, command_id, &payload).await?;
             multiplexer
                 .reply(&ToClient::CommandResult {
                     command_id,

@@ -40,6 +40,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `session` | The session registry: the authoritative host model, the panes behind it, and the numbered deltas every change emits. | `session-registry` (plan 0003) |
 | `session::commands` | Applying a session command to the registry: validation against the model first, then the operation, answered exactly once. | `session-commands` (plan 0003) |
 | `session::instance` | The daemon instance: a number picked at random when a registry is made and announced in `Hello`, so a client can tell this daemon's pane numbers from the last one's. | `server-review` |
+| `session::remembered` | What the host answered each identified client's recent commands, kept across its connections — so many clients, so many commands each, so long — so a command sent again after a dropped link is answered rather than applied twice. | `server-review` |
 | `session::registry` | The registry's operations and their delta order, the ingestion of pane marks, sizes and exits, and the debug-only validation after every operation. | `session-registry` (plan 0003) |
 | `session::registry::ingest` | Marks, sizes and exits pulled into the model, plus a foreground-program sample when the daemon is naming tabs from one. | `session-registry` (plan 0003) |
 | `session::registry::program` | Sampling each pane's foreground program, while any client is attached, and publishing it as the pane title and directory. | `session-registry` (plan 0003) |

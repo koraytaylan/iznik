@@ -3,7 +3,8 @@
 //!
 //! `registry` holds the model and the operations that change it; `commands`
 //! turns a client's `SessionCommand` into one of those operations and answers
-//! it exactly once. [`RegistryError`] is here rather than in either because
+//! it exactly once; `remembered` keeps those answers, so a client that sends
+//! a command again after a dropped link is answered rather than served twice. [`RegistryError`] is here rather than in either because
 //! `commands` maps it to the rejection code a client is answered with, and it
 //! is the vocabulary both share for what an operation refused.
 //!
@@ -16,6 +17,7 @@
 pub mod commands;
 pub mod instance;
 pub mod registry;
+pub mod remembered;
 
 use iznik_protocol::identity::{PaneId, SessionId, TabId};
 use iznik_protocol::model::ModelError;

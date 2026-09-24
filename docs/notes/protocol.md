@@ -109,9 +109,11 @@ fields in the order given.
 | `Resize` | `server_tag::RESIZE` | 10 | `id` pane, `u16` columns, `u16` rows |
 | `Focus` | `server_tag::FOCUS` | 11 | `id` pane |
 | `Ping` | `server_tag::PING` | 12 | none |
+| `Identify` | `server_tag::IDENTIFY` | 13 | 16 bytes: the client's identity, a little-endian `u128` |
 
 *Fixtures:* `message.jsonl`, "Hello with both known capabilities" through
-"Ping", and the refusals from "an empty payload to the server" onward.
+"Identify naming the client", and the refusals from "an empty payload to the
+server" onward, with "a client identity cut short".
 
 The codec does not police channel numbers: a `Credit` or `ChannelReleased`
 naming channel 0 decodes to exactly that, and it is the server's connection
@@ -223,7 +225,13 @@ through "set a tab's layout, carried whole".
 
 ### 6.3 Outcomes
 
-Every command is answered exactly once, with one of:
+Every command is answered exactly once, with one of the outcomes below. A
+client that named itself with `Identify` is answered exactly once across its
+connections too, within what the server remembers (§12): a command it sends
+again under the same number — because the link went before the answer came —
+is answered with the outcome it was given the first time, and nothing is
+applied again. A command the server never saw is applied then, as any other.
+The outcomes:
 
 | Outcome | Constant | Value | Fields after the discriminant |
 |---|---|---|---|
@@ -514,6 +522,7 @@ Capabilities are a `u32` bit set:
 | `REORDER_SESSIONS` | 2 | 4 |
 | `INSTANCE` | 4 | 16 |
 | `ANSWERED` | 5 | 32 |
+| `IDENTIFY` | 6 | 64 |
 
 Bit 3 is unassigned.
 
@@ -528,6 +537,17 @@ server is only ever replaced on purpose: a client must not send
 `ReorderSessions` to a server built before the command existed, because that
 server refuses the unknown tag as garbage and ends the whole connection on it.
 A client sends the command only to a server that advertised this bit.
+
+`IDENTIFY` is a server that takes `Identify` and remembers what it answered
+each identified client's commands, across that client's connections: the
+last 64 commands of each of the last 64 clients heard from, for ten minutes.
+A client sends `Identify` — once, first thing after the handshake — only to a
+server that advertised the bit, because an older one ends the connection on
+a tag it does not know. That is also why the identity is a message of its own
+rather than a field of the client's `Hello`: the `Hello` goes out before the
+client knows what the server can read. Commands sent before `Identify` are
+not remembered. The identity is random, one per client's hold on a host, and
+its command numbers are that hold's own.
 
 **Over `ssh`, the relay says when it is up.** `iznik-server --stdio` speaks
 nothing of its own on its standard output, which is the protocol's; once it

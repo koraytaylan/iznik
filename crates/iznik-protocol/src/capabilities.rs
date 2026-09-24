@@ -45,6 +45,18 @@ impl Capabilities {
     /// bytes before that sequence: the program has had them once.
     pub const ANSWERED: Capabilities = Capabilities { bits: 1 << 5 };
 
+    /// The server takes an `Identify` naming the client, and remembers what
+    /// it answered that client's recent commands across connections: a
+    /// command sent again under the same number is answered from memory,
+    /// not applied a second time.
+    ///
+    /// A client sends `Identify` only to a server whose `Hello` carried this
+    /// bit, because an older server refuses a tag it does not know as garbage
+    /// and ends the connection on it — which is why the identity is a message
+    /// of its own rather than a field appended to the client's `Hello`, which
+    /// is sent before the client knows what the server can read.
+    pub const IDENTIFY: Capabilities = Capabilities { bits: 1 << 6 };
+
     /// The bits that append a field to a server message, and so are claimed
     /// in the server's reply only when the client's `Hello` claimed them too.
     pub const APPENDED: Capabilities = Capabilities {
@@ -56,7 +68,8 @@ impl Capabilities {
         | Capabilities::RESUME.bits
         | Capabilities::REORDER_SESSIONS.bits
         | Capabilities::INSTANCE.bits
-        | Capabilities::ANSWERED.bits;
+        | Capabilities::ANSWERED.bits
+        | Capabilities::IDENTIFY.bits;
 
     /// The bits that gate something a person uses, as opposed to something an
     /// optimization is made of.

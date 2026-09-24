@@ -308,13 +308,19 @@ the next snapshot — is tested by fuzzing in `iznik-protocol`.
 `CreatePane { tab, placement, columns, rows, working_directory }`, `ClosePane`,
 `MovePane`, `SetLayout { tab, layout }`. Every command names stable identity,
 is validated against the model's invariants before anything is spawned, and is
-answered exactly once *per connection*: the server keeps no record of a
-command across connections, so a command whose link goes before its answer
-arrives may or may not have been applied. The client puts back what it showed
-and reports its outcome as unknown — never as timed out — and the snapshot the
-next connection begins with says what the host actually did; a caller reads
-that rather than sending the command again, which for a creation would make a
-second one. A command still waiting in the client's queue when its link went is
+answered exactly once — across connections, too, for a client that names
+itself. The client sends `Identify` with a random identity after the
+handshake, and the server keeps the answers to that client's recent commands
+(`session::remembered`: 64 commands, 64 clients, ten minutes). A command whose
+link goes before its answer arrives may or may not have been applied, so the
+client sends it again on the next link, under the same number, if that link
+reached the same daemon: the server answers it from memory if it applied it
+and applies it if it never saw it. Where that cannot be done — a server that
+does not remember, another daemon, or the memory past its bounds — the client
+puts back what it showed and reports the outcome as unknown, never as timed
+out, and the snapshot the next connection begins with says what the host
+actually did; a caller reads that rather than sending the command again,
+which for a creation would make a second one. A command still waiting in the client's queue when its link went is
 never sent late on the next link once it has been reported. A pane always runs the user's login shell; when its
 child exits the pane is removed and the delta carries the exit status.
 

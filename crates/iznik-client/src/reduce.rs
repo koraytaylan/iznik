@@ -89,9 +89,10 @@ pub enum Notification {
     /// A command this client sent on a link that went before its answer came.
     ///
     /// Not a timeout: the host may have applied it the moment before the link
-    /// went, and nothing on this side can say whether it did. Each command is
-    /// answered exactly once *per connection*; this is what the rest of it
-    /// becomes. What it showed is put back, and the snapshot the next
+    /// went, and nothing on this side can say whether it did. A host that
+    /// remembers what it answered is sent the command again on the next link
+    /// and answers it once; this is what becomes of one that could not be
+    /// settled so. What it showed is put back, and the snapshot the next
     /// connection begins with says what the host actually did — so a caller
     /// reads the model rather than sending it again, which for a creation
     /// would make a second one.

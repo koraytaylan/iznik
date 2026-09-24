@@ -36,3 +36,14 @@ pub struct Sequence(pub u64);
 /// something else now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DaemonInstance(pub u128);
+
+/// One client's hold on a host, chosen at random by the client when it
+/// starts holding it.
+///
+/// Command numbers are the client's own, so a number names a command only
+/// together with the client that sent it. A client names itself with
+/// `Identify` on every connection, and a server that remembers what it
+/// answered that client can answer a command sent again after a dropped link
+/// rather than apply it twice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClientIdentity(pub u128);

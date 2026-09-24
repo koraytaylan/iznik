@@ -9,12 +9,69 @@
 //! Every command is answered, and answered once. The answer says what was made
 //! so that a client which waited a round trip for a creation has the id it
 //! waited for, and says why when nothing was made, by a code rather than a
-//! sentence — the sentence is for a log.
+//! sentence — the sentence is for a log. A client that has named itself is
+//! answered once across its connections too: what it was answered is kept,
+//! and the same command sent again after a dropped link gets the same answer
+//! rather than being applied again.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::session::registry::{Registry, RegistryError};
-use iznik_protocol::command::{CommandOutcome, Created, RejectionCode, SessionCommand};
+use iznik_protocol::command::{
+    CommandOutcome, Created, RejectionCode, SessionCommand, decode_session_command,
+    encode_command_outcome,
+};
+use iznik_protocol::identity::{ClientIdentity, CommandId};
+use iznik_protocol::message::MessageError;
+use tokio::sync::RwLock;
+
+/// Answers a client's `Command`: its encoded outcome, applied now or — when
+/// `client` has sent this command before and its answer is still kept — the
+/// answer it was given then, with nothing applied again.
+///
+/// A payload that will not decode is refused, not fatal. Two peers of one
+/// protocol version are not necessarily one build — a released server and a
+/// local one both say "protocol 1" — so a tag this codec does not know is a
+/// request this server cannot serve, not a peer speaking garbage.
+///
+/// # Errors
+///
+/// [`MessageError`] when the outcome will not encode.
+pub async fn answer(
+    registry: &RwLock<Registry>,
+    client: Option<ClientIdentity>,
+    command_id: CommandId,
+    payload: &[u8],
+) -> Result<Vec<u8>, MessageError> {
+    // Settled before the lock: a directory on a mount that hangs must not
+    // hang every other client with it.
+    let decoded = match decode_session_command(payload) {
+        Ok(command) => Ok(settle(command).await),
+        Err(refused) => Err(refused.to_string()),
+    };
+    // Looked up, applied and kept under one lock, so the same command sent
+    // on two connections at once is still applied once.
+    let mut held = registry.write().await;
+    let now = Instant::now();
+    if let Some(client) = client
+        && let Some(answered) = held.remembered().recall(client, command_id, now)
+    {
+        return Ok(answered);
+    }
+    let outcome = match decoded {
+        Ok(command) => apply(&mut held, command).await,
+        Err(message) => CommandOutcome::Rejected {
+            code: RejectionCode::UnknownCommand,
+            message,
+        },
+    };
+    let answered = encode_command_outcome(&outcome)?;
+    if let Some(client) = client {
+        held.remembered()
+            .remember(client, command_id, answered.clone(), now);
+    }
+    Ok(answered)
+}
 
 /// How long a client-supplied working directory may take to be looked at
 /// before the pane starts in the home directory instead. A local directory
