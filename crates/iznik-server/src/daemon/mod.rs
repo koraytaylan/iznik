@@ -591,8 +591,9 @@ async fn foreground(arguments: &[OsString]) -> ExitCode {
 const ROOT: &str = "/";
 
 /// Runs `work` with the files this process creates restricted to its
-/// owner, then puts back the mask it replaced. The daemon's own files — its
-/// lock and its socket — are made under it; the mask a pane's shell starts
+/// owner, then puts back the mask it replaced. The daemon's socket is made
+/// under it — its lock file is opened with an owner-only mode of its own, so
+/// it needs no mask, and is taken before this runs; the mask a pane's shell starts
 /// with is the one the daemon was started with, because a shell that starts
 /// with `077` makes every file its user writes unreadable to their group.
 fn owner_only<Made>(work: impl FnOnce() -> Made) -> Made {

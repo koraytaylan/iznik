@@ -86,7 +86,11 @@ pub struct PaneState {
     pub newest: Sequence,
     /// The sequence of the oldest byte still held in history.
     pub oldest: Sequence,
-    /// Whether the child has ended and its output stream closed.
+    /// Whether the pane has ended: its output closed, or the shell was
+    /// reaped and the drain after it ran out while something else — a
+    /// background job — still held the terminal open, or the task feeding
+    /// the mirror stopped for any other reason. Nothing is fed to the pane's
+    /// history after it is set.
     pub exited: bool,
     /// How many prompts the shell has said it was about to print.
     ///
