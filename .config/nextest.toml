@@ -161,6 +161,16 @@ threads-required = 'num-cpus'
 filter = 'binary(ffi_surface) + binary(pane_byte_pipe)'
 test-group = 'shells'
 
+# Cases that start real daemons and relays as child processes and wait for
+# their sockets under ten-second deadlines. Beside the rest of the suite on a
+# busy machine a daemon's start alone can take longer than that — on macOS a
+# freshly built binary's first launch is held while it is scanned — so these
+# run a few at a time and each has room for its children.
+[[profile.default.overrides]]
+filter = 'binary(daemon_lifecycle) | binary(stdio_relay) | binary(readme_commands)'
+test-group = 'daemons'
+threads-required = 2
+
 # The fixture reaper removes every labelled container and network, a sibling
 # test's live fixture included, so it runs with the machine to itself.
 [[profile.default.overrides]]
@@ -181,3 +191,8 @@ path = "claims.xml"
 
 [test-groups.distribution]
 max-threads = 1
+
+# Four daemon-starting cases at once: enough to keep the suite quick, few
+# enough that their children are not starved of the machine.
+[test-groups.daemons]
+max-threads = 4
