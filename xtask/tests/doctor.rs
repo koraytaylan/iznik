@@ -1,6 +1,8 @@
 //! The doctor: one prerequisite per row of `CONTRIBUTING.md` section 1, each
 //! reported by name with its install command when absent from the `PATH` or
-//! answering wrongly, and a clean bill of health when every probe answers.
+//! answering wrongly, and a clean bill of health when every probe answers. A
+//! recommendation — GNU `timeout` — is reported the same way but does not
+//! fail the run.
 //! Every tool is a shim in a directory that is the whole `PATH` of the run,
 //! so nothing here depends on this machine; the real machine is what the
 //! done-when's `cargo xtask check` examines.
@@ -269,13 +271,15 @@ fn doctor_reports_a_tool_absent_from_the_path_with_its_install_hint() {
 }
 
 /// GNU `timeout` installed by Homebrew as `gtimeout` counts as present, and
-/// with neither name on the `PATH` it is reported with the Homebrew hint.
+/// with neither name on the `PATH` it is reported as a recommendation with
+/// the Homebrew hint, without failing the doctor.
 ///
 /// # Panics
 ///
-/// When `gtimeout` is not accepted, or the absence of both is not reported.
+/// When `gtimeout` is not accepted, or the absence of both is not reported
+/// or fails the run.
 #[test]
-fn doctor_accepts_gtimeout_and_reports_neither() {
+fn doctor_accepts_gtimeout_and_recommends_it_when_neither() {
     let shims = Shims::new("gtimeout").expect("the shims");
     shims.remove("timeout").expect("timeout removed");
     shims
@@ -292,16 +296,53 @@ echo 'gtimeout (GNU coreutils)'
         "gtimeout counts"
     );
     shims.remove("gtimeout").expect("gtimeout removed");
-    let (status, stderr) = failure(run_doctor(&shims, &[])).expect("a failure");
-    assert_eq!(status, Some(1), "the failure status");
+    let without = run_doctor(&shims, &[]).expect("a missing timeout does not fail the doctor");
+    let stderr = String::from_utf8_lossy(&without.stderr);
     assert!(
-        stderr
-            .contains("missing: GNU timeout: `timeout` is not on PATH, and neither is `gtimeout`"),
+        stderr.contains(
+            "recommended: GNU timeout: `timeout` is not on PATH, and neither is `gtimeout`"
+        ),
         "stderr names both: {stderr}"
     );
     assert!(
         stderr.contains("brew install coreutils"),
         "stderr carries the install command: {stderr}"
+    );
+    assert!(
+        !stderr.contains("missing:"),
+        "nothing required is missing: {stderr}"
+    );
+}
+
+/// A `timeout` that rejects `--version` — not GNU's — does not hide a
+/// `gtimeout` that accepts it.
+///
+/// # Panics
+///
+/// When `gtimeout` is not tried after the rejecting `timeout`.
+#[test]
+fn doctor_tries_gtimeout_after_a_timeout_that_rejects_the_probe() {
+    let shims = Shims::new("other-timeout").expect("the shims");
+    shims
+        .replace(
+            "timeout",
+            "#!/bin/sh\necho 'usage: timeout duration command' >&2\nexit 1\n",
+        )
+        .expect("a timeout that is not GNU's");
+    shims
+        .write("gtimeout", "#!/bin/sh\necho 'gtimeout (GNU coreutils)'\n")
+        .expect("a gtimeout");
+    let completed = run_doctor(&shims, &[]).expect("gtimeout answers for timeout");
+    assert!(
+        String::from_utf8_lossy(&completed.stdout).contains("ok: GNU timeout"),
+        "gtimeout counts after a timeout that rejects --version"
+    );
+    shims.remove("gtimeout").expect("gtimeout removed");
+    let without = run_doctor(&shims, &[]).expect("a missing timeout does not fail the doctor");
+    let stderr = String::from_utf8_lossy(&without.stderr);
+    assert!(
+        stderr.contains("recommended: GNU timeout: `timeout --version` failed"),
+        "the rejecting timeout is what is reported: {stderr}"
     );
 }
 

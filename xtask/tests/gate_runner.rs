@@ -465,6 +465,31 @@ fn gate_runner_check_stops_at_a_missing_prerequisite() {
     assert!(!shims.log.exists(), "no gate ran");
 }
 
+/// `check` does not refuse a machine without GNU `timeout`: no gate spawns
+/// it, so it is a recommendation for commands run by hand, not a
+/// prerequisite of the gates.
+///
+/// # Panics
+///
+/// When the run fails or a gate did not run.
+#[test]
+fn gate_runner_check_runs_without_timeout() {
+    let shims = Shims::new("no-timeout").expect("the shims");
+    shims
+        .remove("timeout")
+        .expect("timeout removed from the PATH");
+    let completed = run_xtask(&shims, &["check"], None).expect("check passes without timeout");
+    assert!(
+        !String::from_utf8_lossy(&completed.stderr).contains("prerequisite missing"),
+        "timeout is not a prerequisite"
+    );
+    assert_eq!(
+        shims.gates_run().expect("the shim log"),
+        EVERY_GATE_LOGGED,
+        "every gate ran"
+    );
+}
+
 /// `xtask gate <name>` runs that one gate and prints its line; an unknown
 /// name, or an extra argument, is a usage error.
 ///

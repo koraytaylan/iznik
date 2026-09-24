@@ -18,9 +18,12 @@
 | `podman` with the `netavark` network backend | The two-container regression fixture. Rootless, daemonless, containers resolve each other by name, and it exits non-zero with a legible message when it cannot run. | `podman info` |
 | `zig` and `x86_64-linux-musl-gcc` / `aarch64-linux-musl-gcc` | `libghostty-vt` is built by Zig; the regression containers and the SSH bootstrap run statically linked musl binaries. | `zig version` |
 | `git` and, once per target and profile, network access | `libghostty-vt-sys` clones ghostty at a pinned commit and fetches its Zig packages on the first build of each target and profile; the shared cache keeps the result. | `git --version` |
-| GNU `timeout` (`gtimeout` on macOS) | Every command below runs under a deadline, and the examples write it as `timeout <seconds>`. macOS ships no `timeout`; `brew install coreutils` installs it as `gtimeout`, which the doctor accepts. | `timeout --version` or `gtimeout --version` |
+| GNU `timeout` (`gtimeout` on macOS), recommended | No gate needs it, but every command you run by hand should have a deadline, and the examples write it as `timeout <seconds>`. macOS ships no `timeout`; `brew install coreutils` installs it as `gtimeout`, which the doctor accepts. | `timeout --version` or `gtimeout --version` |
 
-`cargo xtask doctor` reports which of these is missing and how to install it.
+`cargo xtask doctor` reports which of these is missing and how to install it,
+and fails when a required one is. GNU `timeout` is only recommended: the
+doctor lists it on a `recommended:` line when neither name answers, and
+`cargo xtask check` runs without it.
 
 ## 2. The gate
 

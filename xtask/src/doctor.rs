@@ -1,7 +1,9 @@
 //! `xtask doctor`: every prerequisite of `CONTRIBUTING.md` section 1 with a
 //! probe and an install hint, reported by name when missing. `xtask check`
 //! runs it first, so a missing tool is reported by name instead of surfacing
-//! as a failed gate.
+//! as a failed gate. A recommendation — a tool for running commands by hand
+//! that no gate spawns — is reported but neither fails the doctor nor stops
+//! `check`.
 
 use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
@@ -40,14 +42,12 @@ pub struct Prerequisite {
     pub expected_output: Option<String>,
     /// How to install it.
     pub install: String,
+    /// Whether it is only recommended: no gate runs it, so its absence is
+    /// reported without failing the doctor or stopping `check`.
+    pub recommended: bool,
 }
 
 impl Prerequisite {
-    /// The probe as a command line, for messages.
-    fn probe_line(&self) -> String {
-        self.probe_line_for(self.program)
-    }
-
     /// The probe as a command line run through `program`, for messages.
     fn probe_line_for(&self, program: &'static str) -> String {
         std::iter::once(program)
@@ -66,6 +66,8 @@ pub struct Missing {
     pub reason: String,
     /// How to install it.
     pub install: String,
+    /// Whether it is only recommended, as [`Prerequisite::recommended`].
+    pub recommended: bool,
 }
 
 impl Display for Missing {
@@ -148,6 +150,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             install: format!(
                 "rustup toolchain install {channel}; rustup does it on first use inside this repository"
             ),
+            recommended: false,
         },
         Prerequisite {
             name: "cargo-nextest".to_owned(),
@@ -156,6 +159,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: None,
             install: "cargo install cargo-nextest --locked".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "podman with the netavark network backend".to_owned(),
@@ -164,6 +168,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: Some("netavark".to_owned()),
             install: "install podman and netavark from your distribution (Debian and Ubuntu: apt install podman netavark); if podman reports another backend, set network_backend = \"netavark\" in containers.conf".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "zig".to_owned(),
@@ -172,6 +177,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: None,
             install: "install zig from https://ziglang.org/download/ and put it on PATH".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "x86_64-linux-musl-gcc".to_owned(),
@@ -180,6 +186,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: None,
             install: "install a musl cross-compiler under that name: a musl.cc toolchain, or a shim over `zig cc -target x86_64-linux-musl`".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "aarch64-linux-musl-gcc".to_owned(),
@@ -188,6 +195,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: None,
             install: "install a musl cross-compiler under that name: a musl.cc toolchain, or a shim over `zig cc -target aarch64-linux-musl`".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "git".to_owned(),
@@ -196,6 +204,7 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             alternatives: &[],
             expected_output: None,
             install: "install git from your distribution (Debian and Ubuntu: apt install git)".to_owned(),
+            recommended: false,
         },
         Prerequisite {
             name: "GNU timeout".to_owned(),
@@ -203,7 +212,8 @@ pub fn prerequisites(root: &Path) -> Result<Vec<Prerequisite>, DoctorError> {
             arguments: &["--version"],
             alternatives: &["gtimeout"],
             expected_output: None,
-            install: "macOS: brew install coreutils, which installs it as gtimeout; Linux: it is part of coreutils".to_owned(),
+            install: "recommended for running commands by hand under a deadline, as section 1 of CONTRIBUTING.md advises; no gate needs it. macOS: brew install coreutils, which installs it as gtimeout; Linux: it is part of coreutils".to_owned(),
+            recommended: true,
         },
     ])
 }
@@ -219,13 +229,14 @@ fn said(stderr_tail: &str) -> String {
     }
 }
 
-/// What a failed probe means to a person, with what the probe said.
-fn describe(prerequisite: &Prerequisite, error: &ProcessError) -> String {
+/// What a failed probe through `program` means to a person, with what the
+/// probe said.
+fn describe(prerequisite: &Prerequisite, program: &'static str, error: &ProcessError) -> String {
     match error {
-        ProcessError::Spawn { program, source } if source.kind() == ErrorKind::NotFound => {
+        ProcessError::Spawn { source, .. } if source.kind() == ErrorKind::NotFound => {
             format!("`{program}` is not on PATH")
         }
-        ProcessError::Spawn { program, source } => {
+        ProcessError::Spawn { source, .. } => {
             format!("`{program}` could not be started: {source}")
         }
         ProcessError::TimedOut {
@@ -234,7 +245,7 @@ fn describe(prerequisite: &Prerequisite, error: &ProcessError) -> String {
             ..
         } => format!(
             "`{}` did not finish within {deadline:?}{}",
-            prerequisite.probe_line(),
+            prerequisite.probe_line_for(program),
             said(stderr_tail)
         ),
         ProcessError::Failed {
@@ -243,50 +254,56 @@ fn describe(prerequisite: &Prerequisite, error: &ProcessError) -> String {
             ..
         } => format!(
             "`{}` failed with {status}{}",
-            prerequisite.probe_line(),
+            prerequisite.probe_line_for(program),
             said(stderr_tail)
         ),
         ProcessError::Wait { source, .. } => format!(
             "`{}` could not be watched to its end: {source}",
-            prerequisite.probe_line()
+            prerequisite.probe_line_for(program)
         ),
     }
 }
 
 /// Runs a prerequisite's probe and judges its output: through its program,
-/// or, when that is not on the `PATH`, through the first of its alternatives
-/// that is.
+/// or, when that is not on the `PATH` or does not answer, through each of its
+/// alternatives in turn — a `timeout` that rejects `--version` does not hide
+/// a `gtimeout` that accepts it.
 ///
 /// # Errors
 ///
-/// Why the prerequisite is missing, in a person's words.
+/// Why the prerequisite is missing, in a person's words: every name was
+/// tried, and the reasons are those of the names that answered wrongly, or,
+/// when none was on the `PATH`, that none was.
 fn probe(prerequisite: &Prerequisite) -> Result<(), String> {
-    let mut first_failure = None;
+    let mut first_absence = None;
+    let mut answered_wrongly = Vec::new();
     for program in
         std::iter::once(prerequisite.program).chain(prerequisite.alternatives.iter().copied())
     {
         match probe_through(prerequisite, program) {
             Ok(()) => return Ok(()),
             Err((reason, true)) => {
-                first_failure.get_or_insert(reason);
+                first_absence.get_or_insert(reason);
             }
-            Err((reason, false)) => return Err(reason),
+            Err((reason, false)) => answered_wrongly.push(reason),
         }
     }
-    let reason = first_failure.unwrap_or_default();
-    if prerequisite.alternatives.is_empty() {
-        Err(reason)
-    } else {
-        Err(format!(
-            "{reason}, and neither is {}",
-            prerequisite
-                .alternatives
-                .iter()
-                .map(|alternative| format!("`{alternative}`"))
-                .collect::<Vec<String>>()
-                .join(" nor ")
-        ))
+    if !answered_wrongly.is_empty() {
+        return Err(answered_wrongly.join("; "));
     }
+    let reason = first_absence.unwrap_or_default();
+    if prerequisite.alternatives.is_empty() {
+        return Err(reason);
+    }
+    Err(format!(
+        "{reason}, and neither is {}",
+        prerequisite
+            .alternatives
+            .iter()
+            .map(|alternative| format!("`{alternative}`"))
+            .collect::<Vec<String>>()
+            .join(" nor ")
+    ))
 }
 
 /// Runs a prerequisite's probe through one program and judges its output.
@@ -301,7 +318,7 @@ fn probe_through(prerequisite: &Prerequisite, program: &'static str) -> Result<(
     let completed = process::run(command, Deadline(PROBE_DEADLINE), Output::Capture).map_err(
         |error| {
             let absent = matches!(&error, ProcessError::Spawn { source, .. } if source.kind() == ErrorKind::NotFound);
-            (describe(prerequisite, &error), absent)
+            (describe(prerequisite, program, &error), absent)
         },
     )?;
     let Some(expected) = &prerequisite.expected_output else {
@@ -336,23 +353,31 @@ pub fn examine(root: &Path) -> Result<Vec<Result<Prerequisite, Missing>>, Doctor
                 name: prerequisite.name,
                 reason,
                 install: prerequisite.install,
+                recommended: prerequisite.recommended,
             }),
         })
         .collect())
 }
 
-/// Every prerequisite that is missing, in order.
+/// Every required prerequisite that is missing, in order; a missing
+/// recommendation is not among them.
 ///
 /// # Errors
 ///
 /// [`DoctorError::Toolchain`] when the pinned channel cannot be read.
 pub fn missing(root: &Path) -> Result<Vec<Missing>, DoctorError> {
-    Ok(examine(root)?.into_iter().filter_map(Result::err).collect())
+    Ok(examine(root)?
+        .into_iter()
+        .filter_map(Result::err)
+        .filter(|missing| !missing.recommended)
+        .collect())
 }
 
 /// The entry point of `xtask doctor`: one `ok:` line per present prerequisite
 /// on standard output, one `missing:` line with its install hint per absent
-/// one on standard error, and a failure status when anything is missing.
+/// one on standard error, and a failure status when anything required is
+/// missing. An absent recommendation gets a `recommended:` line on standard
+/// error and does not change the status.
 #[must_use]
 pub fn run(arguments: &[OsString]) -> ExitCode {
     if crate::asked_for_help(arguments) {
@@ -374,6 +399,9 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         match outcome {
             Ok(prerequisite) => {
                 writeln!(io::stdout(), "ok: {}", prerequisite.name).unwrap_or_default();
+            }
+            Err(missing) if missing.recommended => {
+                writeln!(io::stderr(), "recommended: {missing}").unwrap_or_default();
             }
             Err(missing) => {
                 anything_missing = true;
