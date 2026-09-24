@@ -3,11 +3,15 @@
 //!
 //! What a binary contains is the normal dependency graph of its package for
 //! its target: `cargo metadata --filter-platform` resolves that from
-//! `Cargo.lock` without the network, once the sources are in cargo's registry
-//! — which they are, because the build that made the binary put them there.
-//! Build and development dependencies are left out, since none of their code
-//! is linked; the workspace's own packages are left out, since they are this
-//! repository's and under its licence.
+//! `Cargo.lock`. It is not run offline: metadata reads the manifest of every
+//! package in the workspace's lock file, including the ones only another
+//! platform or a development build needs, and a fresh machine that built
+//! one binary has not downloaded those. With the network cargo fetches what
+//! is missing; without it, a registry that already holds everything still
+//! answers. Only the packages reachable from the shipped package through
+//! normal dependencies are listed: build and development dependencies are
+//! left out, since none of their code is linked; the workspace's own packages
+//! are left out, since they are this repository's and under its licence.
 //!
 //! Each package is listed with its version, its licence expression and its
 //! repository, and every licence text the packages carry — the `LICENSE*`,
@@ -31,8 +35,9 @@ use crate::distribution::DistributionError;
 pub const NOTICES: &str = "THIRD-PARTY-NOTICES";
 
 /// How long `cargo metadata` may take: it reads the lock file and the
-/// registry, and a first run may resolve the workspace.
-const METADATA_DEADLINE: Duration = Duration::from_mins(2);
+/// registry, and a first run on a fresh machine downloads the sources the
+/// build did not need.
+const METADATA_DEADLINE: Duration = Duration::from_mins(5);
 
 /// The prefixes, compared without case, of the files that hold a licence
 /// text at a package's root.
@@ -204,8 +209,8 @@ fn field<'value>(value: &'value Value, name: &str) -> Option<&'value str> {
     value.get(name).and_then(Value::as_str)
 }
 
-/// The resolved metadata for `target`, read offline from `Cargo.lock` and
-/// the registry.
+/// The resolved metadata for `target`, read from `Cargo.lock`, fetching any
+/// package source the registry does not yet hold.
 ///
 /// # Errors
 ///
@@ -217,7 +222,6 @@ fn metadata(root: &Path, target: &str) -> Result<Value, DistributionError> {
         "--format-version",
         "1",
         "--locked",
-        "--offline",
         "--filter-platform",
         target,
     ]);

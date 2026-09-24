@@ -1,9 +1,9 @@
 //! `THIRD-PARTY-NOTICES`: every package a shipped binary is built from, with
 //! its licence, and every licence text once.
 //!
-//! The cases that read the real graph run `cargo metadata --offline`, which
-//! answers from `Cargo.lock` and the registry the workspace's own build has
-//! already filled.
+//! The cases that read the real graph run `cargo metadata`, which answers
+//! from `Cargo.lock` and the registry, fetching the sources a fresh machine
+//! has not downloaded yet.
 
 use std::fs;
 
@@ -66,7 +66,7 @@ fn notices_follow_the_server_graph_for_its_target() {
         "iznik-server",
         "x86_64-unknown-linux-musl",
     )
-    .expect("the graph resolves offline");
+    .expect("the graph resolves");
     let names: Vec<&str> = found.iter().map(|package| package.name.as_str()).collect();
     for linked in ["tokio", "portable-pty", "libghostty-vt", "zstd"] {
         assert!(names.contains(&linked), "{linked} is linked: {names:?}");
