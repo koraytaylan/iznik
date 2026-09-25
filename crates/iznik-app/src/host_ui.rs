@@ -34,8 +34,9 @@
 //! act as telling them something broke.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
-use iznik_client::commands::Submission;
+use iznik_client::commands::{self, Submission};
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::{ManagerError, ManagerEvent};
 use iznik_client::host::state::{HostState, UpgradeOffer};
@@ -244,6 +245,24 @@ impl EngineState {
         }
     }
 
+    /// Shows a command the engine has already submitted, under its number.
+    ///
+    /// A close then leaves this model at once, so the chip is gone before the
+    /// host answers and a second click does not ask for it again. Returns
+    /// whether the effect is showing.
+    pub fn show_submitted(
+        &mut self,
+        host: &HostId,
+        id: CommandId,
+        command: SessionCommand,
+        now: Instant,
+    ) -> bool {
+        let Some(view) = self.model.host_mut(host) else {
+            return false;
+        };
+        commands::mirror(view, id, command, now)
+    }
+
     /// Applies one message from a host to that host's model.
     ///
     /// Public because a case about convergence is a case about exactly this:
@@ -326,8 +345,33 @@ impl EngineState {
 
     /// Something worth telling a person, in the words whatever said it used.
     fn recorded(&mut self, notification: &Notification) {
+        self.settle_pending(notification);
         let (host, kind, detail) = read(notification);
         self.notice(host, kind, detail);
+    }
+
+    /// Retires or puts back the command an answer, a timeout or a lost link
+    /// settles, on this window's own copy of the model.
+    fn settle_pending(&mut self, notification: &Notification) {
+        match notification {
+            Notification::CommandFinished {
+                host,
+                command,
+                outcome,
+            } => {
+                if let Some(view) = self.model.host_mut(host) {
+                    let _confirmed = commands::confirm(view, *command, outcome);
+                }
+            }
+            Notification::CommandTimedOut { host, command }
+            | Notification::CommandUnreadable { host, command, .. }
+            | Notification::CommandOutcomeUnknown { host, command } => {
+                if let Some(view) = self.model.host_mut(host) {
+                    let _taken = commands::withdraw(view, *command);
+                }
+            }
+            _otherwise => {}
+        }
     }
 
     /// Records one notice.
@@ -471,6 +515,14 @@ impl HostUi {
         command: SessionCommand,
     ) -> Result<Submission, EngineError> {
         self.bridge.command(alias, command)
+    }
+
+    /// Shows `command` on this window's model under the number the engine gave it.
+    pub fn mirror_command(&mut self, alias: &str, id: CommandId, command: SessionCommand) {
+        let host = HostId(alias.to_owned());
+        let _shown = self
+            .state
+            .show_submitted(&host, id, command, Instant::now());
     }
 }
 

@@ -54,3 +54,15 @@ id = "optimistic-survives-the-host-saying-the-same-thing"
 statement = "The host announces the change to the client that asked for it as well as to the others, and what the command already showed survives its own delta: nothing is refused, no snapshot is asked for, and once the answer retires the command the model is the host's own. A rename, a close and the cascade a pane's going causes are each walked through."
 test = "iznik-client::optimistic_commands::optimistic_commands_survive_the_host_saying_the_same_thing"
 because = "the delta is applied to what the host last said rather than to what is being shown, which is arithmetic over two models and needs no host to check"
+
+[[claim]]
+id = "optimistic-second-close-is-not-sent"
+statement = "A second close of a tab the model already shows as gone is not recorded and not sent."
+test = "iznik-client::optimistic_commands::a_second_close_is_not_sent"
+because = "whether a close is recorded is the view's own; no host is required"
+
+[[claim]]
+id = "optimistic-two-closes-survive-the-host"
+statement = "Two closes asked before either is answered still fit when the host answers both and then announces every removal, and both are retired once the session they emptied is gone."
+test = "iznik-client::optimistic_commands::two_closes_survive_the_host_answering_both"
+because = "the walk is the same two models as a single close, answers first and then the deltas; no host is required"

@@ -713,6 +713,11 @@ impl HostManager {
             .shared
             .with(&host, |view| submit(view, asked, Instant::now()))
             .ok_or_else(|| ManagerError::UnknownHost { host: host.clone() })?;
+        // A second close of something already gone was not recorded. Sending
+        // it would earn a refusal and an error for a click that changed nothing.
+        if !submission.pending {
+            return Ok(submission);
+        }
         // The host was there a moment ago, under the lock; if it is not now,
         // the order below says so.
         if let Err(refused) = self.order(

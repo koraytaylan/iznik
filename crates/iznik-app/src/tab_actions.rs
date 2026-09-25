@@ -196,12 +196,16 @@ fn close(
     shell: &mut WindowShell,
     key: &TabKey,
     tabs: &[TabId],
+    window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) {
     for tab in tabs {
-        if let Err(error) =
-            shell.dispatch_command(&key.host.0, SessionCommand::CloseTab { tab: *tab })
-        {
+        if let Err(error) = shell.dispatch_shown(
+            &key.host.0,
+            SessionCommand::CloseTab { tab: *tab },
+            window,
+            context,
+        ) {
             shell.failure(&key.host, error.to_string(), context);
             return;
         }
@@ -226,11 +230,12 @@ fn close_sessions(
     shell: &mut WindowShell,
     key: &SessionKey,
     sessions: &[SessionId],
+    window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) {
     for session in sessions {
         let command = SessionCommand::CloseSession { session: *session };
-        if let Err(error) = shell.dispatch_command(&key.host.0, command) {
+        if let Err(error) = shell.dispatch_shown(&key.host.0, command, window, context) {
             shell.failure(&key.host, error.to_string(), context);
             return;
         }
@@ -533,24 +538,24 @@ pub fn session_menu(
             "Close Session",
             true,
             &shell,
-            move |shell, _window, context| {
-                close_sessions(shell, &close_key, &[close_key.session], context);
+            move |shell, window, context| {
+                close_sessions(shell, &close_key, &[close_key.session], window, context);
             },
         ))
         .item(item(
             "Close Other Sessions",
             !others.is_empty(),
             &shell,
-            move |shell, _window, context| {
-                close_sessions(shell, &others_key, &others, context);
+            move |shell, window, context| {
+                close_sessions(shell, &others_key, &others, window, context);
             },
         ))
         .item(item(
             "Close Sessions to the Right",
             !rightward.is_empty(),
             &shell,
-            move |shell, _window, context| {
-                close_sessions(shell, &right_close_key, &rightward, context);
+            move |shell, window, context| {
+                close_sessions(shell, &right_close_key, &rightward, window, context);
             },
         ))
     }
@@ -625,24 +630,24 @@ pub fn tab_menu(
             "Close Tab",
             true,
             &shell,
-            move |shell, _window, context| {
-                close(shell, &close_key, &[close_key.tab], context);
+            move |shell, window, context| {
+                close(shell, &close_key, &[close_key.tab], window, context);
             },
         ))
         .item(item(
             "Close Other Tabs",
             !others.is_empty(),
             &shell,
-            move |shell, _window, context| {
-                close(shell, &others_key, &others, context);
+            move |shell, window, context| {
+                close(shell, &others_key, &others, window, context);
             },
         ))
         .item(item(
             "Close Tabs to the Right",
             !rightward.is_empty(),
             &shell,
-            move |shell, _window, context| {
-                close(shell, &right_close_key, &rightward, context);
+            move |shell, window, context| {
+                close(shell, &right_close_key, &rightward, window, context);
             },
         ))
     }

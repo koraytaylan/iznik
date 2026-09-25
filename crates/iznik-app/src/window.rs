@@ -252,7 +252,14 @@ impl WindowShell {
         alias: &str,
         command: SessionCommand,
     ) -> Result<iznik_client::commands::Submission, crate::bridge::EngineError> {
-        self.hosts.command(alias, command)
+        let submission = self.hosts.command(alias, command.clone())?;
+        // The engine's model already shows it. This window's copy has to as
+        // well, or the chip stays until the host answers and the next click
+        // asks for a tab that close is already taking.
+        if submission.optimistic {
+            self.hosts.mirror_command(alias, submission.id, command);
+        }
+        Ok(submission)
     }
     /// Dispatch an inventory action to the host a new session would go to.
     ///
@@ -707,7 +714,7 @@ impl WindowShell {
     /// `place` is the selection as it stood before this reconcile's model
     /// change. When that tab is gone, the next tab of its session takes its
     /// place, and the next session does when the session itself is gone.
-    fn reconcile(
+    pub(crate) fn reconcile(
         &mut self,
         place: Option<&bars::TabPlace>,
         window: &mut Window,

@@ -23,7 +23,7 @@ use iznik_protocol::command::{CommandOutcome, Created, Placement, RejectionCode,
 use iznik_protocol::delta::{Delta, RemovalReason, encode_delta};
 use iznik_protocol::identity::{CommandId, Generation, PaneId, SessionId, TabId};
 use iznik_protocol::message::ToClient;
-use iznik_protocol::model::{HostModel, LayoutNode, SplitDirection};
+use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, SplitDirection, Tab};
 use iznik_protocol::reconcile::apply_change;
 use iznik_testkit::generate::ModelGenerator;
 
@@ -41,6 +41,24 @@ const AGAIN: &str = "renamed-again";
 
 /// Anything a case can fail on.
 type Failed = Box<dyn std::error::Error>;
+/// The left tab of the two-tab fixture, closed first.
+const LEFT_TAB: u64 = 2;
+/// The right tab of the two-tab fixture, closed second, which empties the session.
+const RIGHT_TAB: u64 = 3;
+/// The left tab's only pane.
+const LEFT_PANE: u64 = 4;
+/// The right tab's only pane.
+const RIGHT_PANE: u64 = 5;
+/// A fixture pane's width, the size a new pane is asked for.
+const PANE_COLUMNS: u16 = 80;
+/// A fixture pane's height, the size a new pane is asked for.
+const PANE_ROWS: u16 = 24;
+/// The generation a close of the left tab reaches: the model starts at 1.
+const LEFT_CLOSE_GENERATION: u64 = 2;
+/// The generation of the right tab's removal, one after the left close.
+const RIGHT_TAB_GENERATION: u64 = 3;
+/// The generation of the session the right close empties.
+const SESSION_GENERATION: u64 = 4;
 
 /// The host these cases talk to.
 fn work() -> HostId {
@@ -676,4 +694,161 @@ fn walk(
         "{command:?} ({answer_first}): and the model is the host's own"
     );
     Ok(())
+}
+
+/// A second close of a tab the model already shows as gone is not recorded.
+///
+/// # Panics
+///
+/// When the second close is pending, or the first close's tab is still shown.
+#[test]
+fn a_second_close_is_not_sent() {
+    let model = two_tab_model();
+    let mut view = HostView::of(model);
+    let first = submit(
+        &mut view,
+        SessionCommand::CloseTab {
+            tab: TabId(LEFT_TAB),
+        },
+        moment(),
+    );
+    assert!(first.pending, "the first close is sent");
+    assert!(first.optimistic, "and it is already showing");
+    let second = submit(
+        &mut view,
+        SessionCommand::CloseTab {
+            tab: TabId(LEFT_TAB),
+        },
+        moment(),
+    );
+    assert!(!second.pending, "the second close is not sent");
+    assert!(
+        view.awaiting(second.id).is_none(),
+        "and nothing is waiting on it"
+    );
+    assert!(
+        view.model
+            .sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter())
+            .all(|tab| tab.id != TabId(LEFT_TAB)),
+        "the first close still shows"
+    );
+}
+
+/// Two closes asked before either is answered survive the host saying both,
+/// answers first and then every delta, which is the order a burst is delivered.
+///
+/// # Panics
+///
+/// When a delta is refused or the session is still shown at the end.
+#[test]
+fn two_closes_survive_the_host_answering_both() {
+    let host = work();
+    let mut client = ClientModel::default();
+    let _first = client.insert(host.clone(), HostView::of(two_tab_model()));
+    let view = client.host_mut(&host).expect("the host is known");
+    let first = submit(
+        view,
+        SessionCommand::CloseTab {
+            tab: TabId(LEFT_TAB),
+        },
+        moment(),
+    );
+    let second = submit(
+        view,
+        SessionCommand::CloseTab {
+            tab: TabId(RIGHT_TAB),
+        },
+        moment(),
+    );
+    assert!(first.pending && second.pending, "both closes are sent");
+    let _first_answer = confirm(
+        view,
+        first.id,
+        &CommandOutcome::Applied {
+            generation: Generation(LEFT_CLOSE_GENERATION),
+            created: Created::Nothing,
+        },
+    );
+    let _second_answer = confirm(
+        view,
+        second.id,
+        &CommandOutcome::Applied {
+            generation: Generation(SESSION_GENERATION),
+            created: Created::Nothing,
+        },
+    );
+    let deltas = [
+        (
+            LEFT_CLOSE_GENERATION,
+            Delta::TabRemoved {
+                tab: TabId(LEFT_TAB),
+            },
+        ),
+        (
+            RIGHT_TAB_GENERATION,
+            Delta::TabRemoved {
+                tab: TabId(RIGHT_TAB),
+            },
+        ),
+        (
+            SESSION_GENERATION,
+            Delta::SessionRemoved {
+                session: SessionId(1),
+            },
+        ),
+    ];
+    for (generation, delta) in deltas {
+        let payload = encode_delta(&delta).expect("the delta encodes");
+        let effects = reduce(
+            &mut client,
+            &host,
+            &ToClient::Delta {
+                generation: Generation(generation),
+                payload,
+            },
+        );
+        assert!(
+            effects.is_empty(),
+            "generation {generation} fits: {effects:?}"
+        );
+    }
+    let after = client.host(&host).expect("the host is known");
+    assert!(
+        after.model.sessions.is_empty(),
+        "both tabs, and the session, are gone"
+    );
+    assert!(after.pending.is_empty(), "both closes are retired");
+}
+
+/// Two tabs in one session, at generation 1, so the closes that follow are numbered 2, 3 and 4.
+fn two_tab_model() -> HostModel {
+    HostModel {
+        generation: Generation(1),
+        sessions: vec![Session {
+            id: SessionId(1),
+            name: "work".to_owned(),
+            tabs: vec![
+                one_tab(TabId(LEFT_TAB), PaneId(LEFT_PANE)),
+                one_tab(TabId(RIGHT_TAB), PaneId(RIGHT_PANE)),
+            ],
+        }],
+    }
+}
+
+/// A tab of one pane, named `shell`.
+fn one_tab(tab: TabId, pane: PaneId) -> Tab {
+    Tab {
+        id: tab,
+        name: "shell".to_owned(),
+        layout: LayoutNode::Leaf(pane),
+        panes: vec![Pane {
+            id: pane,
+            title: "shell".to_owned(),
+            working_directory: None,
+            columns: PANE_COLUMNS,
+            rows: PANE_ROWS,
+        }],
+    }
 }

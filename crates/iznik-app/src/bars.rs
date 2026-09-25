@@ -647,13 +647,13 @@ fn tab_close(
         .child("\u{d7}");
     if let Some(target) = shell.cloned() {
         let alias = host.0.clone();
-        close = close.on_click(move |_event, _window, application| {
+        close = close.on_click(move |_event, window, application| {
             // The chip around this mark selects on click, so the mark stops
             // the click and only closes.
             application.stop_propagation();
             let command = SessionCommand::CloseTab { tab };
-            let _ignored = target.update(application, |window_shell, _context| {
-                let _submission = window_shell.dispatch_command(&alias, command);
+            let _ignored = target.update(application, |window_shell, context| {
+                let _submission = window_shell.dispatch_shown(&alias, command, window, context);
             });
         });
     }
@@ -676,13 +676,13 @@ fn session_close(
         .child("\u{d7}");
     if let Some(target) = shell.cloned() {
         let alias = host.0.clone();
-        close = close.on_click(move |_event, _window, application| {
+        close = close.on_click(move |_event, window, application| {
             // The chip around this mark selects on click, so the mark stops
             // the click and only closes.
             application.stop_propagation();
             let command = SessionCommand::CloseSession { session };
-            let _ignored = target.update(application, |window_shell, _context| {
-                let _submission = window_shell.dispatch_command(&alias, command);
+            let _ignored = target.update(application, |window_shell, context| {
+                let _submission = window_shell.dispatch_shown(&alias, command, window, context);
             });
         });
     }

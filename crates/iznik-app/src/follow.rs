@@ -10,8 +10,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui_kit::{Context, Focusable, Window};
+use iznik_client::commands::Submission;
 use iznik_client::host::identity::HostId;
 use iznik_client::host::state::HostState;
+use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{PaneId, TabId};
 
 use crate::actions::ActionId;
@@ -211,6 +213,30 @@ impl WindowShell {
             shown: self.following.session_tab.clone(),
         };
         let _ignored = session_tabs::write(path, &record);
+    }
+
+    /// Send a command and, when its effect is already showing, lay the window
+    /// out on the neighbor before the host has answered.
+    ///
+    /// # Errors
+    ///
+    /// As [`WindowShell::dispatch_command`].
+    pub fn dispatch_shown(
+        &mut self,
+        alias: &str,
+        command: SessionCommand,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> Result<Submission, EngineError> {
+        let place = self
+            .selected()
+            .and_then(|selected| bars::tab_place(self.hosts().state(), selected));
+        let submission = self.dispatch_command(alias, command)?;
+        if submission.optimistic {
+            self.reconcile(place.as_ref(), window, context);
+            context.notify();
+        }
+        Ok(submission)
     }
 
     /// Keep the current tab when the model still holds it. When that tab has

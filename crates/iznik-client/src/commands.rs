@@ -15,6 +15,9 @@
 //! change, through the same reconciler, that the host will send back. That is
 //! what makes the two agree — and it is applied without advancing the
 //! generation, because the authoritative delta that follows carries the number.
+//! A close of a tab, session or pane the model already shows as gone is not
+//! recorded and not sent: the host would only refuse it, and that refusal is
+//! what a second click produced while the first close was still in flight.
 //!
 //! Two models are kept apart to make "the delta always wins" true rather than
 //! hopeful. What the host has said is one model; what this client is showing
@@ -55,6 +58,11 @@ pub struct Submission {
     pub id: CommandId,
     /// Whether its effect is already showing.
     pub optimistic: bool,
+    /// Whether it was recorded to be sent.
+    ///
+    /// False when a close asks for something the model already shows as gone.
+    /// Nothing is waiting on the host, and nothing will be refused.
+    pub pending: bool,
 }
 
 /// What an answer did to a pending command.
@@ -73,6 +81,15 @@ pub enum Confirmed {
 /// The model as it stood is kept with the pending entry, so a refusal — or an
 /// answer that never comes — can put the screen back exactly.
 pub fn submit(view: &mut HostView, command: SessionCommand, now: Instant) -> Submission {
+    // Already gone: a second close of the same tab while the first is in
+    // flight. Recording it would wait for the host to refuse it.
+    if close_already_shown(&view.model, &command) {
+        return Submission {
+            id: view.mint(),
+            optimistic: false,
+            pending: false,
+        };
+    }
     let id = view.mint();
     let optimistic = locally(&mut view.model, &command);
     view.record(PendingCommand {
@@ -81,7 +98,55 @@ pub fn submit(view: &mut HostView, command: SessionCommand, now: Instant) -> Sub
         answered: None,
         submitted_at: now,
     });
-    Submission { id, optimistic }
+    Submission {
+        id,
+        optimistic,
+        pending: true,
+    }
+}
+
+/// Shows a command the engine already submitted, under the number it was given.
+///
+/// The window keeps its own model, and a close has to leave that model when
+/// it is asked for, not when the host answers, or the chip stays clickable
+/// and the next click asks again. A close the model already shows as gone is
+/// not recorded: there is no answer coming for it.
+pub fn mirror(view: &mut HostView, id: CommandId, command: SessionCommand, now: Instant) -> bool {
+    if view.awaiting(id).is_some() || close_already_shown(&view.model, &command) {
+        return false;
+    }
+    let optimistic = locally(&mut view.model, &command);
+    if view.minted.0 < id.0 {
+        view.minted = id;
+    }
+    view.record(PendingCommand {
+        id,
+        command,
+        answered: None,
+        submitted_at: now,
+    });
+    optimistic
+}
+
+/// Whether `command` closes a tab, session or pane the model does not hold.
+fn close_already_shown(model: &HostModel, command: &SessionCommand) -> bool {
+    match command {
+        SessionCommand::CloseTab { tab } => !model
+            .sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter())
+            .any(|held| held.id == *tab),
+        SessionCommand::CloseSession { session } => {
+            !model.sessions.iter().any(|held| held.id == *session)
+        }
+        SessionCommand::ClosePane { pane } => !model
+            .sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .any(|held| held.id == *pane),
+        _other => false,
+    }
 }
 
 /// Settles a pending command with the host's own answer.
