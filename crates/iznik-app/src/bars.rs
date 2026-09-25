@@ -3,7 +3,7 @@
 use gpui_kit::component::Theme;
 use gpui_kit::{
     AnyElement, AppContext as _, InteractiveElement, IntoElement, MouseButton, ParentElement, Role,
-    StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, div,
+    ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, div,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::state::HostState;
@@ -63,12 +63,17 @@ pub fn render(
         shell,
         TabPlacement::Bar,
         ShortcutHint::None,
+        None,
     )
 }
 
 /// The same, with the tab strip drawn for `placement`.
 ///
 /// `hint` leads the tab chips or the session chips with their shortcut number.
+///
+/// `scroll` keeps the tab strip's horizontal offset. Without it the strip
+/// still scrolls, and the offset lives on the element until the next frame
+/// that omits it.
 #[must_use]
 pub fn render_placed(
     theme: &Theme,
@@ -77,6 +82,7 @@ pub fn render_placed(
     shell: Option<&WeakEntity<WindowShell>>,
     placement: TabPlacement,
     hint: ShortcutHint,
+    scroll: Option<&ScrollHandle>,
 ) -> Bars {
     let mut tab_children = Vec::new();
     let mut session_children = Vec::new();
@@ -97,7 +103,7 @@ pub fn render_placed(
         session_children.extend(sessions);
     }
     Bars {
-        top: tab_bar_container(theme, placement)
+        top: tab_bar_container(theme, placement, scroll)
             .children(tab_children)
             .into_any_element(),
         bottom: session_bar_container(theme)
@@ -248,6 +254,7 @@ fn add_button(
         .id(identifier)
         .test_support()
         .aria_label(label)
+        .flex_shrink_0()
         .px_2()
         .rounded_md()
         .text_color(theme.muted_foreground)
@@ -273,11 +280,16 @@ fn add_button(
 
 /// Build the empty top tab strip: a bar of its own, or a transparent strip
 /// that fills the title bar it sits in.
+///
+/// Chips that do not fit scroll horizontally. A vertical wheel over the strip
+/// moves them too, because the strip does not scroll vertically. `scroll`
+/// records that offset so a later frame can bring the selected chip back.
 fn tab_bar_container(
     theme: &Theme,
     placement: TabPlacement,
+    scroll: Option<&ScrollHandle>,
 ) -> impl ParentElement + Styled + IntoElement {
-    let strip = div()
+    let mut strip = div()
         .id("tab-bar")
         .test_support()
         .role(Role::TabList)
@@ -286,8 +298,11 @@ fn tab_bar_container(
         .items_center()
         .gap_2()
         .min_w_0()
-        .overflow_x_hidden()
+        .overflow_x_scroll()
         .text_color(theme.foreground);
+    if let Some(scroll) = scroll {
+        strip = strip.track_scroll(scroll);
+    }
     match placement {
         TabPlacement::Bar => strip
             .w_full()

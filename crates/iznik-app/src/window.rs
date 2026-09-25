@@ -8,8 +8,8 @@ use gpui_kit::StatefulInteractiveElement as _;
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Role, SharedString, Styled, Subscription, Task,
-    TestSupportExt, Window, div, px,
+    KeyDownEvent, ParentElement, Render, Role, ScrollHandle, SharedString, Styled, Subscription,
+    Task, TestSupportExt, Window, div, px,
 };
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
@@ -179,6 +179,10 @@ pub struct WindowShell {
     pub(crate) following: Following,
     /// Tabs or sessions numbered while Command is held.
     shortcut_hint: ShortcutHint,
+    /// Horizontal offset of the tab strip.
+    tab_scroll: ScrollHandle,
+    /// The selection already scrolled into that strip.
+    scrolled_tab: Option<TabKey>,
 }
 
 impl Focusable for WindowShell {
@@ -223,6 +227,8 @@ impl WindowShell {
             focus_handle,
             following,
             shortcut_hint: ShortcutHint::None,
+            tab_scroll: ScrollHandle::new(),
+            scrolled_tab: None,
         };
         crate::settings::load_into(&mut shell, context);
         shell
@@ -870,12 +876,35 @@ impl Drop for WindowShell {
         self.write_session_tabs(true);
     }
 }
+impl WindowShell {
+    /// Scroll the tab strip so the selected chip is in view.
+    ///
+    /// A selection that has not changed keeps the offset a person scrolled to.
+    /// A selected tab the model does not hold yet waits for the next frame.
+    fn scroll_selected_tab(&mut self) {
+        if self.scrolled_tab == self.selected {
+            return;
+        }
+        let Some(selected) = self.selected.clone() else {
+            self.scrolled_tab = None;
+            return;
+        };
+        let keys = bars::tab_keys(self.hosts.state(), Some(&selected));
+        let Some(index) = keys.iter().position(|key| key == &selected) else {
+            return;
+        };
+        self.tab_scroll.scroll_to_item(index);
+        self.scrolled_tab = Some(selected);
+    }
+}
+
 impl Render for WindowShell {
     fn render(
         &mut self,
         root_window: &mut Window,
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        self.scroll_selected_tab();
         let entity = context.entity().downgrade();
         let body = self.body(&entity, context);
         let theme = context.theme();
@@ -891,6 +920,7 @@ impl Render for WindowShell {
             Some(&entity),
             placement,
             self.shortcut_hint,
+            Some(&self.tab_scroll),
         );
         let (title, tab_bar) = match placement {
             bars::TabPlacement::TitleBar => (bars.top, None),

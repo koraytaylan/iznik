@@ -3,11 +3,12 @@
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AppContext, Context, IntoElement, ParentElement, Render, TestAppContext, Window, WindowHandle,
-    div,
+    AppContext, Context, IntoElement, ParentElement, Render, ScrollDelta, ScrollHandle, Styled,
+    TestAppContext, Window, WindowHandle, div, point, px, size,
 };
 use iznik_app::bars;
 use iznik_app::host_ui::EngineState;
+use iznik_app::navigation::ShortcutHint;
 use iznik_app::window::TabKey;
 use iznik_protocol::delta::{Delta, encode_delta};
 use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
@@ -230,6 +231,14 @@ fn bars_render_empty_states(context: &mut TestAppContext) {
 #[gpui_kit::test]
 fn bars_render_settled_model_entries(context: &mut TestAppContext) {
     let result = settled_entries(context);
+    check(&result);
+}
+
+/// A tab past the strip starts hidden, a wheel brings it into view, and
+/// scrolling back to the first chip hides it again.
+#[gpui_kit::test]
+fn tab_strip_scroll_shows_a_chip_past_the_window(context: &mut TestAppContext) {
+    let result = scrolled_tabs(context);
     check(&result);
 }
 
@@ -483,9 +492,9 @@ fn two_tab_model() -> HostModel {
 ///
 /// # Errors
 /// Returns the closed-window error from GPUI.
-fn draw(
+fn draw<View: Render>(
     context: &mut TestAppContext,
-    handle: WindowHandle<BarsFixture>,
+    handle: WindowHandle<View>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     context.update_window(handle.into(), |_, window, application| {
         window.draw(application).clear(application);
@@ -521,7 +530,7 @@ fn entries_fit(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::E
     context.update(gpui_kit::init);
     let handle = context.add_window(|_, _| BarsFixture { state });
     context.update_window(handle.into(), |_, window, _| {
-        window.set_rem_size(gpui_kit::px(CHROME_FONT_SIZE));
+        window.set_rem_size(px(CHROME_FONT_SIZE));
     })?;
     draw(context, handle)?;
     context.update_window(handle.into(), |_, window, _| {
@@ -543,6 +552,145 @@ fn entries_fit(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::E
         Ok::<(), Box<dyn std::error::Error>>(())
     })??;
     Ok(())
+}
+
+/// A root that renders one session's tabs in a strip that records its scroll offset.
+struct TabScrollFixture {
+    /// The model state shown by the bars.
+    state: EngineState,
+    /// The strip's horizontal offset.
+    scroll: ScrollHandle,
+}
+
+impl Render for TabScrollFixture {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let bars = bars::render_placed(
+            context.theme(),
+            &self.state,
+            None,
+            None,
+            bars::TabPlacement::Bar,
+            ShortcutHint::None,
+            Some(&self.scroll),
+        );
+        div().size_full().child(bars.top).child(bars.bottom)
+    }
+}
+
+/// Draw more tabs than fit and scroll the strip to either end.
+///
+/// # Errors
+/// Returns a model encoding or closed-window error.
+fn scrolled_tabs(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    /// Narrow enough that the long tab names cannot all sit in the strip.
+    const WINDOW_WIDTH: f32 = 480.0;
+    /// Tall enough for the tab strip and the session strip.
+    const WINDOW_HEIGHT: f32 = 200.0;
+    /// A vertical wheel over the strip; the strip turns it into a horizontal move.
+    const SCROLL_DISTANCE: f32 = -8_000.0;
+    let mut state = EngineState::new();
+    let host = iznik_client::host::identity::HostId("build".to_owned());
+    let model = many_tab_model();
+    let first = model
+        .sessions
+        .first()
+        .and_then(|session| session.tabs.first())
+        .map(|tab| tab.id.0)
+        .ok_or("the fixture has no first tab")?;
+    let last = model
+        .sessions
+        .first()
+        .and_then(|session| session.tabs.last())
+        .map(|tab| tab.id.0)
+        .ok_or("the fixture has no last tab")?;
+    let payload = encode_host_model(&model)?;
+    state.apply(
+        &host,
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload,
+        },
+    );
+    let scroll = ScrollHandle::new();
+    context.update(gpui_kit::init);
+    let handle = context.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), {
+        let scroll = scroll.clone();
+        move |_, _| TabScrollFixture { state, scroll }
+    });
+    context.update_window(handle.into(), |_, window, _| {
+        window.set_rem_size(px(CHROME_FONT_SIZE));
+    })?;
+    draw(context, handle)?;
+    let first_id = format!("tab-build-{first}");
+    let last_id = format!("tab-build-{last}");
+    context.update_window(handle.into(), |_, window, application| {
+        if !window.find(first_id.clone()).visible() {
+            return Err("the first tab starts off the strip".into());
+        }
+        if window.find(last_id.clone()).visible() {
+            return Err("a tab past the strip is drawn before scrolling".into());
+        }
+        window.scroll(
+            "tab-bar",
+            ScrollDelta::Pixels(point(px(0.), px(SCROLL_DISTANCE))),
+            application,
+        );
+        if !window.find(last_id.clone()).visible() {
+            return Err("scrolling did not bring the last tab into the strip".into());
+        }
+        if window.find(first_id.clone()).visible() {
+            return Err("scrolling left the first tab on the strip".into());
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })??;
+    scroll.scroll_to_item(0);
+    draw(context, handle)?;
+    context.update_window(handle.into(), |_, window, _| {
+        if !window.find(first_id.clone()).visible() {
+            return Err("the selected tab did not scroll back into the strip".into());
+        }
+        if window.find(last_id.clone()).visible() {
+            return Err("scrolling to the first tab left the last tab on the strip".into());
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })??;
+    Ok(())
+}
+
+/// One session with more tabs than fit a narrow window.
+fn many_tab_model() -> HostModel {
+    const TAB_COUNT: u64 = 24;
+    const FIRST_TAB: u64 = 3;
+    let tabs = (0..TAB_COUNT)
+        .map(|index| {
+            let id = FIRST_TAB.saturating_add(index);
+            let pane = PaneId(id.saturating_add(100));
+            Tab {
+                id: TabId(id),
+                name: format!("documentation tab {index}"),
+                panes: vec![Pane {
+                    id: pane,
+                    title: "shell".to_owned(),
+                    working_directory: None,
+                    columns: 80,
+                    rows: 24,
+                }],
+                layout: LayoutNode::Leaf(pane),
+            }
+        })
+        .collect();
+    HostModel {
+        generation: Generation(1),
+        sessions: vec![Session {
+            id: SessionId(2),
+            name: "work".to_owned(),
+            tabs,
+        }],
+    }
 }
 
 /// A host with more sessions than fit the window, each holding one tab.

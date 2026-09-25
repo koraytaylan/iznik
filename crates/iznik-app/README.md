@@ -120,7 +120,9 @@ with its number instead. Command with Right or Up opens the next tab, and
 Command with Left or Down the previous one, wrapping at either end.
 Command-Option with those arrows does the same across sessions. Command-T
 opens a tab in the session on screen. Command-W closes the tab on screen,
-asking first when a pane in it is running a program.
+asking first when a pane in it is running a program. When the tab chips
+do not fit the strip, a wheel or a trackpad over the strip scrolls them, and
+choosing a tab that sits off the edge brings that chip into view.
 On Linux and Windows that Command key is the Super key and Option is Alt, the
 same keys the menu's Command shortcuts already use.
 
@@ -168,7 +170,7 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `bridge` | The engine as the window sees it: a `HostManager` on the tokio runtime it owns, one channel carrying every `ManagerEvent` to the window's thread, and the operations whose calls wait on a host's own task performed off it. |
 | `chrome` | The window's body and banners: the visible tab's pane grid, the stage that describes the next step, and the strips that say what is wrong. |
 | `clipboard` | OSC 52 clipboard writes decoded from pane output and carried on the terminal snapshot. |
-| `bars` | Model-driven tab and session bars rendered above the pane area. |
+| `bars` | Model-driven tab and session bars rendered above the pane area. The tab strip scrolls horizontally when its chips do not fit. |
 | `navigation` | Command shortcuts that move between tabs and sessions, and the numbers those chips show while Command is held. |
 | `actions` | Closed action inventory shared by default keybindings and the command palette. |
 | `palette` | Fuzzy, availability-aware command palette projection. |

@@ -53,6 +53,12 @@ test = "iznik-app::tab_label::default_tabs_show_the_program_or_the_directory"
 because = "the name is a pure function of the tab and the focused pane; a container adds nothing"
 
 [[claim]]
+id = "tab-strip-scrolls"
+statement = "A tab chip past the strip's right edge stays hidden until the strip is scrolled, which brings that chip into view and moves a chip off the left edge. Scrolling back to the first chip reverses it."
+test = "iznik-app::bars::tab_strip_scroll_shows_a_chip_past_the_window"
+because = "the headless GPUI renderer lays the strip out and applies the wheel; a container adds nothing"
+
+[[claim]]
 id = "tab-bar-live-drag-and-menu"
 statement = "Dragging a tab onto another reorders the session's tabs on a live host, and choosing Close Other Tabs from a tab's own right-click menu — opened in the shell's window, not the kit's wrapper — leaves only that tab."
 test = "iznik-app::end_to_end::tab_bar_drag_and_menu_drive_the_in_process_stack"
