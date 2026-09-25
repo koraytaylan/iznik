@@ -1,6 +1,6 @@
 //! Headless proofs for model-driven tab and session bars.
 
-use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AppContext, Context, IntoElement, ParentElement, Render, ScrollDelta, ScrollHandle, Styled,
@@ -239,6 +239,15 @@ fn bars_render_settled_model_entries(context: &mut TestAppContext) {
 #[gpui_kit::test]
 fn tab_strip_scroll_shows_a_chip_past_the_window(context: &mut TestAppContext) {
     let result = scrolled_tabs(context);
+    check(&result);
+}
+
+/// Tabs that sit in the title bar scroll the same way. The title bar must
+/// not grow with the chips, or the window clips them and the strip has
+/// nothing left to scroll.
+#[gpui_kit::test]
+fn title_bar_tab_strip_scrolls_a_chip_past_the_window(context: &mut TestAppContext) {
+    let result = scrolled_title_tabs(context);
     check(&result);
 }
 
@@ -554,6 +563,37 @@ fn entries_fit(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// The tab strip drawn inside the window title bar, as the shell does.
+struct TitleTabScrollFixture {
+    /// The model state shown by the bars.
+    state: EngineState,
+    /// The strip's horizontal offset.
+    scroll: ScrollHandle,
+}
+
+impl Render for TitleTabScrollFixture {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let bars = bars::render_placed(
+            context.theme(),
+            &self.state,
+            None,
+            None,
+            bars::TabPlacement::TitleBar,
+            ShortcutHint::None,
+            Some(&self.scroll),
+        );
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(TitleBar::new().child(bars.top))
+    }
+}
+
 /// A root that renders one session's tabs in a strip that records its scroll offset.
 struct TabScrollFixture {
     /// The model state shown by the bars.
@@ -655,6 +695,83 @@ fn scrolled_tabs(context: &mut TestAppContext) -> Result<(), Box<dyn std::error:
         }
         if window.find(last_id.clone()).visible() {
             return Err("scrolling to the first tab left the last tab on the strip".into());
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })??;
+    Ok(())
+}
+
+/// Draw the same overflowing tabs inside the title bar.
+///
+/// # Errors
+/// Returns a model encoding or closed-window error.
+fn scrolled_title_tabs(context: &mut TestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    /// Narrow enough that the long tab names cannot all sit in the title bar.
+    const WINDOW_WIDTH: f32 = 480.0;
+    /// Tall enough for the title bar.
+    const WINDOW_HEIGHT: f32 = 200.0;
+    /// A vertical wheel over the strip; the strip turns it into a horizontal move.
+    const SCROLL_DISTANCE: f32 = -8_000.0;
+    let mut state = EngineState::new();
+    let host = iznik_client::host::identity::HostId("build".to_owned());
+    let model = many_tab_model();
+    let first = model
+        .sessions
+        .first()
+        .and_then(|session| session.tabs.first())
+        .map(|tab| tab.id.0)
+        .ok_or("the fixture has no first tab")?;
+    let last = model
+        .sessions
+        .first()
+        .and_then(|session| session.tabs.last())
+        .map(|tab| tab.id.0)
+        .ok_or("the fixture has no last tab")?;
+    let payload = encode_host_model(&model)?;
+    state.apply(
+        &host,
+        &ToClient::Snapshot {
+            generation: model.generation,
+            payload,
+        },
+    );
+    let scroll = ScrollHandle::new();
+    context.update(gpui_kit::init);
+    let handle = context.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), {
+        let scroll = scroll.clone();
+        move |_, _| TitleTabScrollFixture { state, scroll }
+    });
+    context.update_window(handle.into(), |_, window, _| {
+        window.set_rem_size(px(CHROME_FONT_SIZE));
+    })?;
+    draw(context, handle)?;
+    let first_id = format!("tab-build-{first}");
+    let last_id = format!("tab-build-{last}");
+    context.update_window(handle.into(), |_, window, application| {
+        let strip = window.find("tab-bar").bounds();
+        let last_bounds = window.find(last_id.clone()).bounds();
+        if strip.right() > px(WINDOW_WIDTH) {
+            return Err(format!(
+                "the title bar strip is wider than the window: strip {strip:?}"
+            )
+            .into());
+        }
+        if !window.find(first_id.clone()).visible() {
+            return Err("the first tab starts off the title bar".into());
+        }
+        if window.find(last_id.clone()).visible() || last_bounds.left() < strip.right() {
+            return Err(format!(
+                "a tab past the title bar is drawn before scrolling: chip {last_bounds:?} strip {strip:?}"
+            )
+            .into());
+        }
+        window.scroll(
+            "tab-bar",
+            ScrollDelta::Pixels(point(px(0.), px(SCROLL_DISTANCE))),
+            application,
+        );
+        if !window.find(last_id.clone()).visible() {
+            return Err("scrolling did not bring the last tab into the title bar".into());
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     })??;

@@ -59,6 +59,12 @@ test = "iznik-app::bars::tab_strip_scroll_shows_a_chip_past_the_window"
 because = "the headless GPUI renderer lays the strip out and applies the wheel; a container adds nothing"
 
 [[claim]]
+id = "title-bar-tab-strip-scrolls"
+statement = "Tabs drawn in the window's title bar stay within that bar. A chip past its right edge stays hidden until the strip is scrolled, which brings that chip into view."
+test = "iznik-app::bars::title_bar_tab_strip_scrolls_a_chip_past_the_window"
+because = "the headless GPUI renderer lays the production title bar out and applies the wheel; a container adds nothing"
+
+[[claim]]
 id = "tab-bar-live-drag-and-menu"
 statement = "Dragging a tab onto another reorders the session's tabs on a live host, and choosing Close Other Tabs from a tab's own right-click menu — opened in the shell's window, not the kit's wrapper — leaves only that tab."
 test = "iznik-app::end_to_end::tab_bar_drag_and_menu_drive_the_in_process_stack"

@@ -103,13 +103,44 @@ pub fn render_placed(
         session_children.extend(sessions);
     }
     Bars {
-        top: tab_bar_container(theme, placement, scroll)
-            .children(tab_children)
-            .into_any_element(),
+        top: tab_bar(theme, placement, scroll, tab_children),
         bottom: session_bar_container(theme)
             .children(session_children)
             .into_any_element(),
     }
+}
+
+/// The tab strip, held to the title bar's width when it sits there.
+///
+/// Chips in the title bar's own flow widen that bar past the window, and the
+/// window then clips them with nothing to scroll. The viewport takes the
+/// bar's width and the strip is positioned over it, so a chip past the
+/// window scrolls into view instead of stretching the bar.
+fn tab_bar(
+    theme: &Theme,
+    placement: TabPlacement,
+    scroll: Option<&ScrollHandle>,
+    tabs: Vec<AnyElement>,
+) -> AnyElement {
+    let strip = tab_bar_container(theme, placement, scroll).children(tabs);
+    match placement {
+        TabPlacement::Bar => strip.into_any_element(),
+        TabPlacement::TitleBar => title_bar_viewport(strip).into_any_element(),
+    }
+}
+
+/// A frame the width of the title bar, with the strip painted over it.
+fn title_bar_viewport(strip: impl IntoElement) -> impl IntoElement {
+    div().flex_1().min_w_0().w_full().h_full().relative().child(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .overflow_hidden()
+            .child(strip),
+    )
 }
 
 /// The session strip's note when no host is held.
@@ -312,7 +343,7 @@ fn tab_bar_container(
             .bg(theme.title_bar)
             .border_b_1()
             .border_color(theme.title_bar_border),
-        TabPlacement::TitleBar => strip.h_full().flex_1(),
+        TabPlacement::TitleBar => strip.h_full().w_full(),
     }
 }
 
