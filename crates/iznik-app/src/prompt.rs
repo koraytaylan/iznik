@@ -519,7 +519,7 @@ fn ask(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -> Opti
             reorder_choices(session, tab.id),
         ),
         ActionId::MovePane => {
-            let pane = moving_pane(state, key, tab)?;
+            let pane = selected_pane(state, key, tab)?;
             choice(
                 "Move the pane to tab".to_owned(),
                 &host,
@@ -693,15 +693,54 @@ fn reorder_choices(session: &Session, moving: TabId) -> Vec<(String, SessionComm
         .collect()
 }
 
-/// The pane a move acts on: the host's focused pane when it is in the
-/// selected tab, otherwise the tab's first pane.
-fn moving_pane(state: &EngineState, key: &TabKey, tab: &Tab) -> Option<PaneId> {
+/// The session command for opening or closing the pane an action addresses.
+///
+/// `columns` and `rows` size a new pane. Closing ignores them.
+#[must_use]
+pub fn pane_command(
+    action: ActionId,
+    state: &EngineState,
+    key: &TabKey,
+    tab: &Tab,
+    columns: u16,
+    rows: u16,
+) -> Option<SessionCommand> {
+    let pane = selected_pane(state, key, tab)?;
+    match action {
+        ActionId::ClosePane => Some(SessionCommand::ClosePane { pane }),
+        ActionId::CreatePane => Some(crate::splits::split_command(
+            key.tab,
+            pane,
+            SplitDirection::Horizontal,
+            false,
+            columns,
+            rows,
+        )),
+        _other => None,
+    }
+}
+
+/// The pane an action on the selected tab addresses.
+///
+/// The focused pane when that pane is still in the tab. Otherwise the first
+/// pane in reading order. Focus is this window's own record: the scheduler's
+/// copy is not the one a command is built from, and a palette that has taken
+/// the keyboard has not cleared it. A record that names some other tab's pane
+/// is ignored, so the tab on screen is the one that changes.
+#[must_use]
+pub fn selected_pane(state: &EngineState, key: &TabKey, tab: &Tab) -> Option<PaneId> {
     let focus = state
         .model()
-        .host(&key.host)?
-        .focus
+        .host(&key.host)
+        .and_then(|view| view.focus)
         .filter(|focus| tab.panes.iter().any(|pane| pane.id == *focus));
-    focus.or_else(|| tab.panes.first().map(|pane| pane.id))
+    focus.or_else(|| {
+        tab.layout
+            .leaves()
+            .first()
+            .copied()
+            .or_else(|| tab.panes.first().map(|pane| pane.id))
+    })
 }
 
 /// Every other tab on the host with a pane to place the moving pane beside.

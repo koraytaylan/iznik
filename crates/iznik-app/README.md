@@ -119,8 +119,8 @@ tab chip with its number; holding Command and Option leads each session chip
 with its number instead. Command with Right or Up opens the next tab, and
 Command with Left or Down the previous one, wrapping at either end.
 Command-Option with those arrows does the same across sessions. Command-T
-opens a tab in the session on screen. Command-W closes the tab on screen,
-asking first when a pane in it is running a program. When the tab chips
+opens a tab in the session on screen. Command-W closes the focused pane of
+that tab, and the tab closes with the pane when it was the last one. When the tab chips
 do not fit the strip, a wheel or a trackpad over the strip scrolls them, and
 choosing a tab that sits off the edge brings that chip into view.
 On Linux and Windows that Command key is the Super key and Option is Alt, the

@@ -43,7 +43,7 @@ use iznik_client::host::state::{HostState, UpgradeOffer};
 use iznik_client::model::ClientModel;
 use iznik_client::reduce::{Effect, Notification, reduce};
 use iznik_protocol::command::{CommandOutcome, SessionCommand};
-use iznik_protocol::identity::CommandId;
+use iznik_protocol::identity::{CommandId, PaneId};
 use iznik_protocol::message::ToClient;
 
 use crate::bridge::{EngineBridge, EngineError, EngineEvent, Operation};
@@ -245,6 +245,17 @@ impl EngineState {
         }
     }
 
+    /// Remember the pane that has keyboard focus, on this window's model.
+    ///
+    /// The host's scheduler is told separately. A palette action is built from
+    /// this copy, and the record stays when the palette takes the keyboard, so
+    /// closing a pane still names the pane that had it.
+    pub fn note_focus(&mut self, host: &HostId, pane: Option<PaneId>) {
+        if let Some(view) = self.model.host_mut(host) {
+            view.focus = pane;
+        }
+    }
+
     /// Shows a command the engine has already submitted, under its number.
     ///
     /// A close then leaves this model at once, so the chip is gone before the
@@ -418,6 +429,19 @@ impl HostUi {
     #[must_use]
     pub fn bridge(&self) -> &EngineBridge {
         &self.bridge
+    }
+
+    /// Remember which pane has keyboard focus, and tell the host's scheduler.
+    ///
+    /// The window's model is a separate copy from the scheduler's. Writing
+    /// only the scheduler leaves a later `pane: close` with no pane to name.
+    ///
+    /// # Errors
+    ///
+    /// As [`EngineBridge::focus`].
+    pub fn focus(&mut self, alias: &str, pane: Option<PaneId>) -> Result<(), EngineError> {
+        self.state.note_focus(&HostId(alias.to_owned()), pane);
+        self.bridge.focus(alias, pane)
     }
 
     /// Apply an event after the shell has routed any terminal payload it carries.

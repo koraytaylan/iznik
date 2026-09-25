@@ -381,7 +381,10 @@ impl WindowShell {
         let selected = self.selected().cloned();
         let wanted = self.following.focus.clone().or_else(|| {
             let key = selected.as_ref()?;
-            if self.following.focused_tab.as_ref() == Some(key) {
+            // Staying on this tab keeps the keyboard where it is, including
+            // while a palette holds it. A focused pane that has since closed
+            // is no longer that place, so the pane still on screen takes it.
+            if self.following.focused_tab.as_ref() == Some(key) && !self.focused_pane_is_gone(key) {
                 return None;
             }
             let leaves = self.visible_panes();
@@ -415,5 +418,19 @@ impl WindowShell {
             }
             (None, _) => {}
         }
+    }
+
+    /// Whether the pane last recorded as focused is no longer on screen.
+    fn focused_pane_is_gone(&self, key: &TabKey) -> bool {
+        let Some(focus) = self
+            .hosts()
+            .state()
+            .model()
+            .host(&key.host)
+            .and_then(|view| view.focus)
+        else {
+            return false;
+        };
+        !self.visible_panes().contains(&focus)
     }
 }

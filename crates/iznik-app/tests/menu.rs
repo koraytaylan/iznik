@@ -13,17 +13,14 @@ use std::rc::Rc;
 use gpui_kit::{
     App, AppContext as _, ClipboardItem, Entity, Focusable, Subscription, TestAppContext,
 };
-use iznik_app::actions::ActionId;
 use iznik_app::grid::{GridInput, GridMetrics, TerminalGrid};
 use iznik_app::host_ui::Notice;
 use iznik_app::input::TerminalInput;
 use iznik_app::menu;
-use iznik_app::prompt::{Answer, Choice, Expected};
 use iznik_app::vt::{VtCommand, VtOptions, VtOutput, VtThread};
 use iznik_app::window::{ShellOptions, WindowShell};
 use iznik_client::host::identity::HostId;
 use iznik_client::host::manager::ManagerEvent;
-use iznik_protocol::command::SessionCommand;
 use iznik_protocol::identity::{Generation, PaneId, Sequence, SessionId, TabId};
 use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, Tab, encode_host_model};
 
@@ -56,10 +53,11 @@ fn tab_reaches_the_focused_pane(context: &mut TestAppContext) {
     check(&tab_reaches(context));
 }
 
-/// Command-W asks to close the tab on screen when that tab is running a program.
+/// Command-W closes the focused pane. A running program does not turn that
+/// into a request to close the whole tab.
 #[gpui_kit::test]
-fn command_close_asks_before_closing_the_running_tab(context: &mut TestAppContext) {
-    check(&close_asks(context));
+fn command_w_closes_the_focused_pane(context: &mut TestAppContext) {
+    check(&close_pane(context));
 }
 
 /// Command-T asks the host for a new tab in the session on screen.
@@ -220,7 +218,7 @@ fn tab_reaches(context: &mut TestAppContext) -> Result<(), Failed> {
     }
 }
 
-/// The second tab is the one Command-2 opens, and the one Command-W must close.
+/// The second tab is the one Command-2 opens, and the one whose pane Command-W closes.
 const RUNNING_TAB: TabId = TabId(2);
 /// The program that makes closing that tab ask first.
 const RUNNING_PROGRAM: &str = "vim";
@@ -337,11 +335,15 @@ fn new_tab(context: &mut TestAppContext) -> Result<(), Failed> {
 }
 
 /// Open a shell on an idle tab and a running one, move to the running tab,
-/// and press Command-W.
+/// record its pane as focused, and press Command-W.
+///
+/// The fixture host is not held, so the close is refused at once. That refusal
+/// is the evidence the chord asked the host to close the pane. A close of the
+/// whole tab would have asked first, because the pane is running a program.
 ///
 /// # Errors
 /// Returns fixture, window or assertion failures.
-fn close_asks(context: &mut TestAppContext) -> Result<(), Failed> {
+fn close_pane(context: &mut TestAppContext) -> Result<(), Failed> {
     context.update(|app| {
         gpui_kit::init(app);
         menu::install(app);
@@ -360,6 +362,9 @@ fn close_asks(context: &mut TestAppContext) -> Result<(), Failed> {
             context,
         )
     });
+    let notices = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&notices);
+    let mut subscription = None;
     handle.update(context, |shell, window, context| {
         shell.absorb(
             iznik_app::bridge::EngineEvent::Said(ManagerEvent::Snapshot {
@@ -370,6 +375,16 @@ fn close_asks(context: &mut TestAppContext) -> Result<(), Failed> {
             window,
             context,
         );
+        subscription = Some(context.subscribe(
+            &context.entity(),
+            move |_, _, notice: &Notice, _| {
+                observed.borrow_mut().push(notice.detail.clone());
+            },
+        ));
+        let refused = shell.hosts_mut().focus("build", Some(PaneId(12)));
+        if refused.is_ok() {
+            return Err("an unheld host accepted focus".into());
+        }
         Ok::<(), Failed>(())
     })??;
     context.update_window(handle.into(), |_, window, application| {
@@ -381,32 +396,33 @@ fn close_asks(context: &mut TestAppContext) -> Result<(), Failed> {
         return Err(format!("command-2 left {selected:?} on screen").into());
     }
     context.simulate_keystrokes(handle.into(), "cmd-w");
-    handle.update(context, |shell, _, _| {
-        let prompt = shell
-            .palette()
-            .prompt
-            .as_ref()
-            .ok_or("command-w did not ask to close the tab")?;
-        if prompt.action != Some(ActionId::CloseTab) {
-            return Err(format!("command-w asked for {:?}, not close tab", prompt.action).into());
+    drop(subscription);
+    handle.update(context, |shell, _, _| -> Result<(), Failed> {
+        if shell.palette().prompt.is_some() {
+            return Err("command-w asked a question instead of closing the pane".into());
         }
-        if !prompt.question.contains(RUNNING_PROGRAM) {
-            return Err(format!("the question omitted the program: {}", prompt.question).into());
+        let recorded = shell
+            .hosts()
+            .state()
+            .model()
+            .host(&HostId("build".to_owned()))
+            .and_then(|view| view.focus);
+        if recorded != Some(PaneId(12)) {
+            return Err(format!("focus was {recorded:?}, not the running pane").into());
         }
-        let Expected::Choice(choices) = &prompt.expected else {
-            return Err("close tab did not offer a confirmation".into());
-        };
-        let Some(Choice {
-            answer: Answer::Command { command, .. },
-            ..
-        }) = choices.first()
-        else {
-            return Err("the confirmation does not close a tab".into());
-        };
-        if *command != (SessionCommand::CloseTab { tab: RUNNING_TAB }) {
-            return Err(format!("the confirmation closes {command:?}").into());
+        if notices
+            .borrow()
+            .iter()
+            .any(|detail| detail.contains("is not held"))
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "command-w did not ask the host to close the pane: {:?}",
+                notices.borrow()
+            )
+            .into())
         }
-        Ok(())
     })?
 }
 

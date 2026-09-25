@@ -113,6 +113,12 @@ test = "iznik-app::prompt::set_layout_offers_even_arrangements"
 because = "the offered arrangements are pure over the model mirror"
 
 [[claim]]
+id = "command-palette-close-pane"
+statement = "pane: close addresses the focused pane of the tab on screen. When focus was never recorded it addresses that tab's first pane in reading order, and focus recorded on another tab's pane does not close that pane."
+test = "iznik-app::prompt::pane_close_acts_on_the_focused_pane_or_the_first"
+because = "which pane a close addresses is a pure projection of the window model and the selected tab"
+
+[[claim]]
 id = "command-palette-choice-filter"
 statement = "A choice answer selects within the fuzzy-filtered choices, and an answer matching nothing sends nothing."
 test = "iznik-app::prompt::choice_answers_index_the_filtered_choices"

@@ -352,25 +352,17 @@ impl WindowShell {
                 rows: DEFAULT_ROWS,
                 working_directory: None,
             }),
-            ActionId::CreatePane => {
+            ActionId::CreatePane | ActionId::ClosePane => {
                 let key = selected?;
-                let view = self.hosts.state().model().host(&key.host)?;
-                let target = view.focus.or_else(|| {
-                    self.tab(key)
-                        .and_then(|tab| tab.panes.first().map(|pane| pane.id))
-                })?;
-                Some(splits::split_command(
-                    key.tab,
-                    target,
-                    iznik_protocol::model::SplitDirection::Horizontal,
-                    false,
+                crate::prompt::pane_command(
+                    action,
+                    self.hosts.state(),
+                    key,
+                    self.tab(key)?,
                     DEFAULT_COLUMNS,
                     DEFAULT_ROWS,
-                ))
+                )
             }
-            ActionId::ClosePane => Some(SessionCommand::ClosePane {
-                pane: self.hosts.state().model().host(&selected?.host)?.focus?,
-            }),
             ActionId::RenameSession
             | ActionId::ReorderSessions
             | ActionId::SetLayout
@@ -765,11 +757,7 @@ impl WindowShell {
             &surface.read(context).focus_handle(context),
             window,
             move |shell, _, context| {
-                if let Err(error) = shell
-                    .hosts
-                    .bridge()
-                    .focus(&focus_key.host.0, Some(focus_key.pane))
-                {
+                if let Err(error) = shell.hosts.focus(&focus_key.host.0, Some(focus_key.pane)) {
                     shell.failure(&focus_key.host, error.to_string(), context);
                 }
             },

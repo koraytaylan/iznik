@@ -5,7 +5,7 @@ use iznik_app::actions::ActionId;
 use iznik_app::bridge::EngineEvent;
 use iznik_app::host_ui::EngineState;
 use iznik_app::prompt::{
-    Answer, HostOperation, Prompt, Step, answer, begin, choices, numbered_name,
+    Answer, HostOperation, Prompt, Step, answer, begin, choices, numbered_name, pane_command,
 };
 use iznik_app::window::TabKey;
 use iznik_client::bootstrap::probe::InstalledServer;
@@ -776,5 +776,48 @@ fn numbered_names_pass_taken_ones() {
     assert_eq!(
         numbered_name("shell", ["shell", "shell 2"].into_iter()),
         "shell 3"
+    );
+}
+
+/// The tab of `id` in the fixture model.
+fn held_tab(state: &EngineState, id: u64) -> Option<Tab> {
+    state.model().host(&host()).and_then(|view| {
+        view.model
+            .sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter())
+            .find(|tab| tab.id == TabId(id))
+            .cloned()
+    })
+}
+
+#[test]
+/// Closing names the focused pane of the tab on screen, or its first pane in
+/// reading order when focus was never recorded. Focus on another tab's pane
+/// does not close that pane.
+///
+/// # Panics
+///
+/// Panics when the fixture does not encode or the addressed pane differs.
+fn pane_close_acts_on_the_focused_pane_or_the_first() {
+    let mut held = state().expect("fixture");
+    let key = selected(10);
+    let tab = held_tab(&held, 10).expect("tab");
+    assert_eq!(
+        pane_command(ActionId::ClosePane, &held, &key, &tab, 80, 24),
+        Some(SessionCommand::ClosePane { pane: PaneId(100) }),
+        "with no focus recorded, the first pane in reading order closes"
+    );
+    held.note_focus(&host(), Some(PaneId(101)));
+    assert_eq!(
+        pane_command(ActionId::ClosePane, &held, &key, &tab, 80, 24),
+        Some(SessionCommand::ClosePane { pane: PaneId(101) }),
+        "the focused pane of this tab closes"
+    );
+    held.note_focus(&host(), Some(PaneId(110)));
+    assert_eq!(
+        pane_command(ActionId::ClosePane, &held, &key, &tab, 80, 24),
+        Some(SessionCommand::ClosePane { pane: PaneId(100) }),
+        "focus on another tab does not close that tab's pane"
     );
 }

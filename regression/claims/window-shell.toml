@@ -121,9 +121,9 @@ because = "the window's model is the engine state's own copy, and the deltas are
 
 [[claim]]
 id = "window-command-close"
-statement = "Command-W runs Close Tab on the tab on screen. When that tab is running a program, it asks before closing, and confirming closes that tab."
-test = "iznik-app::menu::command_close_asks_before_closing_the_running_tab"
-because = "the shortcut is the headless production shell's own key dispatch into the menu's Close Tab action; no container is required"
+statement = "Command-W closes the focused pane of the tab on screen. A tab that is running a program is not asked to close as a whole."
+test = "iznik-app::menu::command_w_closes_the_focused_pane"
+because = "the shortcut is the headless production shell's own key dispatch into the menu's Close Pane action; no container is required"
 
 [[claim]]
 id = "window-installs-its-own-main-menu"
