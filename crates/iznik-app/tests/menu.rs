@@ -2,6 +2,9 @@
 //! iznik rather than whatever application was frontmost before it, and the
 //! menu's terminal items act on the focused pane.
 
+#[path = "support/engine.rs"]
+mod engine;
+
 mod support;
 
 use std::cell::RefCell;
@@ -10,11 +13,19 @@ use std::rc::Rc;
 use gpui_kit::{
     App, AppContext as _, ClipboardItem, Entity, Focusable, Subscription, TestAppContext,
 };
+use iznik_app::actions::ActionId;
 use iznik_app::grid::{GridInput, GridMetrics, TerminalGrid};
+use iznik_app::host_ui::Notice;
 use iznik_app::input::TerminalInput;
 use iznik_app::menu;
+use iznik_app::prompt::{Answer, Choice, Expected};
 use iznik_app::vt::{VtCommand, VtOptions, VtOutput, VtThread};
-use iznik_protocol::identity::Sequence;
+use iznik_app::window::{ShellOptions, WindowShell};
+use iznik_client::host::identity::HostId;
+use iznik_client::host::manager::ManagerEvent;
+use iznik_protocol::command::SessionCommand;
+use iznik_protocol::identity::{Generation, PaneId, Sequence, SessionId, TabId};
+use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, Tab, encode_host_model};
 
 /// Fixture setup and assertion failures.
 type Failed = Box<dyn std::error::Error>;
@@ -43,6 +54,18 @@ fn the_menu_paste_item_reaches_the_focused_pane(context: &mut TestAppContext) {
 #[gpui_kit::test]
 fn tab_reaches_the_focused_pane(context: &mut TestAppContext) {
     check(&tab_reaches(context));
+}
+
+/// Command-W asks to close the tab on screen when that tab is running a program.
+#[gpui_kit::test]
+fn command_close_asks_before_closing_the_running_tab(context: &mut TestAppContext) {
+    check(&close_asks(context));
+}
+
+/// Command-T asks the host for a new tab in the session on screen.
+#[gpui_kit::test]
+fn command_t_asks_the_host_for_a_tab(context: &mut TestAppContext) {
+    check(&new_tab(context));
 }
 
 /// Convert fixture failures into a named assertion outside the GPUI macro.
@@ -194,6 +217,227 @@ fn tab_reaches(context: &mut TestAppContext) -> Result<(), Failed> {
         Ok(())
     } else {
         Err("tab moved focus out of the pane".into())
+    }
+}
+
+/// The second tab is the one Command-2 opens, and the one Command-W must close.
+const RUNNING_TAB: TabId = TabId(2);
+/// The program that makes closing that tab ask first.
+const RUNNING_PROGRAM: &str = "vim";
+
+/// The pane Command-T must not type into.
+fn open_pane() -> iznik_app::vt::PaneKey {
+    iznik_app::vt::PaneKey {
+        host: HostId("build".to_owned()),
+        pane: PaneId(11),
+    }
+}
+
+/// Press Command-T on a pane that already has a screen, and record the refusal.
+///
+/// The fixture host is not held, so a tab command is refused at once. That
+/// refusal is the evidence the chord asked for a tab rather than typing `t`.
+///
+/// # Errors
+/// Returns fixture, window or assertion failures.
+fn new_tab(context: &mut TestAppContext) -> Result<(), Failed> {
+    context.update(|app| {
+        gpui_kit::init(app);
+        menu::install(app);
+    });
+    let (bridge, _directory) = engine::start("menu-new-tab")?;
+    let thread = Rc::new(VtThread::start(VtOptions::default())?);
+    let handle = context.add_window(|window, context| {
+        WindowShell::new(
+            bridge,
+            thread,
+            ShellOptions {
+                update_interval: None,
+                ..ShellOptions::default()
+            },
+            window,
+            context,
+        )
+    });
+    let notices = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&notices);
+    let typed = Rc::new(RefCell::new(Vec::new()));
+    let typed_observed = Rc::clone(&typed);
+    let mut subscriptions = Vec::new();
+    handle.update(context, |shell, window, context| {
+        let host = open_pane().host;
+        shell.absorb(
+            iznik_app::bridge::EngineEvent::Said(ManagerEvent::Snapshot {
+                host: host.clone(),
+                generation: Generation(1),
+                payload: encode_host_model(&running_tabs())?,
+            }),
+            window,
+            context,
+        );
+        shell.absorb(
+            iznik_app::bridge::EngineEvent::Said(ManagerEvent::Screen {
+                host,
+                pane: open_pane().pane,
+                sequence: Sequence(0),
+                columns: 80,
+                rows: 24,
+                bytes: b"ready".to_vec(),
+            }),
+            window,
+            context,
+        );
+        subscriptions.push(context.subscribe(
+            &context.entity(),
+            move |_, _, notice: &Notice, _| {
+                observed.borrow_mut().push(notice.detail.clone());
+            },
+        ));
+        if let Some(surface) = shell.surface(&open_pane()) {
+            let grid = surface.read(context).grid().clone();
+            subscriptions.push(context.subscribe(&grid, move |_, _, event: &GridInput, _| {
+                typed_observed.borrow_mut().push(event.clone());
+            }));
+        }
+        Ok::<(), Failed>(())
+    })??;
+    let started = std::time::Instant::now();
+    loop {
+        let ready = handle.update(context, |shell, window, app| {
+            shell.update(window, app);
+            shell
+                .surface(&open_pane())
+                .is_some_and(|surface| surface.read(app).grid().read(app).snapshot().is_some())
+        })?;
+        if ready {
+            break;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(2) {
+            return Err("the pane never showed its screen".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    context.update_window(handle.into(), |_, window, application| {
+        window.draw(application).clear(application);
+    })?;
+    context.simulate_keystrokes(handle.into(), "cmd-t");
+    drop(subscriptions);
+    if !typed.borrow().is_empty() {
+        return Err(format!("command-t reached the terminal: {:?}", typed.borrow()).into());
+    }
+    if notices
+        .borrow()
+        .iter()
+        .any(|detail| detail.contains("not held"))
+    {
+        Ok(())
+    } else {
+        Err(format!("command-t did not ask for a tab: {:?}", notices.borrow()).into())
+    }
+}
+
+/// Open a shell on an idle tab and a running one, move to the running tab,
+/// and press Command-W.
+///
+/// # Errors
+/// Returns fixture, window or assertion failures.
+fn close_asks(context: &mut TestAppContext) -> Result<(), Failed> {
+    context.update(|app| {
+        gpui_kit::init(app);
+        menu::install(app);
+    });
+    let (bridge, _directory) = engine::start("menu-close")?;
+    let thread = Rc::new(VtThread::start(VtOptions::default())?);
+    let handle = context.add_window(|window, context| {
+        WindowShell::new(
+            bridge,
+            thread,
+            ShellOptions {
+                update_interval: None,
+                ..ShellOptions::default()
+            },
+            window,
+            context,
+        )
+    });
+    handle.update(context, |shell, window, context| {
+        shell.absorb(
+            iznik_app::bridge::EngineEvent::Said(ManagerEvent::Snapshot {
+                host: HostId("build".to_owned()),
+                generation: Generation(1),
+                payload: encode_host_model(&running_tabs())?,
+            }),
+            window,
+            context,
+        );
+        Ok::<(), Failed>(())
+    })??;
+    context.update_window(handle.into(), |_, window, application| {
+        window.draw(application).clear(application);
+    })?;
+    context.simulate_keystrokes(handle.into(), "cmd-2");
+    let selected = handle.update(context, |shell, _, _| shell.selected().map(|key| key.tab))?;
+    if selected != Some(RUNNING_TAB) {
+        return Err(format!("command-2 left {selected:?} on screen").into());
+    }
+    context.simulate_keystrokes(handle.into(), "cmd-w");
+    handle.update(context, |shell, _, _| {
+        let prompt = shell
+            .palette()
+            .prompt
+            .as_ref()
+            .ok_or("command-w did not ask to close the tab")?;
+        if prompt.action != Some(ActionId::CloseTab) {
+            return Err(format!("command-w asked for {:?}, not close tab", prompt.action).into());
+        }
+        if !prompt.question.contains(RUNNING_PROGRAM) {
+            return Err(format!("the question omitted the program: {}", prompt.question).into());
+        }
+        let Expected::Choice(choices) = &prompt.expected else {
+            return Err("close tab did not offer a confirmation".into());
+        };
+        let Some(Choice {
+            answer: Answer::Command { command, .. },
+            ..
+        }) = choices.first()
+        else {
+            return Err("the confirmation does not close a tab".into());
+        };
+        if *command != (SessionCommand::CloseTab { tab: RUNNING_TAB }) {
+            return Err(format!("the confirmation closes {command:?}").into());
+        }
+        Ok(())
+    })?
+}
+
+/// An idle shell and a tab running vim, in that order.
+fn running_tabs() -> HostModel {
+    HostModel {
+        generation: Generation(1),
+        sessions: vec![Session {
+            id: SessionId(1),
+            name: "work".to_owned(),
+            tabs: vec![
+                one_tab(TabId(1), PaneId(11), "zsh"),
+                one_tab(RUNNING_TAB, PaneId(12), RUNNING_PROGRAM),
+            ],
+        }],
+    }
+}
+
+/// One leaf tab whose pane title is `title`.
+fn one_tab(tab: TabId, pane: PaneId, title: &str) -> Tab {
+    Tab {
+        id: tab,
+        name: format!("tab {}", tab.0),
+        panes: vec![Pane {
+            id: pane,
+            title: title.to_owned(),
+            working_directory: None,
+            columns: 80,
+            rows: 24,
+        }],
+        layout: LayoutNode::Leaf(pane),
     }
 }
 

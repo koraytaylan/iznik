@@ -118,9 +118,11 @@ the bottom bar, in the order the chips are drawn. Holding Command leads each
 tab chip with its number; holding Command and Option leads each session chip
 with its number instead. Command with Right or Up opens the next tab, and
 Command with Left or Down the previous one, wrapping at either end.
-Command-Option with those arrows does the same across sessions. On Linux and
-Windows that Command key is the Super key and Option is Alt, the same keys
-the menu's Command shortcuts already use.
+Command-Option with those arrows does the same across sessions. Command-T
+opens a tab in the session on screen. Command-W closes the tab on screen,
+asking first when a pane in it is running a program.
+On Linux and Windows that Command key is the Super key and Option is Alt, the
+same keys the menu's Command shortcuts already use.
 
 ## A host older than the app
 

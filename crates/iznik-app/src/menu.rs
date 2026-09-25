@@ -101,6 +101,8 @@ fn keybindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-n", NewSession, None),
         KeyBinding::new("cmd-t", NewTab, None),
+        // Command-W closes the tab on screen, the same way Command-T opens one.
+        KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-p", CommandPalette, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-c", Copy, Some("Terminal")),

@@ -108,6 +108,18 @@ test = "iznik-app::navigation::command_shortcut_moves_between_tabs_and_sessions"
 because = "the shortcuts and the numbered chips are the headless production shell's own key dispatch and rendering; no container is required"
 
 [[claim]]
+id = "window-command-new-tab"
+statement = "Command-T asks the host for a new tab in the session on screen, and the focused terminal does not receive that key."
+test = "iznik-app::menu::command_t_asks_the_host_for_a_tab"
+because = "the shortcut is the headless production shell's own key dispatch into the menu's New Tab action, over a real terminal surface; no container is required"
+
+[[claim]]
+id = "window-command-close"
+statement = "Command-W runs Close Tab on the tab on screen. When that tab is running a program, it asks before closing, and confirming closes that tab."
+test = "iznik-app::menu::command_close_asks_before_closing_the_running_tab"
+because = "the shortcut is the headless production shell's own key dispatch into the menu's Close Tab action; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"
