@@ -55,7 +55,7 @@ pub(crate) fn put_optional(sink: &mut dyn Sink, text: Option<&str>) {
 }
 
 /// Appends the count of the elements that follow. A count that does not fit
-/// four bytes is written saturated, which [`encode`] then refuses as
+/// four bytes is written saturated, which `encode` then refuses as
 /// oversize: no encoding this crate hands out carries a truncated count.
 pub fn put_count(sink: &mut dyn Sink, count: usize) {
     let count = u32::try_from(count).unwrap_or(u32::MAX);
