@@ -811,7 +811,7 @@ fn upgraded(
     force: bool,
     refused: Option<&str>,
 ) -> Result<(), String> {
-    match manager.upgrade(alias, force) {
+    match manager.upgrade(alias, force, false) {
         Ok(()) => match refused {
             Some(words) => Err(format!(
                 "expected a refusal saying {words:?} and it upgraded"

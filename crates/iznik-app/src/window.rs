@@ -279,7 +279,9 @@ impl WindowShell {
         match action {
             ActionId::RemoveHost => return self.hosts.remove_host(&host.0).map(|()| true),
             ActionId::ReconnectHost => return self.hosts.reconnect(&host.0).map(|()| true),
-            ActionId::UpgradeHost => return self.hosts.upgrade(&host.0, true).map(|()| true),
+            ActionId::UpgradeHost => {
+                return self.hosts.upgrade(&host.0, true, false).map(|()| true);
+            }
             ActionId::UninstallHost => return self.hosts.uninstall(&host.0).map(|()| true),
             _ => {}
         }

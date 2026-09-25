@@ -14,8 +14,10 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 
 | Module | Holds | Landed by |
 |---|---|---|
+| `adopt` | The record a daemon writes before it is replaced and the next one reads: version, model, and each pane's descriptor, child, sequence, ring and terminal attributes. | `adopted-state` (plan 0008) |
 | `connection` | One accepted stream: the handshake, the dispatch of every control message, and the single writer that owns the order of frames on the wire. | `client-connections` (plan 0004) |
-| `daemon` | The daemon: runtime paths, the single-instance lock, the accept loop, idle shutdown, logging, and the `--daemon`, `--foreground`, `--stop` and `--version` entry points. | `daemon-lifecycle` (plan 0004) |
+| `daemon` | The daemon: runtime paths, the single-instance lock, the accept loop, idle shutdown, logging, and the `--daemon`, `--foreground`, `--stop`, `--version`, `--adopt` and `--adopt-request` entry points. | `daemon-lifecycle` (plan 0004) |
+| `daemon::adopt` | Replacing the running daemon in place: write the record, keep the descriptors, and exec the staged binary, or leave this process serving when that exec fails. | `in-place-replacement` (plan 0008) |
 | `daemon::agent` | The SSH agent a pane is told about: one stable link in the runtime directory, re-pointed by every relay at the agent of the connection it arrived on. | `server-review` |
 | `daemon::idle` | The idle interval after which a daemon with no panes and no clients exits. | `daemon-lifecycle` (plan 0004) |
 | `daemon::lock` | The exclusive non-blocking lock that enforces a single daemon instance and names the holder. | `daemon-lifecycle` (plan 0004) |
@@ -30,6 +32,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `multiplexer::credit` | Credit windows in bytes: the focused pane's larger window, refills, consumption, and the stale threshold. | `channel-multiplexer` (plan 0003) |
 | `multiplexer::scheduler` | One scheduling round: the focused cursor first, then round-robin, a cursor at zero credit skipped, a lagging background cursor marked stale. | `multiplexer-assembly` (plan 0003) |
 | `pane` | The pane: pseudoterminal, mirror, history ring and mark observer held together by one VT task, behind one interface. | `pane-assembly` (plan 0002) |
+| `pane::adopt` | A pane built from an inherited master and the bytes the previous process had already produced. | `mirror-rebuild` (plan 0008) |
 | `pane::vt` | The VT task a pane's mirror lives in, on the mirror thread: every chunk the child writes fed to the mirror, the history ring and the marks, and the mirror's query answers written back while no client is subscribed. | `server-review` |
 | `pty` | Pseudoterminal ownership: spawning the login shell in its own session and turning its blocking descriptor into async streams. | `pty-spawn` (plan 0002) |
 | `pty::program` | The foreground program and directory of a pane's process, read so a tab can name itself without shell integration. | `session-registry` (plan 0003) |
@@ -42,6 +45,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `session::instance` | The daemon instance: a number picked at random when a registry is made and announced in `Hello`, so a client can tell this daemon's pane numbers from the last one's. | `server-review` |
 | `session::remembered` | What the host answered each identified client's recent commands, kept across its connections — so many clients, so many commands each, so long — so a command sent again after a dropped link is answered rather than applied twice. | `server-review` |
 | `session::registry` | The registry's operations and their delta order, the ingestion of pane marks, sizes and exits, and the debug-only validation after every operation. | `session-registry` (plan 0003) |
+| `session::registry::adopt` | Building a registry from a carried record and the masters it names, so the first screen is the emulator's account of the ring. | `mirror-rebuild` (plan 0008) |
 | `session::registry::ingest` | Marks, sizes and exits pulled into the model, plus a foreground-program sample when the daemon is naming tabs from one. | `session-registry` (plan 0003) |
 | `session::registry::program` | Sampling each pane's foreground program, while any client is attached, and publishing it as the pane title and directory. | `session-registry` (plan 0003) |
 | `session::registry::summary` | What a delta is, for a log: its kind and the ids it names, never a name, title or directory a user's log bundle would carry. | `server-review` |

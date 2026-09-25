@@ -9,6 +9,8 @@
 
 use std::error::Error;
 use std::io;
+#[cfg(unix)]
+use std::os::fd::IntoRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -163,6 +165,12 @@ pub enum PtyError {
         /// What went wrong.
         source: Box<dyn Error + Send + Sync>,
     },
+    /// An inherited descriptor is not open, so it is not used.
+    #[cfg(unix)]
+    NotOpen {
+        /// The descriptor number.
+        descriptor: std::os::fd::RawFd,
+    },
     /// The program could not be spawned.
     Spawn {
         /// The program asked for.
@@ -198,6 +206,10 @@ impl core::fmt::Display for PtyError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             PtyError::Open { source } => write!(formatter, "opening the pseudoterminal: {source}"),
+            #[cfg(unix)]
+            PtyError::NotOpen { descriptor } => {
+                write!(formatter, "descriptor {descriptor} is not open")
+            }
             PtyError::Spawn { program, source } => {
                 write!(formatter, "spawning `{program}`: {source}")
             }
@@ -219,6 +231,8 @@ impl Error for PtyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             PtyError::WorkingDirectory { source, .. } => Some(source),
+            #[cfg(unix)]
+            PtyError::NotOpen { .. } => None,
             PtyError::Open { source }
             | PtyError::Spawn { source, .. }
             | PtyError::Resize { source }
@@ -235,8 +249,10 @@ pub struct PtyProcess {
     /// The master end, kept open for the pane's lifetime and used to resize.
     master: Box<dyn MasterPty + Send>,
     /// The child, owned so its handle lives; it is waited for through `nix`.
+    /// The child handle from a spawn. An adopted pane has none: the child
+    /// was started by the process this one replaced, and is waited for by pid.
     #[cfg(unix)]
-    _child: Box<dyn Child + Send + Sync>,
+    _child: Option<Box<dyn Child + Send + Sync>>,
     /// The child on Windows, taken by the reaper that waits for it.
     #[cfg(windows)]
     child: Shared<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
@@ -264,6 +280,56 @@ impl PtyProcess {
     #[must_use]
     pub fn process_id(&self) -> u32 {
         self.process_id
+    }
+
+    /// Owns `descriptor` as this pane's master. `process_id` is the child
+    /// already running on it, which this process did not spawn.
+    ///
+    /// # Errors
+    ///
+    /// [`PtyError::NotOpen`] when `descriptor` is not open, and
+    /// [`PtyError::Open`] when it cannot be made a master. A process id of
+    /// zero is refused: signalling it would hit this process's own group.
+    #[cfg(unix)]
+    pub fn adopt(descriptor: std::os::fd::RawFd, process_id: u32) -> Result<PtyProcess, PtyError> {
+        if process_id == 0 {
+            return Err(PtyError::Open {
+                source: "the child has no process id".into(),
+            });
+        }
+        let master = iznik::pty_adopt(descriptor).map_err(|error| {
+            if error.detail.contains("not open") {
+                PtyError::NotOpen { descriptor }
+            } else {
+                PtyError::Open {
+                    source: error.into(),
+                }
+            }
+        })?;
+        Ok(PtyProcess {
+            master,
+            _child: None,
+            process_id,
+            reaped: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// A second descriptor for the same master, for a test that adopts one
+    /// while this process keeps the other.
+    ///
+    /// # Errors
+    ///
+    /// [`PtyError::Open`] when the master has no descriptor or cannot be
+    /// duplicated.
+    #[cfg(unix)]
+    pub fn duplicate_master(&self) -> Result<std::os::fd::RawFd, PtyError> {
+        let descriptor = self.master.as_raw_fd().ok_or_else(|| PtyError::Open {
+            source: "the master has no descriptor".into(),
+        })?;
+        let owned = iznik::duplicate_descriptor(descriptor).map_err(|error| PtyError::Open {
+            source: error.into(),
+        })?;
+        Ok(owned.into_raw_fd())
     }
 
     /// The pseudoterminal's master end, from which the caller clones a reader
@@ -610,7 +676,7 @@ pub fn spawn(options: &SpawnOptions) -> Result<PtyProcess, PtyError> {
     {
         Ok(PtyProcess {
             master: pair.master,
-            _child: child,
+            _child: Some(child),
             process_id,
             reaped,
         })

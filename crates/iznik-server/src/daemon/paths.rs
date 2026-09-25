@@ -24,6 +24,12 @@ const LOCK_NAME: &str = "server.lock";
 /// The log, beside both.
 const LOG_NAME: &str = "server.log";
 
+/// The adoption record, beside the socket. It never leaves this directory.
+const STATE_NAME: &str = "adopted.state";
+
+/// The socket a replacement request arrives on, beside the client socket.
+const ADOPT_NAME: &str = "adopt.sock";
+
 /// The mode the runtime directory is created with: the owner's, and nobody
 /// else's — a socket anyone can connect to is a shell anyone can have.
 #[cfg(unix)]
@@ -43,6 +49,10 @@ pub struct RuntimePaths {
     /// The link every pane's `SSH_AUTH_SOCK` names, which each relay points
     /// at the agent of its own connection.
     pub agent: PathBuf,
+    /// The record a replacement writes and the next process reads.
+    pub state: PathBuf,
+    /// Where a request to replace this process arrives.
+    pub adopt: PathBuf,
 }
 
 /// Why the runtime paths could not be settled.
@@ -122,6 +132,8 @@ impl RuntimePaths {
             lock: directory.join(LOCK_NAME),
             log: directory.join(LOG_NAME),
             agent: directory.join(agent::AGENT_NAME),
+            state: directory.join(STATE_NAME),
+            adopt: directory.join(ADOPT_NAME),
             directory: directory.to_path_buf(),
         })
     }

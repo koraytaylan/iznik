@@ -146,6 +146,14 @@ impl EngineState {
         self.hosts.iter()
     }
 
+    /// Whether `host`'s connected server can keep its sessions across an upgrade.
+    #[must_use]
+    pub fn adopts(&self, host: &HostId) -> bool {
+        self.hosts
+            .get(host)
+            .is_some_and(|standing| standing.connection.adopts())
+    }
+
     /// The newer server a host is offering, when it is offering one.
     ///
     /// What a dialog renders, and the whole of the condition for showing it: a
@@ -429,8 +437,13 @@ impl HostUi {
     /// # Errors
     ///
     /// [`EngineError::Stopped`] when the engine has ended.
-    pub fn upgrade(&mut self, alias: &str, force: bool) -> Result<(), EngineError> {
-        self.bridge.upgrade(alias, force)
+    pub fn upgrade(
+        &mut self,
+        alias: &str,
+        force: bool,
+        keep_sessions: bool,
+    ) -> Result<(), EngineError> {
+        self.bridge.upgrade(alias, force, keep_sessions)
     }
 
     /// Takes iznik off a host.

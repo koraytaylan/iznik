@@ -14,6 +14,8 @@
 //! Every timing is a field of [`DaemonOptions`], so no test waits ten minutes
 //! to watch an idle daemon go.
 
+#[cfg(unix)]
+pub mod adopt;
 pub mod agent;
 pub mod idle;
 pub mod lock;
@@ -73,6 +75,12 @@ const STOP: &str = "--stop";
 
 /// Prints the versions and nothing else.
 const VERSION: &str = "--version";
+
+/// Serves on descriptors inherited from the process this one replaced.
+const ADOPT: &str = "--adopt";
+
+/// Asks the running daemon to replace itself with a staged binary.
+const ADOPT_REQUEST: &str = "--adopt-request";
 
 /// Every timing and default the daemon runs under, so a test can shorten any
 /// of them.
@@ -283,27 +291,69 @@ pub async fn serve(
 ) -> Result<(), DaemonError> {
     let held = Lock::acquire(&paths.lock).await?;
     let listener = owner_only(|| socket::bind(&paths.socket))?;
+    run_with(paths, options, shutdown, listener, held, None).await
+}
+
+/// The accept loop on `listener`, holding `held`. A replacement passes the
+/// listener and the lock it inherited instead of binding and locking again.
+///
+/// # Errors
+///
+/// The lock, binding and mirror failures [`serve`] returns.
+///
+/// # Panics
+///
+/// It spawns, so it must be called from within a Tokio runtime.
+pub(super) async fn run_with(
+    paths: &RuntimePaths,
+    options: DaemonOptions,
+    shutdown: watch::Receiver<bool>,
+    listener: socket::Listener,
+    held: Lock,
+    prepared: Option<Registry>,
+) -> Result<(), DaemonError> {
     let executable = std::env::current_exe().ok();
-    let registry = Registry::new(
-        RegistryDefaults {
-            program: options.program.clone(),
-            terminfo_directory: executable
-                .as_deref()
-                .and_then(terminfo_beside),
-            agent_socket: Some(paths.agent.clone()),
-            program_interval: crate::pty::program::PROGRAM_INTERVAL,
-        },
-        Arc::new(Blocking::new(HistoryBudget::new(
-            DEFAULT_HISTORY_BUDGET_BYTES,
-        ))),
-        MirrorThread::start()?,
-    )
+    let registry = match prepared {
+        Some(existing) => existing,
+        None => Registry::new(
+            RegistryDefaults {
+                program: options.program.clone(),
+                terminfo_directory: executable.as_deref().and_then(terminfo_beside),
+                agent_socket: Some(paths.agent.clone()),
+                program_interval: crate::pty::program::PROGRAM_INTERVAL,
+            },
+            Arc::new(Blocking::new(HistoryBudget::new(
+                DEFAULT_HISTORY_BUDGET_BYTES,
+            ))),
+            MirrorThread::start()?,
+        ),
+    };
     // Read now, once: the file may be replaced by the next build's upload
     // while this daemon goes on running the bytes it started from.
-    .built_from(executable.as_deref().and_then(build_beside));
+    let registry = registry.built_from(executable.as_deref().and_then(build_beside));
     let registry = Arc::new(RwLock::new(registry));
+    #[cfg(unix)]
+    let door = {
+        use std::os::fd::AsRawFd;
+        let adopting = owner_only(|| socket::bind(&paths.adopt))?;
+        Some(adopt::Door {
+            requests: adopt::watch(adopting),
+            listener: listener.as_raw_fd(),
+            lock: held.descriptor(),
+            paths: paths.clone(),
+            open: true,
+        })
+    };
     tracing::info!(socket = %paths.socket.display(), "the daemon is listening");
-    let outcome = accept_until(&listener, &registry, &options, shutdown).await;
+    let outcome = accept_until(
+        &listener,
+        &registry,
+        &options,
+        shutdown,
+        #[cfg(unix)]
+        door,
+    )
+    .await;
     let _removed = std::fs::remove_file(&paths.socket);
     // Hung up, given their grace, and only then killed: a shell told to stop
     // with the daemon gets the chance to save its history that closing its
@@ -329,9 +379,16 @@ async fn accept_until(
     registry: &Arc<RwLock<Registry>>,
     options: &DaemonOptions,
     mut shutdown: watch::Receiver<bool>,
+    #[cfg(unix)] mut door: Option<adopt::Door>,
 ) -> Result<(), DaemonError> {
     let signal = registry.read().await.signal();
-    let mut listener_loop = AcceptLoop::new(listener, registry, signal)?;
+    let mut listener_loop = AcceptLoop::new(
+        listener,
+        registry,
+        signal,
+        #[cfg(unix)]
+        door.take(),
+    )?;
     // Once every sender is gone nothing can ask this daemon to stop, and a
     // `changed` that returns at once for ever would spin.
     let mut asked = true;
@@ -364,6 +421,9 @@ struct AcceptLoop<'listener> {
     attached: Attached,
     /// How long it has had nothing to hold.
     idling: Idle,
+    /// Replacement requests, on a host that can keep its sessions.
+    #[cfg(unix)]
+    door: Option<adopt::Door>,
 }
 
 impl<'listener> AcceptLoop<'listener> {
@@ -376,6 +436,7 @@ impl<'listener> AcceptLoop<'listener> {
         listener: &'listener socket::Listener,
         registry: &'listener Arc<RwLock<Registry>>,
         signal: Arc<Notify>,
+        #[cfg(unix)] door: Option<adopt::Door>,
     ) -> Result<AcceptLoop<'listener>, DaemonError> {
         let terminated =
             stop::Termination::install().map_err(|source| DaemonError::Io { source })?;
@@ -393,6 +454,8 @@ impl<'listener> AcceptLoop<'listener> {
             ticker,
             attached: Attached::default(),
             idling: Idle::new(),
+            #[cfg(unix)]
+            door,
         })
     }
 
@@ -406,6 +469,47 @@ impl<'listener> AcceptLoop<'listener> {
     ///
     /// It spawns through [`admit`], so it must be called from within a Tokio
     /// runtime.
+    #[cfg(unix)]
+    async fn turn(
+        &mut self,
+        shutdown: &mut watch::Receiver<bool>,
+        asked: &mut bool,
+    ) -> Option<bool> {
+        tokio::select! {
+            accepted = self.listener.accept() => {
+                let accepted = accepted.map(|(stream, _address)| stream);
+                admit(accepted, self.registry, &self.attached).await;
+                Some(false)
+            }
+            changed = shutdown.changed(), if *asked => {
+                if told(&changed, shutdown, asked) {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            _signalled = self.terminated.recv() => None,
+            () = self.signal.notified() => {
+                self.registry.write().await.ingest();
+                Some(false)
+            }
+            request = async {
+                let Some(door) = self.door.as_mut() else {
+                    std::future::pending().await
+                };
+                if !door.open {
+                    std::future::pending::<()>().await;
+                }
+                door.requests.recv().await
+            } => {
+                self.receive_replacement(request).await;
+                Some(false)
+            }
+            _tick = self.ticker.tick() => Some(true),
+        }
+    }
+
+    #[cfg(not(unix))]
     async fn turn(
         &mut self,
         shutdown: &mut watch::Receiver<bool>,
@@ -431,6 +535,24 @@ impl<'listener> AcceptLoop<'listener> {
             }
             _tick = self.ticker.tick() => Some(true),
         }
+    }
+
+    /// Runs a replacement, or stops listening once the request channel closes.
+    #[cfg(unix)]
+    async fn receive_replacement(&mut self, request: Option<adopt::Request>) {
+        let Some(request) = request else {
+            if let Some(door) = self.door.as_mut() {
+                door.open = false;
+            }
+            return;
+        };
+        let (listener, lock, paths) = {
+            let Some(door) = self.door.as_ref() else {
+                return;
+            };
+            (door.listener, door.lock, door.paths.clone())
+        };
+        let _outcome = adopt::perform(request, self.registry, listener, lock, &paths).await;
     }
 
     /// Turns what the panes have reported into deltas, records what the daemon
@@ -821,7 +943,7 @@ async fn stop(arguments: &[OsString]) -> ExitCode {
 /// that shorten the idle interval and say what a pane runs.
 fn usage_line() -> String {
     format!(
-        "usage: iznik-server <{DAEMON} | {FOREGROUND} | {STOP} | {VERSION}> \
+        "usage: iznik-server <{DAEMON} | {FOREGROUND} | {STOP} | {VERSION} | {ADOPT} | {ADOPT_REQUEST}> \
          [{IDLE_FLAG} <seconds>] [{PROGRAM_FLAG} <path>]"
     )
 }
@@ -839,6 +961,10 @@ pub async fn run(arguments: &[OsString]) -> ExitCode {
         Some(FOREGROUND) => foreground(arguments).await,
         Some(DAEMON) => start(arguments).await,
         Some(STOP) => stop(arguments).await,
+        #[cfg(unix)]
+        Some(ADOPT) => adopt::adopted(arguments).await,
+        #[cfg(unix)]
+        Some(ADOPT_REQUEST) => adopt::request(arguments).await,
         _unknown => {
             complain(&usage_line()).await;
             ExitCode::from(crate::USAGE_EXIT_CODE)

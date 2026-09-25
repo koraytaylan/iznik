@@ -1,8 +1,15 @@
 //! The C ABI over `iznik-client`: the entry points the application calls, the error, the events, and the pane byte pipe.
 #![doc = include_str!("../README.md")]
 
+#[cfg(unix)]
+mod adopt;
 mod delivery;
 pub mod error;
+#[cfg(unix)]
+pub use adopt::{
+    AdoptFailure, adopt_file, adopt_listener, duplicate_descriptor, keep_across_exec, pty_adopt,
+    termios_image,
+};
 pub mod model;
 pub mod pane;
 mod shape;
@@ -706,7 +713,7 @@ pub unsafe extern "C" fn iznik_host_upgrade(
     // SAFETY: the caller's obligations, as `iznik_host_add`'s.
     unsafe {
         with_host(client, alias, error, |manager, named| {
-            manager.upgrade(named, force)
+            manager.upgrade(named, force, false)
         })
     }
 }

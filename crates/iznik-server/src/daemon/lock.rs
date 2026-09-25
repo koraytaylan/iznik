@@ -237,6 +237,41 @@ impl Lock {
         })
     }
 
+    /// The descriptor the kernel's lock is held on, so a replacement can
+    /// inherit it instead of locking a second time.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn descriptor(&self) -> std::os::fd::RawFd {
+        use std::os::fd::{AsFd, AsRawFd};
+        self.held.as_fd().as_raw_fd()
+    }
+
+    /// A lock already held on `file` by this process, which is what an
+    /// inherited lock descriptor is.
+    ///
+    /// # Errors
+    ///
+    /// [`LockError::Io`] when the descriptor cannot be locked, which it
+    /// cannot when it is not the lock this process already holds.
+    #[cfg(unix)]
+    pub fn inherit(path: PathBuf, file: File) -> Result<Lock, LockError> {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(held) => Ok(Lock { held, path }),
+            // Forgetting the file leaves the descriptor open. Closing it would
+            // drop the lock the next process still has to inherit.
+            Err((file, errno)) => {
+                // `into_raw_fd` leaves the descriptor open. Closing it would
+                // drop the lock the next process still has to inherit.
+                use std::os::fd::IntoRawFd;
+                let _descriptor = file.into_raw_fd();
+                Err(LockError::Io {
+                    path,
+                    source: std::io::Error::from(errno),
+                })
+            }
+        }
+    }
+
     /// Where the lock file is.
     #[must_use]
     pub fn path(&self) -> &Path {

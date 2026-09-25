@@ -12,4 +12,4 @@ pub mod message;
 pub mod model;
 pub mod program;
 pub mod reconcile;
-mod wire;
+pub mod wire;

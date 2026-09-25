@@ -1,0 +1,14 @@
+# The record is pure over bytes. A container cannot make a truncated field
+# mean something else.
+
+[[claim]]
+id = "adopted-state-round-trip"
+statement = "A generated state encodes to exactly its bytes and decodes back to itself, including a ring of bytes a terminal would not print."
+test = "iznik-server::adopted_state::adopted_state_round_trips_including_bytes_a_terminal_would_not_print"
+because = "the codec is a pure function of the bytes; a container adds nothing"
+
+[[claim]]
+id = "adopted-state-refused"
+statement = "Another version, a truncated field and trailing bytes are each refused by name, and nothing is guessed."
+test = "iznik-server::adopted_state::adopted_state_refuses_another_version_a_truncated_field_and_trailing_bytes"
+because = "each refusal is a pure function of the bytes; a container adds nothing"

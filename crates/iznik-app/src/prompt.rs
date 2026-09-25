@@ -91,7 +91,11 @@ pub enum HostOperation {
     /// Reconnect it now.
     Reconnect,
     /// Replace its server with this build's.
-    Upgrade,
+    Upgrade {
+        /// Keep the sessions when the server can adopt them. Ending them is
+        /// the other choice, and the only one a server that cannot adopt offers.
+        keep_sessions: bool,
+    },
     /// Take iznik off it.
     Uninstall,
 }
@@ -176,6 +180,9 @@ pub fn begin_with(
 ) -> Option<Step> {
     if action == ActionId::AddHost {
         return Some(Step::Ask(add_host_prompt(ssh_aliases.to_vec())));
+    }
+    if action == ActionId::UpgradeHost {
+        return upgrade_step(state, selected);
     }
     if let Some(operation) = host_operation(action) {
         return host_step(action, operation, state, selected);
@@ -320,7 +327,6 @@ fn host_operation(action: ActionId) -> Option<HostOperation> {
     match action {
         ActionId::RemoveHost => Some(HostOperation::Remove),
         ActionId::ReconnectHost => Some(HostOperation::Reconnect),
-        ActionId::UpgradeHost => Some(HostOperation::Upgrade),
         ActionId::UninstallHost => Some(HostOperation::Uninstall),
         _ => None,
     }
@@ -331,14 +337,87 @@ fn applies(operation: HostOperation, connection: &HostState) -> bool {
     match operation {
         HostOperation::Remove | HostOperation::Uninstall => true,
         HostOperation::Reconnect => !matches!(connection, HostState::Connected { .. }),
-        HostOperation::Upgrade => matches!(
-            connection,
-            HostState::Connected {
-                upgrade: Some(_),
-                ..
-            }
-        ),
+        HostOperation::Upgrade { .. } => false,
     }
+}
+
+/// The upgrade prompt. A server that can adopt offers keeping the sessions
+/// beside ending them, and each choice says what it costs. One that cannot
+/// offers only the ending, with the warning it has always carried.
+fn upgrade_step(state: &EngineState, selected: Option<&TabKey>) -> Option<Step> {
+    let mut hosts: Vec<&HostId> = state
+        .hosts()
+        .filter(|(_, report)| {
+            matches!(
+                report.connection,
+                HostState::Connected {
+                    upgrade: Some(_),
+                    ..
+                }
+            )
+        })
+        .map(|(host, _)| host)
+        .collect();
+    if let Some(position) =
+        selected.and_then(|key| hosts.iter().position(|host| **host == key.host))
+    {
+        let chosen = hosts.remove(position);
+        hosts.insert(0, chosen);
+    }
+    if hosts.is_empty() {
+        return None;
+    }
+    let adopting = hosts.len() == 1 && state.adopts(hosts.first()?);
+    let question = if adopting {
+        "Upgrade the server?"
+    } else {
+        "Upgrade the server? This ends every session on the host."
+    };
+    let mut choices = Vec::new();
+    for host in hosts {
+        if state.adopts(host) {
+            choices.push(Choice {
+                label: format!(
+                    "Keep the sessions on {}. The shells stay; this window reconnects.",
+                    host.0
+                ),
+                answer: Answer::Host {
+                    operation: HostOperation::Upgrade {
+                        keep_sessions: true,
+                    },
+                    host: host.clone(),
+                },
+            });
+            choices.push(Choice {
+                label: format!(
+                    "End the sessions on {}. Every shell on the host stops.",
+                    host.0
+                ),
+                answer: Answer::Host {
+                    operation: HostOperation::Upgrade {
+                        keep_sessions: false,
+                    },
+                    host: host.clone(),
+                },
+            });
+        } else {
+            choices.push(Choice {
+                label: format!("Upgrade {}", host.0),
+                answer: Answer::Host {
+                    operation: HostOperation::Upgrade {
+                        keep_sessions: false,
+                    },
+                    host: host.clone(),
+                },
+            });
+        }
+    }
+    Some(Step::Ask(Prompt {
+        action: Some(ActionId::UpgradeHost),
+        question: question.to_owned(),
+        initial: String::new(),
+        expected: Expected::Choice(choices),
+    }))
 }
 
 /// A host operation performed at once on the only host it applies to, or a
@@ -364,7 +443,10 @@ fn host_step(
     }
     // Uninstalling and upgrading always ask, even with a single host: both end
     // every session the host holds, and the daemon *is* the sessions.
-    let always_asks = matches!(operation, HostOperation::Uninstall | HostOperation::Upgrade);
+    let always_asks = matches!(
+        operation,
+        HostOperation::Uninstall | HostOperation::Upgrade { .. }
+    );
     if !always_asks && let [only] = hosts.as_slice() {
         return Some(Step::Perform(Answer::Host {
             operation,
@@ -377,7 +459,7 @@ fn host_step(
     let (question, verb) = match operation {
         HostOperation::Remove => ("Stop holding which host?", "Remove"),
         HostOperation::Reconnect => ("Reconnect which host?", "Reconnect"),
-        HostOperation::Upgrade => (
+        HostOperation::Upgrade { .. } => (
             "Upgrade the server? This ends every session on the host.",
             "Upgrade",
         ),

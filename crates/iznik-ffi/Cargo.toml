@@ -18,6 +18,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 iznik-client = { path = "../iznik-client" }
 iznik-protocol = { path = "../iznik-protocol" }
+# The inherited-master handle is a `portable-pty` master. The package is
+# already what the server uses; this crate is where the unsafe ownership lives.
+anyhow = "=1.0.104"
+libc = "=0.2.189"
+portable-pty = "=0.9.0"
 
 [dev-dependencies]
 iznik-testkit = { path = "../iznik-testkit" }

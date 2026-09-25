@@ -1,0 +1,14 @@
+# An inherited pseudoterminal master is a kernel object, the same one on this
+# machine as in a container, so the proof is the process that adopts it.
+
+[[claim]]
+id = "adoption-boundary-resize"
+statement = "An adopted master resizes its terminal and its child sees the new size."
+test = "iznik-server::pty_spawn::pty_spawn_an_adopted_master_resizes_reads_and_writes"
+because = "a pseudoterminal is a kernel object, identical on the host container and here"
+
+[[claim]]
+id = "adoption-boundary-closed"
+statement = "A descriptor number that is not open is refused by name, not used."
+test = "iznik-server::pty_spawn::pty_spawn_a_closed_descriptor_is_refused"
+because = "the refusal is a check of one descriptor in this process; a container adds nothing"

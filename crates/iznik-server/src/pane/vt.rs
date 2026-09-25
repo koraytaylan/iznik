@@ -12,7 +12,7 @@ use iznik_protocol::message::MarkKind;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::{Begun, PaneState, Request};
-use crate::history::ring::PaneHistory;
+use crate::history::ring::{CarriedRing, PaneHistory};
 use crate::pty::spawn::ExitStatus;
 use crate::pty::streams::{InputHandle, OutputStream};
 use crate::terminal::marks::{MarkEvent, MarkObserver};
@@ -48,6 +48,9 @@ pub(super) struct VtTask {
     pub(super) exit: watch::Receiver<Option<ExitStatus>>,
     /// How long to keep reading once the shell has been reaped.
     pub(super) drain: Duration,
+    /// Bytes the pane already produced, fed to the mirror before anything new
+    /// arrives. Empty for a pane this process spawned.
+    pub(super) replay: Vec<u8>,
     /// Signals whether the mirror was created, so the spawn fails if it was not.
     pub(super) ready: oneshot::Sender<Result<(), MirrorError>>,
 }
@@ -69,6 +72,7 @@ impl VtTask {
             mut requests,
             mut exit,
             drain,
+            replay,
             ready,
         } = self;
         // Held for the whole run: however the task ends — the output
@@ -87,76 +91,196 @@ impl VtTask {
                 return;
             }
         };
-        let mut observer = MarkObserver::new();
-        let mut screen_state = ScreenState::new();
-        let mut prompts = 0_u64;
-        let mut subscribers = 0_usize;
-        let mut answered_through = Sequence(0);
-        let mut requests_open = true;
-        let mut exit_open = true;
-        let mut ending: Option<tokio::time::Instant> = None;
+        // The carried ring, through the same emulator a live chunk uses. The
+        // history already holds it, so it is not appended again, and any
+        // answer the emulator would write is discarded: the child was answered
+        // when the bytes were first produced.
+        if !replay.is_empty() {
+            mirror.feed(&replay);
+            let _discarded = mirror.take_pending_responses();
+        }
+        let mut live = Live {
+            output: &mut output,
+            responses: &responses,
+            history: &history,
+            marks: &marks,
+            state,
+            requests: &mut requests,
+            exit: &mut exit,
+            drain,
+            mirror,
+            observer: MarkObserver::new(),
+            screen_state: ScreenState::new(),
+            prompts: 0,
+            subscribers: 0,
+            answered_through: Sequence(0),
+            requests_open: true,
+            exit_open: true,
+            ending: None,
+        };
+        live.serve().await;
+    }
+}
+
+/// The mirror and the counters a running VT task mutates.
+struct Live<'task> {
+    /// The child's output.
+    output: &'task mut OutputStream,
+    /// Where query answers are written.
+    responses: &'task InputHandle,
+    /// The history ring.
+    history: &'task Arc<Mutex<PaneHistory>>,
+    /// Mark events.
+    marks: &'task broadcast::Sender<MarkEvent>,
+    /// The published pane state.
+    state: &'task watch::Sender<PaneState>,
+    /// Requests from the pane.
+    requests: &'task mut mpsc::UnboundedReceiver<Request>,
+    /// The shell's exit, once the reaper has one.
+    exit: &'task mut watch::Receiver<Option<ExitStatus>>,
+    /// How long to keep reading after the shell is reaped.
+    drain: Duration,
+    /// The emulator.
+    mirror: Mirror,
+    /// Mark observation.
+    observer: MarkObserver,
+    /// Primary-screen memory.
+    screen_state: ScreenState,
+    /// Prompts observed so far.
+    prompts: u64,
+    /// Clients subscribed now.
+    subscribers: usize,
+    /// How far the mirror has answered queries.
+    answered_through: Sequence,
+    /// Whether the request channel is still open.
+    requests_open: bool,
+    /// Whether the exit watch is still open.
+    exit_open: bool,
+    /// When the drain after the shell's exit ends.
+    ending: Option<tokio::time::Instant>,
+}
+
+impl Live<'_> {
+    /// Feeds output and answers requests until the pane ends.
+    async fn serve(&mut self) {
         loop {
-            let deadline = ending.unwrap_or_else(tokio::time::Instant::now);
-            // Requests before output: a resize queued before the child was
-            // told of it reaches the mirror before anything the child drew
-            // for it. The drain's end before output too, so a job that
-            // never stops printing cannot hold an ended pane open.
-            tokio::select! {
-                biased;
-                request = requests.recv(), if requests_open => match request {
-                    Some(Request::Screen(reply)) => {
-                        let sequence = newest_of(&history);
-                        let _sent = reply.send(screen_state.serialize(&mirror, sequence));
-                    }
-                    Some(Request::Resize { columns: width, rows: height }) => {
-                        mirror.resize(width, height);
-                        publish(state, &history, &mirror, false, prompts);
-                    }
-                    Some(Request::Subscribe { screen, reply }) => {
-                        subscribers = subscribers.saturating_add(1);
-                        mirror.set_subscriber_count(subscribers);
-                        let begun = begin(&mirror, &screen_state, &history, screen, answered_through);
-                        let _sent = reply.send(begun);
-                    }
-                    Some(Request::Unsubscribe) => {
-                        subscribers = subscribers.saturating_sub(1);
-                        mirror.set_subscriber_count(subscribers);
-                    }
-                    None => requests_open = false,
-                },
-                changed = exit.changed(), if exit_open && ending.is_none() => {
-                    if changed.is_err() {
-                        exit_open = false;
-                    } else if exit.borrow_and_update().is_some() {
-                        ending = tokio::time::Instant::now().checked_add(drain);
-                        if ending.is_none() {
-                            break;
-                        }
-                    }
-                }
-                () = tokio::time::sleep_until(deadline), if ending.is_some() => break,
-                chunk = output.next() => match chunk {
-                    Some(bytes) => {
-                        let prompted = feed_chunk(
-                            &bytes,
-                            &mut mirror,
-                            &mut observer,
-                            &mut screen_state,
-                            &history,
-                            &marks,
-                            &responses,
-                        );
-                        prompts = prompts.saturating_add(prompted);
-                        if subscribers == 0 {
-                            answered_through = newest_of(&history);
-                        }
-                        publish(state, &history, &mirror, false, prompts);
-                    }
-                    None => break,
-                },
+            if self.turn().await.is_none() {
+                break;
             }
         }
-        publish(state, &history, &mirror, true, prompts);
+        publish(self.state, self.history, &self.mirror, true, self.prompts);
+    }
+
+    /// One event. `None` ends the pane.
+    async fn turn(&mut self) -> Option<()> {
+        let deadline = self.ending.unwrap_or_else(tokio::time::Instant::now);
+        // Requests before output: a resize queued before the child was told
+        // of it reaches the mirror before anything the child drew for it.
+        tokio::select! {
+            biased;
+            request = self.requests.recv(), if self.requests_open => {
+                self.on_request(request).await;
+                Some(())
+            }
+            changed = self.exit.changed(), if self.exit_open && self.ending.is_none() => {
+                self.on_exit(&changed)
+            }
+            () = tokio::time::sleep_until(deadline), if self.ending.is_some() => None,
+            chunk = self.output.next() => self.on_chunk(chunk),
+        }
+    }
+
+    /// Applies one request.
+    async fn on_request(&mut self, request: Option<Request>) {
+        match request {
+            Some(Request::Screen(reply)) => {
+                let sequence = newest_of(self.history);
+                let _sent = reply.send(self.screen_state.serialize(&self.mirror, sequence));
+            }
+            Some(Request::Resize { columns, rows }) => {
+                self.mirror.resize(columns, rows);
+                publish(self.state, self.history, &self.mirror, false, self.prompts);
+            }
+            Some(Request::Subscribe { screen, reply }) => {
+                self.subscribers = self.subscribers.saturating_add(1);
+                self.mirror.set_subscriber_count(self.subscribers);
+                let begun = begin(
+                    &self.mirror,
+                    &self.screen_state,
+                    self.history,
+                    screen,
+                    self.answered_through,
+                );
+                let _sent = reply.send(begun);
+            }
+            Some(Request::Unsubscribe) => {
+                self.subscribers = self.subscribers.saturating_sub(1);
+                self.mirror.set_subscriber_count(self.subscribers);
+            }
+            Some(Request::Quiesce(reply)) => {
+                let carried = self.quiesce().await;
+                let _sent = reply.send(carried);
+            }
+            Some(Request::Resume) => self.output.resume(),
+            None => self.requests_open = false,
+        }
+    }
+
+    /// Notes that the shell has been reaped, and starts the drain.
+    ///
+    /// `None` when the drain cannot be scheduled, which ends the pane.
+    fn on_exit(&mut self, changed: &Result<(), watch::error::RecvError>) -> Option<()> {
+        if changed.is_err() {
+            self.exit_open = false;
+            return Some(());
+        }
+        if self.exit.borrow_and_update().is_some() {
+            self.ending = tokio::time::Instant::now().checked_add(self.drain);
+            self.ending?;
+        }
+        Some(())
+    }
+
+    /// Feeds one chunk. `None` when the output has closed, which ends the pane.
+    fn on_chunk(&mut self, chunk: Option<Vec<u8>>) -> Option<()> {
+        let bytes = chunk?;
+        let prompted = feed_chunk(
+            &bytes,
+            &mut self.mirror,
+            &mut self.observer,
+            &mut self.screen_state,
+            self.history,
+            self.marks,
+            self.responses,
+        );
+        self.prompts = self.prompts.saturating_add(prompted);
+        if self.subscribers == 0 {
+            self.answered_through = newest_of(self.history);
+        }
+        publish(self.state, self.history, &self.mirror, false, self.prompts);
+        Some(())
+    }
+
+    /// Stops the reader, feeds every chunk it had already queued, and copies the ring.
+    async fn quiesce(&mut self) -> CarriedRing {
+        self.output.pause().await;
+        while let Some(bytes) = self.output.try_next() {
+            let prompted = feed_chunk(
+                &bytes,
+                &mut self.mirror,
+                &mut self.observer,
+                &mut self.screen_state,
+                self.history,
+                self.marks,
+                self.responses,
+            );
+            self.prompts = self.prompts.saturating_add(prompted);
+            publish(self.state, self.history, &self.mirror, false, self.prompts);
+        }
+        self.history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .tail()
     }
 }
 

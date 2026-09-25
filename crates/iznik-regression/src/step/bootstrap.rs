@@ -67,6 +67,9 @@ struct Body {
     /// Whether an upgrade may end the panes the host is holding.
     #[serde(default)]
     force: bool,
+    /// Keep the sessions. The daemon execs the new binary in place.
+    #[serde(default)]
+    keep: bool,
     /// Where the artifacts are on the machine running this.
     #[serde(default)]
     artifacts: Option<PathBuf>,
@@ -193,6 +196,7 @@ async fn replace(
     let held = artifacts(body)?;
     let replacing = Replacement {
         force: body.force,
+        keep_sessions: body.keep,
         ..Replacement::default()
     };
     match upgrade(transport, &held, options, replacing, deadline).await {

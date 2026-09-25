@@ -1,0 +1,37 @@
+# The replacement is an exec of a real daemon. The shell that answers
+# afterwards is the child that was there before it.
+
+[[claim]]
+id = "in-place-replacement-keeps-the-shell"
+statement = "A real daemon's pane keeps its child across the replacement, and a client reconnecting talks to that same shell."
+test = "iznik-server::adopt_replace::a_replacement_keeps_the_same_shell"
+because = "the proof is one process execing itself; the container scenario repeats it on a host"
+
+[[claim]]
+id = "in-place-replacement-keeps-the-shell-on-a-host"
+statement = "On a host, a keeping upgrade execs the new server in place: the same shell prints again afterwards, twice, and the daemon that answers is the binary just installed."
+scenario = "upgrade-keeps-sessions"
+
+[[claim]]
+id = "in-place-replacement-exec-fails"
+statement = "An exec that cannot run the staged binary leaves the old daemon serving."
+test = "iznik-server::adopt_replace::a_failed_exec_leaves_the_daemon_serving"
+because = "a failed exec is the same process, which a container cannot observe more directly"
+
+[[claim]]
+id = "in-place-replacement-rollback"
+statement = "An adoption that refuses leaves the previous binary in place and the host reaching its old sessions."
+test = "iznik-server::adopt_replace::a_refused_adoption_restores_the_previous_binary"
+because = "the rollback is the new process execing the previous binary; the sessions are the same child"
+
+[[claim]]
+id = "in-place-replacement-second-pane"
+statement = "When the second carried pane cannot be built, the first shell is not killed, and the previous binary still reaches it."
+test = "iznik-server::adopt_replace::a_failed_second_pane_leaves_the_first_shell"
+because = "the failure is inside registry adoption, after the first pane exists; a refusal before any pane is built does not kill it"
+
+[[claim]]
+id = "in-place-replacement-truncated-record"
+statement = "A truncated adoption record is refused by name after the exec, and the previous binary keeps serving the same shell."
+test = "iznik-server::adopt_replace::a_truncated_record_restores_the_previous_server"
+because = "the refusal is the new process reading the record; a marker written before that read does not enter it"

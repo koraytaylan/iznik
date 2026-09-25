@@ -371,7 +371,7 @@
 - `naga` — reached from `wgpu`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`.
 - `ndk-sys` — reached from `wgpu-hal`.
 - `new_debug_unreachable` — reached from `futf`, `rav1e`, `string_cache`.
-- `nix` — process groups, signals, user lookups and file locks as safe wrappers, so no crate but the FFI boundary needs `unsafe`.
+- `nix` — process groups, signals, user lookups, file locks and `poll` as safe wrappers, so no crate but the FFI boundary needs `unsafe`.
 - `no_std_io2` — reached from `bitstream-io`.
 - `nohash-hasher` — reached from `serde-saphyr`.
 - `nom` — reached from `av1-grain`, `cexpr`, `rav1e`.

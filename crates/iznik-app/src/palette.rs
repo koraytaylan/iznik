@@ -547,7 +547,11 @@ pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bri
             // Forced, because a same-version server missing a capability is
             // exactly the case this exists for and nothing else will replace
             // it; the prompt has already said every session on the host ends.
-            HostOperation::Upgrade => shell.hosts_mut().upgrade(&host.0, true),
+            HostOperation::Upgrade { keep_sessions } => {
+                shell
+                    .hosts_mut()
+                    .upgrade(&host.0, !keep_sessions, keep_sessions)
+            }
             HostOperation::Uninstall => shell.hosts_mut().uninstall(&host.0),
         },
         Answer::Command { host, command } => shell.dispatch_command(&host.0, command).map(|_| ()),

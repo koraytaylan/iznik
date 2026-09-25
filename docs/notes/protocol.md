@@ -520,12 +520,17 @@ Capabilities are a `u32` bit set:
 | `ZSTD` | 0 | 1 |
 | `RESUME` | 1 | 2 |
 | `REORDER_SESSIONS` | 2 | 4 |
+| `ADOPT` | 3 | 8 |
 | `INSTANCE` | 4 | 16 |
 | `ANSWERED` | 5 | 32 |
 | `IDENTIFY` | 6 | 64 |
 | `BUILD` | 7 | 128 |
 
-Bit 3 is unassigned.
+`ADOPT` says the server can replace itself in place and keep the sessions it
+holds. It gates nothing a client sends: the record stays on the host. A server
+without the bit is not missing a feature, and a client that sees the bit still
+speaks the same messages. The choice is offered by the application, not by a
+new frame.
 
 Unknown bits are preserved rather than dropped, so a newer peer round-trips
 its own advertisement intact and can tell what it advertised from what came

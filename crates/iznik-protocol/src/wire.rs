@@ -18,7 +18,7 @@ pub(crate) const PRESENT: u8 = 1;
 
 /// Where an encoding goes: a byte count first, so an oversize message is
 /// refused before anything is allocated, and then a buffer.
-pub(crate) trait Sink {
+pub trait Sink {
     /// Appends bytes.
     fn put(&mut self, bytes: &[u8]);
 }
@@ -36,7 +36,7 @@ impl Sink for Vec<u8> {
 }
 
 /// Appends a length-delimited string or payload.
-pub(crate) fn put_bytes(sink: &mut dyn Sink, bytes: &[u8]) {
+pub fn put_bytes(sink: &mut dyn Sink, bytes: &[u8]) {
     let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
     sink.put(&length.to_le_bytes());
     sink.put(bytes);
@@ -57,7 +57,7 @@ pub(crate) fn put_optional(sink: &mut dyn Sink, text: Option<&str>) {
 /// Appends the count of the elements that follow. A count that does not fit
 /// four bytes is written saturated, which [`encode`] then refuses as
 /// oversize: no encoding this crate hands out carries a truncated count.
-pub(crate) fn put_count(sink: &mut dyn Sink, count: usize) {
+pub fn put_count(sink: &mut dyn Sink, count: usize) {
     let count = u32::try_from(count).unwrap_or(u32::MAX);
     sink.put(&count.to_le_bytes());
 }
@@ -89,7 +89,8 @@ pub(crate) fn encode(write: impl Fn(&mut dyn Sink)) -> Result<Vec<u8>, MessageEr
 
 /// A cursor over a message's bytes that remembers the discriminant every
 /// refusal names.
-pub(crate) struct Reader<'bytes> {
+#[derive(Debug)]
+pub struct Reader<'bytes> {
     /// The whole message.
     bytes: &'bytes [u8],
     /// How many bytes have been read.
@@ -103,7 +104,8 @@ impl<'bytes> Reader<'bytes> {
     /// encodings, whose first field is a value rather than a tag. Their
     /// refusals name [`NO_DISCRIMINANT`], which no message claims, so a
     /// refusal inside a model is never read as a refusal of a message.
-    pub(crate) fn payload(bytes: &'bytes [u8]) -> Reader<'bytes> {
+    #[must_use]
+    pub fn payload(bytes: &'bytes [u8]) -> Reader<'bytes> {
         Reader {
             bytes,
             position: 0,
@@ -166,7 +168,7 @@ impl<'bytes> Reader<'bytes> {
     /// # Errors
     ///
     /// [`MessageError::Truncated`] when fewer bytes are left.
-    pub(crate) fn array<const WIDTH: usize>(&mut self) -> Result<[u8; WIDTH], MessageError> {
+    pub fn array<const WIDTH: usize>(&mut self) -> Result<[u8; WIDTH], MessageError> {
         let rest = self.bytes.get(self.position..).unwrap_or_default();
         let Some(chunk) = rest.first_chunk::<WIDTH>() else {
             return Err(MessageError::Truncated {
@@ -186,7 +188,7 @@ impl<'bytes> Reader<'bytes> {
     /// # Errors
     ///
     /// [`MessageError::Truncated`] when four bytes are not left.
-    pub(crate) fn count(&mut self) -> Result<usize, MessageError> {
+    pub fn count(&mut self) -> Result<usize, MessageError> {
         let count = u32::from_le_bytes(self.array()?);
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
@@ -196,7 +198,7 @@ impl<'bytes> Reader<'bytes> {
     /// # Errors
     ///
     /// [`MessageError::Truncated`] when the length or the bytes are cut short.
-    pub(crate) fn bytes(&mut self) -> Result<Vec<u8>, MessageError> {
+    pub fn bytes(&mut self) -> Result<Vec<u8>, MessageError> {
         let length = u32::from_le_bytes(self.array()?);
         let taken = self.take(usize::try_from(length).unwrap_or(usize::MAX))?;
         Ok(taken.to_vec())
@@ -255,7 +257,7 @@ impl<'bytes> Reader<'bytes> {
     /// # Errors
     ///
     /// [`MessageError::TrailingBytes`] when bytes follow the last field.
-    pub(crate) fn finish(self) -> Result<(), MessageError> {
+    pub fn finish(self) -> Result<(), MessageError> {
         let count = self.bytes.len().saturating_sub(self.position);
         if count == 0 {
             Ok(())

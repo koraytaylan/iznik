@@ -91,6 +91,8 @@ iznik-server --daemon       # start one in the background and return once its so
 iznik-server --foreground   # the same, in this terminal, for watching it
 iznik-server --stop         # end the one that holds the lock
 iznik-server --version      # the crate version and the protocol version, one line
+iznik-server --adopt        # serve inherited sessions after an in-place replacement
+iznik-server --adopt-request # ask the running daemon to replace itself and keep its sessions
 ```
 
 The daemon listens on `$XDG_RUNTIME_DIR/iznik/server.sock`, falls back to

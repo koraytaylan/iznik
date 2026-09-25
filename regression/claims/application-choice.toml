@@ -1,0 +1,20 @@
+# The choice is what the prompt offers and what the upgrade check accepts.
+# Both are functions of the capability bit and the greeting, not of a host.
+
+[[claim]]
+id = "application-choice-offers"
+statement = "A host whose server advertises adoption offers keeping the sessions and ending them, each saying what it costs, and one that does not offers only the ending."
+test = "iznik-app::prompt::an_adopting_server_offers_keeping_and_ending"
+because = "the prompt is a pure function of the host state the connection reported"
+
+[[claim]]
+id = "application-choice-same-daemon"
+statement = "Keeping sessions counts as done only when the same daemon answers as the binary just installed, and ending them does not count while the old daemon is still the one answering."
+test = "iznik-client::remote_launch::remote_launch_knows_an_upgrade_by_the_run_that_answers"
+because = "the check is a pure function of the two greetings; a container adds nothing"
+
+[[claim]]
+id = "application-choice-refuses-without-adoption"
+statement = "Asking to keep sessions when the server did not advertise adoption is refused with the warning that replacing the server would end the panes it holds."
+test = "iznik-client::remote_launch::remote_launch_refuses_keeping_when_the_server_cannot_adopt"
+because = "the refusal is the greeting's capability bits and the snapshot's pane count; a container adds nothing"

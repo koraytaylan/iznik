@@ -10,7 +10,15 @@ use iznik_server::{USAGE_EXIT_CODE, daemon, relay};
 use tokio::io::AsyncWriteExt;
 
 /// The flags this binary routes, in the order `--help` lists them.
-const SUBCOMMANDS: &[&str] = &["--stdio", "--daemon", "--foreground", "--stop", "--version"];
+const SUBCOMMANDS: &[&str] = &[
+    "--stdio",
+    "--daemon",
+    "--foreground",
+    "--stop",
+    "--version",
+    "--adopt",
+    "--adopt-request",
+];
 
 /// Builds the runtime every entry point runs on, then dispatches. A runtime
 /// that cannot be built is the one failure this binary cannot report — the
@@ -25,7 +33,7 @@ fn main() -> ExitCode {
     // streams; `--daemon`, `--stop` and `--version` say one thing and go:
     // a thread each for them is a thread per core per SSH connection, on a
     // host somebody else may be sharing.
-    let mut builder = if first == Some("--foreground") {
+    let mut builder = if matches!(first, Some("--foreground" | "--adopt")) {
         tokio::runtime::Builder::new_multi_thread()
     } else {
         tokio::runtime::Builder::new_current_thread()
@@ -54,7 +62,9 @@ fn main() -> ExitCode {
 async fn dispatch(arguments: &[OsString]) -> ExitCode {
     match arguments.first().and_then(|argument| argument.to_str()) {
         Some("--stdio") => relay::run(arguments).await,
-        Some("--daemon" | "--foreground" | "--stop" | "--version") => daemon::run(arguments).await,
+        Some(
+            "--daemon" | "--foreground" | "--stop" | "--version" | "--adopt" | "--adopt-request",
+        ) => daemon::run(arguments).await,
         Some("--help") => help().await,
         _ => usage().await,
     }

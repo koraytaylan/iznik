@@ -35,6 +35,8 @@ use crate::session::remembered::RememberedCommands;
 use crate::terminal::marks::MarkEvent;
 use crate::terminal::mirror::MirrorThread;
 
+#[cfg(unix)]
+mod adopt;
 mod ingest;
 mod program;
 mod summary;
@@ -189,6 +191,28 @@ impl Registry {
     /// command sent twice at once is still applied once.
     pub fn remembered(&mut self) -> &mut RememberedCommands {
         &mut self.remembered
+    }
+
+    /// A registry that is the daemon `state` describes. `processes` already
+    /// own the inherited masters, one for every pane the model names.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::adopt::AdoptError`] when a pane has no process or cannot be
+    /// built. The error returns those processes and the partial registry.
+    ///
+    /// # Panics
+    ///
+    /// As [`Registry::new`], when a program sampler starts off a runtime.
+    #[cfg(unix)]
+    pub async fn adopt(
+        defaults: RegistryDefaults,
+        budget: Arc<Mutex<HistoryBudget>>,
+        mirrors: MirrorThread,
+        state: &crate::adopt::AdoptedState,
+        processes: BTreeMap<PaneId, crate::pty::spawn::PtyProcess>,
+    ) -> Result<Registry, adopt::Abandoned> {
+        adopt::build(defaults, budget, mirrors, state, processes).await
     }
 
     /// Which run of the daemon this registry belongs to: what a connection

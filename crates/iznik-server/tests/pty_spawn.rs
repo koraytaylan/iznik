@@ -378,6 +378,58 @@ fn pty_spawn_a_missing_program_fails_naming_it() {
 ///
 /// When the child does not see the new size.
 #[test]
+fn pty_spawn_an_adopted_master_resizes_reads_and_writes() {
+    let spawned = spawn(&sh(
+        "read line; printf 'got-%s\\n' \"$line\"; printf 'Z%sZ\\n' \"$(stty size)\"",
+    ))
+    .expect("the shell starts");
+    let descriptor = spawned.duplicate_master().expect("the master duplicates");
+    let adopted =
+        PtyProcess::adopt(descriptor, spawned.process_id()).expect("the master is adopted");
+    adopted.resize(100, 40).expect("the adopted master resizes");
+    let mut writer = adopted.master().take_writer().expect("the writer is taken");
+    writer
+        .write_all(b"hello\n")
+        .expect("the write reaches the child");
+    let reader = Reader::new(
+        adopted
+            .master()
+            .try_clone_reader()
+            .expect("the reader clones"),
+    );
+    let output = reader.read_until_quiet();
+    assert!(
+        output.contains("got-hello"),
+        "the child read what the adopted master wrote: {output}"
+    );
+    assert_eq!(
+        marked(&output),
+        Some("40 100"),
+        "and saw the size the adopted master set: {output}"
+    );
+    drop(adopted);
+    drop(spawned);
+}
+
+/// # Panics
+///
+/// When a descriptor that is not open is used.
+#[test]
+fn pty_spawn_a_closed_descriptor_is_refused() {
+    let refused = PtyProcess::adopt(-1, 1).expect_err("a closed descriptor is refused");
+    assert!(
+        refused.to_string().contains("not open"),
+        "the refusal names it: {refused}"
+    );
+}
+
+/// A resize is seen by the child: after `resize(100, 40)`, `stty size` prints
+/// `40 100`.
+///
+/// # Panics
+///
+/// When the child does not see the new size.
+#[test]
 fn pty_spawn_a_resize_is_seen_by_the_child() {
     let session = Session::start(&sh("sleep 0.4; printf 'Z%sZ\\n' \"$(stty size)\"")).expect("sh");
     session

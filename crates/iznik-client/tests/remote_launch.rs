@@ -519,7 +519,7 @@ fn remote_launch_knows_an_upgrade_by_the_run_that_answers() {
         build: None,
     };
     assert!(
-        replaced("host0", Some(first), None, &greeting(Some(first))).is_err(),
+        replaced("host0", Some(first), None, &greeting(Some(first)), false).is_err(),
         "the run that was there still answering is no upgrade, whatever its version"
     );
     assert!(
@@ -527,7 +527,8 @@ fn remote_launch_knows_an_upgrade_by_the_run_that_answers() {
             "host0",
             Some(first),
             None,
-            &greeting(Some(DaemonInstance(0x0222)))
+            &greeting(Some(DaemonInstance(0x0222))),
+            false,
         )
         .is_ok(),
         "another run of this build answering is"
@@ -536,22 +537,100 @@ fn remote_launch_knows_an_upgrade_by_the_run_that_answers() {
     let mut built = greeting(Some(DaemonInstance(0x0222)));
     built.build = Some(BuildDigest([0x22; 32]));
     assert!(
-        replaced("host0", Some(first), Some(installing), &built).is_err(),
+        replaced("host0", Some(first), Some(installing), &built, false).is_err(),
         "a new run that says it is another build than the one installed is no upgrade"
     );
     built.build = Some(installing);
     assert!(
-        replaced("host0", Some(first), Some(installing), &built).is_ok(),
+        replaced("host0", Some(first), Some(installing), &built, false).is_ok(),
         "and one that says it is the one installed is"
     );
     assert!(
-        replaced("host0", None, None, &greeting(None)).is_ok(),
+        replaced("host0", None, None, &greeting(None), false).is_ok(),
         "and with no run named either side, this build's version is all there is to go on"
     );
     let mut other = greeting(None);
     other.server_version = "0.0.0-other".to_owned();
     assert!(
-        replaced("host0", None, None, &other).is_err(),
+        replaced("host0", None, None, &other, false).is_err(),
         "which a server of another version fails"
+    );
+    let mut kept = greeting(Some(first));
+    kept.build = Some(installing);
+    assert!(
+        replaced("host0", Some(first), Some(installing), &kept, true).is_ok(),
+        "keeping sessions is the same daemon running the binary just installed"
+    );
+    assert!(
+        replaced("host0", Some(first), Some(installing), &kept, false).is_err(),
+        "ending sessions is not done while the old daemon is the one answering"
+    );
+    kept.build = Some(BuildDigest([0x22; 32]));
+    assert!(
+        replaced("host0", Some(first), Some(installing), &kept, true).is_err(),
+        "the same daemon running another build did not take the binary just installed"
+    );
+}
+
+/// One pane, which is what a server that cannot adopt is still holding.
+fn one_pane() -> iznik_protocol::model::HostModel {
+    use iznik_protocol::identity::{Generation, PaneId, SessionId, TabId};
+    use iznik_protocol::model::{HostModel, LayoutNode, Pane, Session, Tab};
+    HostModel {
+        generation: Generation(1),
+        sessions: vec![Session {
+            id: SessionId(1),
+            name: "work".to_owned(),
+            tabs: vec![Tab {
+                id: TabId(1),
+                name: "shell".to_owned(),
+                panes: vec![Pane {
+                    id: PaneId(1),
+                    title: String::new(),
+                    working_directory: None,
+                    columns: 80,
+                    rows: 24,
+                }],
+                layout: LayoutNode::Leaf(PaneId(1)),
+            }],
+        }],
+    }
+}
+
+/// # Panics
+///
+/// When a server that did not advertise adoption is kept anyway, or the
+/// refusal is not the warning that replacing it would end the pane it holds.
+#[test]
+fn remote_launch_refuses_keeping_when_the_server_cannot_adopt() {
+    use iznik_client::bootstrap::keeping_refused;
+    use iznik_client::bootstrap::launch::bundled;
+    use iznik_client::transport::channel::ServerHello;
+    use iznik_protocol::identity::DaemonInstance;
+    let greeting = ServerHello {
+        protocol_version: PROTOCOL_VERSION,
+        server_version: bundled().crate_version,
+        capabilities: Capabilities::INSTANCE,
+        instance: Some(DaemonInstance(0x0111)),
+        build: None,
+    };
+    let refused = keeping_refused("devbox", &greeting, &one_pane());
+    let Err(error) = refused else {
+        panic!("a server that cannot adopt was asked to keep its sessions");
+    };
+    let said = error.to_string();
+    assert!(
+        said.contains("holding 1 pane"),
+        "the warning names the pane the replacement would end: {said}"
+    );
+    assert!(
+        said.contains("ask again with force"),
+        "and it is the same warning an ending upgrade gives: {said}"
+    );
+    let mut adopting = greeting;
+    adopting.capabilities = Capabilities::ADOPT;
+    assert!(
+        keeping_refused("devbox", &adopting, &one_pane()).is_ok(),
+        "a server that advertised adoption is not refused for holding the pane"
     );
 }

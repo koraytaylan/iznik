@@ -16,6 +16,20 @@ use iznik_protocol::identity::Sequence;
 /// out of room, as a growing collection's is, so appends stay cheap.
 const GROWTH_FACTOR: usize = 2;
 
+/// The bytes a ring still holds, and the sequences that name them.
+///
+/// Copied under the ring's lock, so `newest` is exactly `oldest` plus the
+/// length of `bytes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CarriedRing {
+    /// The sequence of the oldest byte in [`Self::bytes`].
+    pub oldest: Sequence,
+    /// The sequence just past the newest byte.
+    pub newest: Sequence,
+    /// The bytes from `oldest` up to `newest`, oldest first.
+    pub bytes: Vec<u8>,
+}
+
 /// A pane's recent output, indexed by absolute sequence and bounded to a
 /// capacity in bytes.
 #[derive(Clone, Debug)]
@@ -30,6 +44,25 @@ pub struct PaneHistory {
 }
 
 impl PaneHistory {
+    /// A ring holding `bytes`, whose newest sequence is `newest`.
+    ///
+    /// `bytes` are the tail the previous ring still held, so the oldest
+    /// sequence is `newest` minus how many of them fit. A `newest` shorter
+    /// than the tail is raised to the tail: a sequence never names a byte
+    /// the ring does not contain.
+    #[must_use]
+    pub fn carrying(capacity: usize, newest: Sequence, bytes: &[u8]) -> PaneHistory {
+        let mut history = PaneHistory::new(capacity);
+        let kept = bytes.len().min(history.capacity);
+        let start = bytes.len().saturating_sub(kept);
+        if let Some(tail) = bytes.get(start..) {
+            history.bytes.extend(tail.iter().copied());
+        }
+        let held = history.held();
+        history.total = newest.0.max(held);
+        history
+    }
+
     /// A ring holding at most `capacity` bytes.
     #[must_use]
     pub fn new(capacity: usize) -> PaneHistory {
@@ -50,6 +83,24 @@ impl PaneHistory {
     #[must_use]
     pub fn oldest(&self) -> Sequence {
         Sequence(self.total.saturating_sub(self.held()))
+    }
+
+    /// The bytes still held, with the sequences that name them.
+    ///
+    /// One lock covers the whole copy: a caller that read the sequences first
+    /// and the bytes after can observe the ring move in between, and on a full
+    /// ring that movement makes the earlier sequence unreadable.
+    #[must_use]
+    pub fn tail(&self) -> CarriedRing {
+        let oldest = self.oldest();
+        let newest = self.newest();
+        let mut bytes = Vec::new();
+        bytes.extend(self.bytes.iter().copied());
+        CarriedRing {
+            oldest,
+            newest,
+            bytes,
+        }
     }
 
     /// The capacity the ring is bounded to.

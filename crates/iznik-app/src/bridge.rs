@@ -84,6 +84,8 @@ pub enum Operation {
         /// Whether to replace it even though it is holding panes, which ends
         /// them.
         force: bool,
+        /// Keep the sessions when the server can adopt them.
+        keep_sessions: bool,
     },
     /// Take iznik off a host, and stop holding it.
     Uninstall {
@@ -108,8 +110,17 @@ impl core::fmt::Display for Operation {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Operation::Remove { host } => write!(formatter, "removing {host}"),
-            Operation::Upgrade { host, force: false } => write!(formatter, "upgrading {host}"),
-            Operation::Upgrade { host, force: true } => {
+            Operation::Upgrade {
+                host,
+                keep_sessions: true,
+                ..
+            } => write!(formatter, "upgrading {host}, keeping its sessions"),
+            Operation::Upgrade {
+                host, force: false, ..
+            } => write!(formatter, "upgrading {host}"),
+            Operation::Upgrade {
+                host, force: true, ..
+            } => {
                 write!(formatter, "upgrading {host}, ending the panes it holds")
             }
             Operation::Uninstall { host } => write!(formatter, "taking iznik off {host}"),
@@ -358,10 +369,16 @@ impl EngineBridge {
     /// # Errors
     ///
     /// [`EngineError::Stopped`] when the engine has ended.
-    pub fn upgrade(&self, alias: &str, force: bool) -> Result<(), EngineError> {
+    pub fn upgrade(
+        &self,
+        alias: &str,
+        force: bool,
+        keep_sessions: bool,
+    ) -> Result<(), EngineError> {
         self.order(Operation::Upgrade {
             host: HostId(alias.to_owned()),
             force,
+            keep_sessions,
         })
     }
 
@@ -711,7 +728,11 @@ fn serve_orders(orders: &Receiver<Option<Operation>>, manager: &Arc<HostManager>
     while let Ok(Some(operation)) = orders.recv() {
         let answer = match &operation {
             Operation::Remove { host } => manager.remove_host(&host.0),
-            Operation::Upgrade { host, force } => manager.upgrade(&host.0, *force),
+            Operation::Upgrade {
+                host,
+                force,
+                keep_sessions,
+            } => manager.upgrade(&host.0, *force, *keep_sessions),
             Operation::Uninstall { host } => manager.uninstall(&host.0),
         };
         if !outbox.send(EngineEvent::Finished { operation, answer }) {

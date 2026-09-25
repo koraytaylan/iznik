@@ -1,0 +1,118 @@
+name = "upgrade-keeps-sessions"
+claims = ["in-place-replacement-keeps-the-shell-on-a-host"]
+driver = "engine"
+budget_seconds = 240
+exclusive = false
+
+[setup]
+hosts = 1
+files = []
+
+# The same older-looking shim the ending upgrade uses, and a real pane behind
+# it. This time the upgrade asks the daemon to exec the new binary in place.
+# The shell that printed the first marker is the one that prints the two after.
+[[steps]]
+id = "install-the-real-server"
+container = "engine"
+timeout_seconds = 90
+
+[steps.bootstrap]
+alias = "host0"
+
+[[steps]]
+id = "make-it-look-older"
+container = "host0"
+run = "p=/home/iznik/.local/share/iznik/bin && mv $p/iznik-server $p/iznik-server.real && printf '#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then printf \"iznik-server 0.0.1 protocol 1\\\\n\"; exit 0; fi\\nexec /home/iznik/.local/share/iznik/bin/iznik-server.real \"$@\"\\n' > $p/iznik-server && chmod 755 $p/iznik-server && $p/iznik-server --version"
+timeout_seconds = 30
+
+[[steps]]
+id = "open-a-pane-on-it"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+actions = [
+  { kind = "create_session", name = "work" },
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo held-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "held-42" },
+]
+
+[[steps]]
+id = "a-keeping-upgrade-replaces-it"
+container = "engine"
+timeout_seconds = 120
+
+[steps.bootstrap]
+alias = "host0"
+action = "upgrade"
+keep = true
+
+[[steps]]
+id = "and-the-same-shell-answers-twice"
+container = "engine"
+timeout_seconds = 60
+
+[steps.channel]
+alias = "host0"
+server = "/home/iznik/.local/share/iznik/bin/iznik-server"
+actions = [
+  { kind = "subscribe", pane = 1 },
+  { kind = "input", pane = 1, text = "echo kept-one-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "kept-one-42" },
+  { kind = "input", pane = 1, text = "echo kept-two-$((6*7))\n" },
+  { kind = "await_bytes", pane = 1, contains = "kept-two-42" },
+]
+
+[[steps]]
+id = "and-the-host-is-now-up-to-date"
+container = "engine"
+timeout_seconds = 60
+
+[steps.bootstrap]
+alias = "host0"
+
+[steps.bootstrap.expect]
+decision = "up to date"
+
+[[steps]]
+id = "and-the-shim-is-gone"
+container = "engine"
+run = "ssh -o BatchMode=yes host0 'head -c 4 $HOME/.local/share/iznik/bin/iznik-server | od -An -c | tr -s \" \"'"
+timeout_seconds = 30
+
+[[expect]]
+step = "install-the-real-server"
+exit = 0
+
+[[expect]]
+step = "make-it-look-older"
+exit = 0
+stdout_contains = "iznik-server 0.0.1 protocol 1"
+
+[[expect]]
+step = "open-a-pane-on-it"
+exit = 0
+stdout_contains = "4 actions"
+
+[[expect]]
+step = "a-keeping-upgrade-replaces-it"
+exit = 0
+stdout_contains = "upgraded"
+
+[[expect]]
+step = "and-the-same-shell-answers-twice"
+exit = 0
+stdout_contains = "5 actions"
+
+[[expect]]
+step = "and-the-host-is-now-up-to-date"
+exit = 0
+stdout_contains = "up to date"
+
+[[expect]]
+step = "and-the-shim-is-gone"
+exit = 0
+stdout_contains = "177 E L F"

@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
+use std::time::Duration;
 
 use tokio::sync::mpsc::{Receiver as AsyncReceiver, Sender as AsyncSender};
 use tokio::sync::watch;
@@ -34,12 +35,22 @@ pub const OUTPUT_CHANNEL_CHUNKS: usize = 16;
 /// that cannot come.
 pub const MAXIMUM_PENDING_INPUT_BYTES: usize = 8 * 1024 * 1024;
 
+/// How long the reader waits in `poll`, and how often it looks at a pause.
+///
+/// Short enough that a replacement stops consuming the terminal before it
+/// copies history, and long enough that an idle pane does not wake constantly.
+const READER_WAIT: Duration = Duration::from_millis(20);
+
 /// The async stream of a pane's output, in chunks of at most
 /// [`READ_CHUNK_LENGTH`], ending when the child's terminal closes.
 #[derive(Debug)]
 pub struct OutputStream {
     /// Chunks from the reader thread; closed when it ends.
     chunks: AsyncReceiver<Vec<u8>>,
+    /// Set while a replacement wants the reader to leave the terminal alone.
+    hold: Arc<AtomicBool>,
+    /// Whether the reader has stopped taking bytes, so the held ones can be copied.
+    settled: watch::Receiver<bool>,
 }
 
 impl OutputStream {
@@ -47,6 +58,36 @@ impl OutputStream {
     /// and every chunk before it has been taken.
     pub async fn next(&mut self) -> Option<Vec<u8>> {
         self.chunks.recv().await
+    }
+
+    /// A chunk already read, or `None` when nothing is waiting.
+    ///
+    /// Does not wait. A replacement drains these after the reader has stopped,
+    /// so a byte the reader already took still reaches history.
+    pub fn try_next(&mut self) -> Option<Vec<u8>> {
+        self.chunks.try_recv().ok()
+    }
+
+    /// Stops the reader from taking any further byte, and waits until it has.
+    ///
+    /// Bytes still in the kernel stay there. Bytes already queued are left for
+    /// [`Self::try_next`]. [`Self::resume`] lets the reader continue, which a
+    /// replacement does when the new binary cannot be executed.
+    pub async fn pause(&mut self) {
+        self.hold.store(true, Ordering::Release);
+        loop {
+            if *self.settled.borrow() {
+                return;
+            }
+            if self.settled.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Lets the reader take bytes again after [`Self::pause`].
+    pub fn resume(&self) {
+        self.hold.store(false, Ordering::Release);
     }
 }
 
@@ -207,12 +248,6 @@ impl InputHandle {
 /// [`PtyError::Open`] when the master's reader cannot be cloned or its writer
 /// cannot be taken.
 pub fn streams(process: &PtyProcess) -> Result<(OutputStream, InputHandle), PtyError> {
-    let reader = process
-        .master()
-        .try_clone_reader()
-        .map_err(|source| PtyError::Open {
-            source: source.into(),
-        })?;
     let writer = process
         .master()
         .take_writer()
@@ -220,15 +255,13 @@ pub fn streams(process: &PtyProcess) -> Result<(OutputStream, InputHandle), PtyE
             source: source.into(),
         })?;
     let (chunk_sender, chunks) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CHUNKS);
+    let hold = Arc::new(AtomicBool::new(false));
+    let (settled_sender, settled) = watch::channel(false);
+    let holding = Arc::clone(&hold);
     // The threads are detached — each ends itself when the terminal closes or its
     // channel drops — but a spawn that fails is an open-time failure to report,
     // not a silently dead pane.
-    thread::Builder::new()
-        .name("pty-output".to_owned())
-        .spawn(move || read_output(reader, &chunk_sender))
-        .map_err(|source| PtyError::Open {
-            source: source.into(),
-        })?;
+    spawn_reader(process, chunk_sender, holding, settled_sender)?;
     let (messages, queue) = channel();
     let input = InputHandle {
         messages,
@@ -247,12 +280,74 @@ pub fn streams(process: &PtyProcess) -> Result<(OutputStream, InputHandle), PtyE
         .map_err(|source| PtyError::Open {
             source: source.into(),
         })?;
-    Ok((OutputStream { chunks }, input))
+    Ok((
+        OutputStream {
+            chunks,
+            hold,
+            settled,
+        },
+        input,
+    ))
 }
 
-/// The output thread: chunks from the descriptor to the channel, blocking when
-/// it is full, until the terminal closes or nobody listens.
-fn read_output(mut reader: Box<dyn Read + Send>, chunks: &AsyncSender<Vec<u8>>) {
+/// Starts the output thread on a duplicate of the master.
+///
+/// # Errors
+///
+/// [`PtyError::Open`] when the master cannot be duplicated or the thread
+/// cannot be started.
+fn spawn_reader(
+    process: &PtyProcess,
+    chunks: AsyncSender<Vec<u8>>,
+    hold: Arc<AtomicBool>,
+    settled: watch::Sender<bool>,
+) -> Result<(), PtyError> {
+    #[cfg(unix)]
+    let reader = duplicate_master(process)?;
+    #[cfg(not(unix))]
+    let reader = process
+        .master()
+        .try_clone_reader()
+        .map_err(|source| PtyError::Open {
+            source: source.into(),
+        })?;
+    thread::Builder::new()
+        .name("pty-output".to_owned())
+        .spawn(move || {
+            #[cfg(unix)]
+            read_output_waiting(reader, &chunks, &hold, &settled);
+            #[cfg(not(unix))]
+            {
+                let _hold = hold;
+                let _settled = settled;
+                read_output_blocking(reader, &chunks);
+            }
+        })
+        .map_err(|source| PtyError::Open {
+            source: source.into(),
+        })?;
+    Ok(())
+}
+
+/// A close-on-exec duplicate of the master, so the reader can poll it.
+///
+/// # Errors
+///
+/// [`PtyError::Open`] when the master has no descriptor or cannot be duplicated.
+#[cfg(unix)]
+fn duplicate_master(process: &PtyProcess) -> Result<std::fs::File, PtyError> {
+    let descriptor = process.master().as_raw_fd().ok_or_else(|| PtyError::Open {
+        source: "the master has no descriptor".into(),
+    })?;
+    let owned = iznik::duplicate_descriptor(descriptor).map_err(|error| PtyError::Open {
+        source: error.into(),
+    })?;
+    Ok(std::fs::File::from(owned))
+}
+
+/// Reads until the terminal closes, without a way to pause.
+#[cfg(not(unix))]
+fn read_output_blocking(mut reader: Box<dyn Read + Send>, chunks: &AsyncSender<Vec<u8>>) {
     let mut buffer = vec![0; READ_CHUNK_LENGTH];
     loop {
         match reader.read(&mut buffer) {
@@ -265,6 +360,67 @@ fn read_output(mut reader: Box<dyn Read + Send>, chunks: &AsyncSender<Vec<u8>>) 
             }
         }
     }
+}
+
+/// Polls `reader` so [`OutputStream::pause`] can stop it between reads.
+#[cfg(unix)]
+fn read_output_waiting(
+    mut reader: std::fs::File,
+    chunks: &AsyncSender<Vec<u8>>,
+    hold: &AtomicBool,
+    settled: &watch::Sender<bool>,
+) {
+    use std::os::fd::AsFd;
+    let mut buffer = vec![0; READ_CHUNK_LENGTH];
+    let timeout =
+        nix::poll::PollTimeout::try_from(READER_WAIT).unwrap_or(nix::poll::PollTimeout::ZERO);
+    loop {
+        if hold.load(Ordering::Acquire) {
+            let _paused = settled.send(true);
+            while hold.load(Ordering::Acquire) {
+                thread::sleep(READER_WAIT);
+            }
+            let _resumed = settled.send(false);
+            continue;
+        }
+        let mut waiting = [nix::poll::PollFd::new(
+            reader.as_fd(),
+            nix::poll::PollFlags::POLLIN,
+        )];
+        let _polled = nix::poll::poll(&mut waiting, timeout);
+        if hold.load(Ordering::Acquire) {
+            continue;
+        }
+        if !waiting
+            .first()
+            .and_then(nix::poll::PollFd::any)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        match reader.read(&mut buffer) {
+            Ok(0) => return,
+            Err(error) if terminal_closed(&error) => return,
+            Err(_error) => return,
+            Ok(count) => {
+                let chunk = buffer.get(..count).unwrap_or_default().to_vec();
+                if chunks.blocking_send(chunk).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Whether `error` is the pseudoterminal's end-of-file.
+///
+/// A read of a master whose slave has closed fails with `EIO` rather than
+/// returning zero. That is the reader ending, not a pause.
+#[cfg(unix)]
+fn terminal_closed(error: &std::io::Error) -> bool {
+    error
+        .raw_os_error()
+        .is_some_and(|code| nix::errno::Errno::from_raw(code) == nix::errno::Errno::EIO)
 }
 
 /// What the input thread shares with the handles that feed it.

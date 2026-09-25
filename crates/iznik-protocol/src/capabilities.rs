@@ -26,6 +26,14 @@ impl Capabilities {
     /// upgraded separately and a remote is only ever replaced on purpose.
     pub const REORDER_SESSIONS: Capabilities = Capabilities { bits: 1 << 2 };
 
+    /// The server can replace itself in place and keep the sessions it holds.
+    ///
+    /// A client offers that choice only when the server's `Hello` carries this
+    /// bit. It gates nothing a client sends: the adoption record never leaves
+    /// the host, so a server without the bit is not missing a feature, and a
+    /// client that sees it does nothing different on the wire.
+    pub const ADOPT: Capabilities = Capabilities { bits: 1 << 3 };
+
     /// The server's `Hello` ends with the [`DaemonInstance`] it comes from.
     ///
     /// A client that sets this bit in its own `Hello` can read the field, and
@@ -80,6 +88,7 @@ impl Capabilities {
     const KNOWN: u32 = Capabilities::ZSTD.bits
         | Capabilities::RESUME.bits
         | Capabilities::REORDER_SESSIONS.bits
+        | Capabilities::ADOPT.bits
         | Capabilities::INSTANCE.bits
         | Capabilities::ANSWERED.bits
         | Capabilities::IDENTIFY.bits

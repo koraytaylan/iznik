@@ -196,6 +196,8 @@ pub(crate) enum Order {
     Upgrade {
         /// Whether to replace it even though it holds panes, which ends them.
         force: bool,
+        /// Keep the sessions the daemon holds, when it can adopt them.
+        keep_sessions: bool,
     },
     /// End the task.
     Stop,
@@ -752,8 +754,19 @@ impl HostManager {
     ///
     /// [`ManagerError::UnknownHost`] when no host of that name is held, and
     /// [`ManagerError::Gone`] when its task has ended.
-    pub fn upgrade(&self, alias: &str, force: bool) -> Result<(), ManagerError> {
-        self.order(alias, Order::Upgrade { force })
+    pub fn upgrade(
+        &self,
+        alias: &str,
+        force: bool,
+        keep_sessions: bool,
+    ) -> Result<(), ManagerError> {
+        self.order(
+            alias,
+            Order::Upgrade {
+                force,
+                keep_sessions,
+            },
+        )
     }
 
     /// Takes iznik off a host, and stops holding it.

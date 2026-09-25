@@ -1,0 +1,4 @@
+carried
+discarded
+emulators
+replay

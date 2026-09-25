@@ -193,6 +193,18 @@ pub enum HostState {
 }
 
 impl HostState {
+    /// Whether this connection's server can keep its sessions across an upgrade.
+    ///
+    /// False for every state but [`HostState::Connected`], and false when the
+    /// server did not advertise [`Capabilities::ADOPT`].
+    #[must_use]
+    pub fn adopts(&self) -> bool {
+        match self {
+            HostState::Connected { capabilities, .. } => capabilities.contains(Capabilities::ADOPT),
+            _otherwise => false,
+        }
+    }
+
     /// Whether this state is a connection whose server can reorder sessions.
     ///
     /// False for every state but [`HostState::Connected`], and false for a

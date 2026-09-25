@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+pub mod adopt;
 pub mod connection;
 pub mod daemon;
 pub mod history;

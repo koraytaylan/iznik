@@ -46,6 +46,8 @@ enum Ended {
     Upgrade {
         /// Whether to replace it even though it holds panes, which ends them.
         force: bool,
+        /// Keep the sessions, when the server can adopt them.
+        keep_sessions: bool,
     },
 }
 
@@ -96,8 +98,11 @@ pub(super) async fn serve(host: HostId, shared: Arc<Shared>, mut orders: Unbound
         {
             Ended::Stopped => return,
             Ended::Gone => {}
-            Ended::Upgrade { force } => {
-                let _replaced = replace(&host, &shared, &machine, force).await;
+            Ended::Upgrade {
+                force,
+                keep_sessions,
+            } => {
+                let _replaced = replace(&host, &shared, &machine, force, keep_sessions).await;
                 // The alias is held throughout: the loop goes straight back to
                 // connecting, and everything asked for during the replacement
                 // is already on this task's queue.
@@ -118,6 +123,7 @@ async fn replace(
     shared: &Arc<Shared>,
     machine: &Mutex<HostStateMachine>,
     force: bool,
+    keep_sessions: bool,
 ) -> bool {
     let transport = Transport::for_alias(
         &host.0,
@@ -140,6 +146,7 @@ async fn replace(
             force,
             stale: superseded,
             running,
+            keep_sessions,
         },
         shared.options.bootstrap_deadline,
     )
@@ -245,9 +252,12 @@ async fn connect(
                 }
                 // Replaced first, then reached: the replacement is what may
                 // make the host reachable at all.
-                Some(Woken::Upgrade { force }) => {
+                Some(Woken::Upgrade {
+                    force,
+                    keep_sessions,
+                }) => {
                     let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
-                    if !replace(host, shared, machine, force).await {
+                    if !replace(host, shared, machine, force, keep_sessions).await {
                         continue;
                     }
                 }
@@ -621,14 +631,20 @@ async fn serve_link(
                 let _now = advance(shared, host, machine, HostEvent::RetryDue);
                 return Ended::Gone;
             }
-            Turn::Ordered(Some(Order::Upgrade { force })) => {
+            Turn::Ordered(Some(Order::Upgrade {
+                force,
+                keep_sessions,
+            })) => {
                 // The link is talking to the daemon being replaced, so it goes;
                 // the outer loop runs the replacement and connects again. The
                 // machine says work is under way, so the window shows an
                 // upgrade rather than a host that merely vanished.
                 channel.close();
                 let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
-                return Ended::Upgrade { force };
+                return Ended::Upgrade {
+                    force,
+                    keep_sessions,
+                };
             }
             Turn::Ordered(Some(Order::Credit { receipt })) => {
                 let (carrying, after) = carry_credit(&mut channel, &receipt, orders, shared).await;
@@ -685,9 +701,15 @@ fn credit_failed(
             let _torn = advance(shared, host, machine, HostEvent::Removed);
             return Ended::Stopped;
         }
-        Some(Order::Upgrade { force }) => {
+        Some(Order::Upgrade {
+            force,
+            keep_sessions,
+        }) => {
             let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
-            return Ended::Upgrade { force };
+            return Ended::Upgrade {
+                force,
+                keep_sessions,
+            };
         }
         Some(Order::Input { pane, bytes, .. }) => dropped_input(host, shared, pane, bytes.len()),
         Some(held) => keep(kept, held),

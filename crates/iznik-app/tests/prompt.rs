@@ -571,6 +571,84 @@ fn upgrade_asks_even_for_one_host_and_warns() {
 }
 
 #[test]
+/// A server that advertises adoption offers keeping the sessions and ending
+/// them, and each choice says what it costs. One that does not offers only
+/// the ending.
+///
+/// # Panics
+///
+/// When the choices are not those two, or a server without the capability
+/// offers the keeping one.
+fn an_adopting_server_offers_keeping_and_ending() {
+    let mut state = EngineState::new();
+    let installed = InstalledServer {
+        crate_version: "0.0.0".to_owned(),
+        protocol_version: 1,
+    };
+    let offer = UpgradeOffer {
+        installed: installed.clone(),
+        bundled: InstalledServer {
+            crate_version: "0.2.0".to_owned(),
+            protocol_version: 1,
+        },
+        reason: UpgradeReason::Version,
+    };
+    moved(
+        &mut state,
+        &[(
+            "devbox",
+            HostState::Connected {
+                server_version: "0.0.0".to_owned(),
+                capabilities: Capabilities::ADOPT,
+                upgrade: Some(offer.clone()),
+            },
+        )],
+    );
+    let prompt = asked(begin(ActionId::UpgradeHost, &state, None)).expect("upgrade asks");
+    let offered = choices(&prompt, "");
+    assert_eq!(offered.len(), 2, "keeping and ending are both offered");
+    let labels: Vec<&str> = offered.iter().map(|choice| choice.label.as_str()).collect();
+    assert!(
+        labels.iter().any(|label| label.contains("shells stay")),
+        "keeping says the shells stay: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|label| label.contains("Every shell")),
+        "ending says every shell stops: {labels:?}"
+    );
+    let kept = offered
+        .iter()
+        .find(|choice| choice.label.contains("shells stay"));
+    match &kept.expect("the keeping choice").answer {
+        Answer::Host {
+            operation: HostOperation::Upgrade { keep_sessions },
+            ..
+        } => assert!(*keep_sessions, "the keeping choice keeps the sessions"),
+        other => panic!("the keeping choice is not an upgrade: {other:?}"),
+    }
+
+    let mut plain = EngineState::new();
+    moved(
+        &mut plain,
+        &[(
+            "devbox",
+            HostState::Connected {
+                server_version: "0.0.0".to_owned(),
+                capabilities: Capabilities::REORDER_SESSIONS,
+                upgrade: Some(offer),
+            },
+        )],
+    );
+    let ending = asked(begin(ActionId::UpgradeHost, &plain, None)).expect("ending asks");
+    assert!(
+        ending.question.contains("ends every session"),
+        "a server that cannot adopt only warns: {}",
+        ending.question
+    );
+    assert_eq!(choices(&ending, "").len(), 1);
+}
+
+#[test]
 /// A host whose connected server is missing a feature carries an upgrade
 /// offer, and `Upgrade Host` is then offered for it — even at an unchanged
 /// version.

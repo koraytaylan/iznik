@@ -1,0 +1,14 @@
+# The mirror is rebuilt by feeding the carried ring through the emulator. The
+# equality is that function, which a container does not change.
+
+[[claim]]
+id = "mirror-rebuild-screen"
+statement = "An adopted pane answers a screen at the sequence it carried, and the bytes are the emulator's own serialization of that screen."
+test = "iznik-server::adopted_mirror::an_adopted_pane_screen_is_the_emulators_and_resume_follows_the_ring"
+because = "the screen is the emulator fed the carried ring; a container adds nothing"
+
+[[claim]]
+id = "mirror-rebuild-resume"
+statement = "A resume from a byte the ring still covers is contiguous, and one it does not cover is a screen."
+test = "iznik-server::adopted_mirror::an_adopted_pane_screen_is_the_emulators_and_resume_follows_the_ring"
+because = "resume is decided from the adopted ring's oldest and newest sequences"

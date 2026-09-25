@@ -149,7 +149,7 @@ fn an_upgrade_keeps_the_host_held() {
 
         // The ask itself must be accepted.
         manager
-            .upgrade(&host.0, true)
+            .upgrade(&host.0, true, false)
             .map_err(|error| format!("the upgrade was refused: {error}"))?;
 
         // And the host is still held: what the window asks for while an upgrade
@@ -230,7 +230,7 @@ fn an_upgrade_asked_for_without_a_link_is_acted_on() {
             };
             if matches!(state, HostState::Failed { .. }) && !asked {
                 // Waiting an hour: only the ask can move it now.
-                manager.upgrade(&host.0, true)?;
+                manager.upgrade(&host.0, true, false)?;
                 asked = true;
                 continue;
             }

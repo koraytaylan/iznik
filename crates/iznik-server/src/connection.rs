@@ -46,11 +46,24 @@ use crate::session::registry::Registry;
 /// This server's own version, which the client keeps only for its logs.
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The adopt bit on a host that can keep its sessions, and none on Windows.
+const fn adopt_capability() -> u32 {
+    #[cfg(unix)]
+    {
+        Capabilities::ADOPT.bits()
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
 /// What this server can do.
 const CAPABILITIES: Capabilities = Capabilities::from_bits(
     Capabilities::ZSTD.bits()
         | Capabilities::RESUME.bits()
         | Capabilities::REORDER_SESSIONS.bits()
+        | adopt_capability()
         | Capabilities::INSTANCE.bits()
         | Capabilities::ANSWERED.bits()
         | Capabilities::IDENTIFY.bits()

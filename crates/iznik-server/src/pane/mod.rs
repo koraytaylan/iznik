@@ -21,6 +21,8 @@
 //! the screen when one is asked for — so a client that is then sent older
 //! bytes knows its own answers to them would be second ones.
 
+#[cfg(unix)]
+mod adopt;
 mod vt;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +32,7 @@ use std::time::Duration;
 use iznik_protocol::identity::Sequence;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::history::ring::{HistoryError, PaneHistory};
+use crate::history::ring::{CarriedRing, HistoryError, PaneHistory};
 use crate::pty::spawn::{ExitStatus, PtyError, PtyProcess, SpawnOptions, spawn};
 use crate::pty::streams::{InputError, InputHandle, Offer, streams};
 use crate::terminal::marks::MarkEvent;
@@ -182,6 +184,10 @@ enum Request {
     },
     /// A client unsubscribed.
     Unsubscribe,
+    /// Stop taking new output, drain what was already read, and copy the ring.
+    Quiesce(oneshot::Sender<CarriedRing>),
+    /// Take output again after [`Request::Quiesce`].
+    Resume,
 }
 
 /// A client's subscription to a pane. While it lives, the pane counts one more
@@ -332,6 +338,7 @@ impl Pane {
             requests: requests_receiver,
             exit: exit.clone(),
             drain: pane_options.exit_drain,
+            replay: Vec::new(),
             ready: ready_sender,
         };
         thread.spawn(move || task.run());
@@ -382,6 +389,45 @@ impl Pane {
         *self.state.borrow()
     }
 
+    /// A pane on an inherited master, showing `ring` at `sequence`.
+    ///
+    /// # Errors
+    ///
+    /// As the spawn: the master could not be streamed, or the mirror could
+    /// not be created.
+    #[cfg(unix)]
+    pub async fn adopt(
+        process: PtyProcess,
+        history_bytes: usize,
+        ring: &[u8],
+        sequence: Sequence,
+        columns: u16,
+        rows: u16,
+        thread: &MirrorThread,
+    ) -> Result<Pane, PaneError> {
+        adopt::from_process(
+            process,
+            history_bytes,
+            ring,
+            sequence,
+            columns,
+            rows,
+            thread,
+        )
+        .await
+    }
+
+    /// The master's descriptor, when it has one.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn master_descriptor(&self) -> Option<std::os::fd::RawFd> {
+        self.process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .master()
+            .as_raw_fd()
+    }
+
     /// The child's process id.
     #[must_use]
     pub fn process_id(&self) -> u32 {
@@ -398,6 +444,29 @@ impl Pane {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .foreground_process_id()
+    }
+
+    /// Stops the reader, drains bytes it already took, and copies the ring.
+    ///
+    /// The copy is one lock after the reader has stopped, so the sequences and
+    /// the bytes name the same range. The reader stays stopped until
+    /// [`Self::resume_output`]: a replacement that goes on to `exec` leaves it
+    /// stopped, and one that cannot execute the new binary resumes it.
+    ///
+    /// # Errors
+    ///
+    /// [`PaneError::Gone`] when the mirror thread has ended.
+    pub async fn carried_ring(&self) -> Result<CarriedRing, PaneError> {
+        let (sender, receiver) = oneshot::channel();
+        self.requests
+            .send(Request::Quiesce(sender))
+            .map_err(|_error| PaneError::Gone)?;
+        receiver.await.map_err(|_error| PaneError::Gone)
+    }
+
+    /// Lets the reader take output again after [`Self::carried_ring`].
+    pub fn resume_output(&self) {
+        let _sent = self.requests.send(Request::Resume);
     }
 
     /// The bytes from `from` to the newest, as one vector. The copy is made while

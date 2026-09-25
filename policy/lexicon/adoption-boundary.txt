@@ -1,0 +1,11 @@
+adopted
+clone
+cloned
+descriptor
+fd
+get
+image
+inherited
+leader
+termios
+tty

@@ -50,6 +50,8 @@ pub(super) enum Woken {
     Upgrade {
         /// Whether to replace it even though it holds panes.
         force: bool,
+        /// Keep the sessions, when the server can adopt them.
+        keep_sessions: bool,
     },
 }
 
@@ -79,7 +81,15 @@ pub(super) async fn hold_until(
                 None | Some(Order::Stop) => return None,
                 // Somebody asked for it now, so the wait is over.
                 Some(Order::Reconnect) => return Some(Woken::Due),
-                Some(Order::Upgrade { force }) => return Some(Woken::Upgrade { force }),
+                Some(Order::Upgrade {
+                    force,
+                    keep_sessions,
+                }) => {
+                    return Some(Woken::Upgrade {
+                        force,
+                        keep_sessions,
+                    });
+                }
                 Some(Order::Input { pane, bytes, .. }) => dropping(pane, bytes.len()),
                 Some(held) => keep(kept, held),
             },

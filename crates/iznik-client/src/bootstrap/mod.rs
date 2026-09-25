@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use iznik_protocol::identity::{BuildDigest, DaemonInstance};
+use iznik_protocol::model::HostModel;
 
 use crate::bootstrap::launch::{
     BootstrapError, BootstrapOptions, Bootstrapped, Cause, Decision, Stage, UpgradeError, bundled,
@@ -29,6 +30,20 @@ use crate::bootstrap::upload::{
 };
 use crate::transport::Transport;
 use crate::transport::channel::ServerHello;
+
+/// Copies the running binary aside so a refused adoption can put it back.
+const PRESERVE_BINARY_SCRIPT: &str = r#"
+server="$IZNIK_PREFIX/bin/iznik-server"
+cp -p "$server" "$server.previous"
+if [ -f "$server.sha256" ]; then cp -p "$server.sha256" "$server.sha256.previous"; fi
+printf 'preserved\n'
+"#;
+
+/// Asks the running daemon to exec the binary now at its own path.
+const ADOPT_REQUEST_SCRIPT: &str = r#"
+server="$IZNIK_PREFIX/bin/iznik-server"
+"$server" --adopt-request "$server"
+"#;
 
 /// The remote script that ends a daemon before its server is replaced.
 ///
@@ -223,6 +238,92 @@ async fn install(
         .map_err(|source| refused(&host, Stage::Upload, &source))
 }
 
+/// Whether a server that was asked to keep its sessions can.
+///
+/// Keeping them is an exec of the binary the host is already running, which
+/// only a server that advertised adoption can do. One that did not is refused
+/// with the same warning an ending upgrade gives: replacing it would end the
+/// panes it holds.
+///
+/// # Errors
+///
+/// [`UpgradeError::LivePanes`] when `greeting` does not carry
+/// [`iznik_protocol::capabilities::Capabilities::ADOPT`], naming how many
+/// panes `held` has.
+pub fn keeping_refused(
+    host: &str,
+    greeting: &ServerHello,
+    held: &HostModel,
+) -> Result<(), UpgradeError> {
+    if greeting
+        .capabilities
+        .contains(iznik_protocol::capabilities::Capabilities::ADOPT)
+    {
+        return Ok(());
+    }
+    Err(UpgradeError::LivePanes {
+        host: host.to_owned(),
+        count: live_panes(held),
+    })
+}
+
+/// Replaces the server without ending its sessions.
+///
+/// # Errors
+///
+/// [`UpgradeError::LivePanes`] when the server did not advertise that it can
+/// adopt — the same warning an ending upgrade gives for a host that holds
+/// panes — and [`UpgradeError::Bootstrap`] when a stage fails.
+async fn preserve(
+    transport: &Transport,
+    artifacts: &upload::ArtifactSet,
+    options: &BootstrapOptions,
+    found: &HostProbe,
+    before: Option<DaemonInstance>,
+    expires: Instant,
+) -> Result<(), UpgradeError> {
+    let host = transport.alias();
+    let (channel, held) = launch(transport, Some(&server_path(found)), options, expires).await?;
+    let greeting = channel.greeting().clone();
+    channel.close();
+    let before = greeting.instance.or(before);
+    keeping_refused(&host, &greeting, &held)?;
+    let preserved = with_prefix(PRESERVE_BINARY_SCRIPT, &found.prefix);
+    transport
+        .run_for(
+            &preserved,
+            left(expires, options.command_deadline),
+            "preserving the server",
+        )
+        .await
+        .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
+    let _installed = install(
+        transport,
+        found,
+        artifacts,
+        left(expires, options.upload_deadline),
+    )
+    .await?;
+    let asked = with_prefix(ADOPT_REQUEST_SCRIPT, &found.prefix);
+    transport
+        .run_for(
+            &asked,
+            left(expires, options.command_deadline),
+            "adopting the server",
+        )
+        .await
+        .map_err(|source| refused_probe(&host, Stage::Launch, &source))?;
+    let (answering_channel, _held) =
+        launch(transport, Some(&server_path(found)), options, expires).await?;
+    let answering = answering_channel.greeting().clone();
+    answering_channel.close();
+    let installing = artifacts
+        .for_triple(&triple_of(found))
+        .ok()
+        .map(|artifact| BuildDigest(artifact.digest));
+    replaced(&host, before, installing, &answering, true)
+}
+
 /// Ends the daemon on a host, if one is running.
 ///
 /// # Errors
@@ -300,6 +401,10 @@ pub struct Replacement {
     /// The run of the daemon the caller last reached, when it said: what the
     /// upgrade must have ended, when the daemon itself could not be asked.
     pub running: Option<DaemonInstance>,
+    /// Keep the sessions. The daemon execs the new binary in place instead of
+    /// stopping, and the same run answering with the installed build is the
+    /// upgrade having happened.
+    pub keep_sessions: bool,
 }
 
 /// Replaces the server on a host with the one this build carries.
@@ -327,6 +432,7 @@ pub async fn upgrade(
         force,
         stale,
         running,
+        keep_sessions,
     } = replacing;
     let host = transport.alias();
     let expires = expiry(deadline);
@@ -338,7 +444,7 @@ pub async fn upgrade(
         // Nothing to do — unless somebody forced it, which is the only way a
         // same-version server missing a capability is ever replaced, or the
         // daemon running is another build than the binary under it.
-        Decision::UpToDate if !force && !stale => return Ok(()),
+        Decision::UpToDate if !force && !stale && !keep_sessions => return Ok(()),
         Decision::Unsupported { triple } => {
             return Err(no_artifact(&host, &triple, &artifacts.triples()).into());
         }
@@ -348,6 +454,11 @@ pub async fn upgrade(
         // a forced replacement: the running daemon is asked whether it may
         // go, and then it is stopped before the new binary is put where it
         // was.
+        Decision::UpgradeAvailable { .. } | Decision::Replace | Decision::UpToDate
+            if keep_sessions =>
+        {
+            return preserve(transport, artifacts, options, &found, before, expires).await;
+        }
         Decision::UpgradeAvailable { .. } | Decision::Replace | Decision::UpToDate => {
             before = may_replace(transport, &found, options, force, expires)
                 .await?
@@ -369,7 +480,7 @@ pub async fn upgrade(
         .for_triple(&triple_of(&found))
         .ok()
         .map(|artifact| BuildDigest(artifact.digest));
-    replaced(&host, before, installing, &answering)
+    replaced(&host, before, installing, &answering, keep_sessions)
 }
 
 /// Whether an upgrade happened, from the greeting of the daemon answering
@@ -394,9 +505,33 @@ pub fn replaced(
     before: Option<DaemonInstance>,
     installing: Option<BuildDigest>,
     answering: &ServerHello,
+    keep_sessions: bool,
 ) -> Result<(), UpgradeError> {
     let carried = bundled().crate_version;
-    let unchanged = before.is_some() && answering.instance == before;
+    let same_run = before.is_some() && answering.instance == before;
+    let installed_build = matches!(
+        (installing, answering.build),
+        (Some(wanted), Some(running)) if wanted == running
+    );
+    // A kept upgrade is the same daemon running the binary just installed.
+    // An ending upgrade is a different daemon: the same run still answering
+    // means the old one never stopped.
+    if keep_sessions {
+        if same_run && installed_build {
+            return Ok(());
+        }
+        let detail = format!(
+            "the server was replaced but the kept daemon is not answering as the binary just \
+             installed ({carried})"
+        );
+        return Err(UpgradeError::Bootstrap(BootstrapError {
+            host: host.to_owned(),
+            stage: Stage::Launch,
+            cause: Cause::Transient,
+            detail,
+        }));
+    }
+    let unchanged = same_run;
     let other_build = matches!(
         (installing, answering.build),
         (Some(wanted), Some(running)) if wanted != running

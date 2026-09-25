@@ -8,6 +8,7 @@ The C ABI over `iznik-client`, and the one crate in this workspace that may cont
 
 | Module | Holds | Landed by |
 |---|---|---|
+| `adopt` | Owning a descriptor this process inherited: the pseudoterminal master, the listener and the lock. This crate's own, not part of the ABI. | `adoption-boundary` (plan 0008) |
 | `delivery` | The one thread every callback arrives on, what it looks up before each call, and the count that lets a caller wait for the calls already made with nothing held while they run. This crate's own, not part of the ABI. | `ffi-surface` (plan 0006) |
 | `error` | `iznik_error`: a code, the layer it came from, and a message the application may display verbatim. | `ffi-surface` (plan 0006) |
 | `model` | The events carried to the application in `iznik/1`'s own encoding, so there is one format, not two. | `ffi-surface` (plan 0006) |
