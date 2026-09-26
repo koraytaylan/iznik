@@ -343,7 +343,8 @@ fn applies(operation: HostOperation, connection: &HostState) -> bool {
 
 /// The upgrade prompt. A server that can adopt offers keeping the sessions
 /// beside ending them, and each choice says what it costs. One that cannot
-/// offers only the ending, with the warning it has always carried.
+/// keep them has no other way forward, so the only choice is a confirmation
+/// that every session on the host ends.
 fn upgrade_step(state: &EngineState, selected: Option<&TabKey>) -> Option<Step> {
     let mut hosts: Vec<&HostId> = state
         .hosts()
@@ -376,41 +377,12 @@ fn upgrade_step(state: &EngineState, selected: Option<&TabKey>) -> Option<Step> 
     let mut choices = Vec::new();
     for host in hosts {
         if state.adopts(host) {
-            choices.push(Choice {
-                label: format!(
-                    "Keep the sessions on {}. The shells stay; this window reconnects.",
-                    host.0
-                ),
-                answer: Answer::Host {
-                    operation: HostOperation::Upgrade {
-                        keep_sessions: true,
-                    },
-                    host: host.clone(),
-                },
-            });
-            choices.push(Choice {
-                label: format!(
-                    "End the sessions on {}. Every shell on the host stops.",
-                    host.0
-                ),
-                answer: Answer::Host {
-                    operation: HostOperation::Upgrade {
-                        keep_sessions: false,
-                    },
-                    host: host.clone(),
-                },
-            });
-        } else {
-            choices.push(Choice {
-                label: format!("Upgrade {}", host.0),
-                answer: Answer::Host {
-                    operation: HostOperation::Upgrade {
-                        keep_sessions: false,
-                    },
-                    host: host.clone(),
-                },
-            });
+            choices.push(keeping_upgrade(host));
         }
+        // Ending is the confirmation. A server that can keep the sessions
+        // offers it beside keeping them; one that cannot offers only this,
+        // so continuing is a choice that says the sessions end.
+        choices.push(ending_upgrade(host));
     }
     Some(Step::Ask(Prompt {
         action: Some(ActionId::UpgradeHost),
@@ -418,6 +390,39 @@ fn upgrade_step(state: &EngineState, selected: Option<&TabKey>) -> Option<Step> 
         initial: String::new(),
         expected: Expected::Choice(choices),
     }))
+}
+
+/// Keep the sessions: the shells stay and this window reconnects.
+fn keeping_upgrade(host: &HostId) -> Choice {
+    Choice {
+        label: format!(
+            "Keep the sessions on {}. The shells stay; this window reconnects.",
+            host.0
+        ),
+        answer: Answer::Host {
+            operation: HostOperation::Upgrade {
+                keep_sessions: true,
+            },
+            host: host.clone(),
+        },
+    }
+}
+
+/// End the sessions. This is the confirmation that they stop, and the only
+/// way forward when the server cannot keep them.
+fn ending_upgrade(host: &HostId) -> Choice {
+    Choice {
+        label: format!(
+            "End the sessions on {}. Every shell on the host stops.",
+            host.0
+        ),
+        answer: Answer::Host {
+            operation: HostOperation::Upgrade {
+                keep_sessions: false,
+            },
+            host: host.clone(),
+        },
+    }
 }
 
 /// A host operation performed at once on the only host it applies to, or a

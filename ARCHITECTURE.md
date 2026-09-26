@@ -473,7 +473,9 @@ its binary, `<binary>.sha256`, once — the file is replaced with the next
 build's while it runs — and its `Hello` names it to a client that asks. A
 client trusts a same-version daemon's capabilities, and offers nothing, only
 when that digest is one of the servers it carries; any other is another build,
-offered its replacement for the build. A daemon that names no build is judged
+offered its replacement for the build. The adoption bit is still read: it
+gates no command, and the palette's choice to keep the sessions is made of it.
+A daemon that names no build is judged
 as before: another build is assumed only of the run a bootstrap found another
 build's binary under. It is
 an order to the host's own task rather than a handle taken out of the manager:

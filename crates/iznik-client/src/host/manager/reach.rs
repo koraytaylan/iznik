@@ -156,15 +156,21 @@ fn superseded(
 /// version, its bytes. Two servers that both say "protocol 1" may have given
 /// one bit number two different jobs — an unreleased local build did exactly
 /// that — so a server that is not this build's own version, or is `stale`,
-/// another build of it, is not interpreted at all: its advertisement is
-/// dropped and every feature gated on a bit is unavailable to it. That is the
-/// conservative answer, and it costs nothing real, because such a host is
+/// another build of it, is not interpreted for anything a command is gated
+/// on: those bits are dropped and every such feature is unavailable. That is
+/// the conservative answer, and it costs nothing real, because such a host is
 /// offered an upgrade on that ground alone.
+///
+/// [`Capabilities::ADOPT`] is the exception. It gates no command. It is the
+/// server's claim that an upgrade can keep the sessions, which the upgrade
+/// reads from the greeting again before it acts, and which the palette's
+/// keep-or-end choice is made of. Dropping it is what left that choice out
+/// of the palette for every host a person actually upgrades.
 fn trusted_capabilities(greeting: &ServerHello, stale: bool) -> Capabilities {
     if greeting.server_version == bundled().crate_version && !stale {
         greeting.capabilities
     } else {
-        Capabilities::from_bits(0)
+        Capabilities::from_bits(greeting.capabilities.bits() & Capabilities::ADOPT.bits())
     }
 }
 

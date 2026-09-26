@@ -164,7 +164,8 @@ pub struct HostView {
     /// started before the binary under it was replaced, while it is the one
     /// answering.
     ///
-    /// Its capability bits are not this build's to read, and it is offered an
+    /// The bits a command is gated on are not this build's to read. Adoption
+    /// is kept, so an upgrade can offer to keep the sessions. It is offered an
     /// upgrade for the build, on every connection it answers — not only the
     /// one whose bootstrap replaced the binary and so found it out.
     pub superseded: Option<DaemonInstance>,

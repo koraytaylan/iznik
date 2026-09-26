@@ -567,7 +567,13 @@ fn upgrade_asks_even_for_one_host_and_warns() {
         "the question warns what an upgrade costs: {}",
         prompt.question
     );
-    assert_eq!(choices(&prompt, "").len(), 1);
+    let offered = choices(&prompt, "");
+    assert_eq!(offered.len(), 1, "the only way forward is the confirmation");
+    assert!(
+        offered[0].label.contains("Every shell"),
+        "continuing confirms the sessions end: {}",
+        offered[0].label
+    );
 }
 
 #[test]
@@ -645,7 +651,17 @@ fn an_adopting_server_offers_keeping_and_ending() {
         "a server that cannot adopt only warns: {}",
         ending.question
     );
-    assert_eq!(choices(&ending, "").len(), 1);
+    let confirmed = choices(&ending, "");
+    assert_eq!(confirmed.len(), 1, "there is no way to keep the sessions");
+    assert!(
+        confirmed[0].label.contains("Every shell"),
+        "the only choice confirms they end: {}",
+        confirmed[0].label
+    );
+    assert!(
+        !confirmed[0].label.contains("shells stay"),
+        "keeping is not offered when the server cannot adopt"
+    );
 }
 
 #[test]

@@ -99,7 +99,8 @@ impl Unanswered {
     ) -> Vec<CommandId> {
         let greeting = channel.greeting();
         // What the connection took this server's capabilities to be, which is
-        // what may be acted on: nothing, for another build than this one.
+        // what a command may be gated on: nothing, for another build than this
+        // one. Adoption may remain; it gates no command.
         let trusted = shared
             .with(host, |view| view.capabilities)
             .unwrap_or(Capabilities::from_bits(0));

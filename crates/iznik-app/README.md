@@ -137,10 +137,13 @@ have given one bit number two different jobs, so another version's
 advertisement is dropped and its feature-gated commands are unavailable; a
 server that is missing `REORDER_SESSIONS` (or is of another version) has the
 moves disabled, and a warning toast says which features are unavailable.
-Connecting such a host also puts an upgrade on offer — for the version, or for
-the missing feature when the version is this one — and `host: upgrade` in the
-palette, or the session menu, then asks with the plain warning that every
-session on the host ends before it replaces the server. A same-version
+Connecting such a host also puts an upgrade on offer — for the version, for
+another build of this version, or for the missing feature when the version is
+this one — and `host: upgrade` in the palette then asks. When the server
+advertised that it can keep the sessions, the palette offers that beside
+ending them. When it cannot, the only choice confirms that every session on
+the host ends, and the upgrade does not continue until that choice is taken.
+A same-version
 replacement is forced, because it is the only path that closes a capability
 gap; the daemon's own guard still refuses an unforced upgrade while it holds
 panes. A command the connected server cannot decode is refused before it is

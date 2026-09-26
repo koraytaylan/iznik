@@ -94,7 +94,8 @@ pub enum UpgradeReason {
     /// The host runs the same version, but another build of it — its daemon
     /// said so, naming the digest of the binary it started from, or went on
     /// running after its binary was replaced with this build's — whose
-    /// capability bits are not this build's to read.
+    /// feature bits are not this build's to read. Adoption is kept: it gates
+    /// no command, and it is what lets the upgrade offer to keep the sessions.
     Build,
 }
 

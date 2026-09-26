@@ -292,9 +292,10 @@ impl WindowShell {
         match action {
             ActionId::RemoveHost => return self.hosts.remove_host(&host.0).map(|()| true),
             ActionId::ReconnectHost => return self.hosts.reconnect(&host.0).map(|()| true),
-            ActionId::UpgradeHost => {
-                return self.hosts.upgrade(&host.0, true, false).map(|()| true);
-            }
+            // An upgrade that cannot keep the sessions ends them. That is
+            // confirmed in the palette, which is the only path that asks.
+            // Performing it here would end them with no question.
+            ActionId::UpgradeHost => return Ok(false),
             ActionId::UninstallHost => return self.hosts.uninstall(&host.0).map(|()| true),
             _ => {}
         }

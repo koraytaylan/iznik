@@ -4,8 +4,9 @@
 //! running another build over this build's binary is told apart only by the
 //! digest it read beside its binary when it started. The same digest as the
 //! server this build carries is this build: its capabilities are read and
-//! nothing is offered. Another is another build: its capabilities are not
-//! this build's to read, and replacing it is offered.
+//! nothing is offered. Another is another build: the bits a command is gated
+//! on are not this build's to read, the adoption bit is kept so an upgrade
+//! can offer to keep the sessions, and replacing it is offered.
 
 use core::time::Duration;
 use std::path::PathBuf;
@@ -202,8 +203,8 @@ fn build_digest_of_another_build_is_offered_a_replacement() {
         "another build is offered its replacement, for the build"
     );
     assert_eq!(
-        capabilities.bits(),
-        0,
-        "and what it advertised is not this build's to read"
+        capabilities,
+        Capabilities::ADOPT,
+        "feature bits of another build stay unread; adoption is what the upgrade choice reads"
     );
 }

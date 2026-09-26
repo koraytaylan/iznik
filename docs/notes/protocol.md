@@ -589,8 +589,10 @@ one, with `BUILD` set and those thirty-two bytes appended after the instance;
 a daemon that read none, or a client that did not ask for both, gets neither
 the bit nor the field. A client compares the digest with the servers it
 carries: the same is this build, whose capabilities it reads; another is
-another build of the same version, whose capability bits it does not read and
-whose replacement it offers. *Fixtures:* `message.jsonl`, "Hello reply naming
+another build of the same version, whose feature bits it does not read. The
+adoption bit is kept, because it gates no command and is what lets an upgrade
+offer to keep the sessions. The replacement is offered. *Fixtures:*
+`message.jsonl`, "Hello reply naming
 the daemon instance and the build it runs".
 
 When **both** `Hello`s carried `ZSTD`, everything after them is a single zstd
