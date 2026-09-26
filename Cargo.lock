@@ -3664,6 +3664,8 @@ dependencies = [
  "iznik-testkit",
  "libghostty-vt",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -137,6 +137,7 @@ fn usage() -> ExitCode {
 /// application quit, and failure returned rather than a process left running
 /// with no window.
 fn run() -> ExitCode {
+    iznik_app::tools_log::install();
     let failed = Rc::new(Cell::new(false));
     let failing = Rc::clone(&failed);
     gpui_kit::application()

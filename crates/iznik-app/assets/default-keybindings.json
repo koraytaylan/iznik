@@ -16,5 +16,6 @@
   "ReconnectHost": "ctrl-shift-u",
   "UpgradeHost": "ctrl-shift-g",
   "UninstallHost": "ctrl-shift-delete",
-  "OpenSettings": "ctrl-shift-s"
+  "OpenSettings": "ctrl-shift-s",
+  "OpenTools": "ctrl-alt-i"
 }

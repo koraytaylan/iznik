@@ -44,6 +44,8 @@ pub enum ActionId {
     UninstallHost,
     /// Open the settings window.
     OpenSettings,
+    /// Open the developer tools window.
+    OpenTools,
 }
 
 /// What an action operates on.
@@ -231,6 +233,14 @@ pub const INVENTORY: &[ActionSpec] = &[
         ActionId::OpenSettings,
         "iznik: settings",
         "Open the settings window.",
+        ActionTarget::Application,
+        ActionContext::None,
+        None,
+    ),
+    spec(
+        ActionId::OpenTools,
+        "iznik: developer tools",
+        "Show each host's connection, capabilities and pane identities.",
         ActionTarget::Application,
         ActionContext::None,
         None,

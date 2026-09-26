@@ -33,6 +33,8 @@ pub mod surface;
 pub mod tab_actions;
 pub mod tab_label;
 pub mod theme;
+pub mod tools_log;
+pub mod tools_window;
 pub mod vt;
 pub mod wake;
 pub mod window;

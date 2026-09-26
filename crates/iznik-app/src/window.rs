@@ -375,7 +375,8 @@ impl WindowShell {
             | ActionId::ReconnectHost
             | ActionId::UpgradeHost
             | ActionId::UninstallHost
-            | ActionId::OpenSettings => None,
+            | ActionId::OpenSettings
+            | ActionId::OpenTools => None,
         }
     }
     /// The currently selected host-qualified tab.
@@ -856,6 +857,7 @@ impl WindowShell {
             detail,
         };
         if self.notices.fail(notice.clone()) {
+            crate::tools_log::record(&format!("{}: {}", host.0, notice.detail));
             context.emit(notice);
             context.notify();
         }

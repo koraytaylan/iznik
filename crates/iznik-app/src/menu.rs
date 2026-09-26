@@ -56,6 +56,8 @@ actions!(
         ClosePane,
         /// Open the settings window.
         OpenSettings,
+        /// Open the developer tools window.
+        OpenTools,
         /// Show the command palette.
         CommandPalette,
         /// Put the terminal's selection on the clipboard.
@@ -106,6 +108,7 @@ fn keybindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-w", ClosePane, None),
         KeyBinding::new("cmd-shift-p", CommandPalette, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-alt-i", OpenTools, None),
         KeyBinding::new("cmd-c", Copy, Some("Terminal")),
         KeyBinding::new("cmd-v", Paste, Some("Terminal")),
         // Control-C and Control-V belong to the program in a terminal, so
@@ -160,6 +163,9 @@ where
                 run(shell, ActionId::OpenSettings, window, context);
             }),
         )
+        .on_action(context.listener(|shell, _: &OpenTools, window, context| {
+            run(shell, ActionId::OpenTools, window, context);
+        }))
         .on_action(
             context.listener(|shell, _: &CommandPalette, _window, context| {
                 shell.open_palette(context);
@@ -210,7 +216,10 @@ pub fn menu_bar() -> Vec<Menu> {
             MenuItem::action("Copy", Copy),
             MenuItem::action("Paste", Paste),
         ]),
-        Menu::new("View").items([MenuItem::action("Command Palette\u{2026}", CommandPalette)]),
+        Menu::new("View").items([
+            MenuItem::action("Command Palette\u{2026}", CommandPalette),
+            MenuItem::action("Developer Tools", OpenTools),
+        ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),

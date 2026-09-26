@@ -18,6 +18,12 @@ opened ends the process with a failure status. The shell paints from the
 kit's active theme through the 0.3.5 `gpui` line that `gpui-kit` 0.6.1 pins
 exact.
 
+View → Developer Tools (`cmd-alt-i`, or `iznik: developer tools` in the
+palette) opens a window laid out like Settings. Hosts lists each connection,
+the server's capabilities, and every pane. Log is the process log, following
+the newest line, including the engine's `tracing` output. The level is
+`IZNIK_LOG`, or `info` when that is unset.
+
 ## Servers it can install
 
 Reaching an ssh host that has no `iznik-server` of its own means installing

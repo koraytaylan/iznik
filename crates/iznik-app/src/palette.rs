@@ -461,6 +461,11 @@ pub fn dispatch_action(
         palette.close();
         return Ok(true);
     }
+    if action == ActionId::OpenTools {
+        crate::tools_window::open(context);
+        palette.close();
+        return Ok(true);
+    }
     match prompt::begin_with(
         action,
         shell.hosts().state(),

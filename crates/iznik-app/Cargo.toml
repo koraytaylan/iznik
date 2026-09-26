@@ -24,6 +24,9 @@ gpui-kit = "=0.6.1"
 gpui-kit-assets = "=0.6.1"
 iznik-client = { path = "../iznik-client" }
 iznik-protocol = { path = "../iznik-protocol" }
+# The engine's structured log, shown on the developer tools log page.
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 # The existing two-container fixture owns lifecycle proof credentials and hosts.
