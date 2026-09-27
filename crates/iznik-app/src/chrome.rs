@@ -293,24 +293,26 @@ fn applied(native_size: Option<(u16, u16)>, wanted: (u16, u16), shown: (u16, u16
 /// One strip for the latest local failure, dismissible without discarding
 /// host state.
 ///
-/// The text colour is set here rather than left to the alert's variant: the
-/// kit paints an error alert's message in `theme.danger`, which is the
-/// `danger.background` token — a colour meant to sit *behind* text. In a theme
-/// that declares it as a dark red, as Ayu Mirage does, that is dark red text on
-/// a dark red field, which is a contrast ratio of 1.1 and cannot be read at
-/// all. The failure reads in `danger.foreground`, which is the token for text
-/// on that colour, so it is legible in every theme.
+/// The field, text, and border are [`crate::theme::failure_strip_colors`],
+/// from the theme that is selected now. They are applied on the strip itself
+/// and again on the alert, because the alert paints its own field after the
+/// parent and that field is nearly transparent.
 fn banner(context: &mut Context<'_, WindowShell>, failure: &Notice) -> AnyElement {
-    let foreground = context.theme().danger_foreground;
+    let (background, foreground, border) = crate::theme::failure_strip_colors(context.theme());
     div()
         .id("surface-failure")
         .test_support()
+        .w_full()
+        .bg(background)
+        .border_color(border)
         .child(
             Alert::error(
                 "surface-failure-alert",
                 format!("{}: {}", failure.host, failure.detail),
             )
             .banner()
+            .bg(background)
+            .border_color(border)
             .text_color(foreground)
             .on_close(context.listener(|shell, _, _, context| {
                 shell.notices.dismiss();

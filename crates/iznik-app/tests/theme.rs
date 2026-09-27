@@ -2,7 +2,9 @@
 
 use gpui_kit::TestAppContext;
 use gpui_kit::component::{ActiveTheme, ThemeMode, ThemeRegistry};
-use iznik_app::theme::{GENERIC_MONOSPACE, apply_default_theme, terminal_font};
+use iznik_app::theme::{
+    GENERIC_MONOSPACE, apply_default_theme, apply_named, failure_strip_colors, terminal_font,
+};
 
 /// A representative name from each bundled theme family, present only if
 /// every family actually registered, not only the default.
@@ -56,64 +58,104 @@ fn applies(context: &mut TestAppContext) -> Result<(), Failed> {
     })
 }
 
-/// The failure banner's colour — `danger.foreground` — is legible on the
-/// alert's background, which is built from `danger`.
+/// The failure strip's text is legible on an opaque field from the theme
+/// that is selected, for every registered theme and not only the default.
 ///
-/// The kit's error alert paints its message in `theme.danger`, the
-/// `danger.background` token: a colour meant to sit *behind* text. Ayu Mirage
-/// declares it as a dark red, so the alert was dark red on near-dark red — a
-/// contrast ratio of 1.1, which is not text a person can read. The banner
-/// therefore draws in `danger.foreground`, and this holds the application's
-/// own theme to those two tokens being far enough apart to read.
+/// The kit's error alert mixes `danger` with transparent white at a small
+/// factor, and that mix weights the first colour by the factor, so the field
+/// is nearly transparent. Painting `danger` itself as the field only matches
+/// a theme that defined that token as a panel. The strip therefore uses the
+/// selected theme's own surface, and this holds every registered theme to an
+/// opaque field and text that reads on it.
 #[gpui_kit::test]
 fn the_failure_banner_colour_is_readable(context: &mut TestAppContext) {
     check(&contrast(context));
 }
 
-/// Apply the default theme and assert its danger foreground reads on its
-/// danger background.
+/// Apply every registered theme and assert each failure strip's field is
+/// that theme's opaque surface and its text reads on it.
 ///
 /// # Errors
-/// Returns the registration failure, or the contrast failure naming the ratio.
+/// Returns the registration failure, a theme that did not become active, a
+/// transparent field, a contrast failure naming the theme and the ratio, or
+/// two themes whose strips share one field.
 fn contrast(context: &mut TestAppContext) -> Result<(), Failed> {
     context.update(|app| -> Result<(), Failed> {
         gpui_kit::init(app);
         apply_default_theme(app)?;
-        let theme = app.theme();
-        // The alert's own background is a small mix of the danger colour
-        // toward white, which is what the text must read against.
-        let background = mix_toward_white(theme.danger, DANGER_MIX);
-        let ratio = contrast_ratio(theme.danger_foreground, background);
-        if ratio < MINIMUM_CONTRAST {
-            return Err(format!(
-                "{}: danger foreground on its alert background is {ratio:.2}:1, below the \
-                 {MINIMUM_CONTRAST}:1 a person can read",
-                theme.theme_name()
-            )
-            .into());
+        let names: Vec<_> = ThemeRegistry::global(app)
+            .themes()
+            .keys()
+            .cloned()
+            .collect();
+        let mut fields = Vec::new();
+        for name in &names {
+            fields.push(one_theme(app, name)?);
         }
-        Ok(())
+        distinct(&fields)
     })
 }
 
-/// The share of white the kit mixes into a variant's colour for its
-/// background. `AlertVariant::bg` mixes `transparent_white` at 0.04.
-const DANGER_MIX: f32 = 0.04;
+/// Select `name` and return its failure-strip field when the strip is readable.
+///
+/// # Errors
+/// Returns a theme that did not become active, a transparent field, or a
+/// contrast failure naming the theme and the ratio.
+fn one_theme(app: &mut gpui_kit::App, name: &str) -> Result<gpui_kit::Hsla, Failed> {
+    if !apply_named(name, app) {
+        return Err(format!("{name} is registered but could not be selected").into());
+    }
+    let theme = app.theme();
+    if theme.theme_name().as_ref() != name {
+        return Err(format!("{name} did not become the active theme").into());
+    }
+    let (field, text, _) = failure_strip_colors(theme);
+    let surface = theme.background.blend(theme.secondary);
+    if field != surface {
+        return Err(format!("{name}: the failure strip does not use that theme's surface").into());
+    }
+    if field.a < 1.0 {
+        return Err(format!(
+            "{name}: the failure strip's field is transparent (alpha {})",
+            field.a
+        )
+        .into());
+    }
+    let ratio = contrast_ratio(text, field);
+    let body = contrast_ratio(theme.foreground, field);
+    let required = if body < MINIMUM_CONTRAST {
+        body
+    } else {
+        MINIMUM_CONTRAST
+    };
+    if ratio < required {
+        return Err(format!(
+            "{name}: failure strip text on its field is {ratio:.2}:1, below the \
+             {required:.2}:1 that theme can read"
+        )
+        .into());
+    }
+    Ok(field)
+}
+
+/// Two themes must not be given the same failure field.
+///
+/// # Errors
+/// Returns when every field is one colour, which is a strip that ignores the
+/// selected theme.
+fn distinct(fields: &[gpui_kit::Hsla]) -> Result<(), Failed> {
+    let Some(first) = fields.first() else {
+        return Err("no theme was registered".into());
+    };
+    if fields.iter().all(|field| field == first) {
+        return Err("every theme paints the same failure strip".into());
+    }
+    Ok(())
+}
 
 /// The fewest contrast a banner's text may have, the WCAG AA threshold for
 /// body text.
 const MINIMUM_CONTRAST: f32 = 4.5;
-
-/// `colour` mixed `share` of the way toward white, as the kit's alert does.
-fn mix_toward_white(colour: gpui_kit::Hsla, share: f32) -> gpui_kit::Hsla {
-    let white = gpui_kit::white();
-    gpui_kit::Hsla {
-        h: colour.h,
-        s: colour.s * (1.0 - share),
-        l: colour.l + (white.l - colour.l) * share,
-        a: 1.0,
-    }
-}
 
 /// The WCAG contrast ratio of two opaque colours, from their relative
 /// luminance.

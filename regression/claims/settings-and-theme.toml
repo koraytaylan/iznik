@@ -60,7 +60,7 @@ because = "The test drives a real shell construction directly and needs no conta
 
 [[claim]]
 id = "failure-banner-is-readable"
-statement = "The application's own theme has a danger foreground legible on the alert's danger-built background — at least the 4.5:1 a person reads by — where the kit's error alert paints its message in the danger *background* token, which in Ayu Mirage is a contrast ratio of 1.1 and cannot be read at all."
+statement = "The failure strip paints the selected theme's own surface as an opaque field and, as its text, the danger colour from that same theme that reads best on the field, for every registered theme. Where the theme's own text already clears 4.5:1 the strip does too; a theme whose surface cannot reach that keeps text at least as readable as the rest of the theme. The kit's error alert mixes danger with transparent white, so its own field is nearly transparent."
 test = "iznik-app::theme::the_failure_banner_colour_is_readable"
 because = "the two colours and their contrast are arithmetic over the registered theme; no display is needed"
 

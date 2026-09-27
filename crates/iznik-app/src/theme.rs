@@ -64,6 +64,90 @@ pub fn apply_default_theme(app: &mut App) -> Result<(), String> {
     Ok(())
 }
 
+/// Field, text, and border for a failure strip, taken from `theme`.
+///
+/// The field is that theme's secondary surface painted over its background,
+/// the same chrome the connection strip uses, so a light theme stays light
+/// and a dark theme stays dark. The text is the danger colour from the same
+/// theme that can be read on that field: `danger` where that token is the
+/// accent, and `danger.foreground` where `danger` is itself a dark fill.
+/// The kit's error alert is not used for these colours. It mixes `danger`
+/// with transparent white, and that mix leaves the field nearly transparent.
+#[must_use]
+pub fn failure_strip_colors(theme: &ThemeColor) -> (Hsla, Hsla, Hsla) {
+    let field = theme.background.blend(theme.secondary);
+    (field, danger_text(theme, field), theme.border)
+}
+
+/// The opaque danger colour that reads best on `field`.
+///
+/// Starts from the theme's own text, so a theme whose danger accent is too
+/// close to its surface keeps the text the rest of that theme already uses.
+fn danger_text(theme: &ThemeColor, field: Hsla) -> Hsla {
+    let mut chosen = theme.foreground;
+    let mut best = contrast_ratio(chosen, field);
+    for candidate in [theme.danger, theme.danger_foreground] {
+        if !candidate.is_opaque() {
+            continue;
+        }
+        let ratio = contrast_ratio(candidate, field);
+        if ratio > best {
+            chosen = candidate;
+            best = ratio;
+        }
+    }
+    chosen
+}
+
+/// Offset WCAG adds to both luminances before dividing them.
+const CONTRAST_OFFSET: f32 = 0.05;
+/// A channel at or below this sRGB value is still on the linear segment.
+const LINEAR_THRESHOLD: f32 = 0.040_45;
+/// Divisor of the linear segment of the sRGB transfer.
+const LINEAR_DIVISOR: f32 = 12.92;
+/// Offset inside the gamma segment of the sRGB transfer.
+const GAMMA_OFFSET: f32 = 0.055;
+/// Scale of the gamma segment of the sRGB transfer.
+const GAMMA_SCALE: f32 = 1.055;
+/// Exponent of the gamma segment of the sRGB transfer.
+const GAMMA_EXPONENT: f32 = 2.4;
+/// Share of luminance WCAG assigns to red.
+const LUMINANCE_RED: f32 = 0.2126;
+/// Share of luminance WCAG assigns to green.
+const LUMINANCE_GREEN: f32 = 0.7152;
+/// Share of luminance WCAG assigns to blue.
+const LUMINANCE_BLUE: f32 = 0.0722;
+
+/// The WCAG contrast ratio of two colours, from their relative luminance.
+fn contrast_ratio(left: Hsla, right: Hsla) -> f32 {
+    let left = luminance(left);
+    let right = luminance(right);
+    let (lighter, darker) = if left > right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    (lighter + CONTRAST_OFFSET) / (darker + CONTRAST_OFFSET)
+}
+
+/// The relative luminance of a colour, as WCAG defines it.
+fn luminance(colour: Hsla) -> f32 {
+    let rgb = gpui_kit::Rgba::from(colour);
+    let red = linear_channel(rgb.r);
+    let green = linear_channel(rgb.g);
+    let blue = linear_channel(rgb.b);
+    (LUMINANCE_RED * red) + (LUMINANCE_GREEN * green) + (LUMINANCE_BLUE * blue)
+}
+
+/// One sRGB channel converted to linear light.
+fn linear_channel(value: f32) -> f32 {
+    if value <= LINEAR_THRESHOLD {
+        value / LINEAR_DIVISOR
+    } else {
+        ((value + GAMMA_OFFSET) / GAMMA_SCALE).powf(GAMMA_EXPONENT)
+    }
+}
+
 /// Default terminal font size in logical pixels.
 const DEFAULT_FONT_SIZE: f32 = 14.0;
 /// Default row height as a multiple of the font size: the conventional
