@@ -42,6 +42,7 @@ use crate::pty::streams::{InputError, InputRoom, Offer};
 use crate::resume::StartRequest;
 use crate::session::commands;
 use crate::session::registry::Registry;
+use crate::upload::UploadState;
 
 /// This server's own version, which the client keeps only for its logs.
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -67,7 +68,8 @@ const CAPABILITIES: Capabilities = Capabilities::from_bits(
         | Capabilities::INSTANCE.bits()
         | Capabilities::ANSWERED.bits()
         | Capabilities::IDENTIFY.bits()
-        | Capabilities::BUILD.bits(),
+        | Capabilities::BUILD.bits()
+        | Capabilities::UPLOAD.bits(),
 );
 
 /// How many frames may be waiting for the writer. Small on purpose: it is not
@@ -487,6 +489,9 @@ struct Held {
     /// Who the client said it is, once it has: what its commands are
     /// remembered under.
     client: Option<ClientIdentity>,
+    /// Files this connection is still receiving. Dropping the connection
+    /// deletes whatever had not been finished.
+    upload_state: UploadState,
 }
 
 impl Held {
@@ -558,7 +563,15 @@ async fn dispatch(
         answer_held(&mut multiplexer, &registry, &mut held).await?;
         for request in commuting {
             // Nothing that commutes is keystrokes, so nothing here is held.
-            let _held = answer(&mut multiplexer, &registry, held.client, request).await?;
+            let client = held.client;
+            let _held = answer(
+                &mut multiplexer,
+                &registry,
+                client,
+                &mut held.upload_state,
+                request,
+            )
+            .await?;
         }
         if gone {
             return Ok(());
@@ -628,7 +641,15 @@ async fn answer_held(
             held.client = Some(client);
             continue;
         }
-        held.blocked = answer(multiplexer, registry, held.client, request).await?;
+        let client = held.client;
+        held.blocked = answer(
+            multiplexer,
+            registry,
+            client,
+            &mut held.upload_state,
+            request,
+        )
+        .await?;
         if held.blocked.is_some() {
             return Ok(());
         }
@@ -827,11 +848,12 @@ async fn answer(
     multiplexer: &mut Multiplexer<Handoff>,
     registry: &Arc<RwLock<Registry>>,
     client: Option<ClientIdentity>,
+    upload_state: &mut UploadState,
     request: ToServer,
 ) -> Result<Option<Blocked>, ConnectionError> {
     match request {
         ToServer::Input { pane, bytes } => offer(multiplexer, registry, pane, bytes).await,
-        other => answer_other(multiplexer, registry, client, other)
+        other => answer_other(multiplexer, registry, client, upload_state, other)
             .await
             .map(|()| None),
     }
@@ -846,6 +868,7 @@ async fn answer_other(
     multiplexer: &mut Multiplexer<Handoff>,
     registry: &Arc<RwLock<Registry>>,
     client: Option<ClientIdentity>,
+    upload_state: &mut UploadState,
     request: ToServer,
 ) -> Result<(), ConnectionError> {
     match request {
@@ -870,6 +893,9 @@ async fn answer_other(
             Ok(())
         }
         ToServer::Ping => Ok(multiplexer.reply(&ToClient::Pong).await?),
+        ToServer::Upload(upload) => {
+            Ok(crate::upload::accept(multiplexer, registry, upload_state, upload).await?)
+        }
         ToServer::Resize {
             pane,
             columns,

@@ -138,6 +138,7 @@ Client to server:
 | `Resize { pane, columns, rows }` | Set a pane's size. |
 | `Focus { pane }` | Which pane this client is looking at, for scheduling priority. |
 | `Ping` | Liveness. |
+| `Upload { pane, name, offset, finished, bytes }` | One piece of a file written into the pane's directory, or a directory when `name` ends in `/`. `name` is a relative path. A temporary file is kept when the link drops so a later piece can continue at its length. Sent only to a server that advertised `UPLOAD`. |
 
 Server to client:
 
@@ -152,6 +153,7 @@ Server to client:
 | `Screen { pane, sequence, columns, rows, bytes }` | The pane's screen and scrollback as VT bytes, exact at `sequence`. |
 | `Mark { pane, sequence, kind }` | A shell-integration event, fully typed: prompt, command start, command end with status, working directory, title, alternate-screen switch. |
 | `Pong`, `Error { code, message }` | Liveness and refusal. |
+| `UploadAccepted { pane, written, path }` | A piece of an upload was accepted. `path` is set when the file is finished. |
 
 Capabilities are a bit set exchanged in `Hello`; unknown bits are preserved,
 not dropped, so a newer peer round-trips its own advertisement intact. The

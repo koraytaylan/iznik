@@ -179,6 +179,17 @@ impl TerminalGrid {
     pub fn paste_text(&self, text: String, context: &mut Context<'_, Self>) {
         self.emit_input(TerminalInput::Paste(text), context);
     }
+
+    /// Paste the clipboard: files are uploaded, and text is typed.
+    pub fn paste_clipboard(&self, item: &gpui_kit::ClipboardItem, context: &mut Context<'_, Self>) {
+        match crate::upload::paste_clipboard(item) {
+            crate::upload::ClipboardPaste::Files(paths) => {
+                self.emit_input(TerminalInput::Files(paths), context);
+            }
+            crate::upload::ClipboardPaste::Text(Some(text)) => self.paste_text(text, context),
+            crate::upload::ClipboardPaste::Text(None) => {}
+        }
+    }
 }
 
 /// Capture only an owned drag outside the surface; hovered motion uses the div listener.

@@ -113,7 +113,10 @@ fn kind_of(event: &ManagerEvent) -> Option<(EventKind, String, Vec<u8>)> {
         ManagerEvent::Notify(notification) => told(notification),
         // Carrying begun is said to a C application by the screen or the
         // bytes that follow it; it has no payload of its own.
-        ManagerEvent::Carried { .. } => None,
+        ManagerEvent::Carried { .. }
+        | ManagerEvent::UploadProgress { .. }
+        | ManagerEvent::UploadFinished { .. }
+        | ManagerEvent::UploadFailed { .. } => None,
         // A host nobody holds any more is not an event with a payload; the
         // application learns it from the state that came before it.
         ManagerEvent::Removed { host } => Some((

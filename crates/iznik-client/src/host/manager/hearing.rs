@@ -45,6 +45,15 @@ pub(super) async fn heard(
                 return Ok(());
             }
         };
+        if let iznik_protocol::message::ToClient::UploadAccepted(accepted) = &message
+            && let Some(path) = &accepted.path
+        {
+            shared.publish(ManagerEvent::UploadFinished {
+                host: host.clone(),
+                pane: accepted.pane,
+                path: path.clone(),
+            });
+        }
         let taken = reduce_under(shared, host, &message);
         if let Ok(mut credit) = shared.credit.lock() {
             match &message {

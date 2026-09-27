@@ -197,6 +197,15 @@ fn to_server(value: &Value) -> Result<ToServer, Failure> {
                     .map_err(|_wrong| "`client` is not sixteen bytes")?,
             )),
         },
+        "Upload" => ToServer::Upload(iznik_protocol::upload::FileUpload {
+            pane: PaneId(integer_field(&fields, "pane")?),
+            name: string_field(&fields, "name")?,
+            offset: integer_field(&fields, "offset")?,
+            finished: field(&fields, "finished")?
+                .as_bool()
+                .ok_or("finished is not a boolean")?,
+            bytes: bytes_field(&fields, "bytes")?,
+        }),
         other => return Err(format!("no ToServer variant `{other}`").into()),
     })
 }
@@ -213,6 +222,7 @@ fn error_code(name: &str) -> Result<ErrorCode, Failure> {
         "UnknownPane" => ErrorCode::UnknownPane,
         "ChannelsExhausted" => ErrorCode::ChannelsExhausted,
         "NotSubscribed" => ErrorCode::NotSubscribed,
+        "Upload" => ErrorCode::Upload,
         other => return Err(format!("no ErrorCode `{other}`").into()),
     })
 }
@@ -310,6 +320,15 @@ fn to_client(value: &Value) -> Result<ToClient, Failure> {
             code: error_code(&string_field(&fields, "code")?)?,
             message: string_field(&fields, "message")?,
         },
+        "UploadAccepted" => ToClient::UploadAccepted(iznik_protocol::upload::UploadAccepted {
+            pane: PaneId(integer_field(&fields, "pane")?),
+            written: integer_field(&fields, "written")?,
+            path: if field(&fields, "path")?.is_null() {
+                None
+            } else {
+                Some(string_field(&fields, "path")?)
+            },
+        }),
         other => return Err(format!("no ToClient variant `{other}`").into()),
     })
 }
@@ -487,10 +506,12 @@ fn message_golden_every_line_holds_in_both_directions() {
 #[test]
 fn message_golden_unknown_capability_bits_survive_a_round_trip() {
     let advertised = Capabilities::from_bits(0x8000_000F);
-    assert_eq!(advertised.unknown_bits(), 0x8000_0008);
+    // Bits 0 through 3 are known, including adoption. The high bit is not.
+    assert_eq!(advertised.unknown_bits(), 0x8000_0000);
     assert_eq!(Capabilities::ZSTD.unknown_bits(), 0);
     assert_eq!(Capabilities::RESUME.unknown_bits(), 0);
     assert_eq!(Capabilities::REORDER_SESSIONS.unknown_bits(), 0);
+    assert_eq!(Capabilities::UPLOAD.unknown_bits(), 0);
     let hello = ToServer::Hello {
         protocol_version: PROTOCOL_VERSION,
         client_version: "future".to_owned(),

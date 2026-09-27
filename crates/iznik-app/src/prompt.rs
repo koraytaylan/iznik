@@ -127,6 +127,13 @@ pub enum Answer {
         /// The text.
         text: String,
     },
+    /// Write these files into a pane's directory.
+    Upload {
+        /// The pane.
+        key: crate::vt::PaneKey,
+        /// The files and directories on this machine, in send order.
+        files: Vec<crate::upload_tree::Item>,
+    },
     /// Send this session command to this host.
     Command {
         /// The host the command is for.
@@ -134,6 +141,40 @@ pub enum Answer {
         /// The complete command.
         command: SessionCommand,
     },
+}
+
+/// Ask before writing pasted files into a pane's directory.
+#[must_use]
+pub fn upload_prompt(
+    key: crate::vt::PaneKey,
+    files: Vec<crate::upload_tree::Item>,
+    directory: Option<String>,
+) -> Prompt {
+    let roots: Vec<_> = files.iter().filter(|item| item.type_path).collect();
+    let count = roots.len();
+    let directory_root = roots.iter().any(|item| item.directory);
+    let subject = roots
+        .first()
+        .map(|item| item.name.trim_end_matches('/').to_owned());
+    let what = match (count, directory_root) {
+        (1, true) => format!(
+            "{} and its contents",
+            subject.unwrap_or_else(|| "1 directory".to_owned())
+        ),
+        (1, false) => subject.unwrap_or_else(|| "1 file".to_owned()),
+        (_, true) => format!("{count} items"),
+        (_, false) => format!("{count} files"),
+    };
+    let into = directory.unwrap_or_else(|| "the pane's directory".to_owned());
+    Prompt {
+        action: None,
+        question: format!("Upload {what} into {into}?"),
+        initial: String::new(),
+        expected: Expected::Choice(vec![Choice {
+            label: format!("Upload {what}"),
+            answer: Answer::Upload { key, files },
+        }]),
+    }
 }
 
 /// Ask before pasting text with line breaks into a program that has not

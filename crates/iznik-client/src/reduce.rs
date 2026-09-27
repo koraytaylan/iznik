@@ -277,9 +277,13 @@ pub fn reduce(model: &mut ClientModel, host: &HostId, message: &ToClient) -> Vec
             code: *code,
             message: message.clone(),
         })],
-        // The handshake is the channel's, the liveness is the channel's, and a
-        // snapshot was taken before the lookup above.
-        ToClient::Hello { .. } | ToClient::Pong | ToClient::Snapshot { .. } => Vec::new(),
+        // The handshake is the channel's, the liveness is the channel's, a
+        // snapshot was taken before the lookup above, and an accepted upload
+        // changes nothing in the model: the application hears it beside this.
+        ToClient::Hello { .. }
+        | ToClient::Pong
+        | ToClient::Snapshot { .. }
+        | ToClient::UploadAccepted(_) => Vec::new(),
     }
 }
 

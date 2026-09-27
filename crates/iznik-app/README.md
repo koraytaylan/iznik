@@ -141,7 +141,7 @@ by the capabilities the server advertises in its greeting — but only when that
 server is this build's own version. Two servers that both say "protocol 1" may
 have given one bit number two different jobs, so another version's
 advertisement is dropped and its feature-gated commands are unavailable; a
-server that is missing `REORDER_SESSIONS` (or is of another version) has the
+server that is missing `REORDER_SESSIONS` or `UPLOAD` (or is of another version) has the
 moves disabled, and a warning toast says which features are unavailable.
 Connecting such a host also puts an upgrade on offer — for the version, for
 another build of this version, or for the missing feature when the version is
@@ -218,6 +218,12 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
 | `menu` | The application's main menu: the named menus the system menu bar shows while an iznik window is frontmost, and the handlers that run each item. |
+| `upload` | A paste of files or directories into the focused pane: confirmation, one file at a time, the remote path typed back, and the record a later launch continues. |
+| `upload_log` | The upload record beside the settings file. A file still sending is continued from the bytes already sent; a finished one stays in the list. |
+| `upload_tree` | A pasted directory expanded depth-first. A symbolic link is refused rather than followed. |
+| `upload_window` | The uploads window: every paste this process has made, including one still sending, and the same list after a launch. |
+| `tools_log` | The process log kept for Developer Tools: tracing at `IZNIK_LOG` (or `info`), the latest lines, and the same lines on standard error. |
+| `tools_window` | The Developer Tools window: each host's connection and panes, and the process log following its newest line. |
 
 ## The engine bridge
 

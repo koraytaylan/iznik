@@ -179,6 +179,8 @@ pub struct WindowShell {
     pub(crate) following: Following,
     /// Tabs or sessions numbered while Command is held.
     shortcut_hint: ShortcutHint,
+    /// Files from a paste still being written into a pane.
+    pub(crate) pending_upload: crate::upload::Pending,
     /// Horizontal offset of the tab strip.
     tab_scroll: ScrollHandle,
     /// The selection already scrolled into that strip.
@@ -227,6 +229,7 @@ impl WindowShell {
             focus_handle,
             following,
             shortcut_hint: ShortcutHint::None,
+            pending_upload: crate::upload::Pending::default(),
             tab_scroll: ScrollHandle::new(),
             scrolled_tab: None,
         };
@@ -376,7 +379,8 @@ impl WindowShell {
             | ActionId::UpgradeHost
             | ActionId::UninstallHost
             | ActionId::OpenSettings
-            | ActionId::OpenTools => None,
+            | ActionId::OpenTools
+            | ActionId::OpenUpload => None,
         }
     }
     /// The currently selected host-qualified tab.
@@ -660,13 +664,14 @@ impl WindowShell {
                     }
                 }
             }
-            // Output changes no model and no selection: the grid redraws the
-            // rows it changes when its snapshot comes back.
             if matches!(said, ManagerEvent::Bytes { .. }) {
                 return;
             }
         }
+        let resumed = crate::upload::snapshot_host(&event);
+        crate::upload::on_event(self, &event, context);
         self.hosts.absorb_event(event);
+        crate::upload::resume_after(self, resumed.as_ref(), context);
         self.sizes_pending = true;
         self.notify_upgrades_on_offer(window, context);
         self.reconcile(place.as_ref(), window, context);
@@ -782,12 +787,18 @@ impl WindowShell {
         let paste = context.subscribe(&surface, |shell, _, paste: &PasteConfirmation, context| {
             shell.confirm_paste(paste, context);
         });
+        let files = context.subscribe(
+            &surface,
+            |shell, _, file_paste: &crate::surface::FilePaste, context| {
+                shell.confirm_upload(file_paste, context);
+            },
+        );
         HeldPane {
             surface,
             measured: None,
             awaiting_model: None,
             native_size: None,
-            _subscriptions: vec![focus, failure, paste, left, shown],
+            _subscriptions: vec![focus, failure, paste, files, left, shown],
         }
     }
     /// The panes of the selected tab's layout, keyed by its host.

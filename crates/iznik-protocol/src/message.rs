@@ -24,6 +24,7 @@ use crate::frame::MAXIMUM_PAYLOAD_LENGTH;
 use crate::identity::{
     BuildDigest, ClientIdentity, CommandId, DaemonInstance, Generation, PaneId, Sequence,
 };
+use crate::upload::{FileUpload, UploadAccepted};
 use crate::wire::{ABSENT, PRESENT, Reader, Sink, encode, put_bytes, put_pane, unknown};
 
 /// The channel control messages travel on; every other channel carries pane
@@ -94,6 +95,8 @@ mod server_tag {
     pub(super) const PING: u8 = 12;
     /// `Identify`.
     pub(super) const IDENTIFY: u8 = 13;
+    /// `Upload`.
+    pub(super) const UPLOAD: u8 = 14;
 }
 
 /// The discriminants of [`ToClient`], in table order.
@@ -118,6 +121,8 @@ mod client_tag {
     pub(super) const PONG: u8 = 8;
     /// `Error`.
     pub(super) const ERROR: u8 = 9;
+    /// `UploadAccepted`.
+    pub(super) const UPLOAD_ACCEPTED: u8 = 10;
 }
 
 /// The wire values of [`ErrorCode`], in declaration order.
@@ -132,6 +137,8 @@ mod error_tag {
     pub(super) const CHANNELS_EXHAUSTED: u8 = 3;
     /// `NotSubscribed`.
     pub(super) const NOT_SUBSCRIBED: u8 = 4;
+    /// `Upload`.
+    pub(super) const UPLOAD: u8 = 5;
 }
 
 /// The wire values of [`MarkKind`], in declaration order.
@@ -238,6 +245,11 @@ pub enum ToServer {
         /// The client's identity.
         client: ClientIdentity,
     },
+    /// One piece of a file being written into a pane's directory.
+    ///
+    /// Sent only to a server that advertised [`Capabilities::UPLOAD`]: an
+    /// older server refuses a tag it does not know and ends the connection.
+    Upload(FileUpload),
 }
 
 /// A message from the server to a client.
@@ -343,6 +355,9 @@ pub enum ToClient {
         /// The words for a log or a person.
         message: String,
     },
+    /// A piece of an upload was accepted. The path is set when the file is
+    /// finished and in place.
+    UploadAccepted(UploadAccepted),
 }
 
 /// Why the server refused something; the `code` of [`ToClient::Error`].
@@ -358,6 +373,8 @@ pub enum ErrorCode {
     ChannelsExhausted,
     /// The client acted on a pane it is not subscribed to.
     NotSubscribed,
+    /// A file upload was refused, or could not be written.
+    Upload,
 }
 
 /// A shell-integration event, fully typed on the wire because the server
@@ -559,6 +576,7 @@ impl ErrorCode {
             ErrorCode::UnknownPane => error_tag::UNKNOWN_PANE,
             ErrorCode::ChannelsExhausted => error_tag::CHANNELS_EXHAUSTED,
             ErrorCode::NotSubscribed => error_tag::NOT_SUBSCRIBED,
+            ErrorCode::Upload => error_tag::UPLOAD,
         }
     }
 
@@ -574,6 +592,7 @@ impl ErrorCode {
             error_tag::UNKNOWN_PANE => Ok(ErrorCode::UnknownPane),
             error_tag::CHANNELS_EXHAUSTED => Ok(ErrorCode::ChannelsExhausted),
             error_tag::NOT_SUBSCRIBED => Ok(ErrorCode::NotSubscribed),
+            error_tag::UPLOAD => Ok(ErrorCode::Upload),
             other => Err(unknown(other)),
         }
     }
@@ -636,6 +655,10 @@ fn put_to_server(sink: &mut dyn Sink, message: &ToServer) {
         ToServer::Identify { client } => {
             sink.put(&[server_tag::IDENTIFY]);
             sink.put(&client.0.to_le_bytes());
+        }
+        ToServer::Upload(upload) => {
+            sink.put(&[server_tag::UPLOAD]);
+            upload.write(sink);
         }
     }
 }
@@ -728,6 +751,10 @@ fn put_to_client(sink: &mut dyn Sink, message: &ToClient) {
         ToClient::Error { code, message } => {
             sink.put(&[client_tag::ERROR, code.tag()]);
             put_bytes(sink, message.as_bytes());
+        }
+        ToClient::UploadAccepted(accepted) => {
+            sink.put(&[client_tag::UPLOAD_ACCEPTED]);
+            accepted.write(sink);
         }
     }
 }
@@ -840,6 +867,7 @@ pub fn decode_to_server(payload: &[u8]) -> Result<ToServer, MessageError> {
         server_tag::IDENTIFY => ToServer::Identify {
             client: ClientIdentity(u128::from_le_bytes(reader.array()?)),
         },
+        server_tag::UPLOAD => ToServer::Upload(FileUpload::read(&mut reader)?),
         other => return Err(unknown(other)),
     };
     reader.finish()?;
@@ -914,6 +942,7 @@ pub fn decode_to_client(payload: &[u8]) -> Result<ToClient, MessageError> {
             code: ErrorCode::from_tag(reader.byte()?)?,
             message: reader.string()?,
         },
+        client_tag::UPLOAD_ACCEPTED => ToClient::UploadAccepted(UploadAccepted::read(&mut reader)?),
         other => return Err(unknown(other)),
     };
     reader.finish()?;

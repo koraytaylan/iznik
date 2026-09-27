@@ -111,6 +111,9 @@ pub enum TerminalInput {
     Paste(String),
     /// Clipboard text a person has confirmed, encoded whatever the mode.
     ConfirmedPaste(String),
+    /// Files from the clipboard. The surface uploads them and does not ask
+    /// the emulator to encode them.
+    Files(Vec<std::path::PathBuf>),
     /// A pointer event, suppressed when the terminal has not requested it.
     Mouse(MouseInput),
     /// Platform pointer input with a local fallback selected by live terminal modes.
@@ -162,6 +165,7 @@ impl InputEncoder {
                 encode_paste(terminal, text)?
             }
             TerminalInput::ConfirmedPaste(text) => encode_paste(terminal, text)?,
+            TerminalInput::Files(_) => Vec::new(),
             TerminalInput::Mouse(input) => self.mouse(terminal, input)?,
             TerminalInput::Pointer(input) => return self.pointer(terminal, input),
         };

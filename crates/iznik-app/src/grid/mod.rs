@@ -673,8 +673,8 @@ impl Render for TerminalGrid {
             )
             .on_action(
                 context.listener(|grid, _: &crate::menu::Paste, _action_window, context| {
-                    if let Some(text) = context.read_from_clipboard().and_then(|item| item.text()) {
-                        grid.paste_text(text, context);
+                    if let Some(item) = context.read_from_clipboard() {
+                        grid.paste_clipboard(&item, context);
                     }
                 }),
             )

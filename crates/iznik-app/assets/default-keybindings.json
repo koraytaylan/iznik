@@ -17,5 +17,6 @@
   "UpgradeHost": "ctrl-shift-g",
   "UninstallHost": "ctrl-shift-delete",
   "OpenSettings": "ctrl-shift-s",
-  "OpenTools": "ctrl-alt-i"
+  "OpenTools": "ctrl-alt-i",
+  "OpenUpload": "ctrl-alt-u"
 }

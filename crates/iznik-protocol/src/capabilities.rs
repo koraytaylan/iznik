@@ -78,6 +78,14 @@ impl Capabilities {
     /// [`BuildDigest`]: crate::identity::BuildDigest
     pub const BUILD: Capabilities = Capabilities { bits: 1 << 7 };
 
+    /// The server writes a file into a pane's directory.
+    ///
+    /// A client sends `Upload` only to a server whose `Hello` carried this
+    /// bit. An older server refuses the tag as garbage and ends the
+    /// connection, the same way an unknown command used to, so the bit is
+    /// what keeps a paste of a file from taking the link down.
+    pub const UPLOAD: Capabilities = Capabilities { bits: 1 << 8 };
+
     /// The bits that append a field to a server message, and so are claimed
     /// in the server's reply only when the client's `Hello` claimed them too.
     pub const APPENDED: Capabilities = Capabilities {
@@ -92,7 +100,8 @@ impl Capabilities {
         | Capabilities::INSTANCE.bits
         | Capabilities::ANSWERED.bits
         | Capabilities::IDENTIFY.bits
-        | Capabilities::BUILD.bits;
+        | Capabilities::BUILD.bits
+        | Capabilities::UPLOAD.bits;
 
     /// The bits that gate something a person uses, as opposed to something an
     /// optimization is made of.
@@ -100,9 +109,9 @@ impl Capabilities {
     /// A server without `ZSTD` or `RESUME` is a server this client still talks
     /// to with every feature: compression is a saving and resuming is a
     /// recovery, and neither is a command a person chooses. A server without
-    /// [`Capabilities::REORDER_SESSIONS`] is missing a feature, and that — and
-    /// only that — is what an upgrade offer is made of.
-    const FEATURES: u32 = Capabilities::REORDER_SESSIONS.bits;
+    /// [`Capabilities::REORDER_SESSIONS`] or [`Capabilities::UPLOAD`] is
+    /// missing a feature, and that is what an upgrade offer is made of.
+    const FEATURES: u32 = Capabilities::REORDER_SESSIONS.bits | Capabilities::UPLOAD.bits;
 
     /// The set with exactly these bits, whatever they mean.
     #[must_use]

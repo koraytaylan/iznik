@@ -1,0 +1,39 @@
+# A file copied on the machine running the application is written into the
+# pane's directory when it is pasted, and the path the server gives it is
+# what gets typed.
+
+[[claim]]
+id = "upload-writes-file-bytes"
+statement = "Two pieces of a pasted file are written, in order, into the directory the pane was started in, and the server names the finished path."
+test = "iznik-server::file_upload::upload_writes_a_file_into_the_pane_directory"
+because = "the write is a property of the connection loop and the directory on the host, and a socket pair carries the pieces"
+
+[[claim]]
+id = "upload-refuses-a-path"
+statement = "A pasted name that leaves the pane directory is refused with `ErrorCode::Upload`, and the connection still answers a ping."
+test = "iznik-server::file_upload::upload_refuses_a_name_that_is_not_one_file"
+because = "the refusal is a property of the connection loop, and a socket pair is enough to see that the link stays up"
+
+[[claim]]
+id = "upload-prefers-clipboard-files"
+statement = "A clipboard that holds both a file list and a path string is pasted as the files, because the string is only the path on this machine."
+test = "iznik-app::upload::upload_takes_file_paths_before_the_path_text"
+because = "which clipboard entry wins is decided before anything is sent, and a transport would add nothing"
+
+[[claim]]
+id = "upload-quotes-the-remote-path"
+statement = "The path a finished upload is given is quoted for a shell, with a trailing space, so it is typed as one word."
+test = "iznik-app::upload::upload_quotes_a_remote_path_for_the_shell"
+because = "the quoting is a pure function of the path string"
+
+[[claim]]
+id = "upload-writes-a-nested-file"
+statement = "A pasted directory is created under the pane directory, and a file beneath it is written there."
+test = "iznik-server::file_upload::upload_writes_a_nested_file"
+because = "creating the directory is a property of the connection loop, and a socket pair carries the pieces"
+
+[[claim]]
+id = "upload-resumes-after-the-link-drops"
+statement = "A temporary file is kept when the link drops, a later piece past its length is told that length, and a piece at that length finishes the file."
+test = "iznik-server::file_upload::upload_resumes_a_file_after_the_link_drops"
+because = "the temporary file is on the host, and two socket pairs are enough to see a connection drop between pieces"

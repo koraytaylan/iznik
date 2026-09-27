@@ -542,6 +542,29 @@ impl<Stream: Duplex> TestClient<Stream> {
     pub async fn ping(&mut self) -> Result<(), ClientError> {
         self.tell(&ToServer::Ping).await
     }
+
+    /// Sends one piece of a file to be written into a pane's directory.
+    ///
+    /// # Errors
+    ///
+    /// As [`TestClient::subscribe`].
+    pub async fn upload(
+        &mut self,
+        pane: PaneId,
+        name: &str,
+        offset: u64,
+        finished: bool,
+        bytes: Vec<u8>,
+    ) -> Result<(), ClientError> {
+        self.tell(&ToServer::Upload(iznik_protocol::upload::FileUpload {
+            pane,
+            name: name.to_owned(),
+            offset,
+            finished,
+            bytes,
+        }))
+        .await
+    }
 }
 
 impl<Stream: Duplex> TestClient<Stream> {

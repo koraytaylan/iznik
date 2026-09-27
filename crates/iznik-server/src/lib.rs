@@ -13,6 +13,7 @@ pub mod relay;
 pub mod resume;
 pub mod session;
 pub mod terminal;
+mod upload;
 
 /// The exit code of a command line the binary cannot act on: a subcommand it
 /// does not know, or a flag it cannot parse. Two, the conventional usage-error status, so that a failed run's

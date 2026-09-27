@@ -221,6 +221,20 @@ impl HostState {
         }
     }
 
+    /// Whether this connection's server can write a file into a pane's directory.
+    ///
+    /// False unless the server advertised [`Capabilities::UPLOAD`]. Sending
+    /// the message to a server that predates it ends the connection.
+    #[must_use]
+    pub fn accepts_upload(&self) -> bool {
+        match self {
+            HostState::Connected { capabilities, .. } => {
+                capabilities.contains(Capabilities::UPLOAD)
+            }
+            _otherwise => false,
+        }
+    }
+
     /// What this connection's server is missing of the capabilities that gate
     /// a person's features, when it is connected.
     ///

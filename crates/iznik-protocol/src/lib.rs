@@ -12,4 +12,5 @@ pub mod message;
 pub mod model;
 pub mod program;
 pub mod reconcile;
+pub mod upload;
 pub mod wire;

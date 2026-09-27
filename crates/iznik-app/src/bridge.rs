@@ -487,6 +487,23 @@ impl EngineBridge {
             .map_err(EngineError::Manager)
     }
 
+    /// Write a file on this machine into a pane's directory on the host.
+    ///
+    /// # Errors
+    /// Returns the manager's host or capability refusal, or `Stopped` on shutdown.
+    pub fn upload_file(
+        &self,
+        alias: &str,
+        pane: PaneId,
+        name: String,
+        path: PathBuf,
+        offset: u64,
+    ) -> Result<(), EngineError> {
+        self.engine()?
+            .upload_file(alias, pane, name, path, offset)
+            .map_err(EngineError::Manager)
+    }
+
     /// Return credit only after the grid consumes the corresponding snapshot.
     ///
     /// # Errors

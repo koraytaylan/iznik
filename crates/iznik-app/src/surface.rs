@@ -20,6 +20,16 @@ pub struct SurfaceFailure {
     pub detail: String,
 }
 
+/// Files copied on this machine, pasted into a pane so they are written
+/// into that pane's directory.
+#[derive(Clone, Debug)]
+pub struct FilePaste {
+    /// The pane the files were pasted into.
+    pub key: PaneKey,
+    /// The files, in the order the clipboard listed them.
+    pub paths: Vec<std::path::PathBuf>,
+}
+
 /// A paste with a line break waits for a person to confirm it, because the
 /// program has not asked for bracketed paste and would run each line.
 #[derive(Clone, Debug)]
@@ -85,6 +95,13 @@ impl PaneSurface {
         let grid = context.new(|context| TerminalGrid::new(metrics, context));
         let input_thread = Rc::clone(&thread);
         let input = context.subscribe(&grid, move |surface, _, event: &GridInput, context| {
+            if let crate::input::TerminalInput::Files(paths) = &event.input {
+                context.emit(FilePaste {
+                    key: event.key.clone(),
+                    paths: paths.clone(),
+                });
+                return;
+            }
             surface.send(
                 &input_thread,
                 VtCommand::Input {
@@ -227,6 +244,7 @@ fn deliver_program_clipboard(context: &mut Context<'_, PaneSurface>, copies: Vec
 
 impl EventEmitter<SurfaceFailure> for PaneSurface {}
 impl EventEmitter<PasteConfirmation> for PaneSurface {}
+impl EventEmitter<FilePaste> for PaneSurface {}
 
 impl Focusable for PaneSurface {
     fn focus_handle(&self, context: &App) -> FocusHandle {

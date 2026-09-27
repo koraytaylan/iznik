@@ -178,6 +178,14 @@ impl EngineState {
             .is_some_and(|report| report.connection.reorders_sessions())
     }
 
+    /// Whether a connected host's server can write a pasted file into a pane.
+    #[must_use]
+    pub fn accepts_upload(&self, host: &HostId) -> bool {
+        self.hosts
+            .get(host)
+            .is_some_and(|report| report.connection.accepts_upload())
+    }
+
     /// Whether a held host's connected server is still missing capabilities
     /// this build knows.
     ///
@@ -239,7 +247,10 @@ impl EngineState {
                 ManagerEvent::Screen { .. }
                 | ManagerEvent::Bytes { .. }
                 | ManagerEvent::Detached { .. }
-                | ManagerEvent::Carried { .. },
+                | ManagerEvent::Carried { .. }
+                | ManagerEvent::UploadProgress { .. }
+                | ManagerEvent::UploadFinished { .. }
+                | ManagerEvent::UploadFailed { .. },
             ) => {}
             EngineEvent::Finished { operation, answer } => self.finished(&operation, answer),
         }

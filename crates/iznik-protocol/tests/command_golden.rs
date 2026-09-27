@@ -516,22 +516,33 @@ fn command_golden_only_a_late_command_needs_a_capability() {
 fn command_golden_only_feature_bits_are_missing_features() {
     use iznik_protocol::capabilities::Capabilities;
     // A server missing only compression or resume is missing no feature.
+    let features = Capabilities::from_bits(
+        Capabilities::REORDER_SESSIONS.bits() | Capabilities::UPLOAD.bits(),
+    );
     assert_eq!(
         Capabilities::from_bits(0).missing_features(),
-        Capabilities::REORDER_SESSIONS,
-        "the reorder is a feature; compression and resume are not"
+        features,
+        "reordering and upload are features; compression and resume are not"
     );
     assert_eq!(
         Capabilities::from_bits(Capabilities::ZSTD.bits()).missing_features(),
-        Capabilities::REORDER_SESSIONS
+        features
     );
     assert_eq!(
         Capabilities::from_bits(Capabilities::ZSTD.bits() | Capabilities::RESUME.bits())
             .missing_features(),
-        Capabilities::REORDER_SESSIONS
+        features
     );
     assert_eq!(
         Capabilities::from_bits(Capabilities::REORDER_SESSIONS.bits()).missing_features(),
+        Capabilities::UPLOAD,
+        "a server that can reorder and cannot receive a file is missing the upload"
+    );
+    assert_eq!(
+        Capabilities::from_bits(
+            Capabilities::REORDER_SESSIONS.bits() | Capabilities::UPLOAD.bits()
+        )
+        .missing_features(),
         Capabilities::from_bits(0),
         "a server with every feature is missing nothing"
     );

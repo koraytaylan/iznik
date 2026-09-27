@@ -367,7 +367,10 @@ impl Watched {
             | ManagerEvent::Carried { .. }
             | ManagerEvent::Detached { .. }
             | ManagerEvent::Snapshot { .. }
-            | ManagerEvent::Delta { .. } => {}
+            | ManagerEvent::Delta { .. }
+            | ManagerEvent::UploadProgress { .. }
+            | ManagerEvent::UploadFinished { .. }
+            | ManagerEvent::UploadFailed { .. } => {}
         }
     }
 

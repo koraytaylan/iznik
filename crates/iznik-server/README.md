@@ -49,6 +49,7 @@ How `libghostty-vt` 0.2.1 behaves under the mirror — the query routing, why th
 | `session::registry::ingest` | Marks, sizes and exits pulled into the model, plus a foreground-program sample when the daemon is naming tabs from one. | `session-registry` (plan 0003) |
 | `session::registry::program` | Sampling each pane's foreground program, while any client is attached, and publishing it as the pane title and directory. | `session-registry` (plan 0003) |
 | `session::registry::summary` | What a delta is, for a log: its kind and the ids it names, never a name, title or directory a user's log bundle would carry. | `server-review` |
+| `upload` | A pasted file or directory written into a pane's directory. A temporary file is kept when the link drops so the next connection can continue it. | `server-review` |
 | `terminal` | The terminal mirror thread and the emulator every pane's bytes are fed into. | `terminal-mirror` (plan 0002) |
 | `terminal::marks` | The shell-integration observer: OSC 133, OSC 7, titles and alternate-screen switches recognized as bytes pass, across any chunk boundary, without touching them. | `shell-integration-marks` (plan 0002) |
 | `terminal::mirror` | The mirror thread's `LocalSet`, the `libghostty-vt` terminal behind each pane, and the policy that answers a program's queries only while nobody is subscribed. | `terminal-mirror` (plan 0002) |

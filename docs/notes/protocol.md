@@ -110,6 +110,7 @@ fields in the order given.
 | `Focus` | `server_tag::FOCUS` | 11 | `id` pane |
 | `Ping` | `server_tag::PING` | 12 | none |
 | `Identify` | `server_tag::IDENTIFY` | 13 | 16 bytes: the client's identity, a little-endian `u128` |
+| `Upload` | `server_tag::UPLOAD` | 14 | `id` pane, `bytes` file name, `u64` offset, `flag` finished, `bytes` file bytes |
 
 *Fixtures:* `message.jsonl`, "Hello with both known capabilities" through
 "Identify naming the client", and the refusals from "an empty payload to the
@@ -145,6 +146,7 @@ that way, and no other client's.
 | `Mark` | `client_tag::MARK` | 7 | `id` pane, `sequence`, mark kind (§5.2) |
 | `Pong` | `client_tag::PONG` | 8 | none |
 | `Error` | `client_tag::ERROR` | 9 | `u8` error code (§5.1), `bytes` message |
+| `UploadAccepted` | `client_tag::UPLOAD_ACCEPTED` | 10 | `id` pane, `u64` bytes written, optional `bytes` path once the file is finished |
 
 *Fixtures:* `message.jsonl`, "Hello reply with both known capabilities"
 through "Error with an empty message"; "a daemon instance cut short", "a
@@ -159,6 +161,7 @@ build digest cut short" and "an answered-through sequence cut short".
 | `UnknownPane` | `error_tag::UNKNOWN_PANE` | 2 | The pane does not exist. |
 | `ChannelsExhausted` | `error_tag::CHANNELS_EXHAUSTED` | 3 | No channel number is free. |
 | `NotSubscribed` | `error_tag::NOT_SUBSCRIBED` | 4 | The client acted on a pane it is not subscribed to. |
+| `Upload` | `error_tag::UPLOAD` | 5 | A pasted file was refused or could not be written. The message says which. |
 
 ### 5.2 Mark kinds
 
@@ -525,6 +528,7 @@ Capabilities are a `u32` bit set:
 | `ANSWERED` | 5 | 32 |
 | `IDENTIFY` | 6 | 64 |
 | `BUILD` | 7 | 128 |
+| `UPLOAD` | 8 | 256 |
 
 `ADOPT` says the server can replace itself in place and keep the sessions it
 holds. It gates nothing a client sends: the record stays on the host. A server
@@ -543,6 +547,15 @@ server is only ever replaced on purpose: a client must not send
 `ReorderSessions` to a server built before the command existed, because that
 server refuses the unknown tag as garbage and ends the whole connection on it.
 A client sends the command only to a server that advertised this bit.
+
+`UPLOAD` is the same kind of gate for a pasted file. A client sends `Upload`
+only to a server that advertised it, because an older server ends the
+connection on a tag it does not know. The server writes the file into the
+pane's directory under the relative path it was given. A name ending in `/`
+creates that directory. A component of `.` or `..` is refused. Pieces of a
+file land in a temporary file that is kept when the link drops, and a later
+piece continues from the length that file still has. The server answers
+`UploadAccepted` with the path when the last piece arrives.
 
 `IDENTIFY` is a server that takes `Identify` and remembers what it answered
 each identified client's commands, across that client's connections: the

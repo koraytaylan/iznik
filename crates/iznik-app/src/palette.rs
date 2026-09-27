@@ -466,6 +466,11 @@ pub fn dispatch_action(
         palette.close();
         return Ok(true);
     }
+    if action == ActionId::OpenUpload {
+        crate::upload::show(shell, context);
+        palette.close();
+        return Ok(true);
+    }
     match prompt::begin_with(
         action,
         shell.hosts().state(),
@@ -567,6 +572,7 @@ pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bri
                 input: crate::input::TerminalInput::ConfirmedPaste(text),
             })
             .map_err(|_stopped| crate::bridge::EngineError::Stopped),
+        Answer::Upload { key, files } => crate::upload::begin(shell, key, &files),
     }
 }
 

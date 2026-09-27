@@ -18,6 +18,7 @@ Every discriminant, byte layout and rule a second implementation needs is writte
 | `model` | The host model: sessions holding ordered tabs holding a normalized layout tree of panes, its invariants, and the `Snapshot` payload encoding. | `model-types` (plan 0003) |
 | `program` | What a pane is running, as a tab can show it: a program name, or the directory when the foreground program is the shell. | `session-registry` (plan 0003) |
 | `reconcile` | Applying a numbered delta to a host model: exactly the next generation, every invariant checked before the first mutation. | `deltas-and-reconciler` (plan 0003) |
+| `upload` | A pasted file carried in pieces: the relative path, the offset a later connection continues from, and the acceptance that names the finished path. | `server-review` |
 | `wire` | The little-endian, length-prefixed primitives every codec in the crate reads and writes with: a sink measured before it is filled, and a reader that names what it could not read. | `control-messages` (plan 0001), as a follow-up |
 
 ## Tests

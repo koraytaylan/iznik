@@ -46,6 +46,8 @@ pub enum ActionId {
     OpenSettings,
     /// Open the developer tools window.
     OpenTools,
+    /// Open the window that lists pasted files.
+    OpenUpload,
 }
 
 /// What an action operates on.
@@ -241,6 +243,14 @@ pub const INVENTORY: &[ActionSpec] = &[
         ActionId::OpenTools,
         "iznik: developer tools",
         "Show each host's connection, capabilities and pane identities.",
+        ActionTarget::Application,
+        ActionContext::None,
+        None,
+    ),
+    spec(
+        ActionId::OpenUpload,
+        "iznik: uploads",
+        "Show files pasted into panes, including those still sending.",
         ActionTarget::Application,
         ActionContext::None,
         None,

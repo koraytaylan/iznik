@@ -324,8 +324,6 @@ impl EntityInputHandler for TerminalGrid {
         context: &mut Context<'_, Self>,
     ) {
         self.commit_composition(context);
-        if let Some(text) = item.text() {
-            self.emit_input(TerminalInput::Paste(text), context);
-        }
+        self.paste_clipboard(&item, context);
     }
 }

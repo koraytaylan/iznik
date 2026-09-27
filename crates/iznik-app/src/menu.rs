@@ -58,6 +58,8 @@ actions!(
         OpenSettings,
         /// Open the developer tools window.
         OpenTools,
+        /// Open the window of pasted files.
+        OpenUpload,
         /// Show the command palette.
         CommandPalette,
         /// Put the terminal's selection on the clipboard.
@@ -109,6 +111,7 @@ fn keybindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-p", CommandPalette, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-alt-i", OpenTools, None),
+        KeyBinding::new("cmd-alt-u", OpenUpload, None),
         KeyBinding::new("cmd-c", Copy, Some("Terminal")),
         KeyBinding::new("cmd-v", Paste, Some("Terminal")),
         // Control-C and Control-V belong to the program in a terminal, so
@@ -166,6 +169,9 @@ where
         .on_action(context.listener(|shell, _: &OpenTools, window, context| {
             run(shell, ActionId::OpenTools, window, context);
         }))
+        .on_action(context.listener(|shell, _: &OpenUpload, window, context| {
+            run(shell, ActionId::OpenUpload, window, context);
+        }))
         .on_action(
             context.listener(|shell, _: &CommandPalette, _window, context| {
                 shell.open_palette(context);
@@ -219,6 +225,7 @@ pub fn menu_bar() -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Command Palette\u{2026}", CommandPalette),
             MenuItem::action("Developer Tools", OpenTools),
+            MenuItem::action("Uploads", OpenUpload),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

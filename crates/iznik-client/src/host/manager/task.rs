@@ -242,7 +242,15 @@ async fn connect(
         let wait = waiting(machine);
         if !matches!(wait, Waiting::Not) {
             let dropping = |pane: PaneId, bytes: usize| dropped_input(host, shared, pane, bytes);
-            match hold_until(&wait, orders, kept, &dropping).await {
+            let upload_lost = |pane: PaneId| {
+                crate::host::manager::upload::failed(
+                    host,
+                    shared,
+                    pane,
+                    "the host had no link to receive the file".to_owned(),
+                );
+            };
+            match hold_until(&wait, orders, kept, &dropping, &upload_lost).await {
                 None => {
                     let _torn = advance(shared, host, machine, HostEvent::Removed);
                     return None;
@@ -280,7 +288,7 @@ async fn connect(
                     .collect();
                 let mut sent = 0_usize;
                 for order in &standing {
-                    match carry(&mut channel, order.clone(), shared).await {
+                    match carry(host, shared, &mut channel, order.clone()).await {
                         // One order this client could not even encode is that
                         // order's failure, and the link is fine.
                         Ok(()) | Err(ChannelError::Message(_)) => {}
@@ -659,7 +667,7 @@ async fn serve_link(
                 }
                 let order = current(host, shared, order);
                 let holdable = keeps(&order).then(|| order.clone());
-                let carrying = carry(&mut channel, order, shared).await;
+                let carrying = carry(host, shared, &mut channel, order).await;
                 if let Err(ChannelError::Message(refusal)) = &carrying {
                     // Refused here, before a byte of it was written: the order
                     // fails and the link, which never saw it, carries on.
@@ -712,6 +720,12 @@ fn credit_failed(
             };
         }
         Some(Order::Input { pane, bytes, .. }) => dropped_input(host, shared, pane, bytes.len()),
+        Some(Order::Upload { pane, .. }) => crate::host::manager::upload::failed(
+            host,
+            shared,
+            pane,
+            "the link failed before the file was sent".to_owned(),
+        ),
         Some(held) => keep(kept, held),
         None => {}
     }
@@ -816,9 +830,10 @@ async fn carry_input(
 ///
 /// Whatever the channel says, when the link will not take it.
 async fn carry(
+    host: &HostId,
+    shared: &Arc<Shared>,
     channel: &mut RemoteChannel,
     order: Order,
-    shared: &Shared,
 ) -> Result<(), ChannelError> {
     let message = match order {
         Order::Subscribe { pane } => ToServer::Subscribe { pane },
@@ -848,6 +863,17 @@ async fn carry(
             command_id: id,
             payload: encode_session_command(&command).map_err(ChannelError::Message)?,
         },
+        Order::Upload {
+            pane,
+            name,
+            path,
+            offset,
+        } => {
+            return crate::host::manager::upload::carry(
+                host, shared, channel, pane, name, path, offset,
+            )
+            .await;
+        }
         // The first three are the loop's own business; the last says the
         // person is looking at no pane at all, which the host is not told
         // because there is nothing for it to prefer.

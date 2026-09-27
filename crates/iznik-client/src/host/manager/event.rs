@@ -111,6 +111,41 @@ pub enum ManagerEvent {
         /// The host.
         host: HostId,
     },
+    /// Bytes of a pasted file have been sent toward the host.
+    ///
+    /// `sent` is how much of `total` has left this machine. The host answers
+    /// once, when the file is in place, so this is the progress a window can
+    /// draw while the pieces are still going.
+    UploadProgress {
+        /// The host.
+        host: HostId,
+        /// The pane.
+        pane: PaneId,
+        /// The file's name.
+        name: String,
+        /// Bytes sent, including this piece.
+        sent: u64,
+        /// Bytes the file holds.
+        total: u64,
+    },
+    /// A pasted file is in the pane's directory.
+    UploadFinished {
+        /// The host.
+        host: HostId,
+        /// The pane.
+        pane: PaneId,
+        /// The path the file was given.
+        path: String,
+    },
+    /// A pasted file was not written.
+    UploadFailed {
+        /// The host.
+        host: HostId,
+        /// The pane.
+        pane: PaneId,
+        /// What a person is told.
+        detail: String,
+    },
 }
 
 /// How many of the `length` bytes starting at `sequence` come before

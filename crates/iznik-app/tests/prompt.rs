@@ -198,6 +198,7 @@ fn only_argument_actions_open_a_prompt() {
         ActionId::UninstallHost,
         ActionId::OpenSettings,
         ActionId::OpenTools,
+        ActionId::OpenUpload,
     ] {
         assert!(begin(action, &state, Some(&key)).is_none(), "{action:?}");
     }

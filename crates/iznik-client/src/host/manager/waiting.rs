@@ -66,6 +66,7 @@ pub(super) async fn hold_until(
     orders: &mut UnboundedReceiver<Order>,
     kept: &mut Vec<Order>,
     dropping: &(dyn Fn(PaneId, usize) + Sync),
+    upload_lost: &(dyn Fn(PaneId) + Sync),
 ) -> Option<Woken> {
     loop {
         let waiting = async {
@@ -91,6 +92,7 @@ pub(super) async fn hold_until(
                     });
                 }
                 Some(Order::Input { pane, bytes, .. }) => dropping(pane, bytes.len()),
+                Some(Order::Upload { pane, .. }) => upload_lost(pane),
                 Some(held) => keep(kept, held),
             },
         }
@@ -136,6 +138,7 @@ pub(super) fn keep(kept: &mut Vec<Order>, order: Order) {
         | Order::Credit { .. }
         | Order::Command { .. }
         | Order::Screen { .. }
+        | Order::Upload { .. }
         // The last three end a wait rather than being held through one.
         | Order::Reconnect
         | Order::Upgrade { .. }

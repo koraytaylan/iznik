@@ -57,6 +57,7 @@ mod hearing;
 mod reach;
 mod task;
 mod unanswered;
+mod upload;
 mod waiting;
 
 pub use crate::host::manager::error::ManagerError;
@@ -201,6 +202,18 @@ pub(crate) enum Order {
     },
     /// End the task.
     Stop,
+    /// Write a file on this machine into a pane's directory.
+    Upload {
+        /// The pane whose directory receives it.
+        pane: PaneId,
+        /// The name it is given there. A name ending in `/` creates a directory.
+        name: String,
+        /// The file on this machine. A directory when `name` ends in `/`.
+        path: PathBuf,
+        /// The first byte still to send. Zero starts the file. A later launch
+        /// continues from the bytes already written.
+        offset: u64,
+    },
 }
 
 /// Everything the tasks share.

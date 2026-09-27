@@ -248,6 +248,7 @@ fn known_capabilities() -> Vec<(Capabilities, &'static str)> {
         (Capabilities::ANSWERED, "answered"),
         (Capabilities::IDENTIFY, "identify"),
         (Capabilities::BUILD, "build"),
+        (Capabilities::UPLOAD, "upload"),
     ]
 }
 
@@ -373,11 +374,13 @@ fn hosts_page(cards: &[HostCard], report: &str) -> SettingPage {
         let alias = card.alias.clone();
         let label = first.then(|| report.to_owned());
         first = false;
-        page = page.group(SettingGroup::new().title(alias.clone()).item(
-            SettingItem::render(move |_, _, _| {
-                host_list(alias.clone(), rows.clone(), label.clone())
-            }),
-        ));
+        page = page.group(
+            SettingGroup::new()
+                .title(alias.clone())
+                .item(SettingItem::render(move |_, _, _| {
+                    host_list(alias.clone(), rows.clone(), label.clone())
+                })),
+        );
     }
     page
 }
@@ -438,7 +441,12 @@ fn log_page(lines: &[String], log_list: ListState) -> SettingPage {
                 div().h(px(LOG_VIEW_HEIGHT)).w_full().child(
                     list(log_list.clone(), move |index, _, _| {
                         let line = stored.get(index).cloned().unwrap_or_default();
-                        div().w_full().min_w_0().text_sm().child(line).into_any_element()
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_sm()
+                            .child(line)
+                            .into_any_element()
                     })
                     .size_full(),
                 )
