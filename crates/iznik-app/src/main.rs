@@ -218,19 +218,31 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) -> Result<(), Box<dyn std::
         // shell, so the shell a case builds reads no file this machine holds.
         let ssh_config_path = iznik_app::ssh_config::default_path();
         let selection_path = iznik_app::session_tabs::default_path();
+        let bounds_path = iznik_app::window_bounds::default_path();
         let options = ShellOptions {
             ssh_config_path,
             selection_path,
             settings_path,
+            bounds_path: bounds_path.clone(),
             ..ShellOptions::default()
         };
-        let window =
-            app_context.open_window(TitleBar::window_options(), |window, build_context| {
-                let shell = build_context.new(|context| {
-                    WindowShell::new(bridge, Rc::clone(&thread), options, window, context)
-                });
-                build_context.new(|root_context| Root::new(shell, window, root_context))
-            })?;
+        let window_options = app_context.update(|app| {
+            let mut window_options = TitleBar::window_options();
+            if let Some(placement) = bounds_path
+                .as_deref()
+                .and_then(|path| iznik_app::window_bounds::saved(path, app))
+            {
+                window_options.window_bounds = Some(placement.bounds);
+                window_options.display_id = placement.display;
+            }
+            window_options
+        });
+        let window = app_context.open_window(window_options, |window, build_context| {
+            let shell = build_context.new(|context| {
+                WindowShell::new(bridge, Rc::clone(&thread), options, window, context)
+            });
+            build_context.new(|root_context| Root::new(shell, window, root_context))
+        })?;
         let main_window = window.window_id();
         app_context.update(|app| {
             // Bring the window to the foreground at launch. GPUI opens a

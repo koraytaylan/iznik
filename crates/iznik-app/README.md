@@ -118,6 +118,15 @@ and choosing another session shows the tab it was left on, while those tabs
 still exist. A recorded tab the host no longer holds yields that session's
 first remaining tab.
 
+The main window's size is written to `~/.config/iznik/window-bounds` (the same
+directory as the settings file). The record is what GPUI reports, in logical
+pixels, on macOS, Windows and Linux alike: the width and height, the position,
+whether the window was maximized or fullscreen, and the display's stable
+identifier. The next launch opens at that size on that display when it is still
+connected. A display that is gone, or a position that meets none of the
+connected displays, opens the same size centered on the primary display. The
+file is written a second after the window stops moving and again when it closes.
+
 Command and a digit opens that tab of the session on screen: Command-1 the
 first, through Command-9. Command-Option and a digit opens that session along
 the bottom bar, in the order the chips are drawn. Holding Command leads each
@@ -185,6 +194,7 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `palette` | Fuzzy, availability-aware command palette projection. |
 | `follow` | What the window follows after a person asks: the added host's first session, the created tab's selection and the visible pane's keyboard focus. |
 | `session_tabs` | The file that records the tab each session was left on, so the next launch opens it. |
+| `window_bounds` | The file that records the main window's size, position and maximized or fullscreen state, so the next launch opens there. |
 | `prompt` | The palette's argument step: names, host aliases, destinations and arrangements an action needs before it is sent. |
 | `grid::interaction` | Keyboard and pointer dispatch, matching releases, frame-bound selection, and live-mode history fallback. |
 | `grid::link` | Which OSC 8 targets a Command-click hands to the platform: web and mail addresses, and local plain files whose extension names a document the platform only shows (text, images, PDFs, source code) and that nobody may run; never a directory, a bundle, a symbolic link, any other kind of file, or a `file:` target on another host. |

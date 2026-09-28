@@ -126,6 +126,12 @@ test = "iznik-app::menu::command_w_closes_the_focused_pane"
 because = "the shortcut is the headless production shell's own key dispatch into the menu's Close Pane action; no container is required"
 
 [[claim]]
+id = "window-bounds-survive-relaunch"
+statement = "Resizing the main window writes its logical size, and the next launch reads that size back. A recorded position on a display that is still connected is handed back unchanged. A position that meets no connected display opens centered on the primary display at the recorded size, still maximized when that was recorded, and a record larger than the display is fitted to it."
+test = "iznik-app::window_bounds::a_resized_window_is_what_the_next_launch_reads"
+because = "the record is a file the headless shell writes and the same placement function the launch reads; no container is required"
+
+[[claim]]
 id = "window-installs-its-own-main-menu"
 statement = "The application installs a main menu of its own at startup, so the system menu bar shows iznik's named menus while an iznik window is frontmost instead of the previous application's menus, and the menu's Paste item sends the clipboard's text to the focused pane through the native encoder."
 test = "iznik-app::menu::the_menu_paste_item_reaches_the_focused_pane"

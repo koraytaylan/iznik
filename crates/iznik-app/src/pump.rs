@@ -105,6 +105,7 @@ impl WindowShell {
         self.synchronize_sizes(context);
         crate::settings::poll(self, self.options.settings_interval, context);
         self.write_session_tabs(false);
+        self.write_window_bounds(false);
         engine_events >= cap || terminal_events >= cap
     }
 

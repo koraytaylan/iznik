@@ -35,11 +35,9 @@ use crate::tab_label::DEFAULT_TAB_NAME;
 use crate::theme::{self, AppTheme};
 use crate::vt::{PaneKey, TerminalTheme, VtCommand, VtThread};
 
-/// The pump's slow fallback: owners wake the window when they queue work, so
-/// this only bounds how late a missed wakeup or a settings poll can be.
+/// Slowest the pump wakes when no owner does. Also paces the settings poll.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
-/// How often the settings file is looked at for a change made outside the
-/// window. Each look is a file-system stat, so it is kept well apart.
+/// Least time between looks at the settings file.
 const SETTINGS_INTERVAL: Duration = Duration::from_secs(2);
 /// Bound each owner drain so continuous terminal output cannot monopolize a UI update.
 const MAXIMUM_EVENTS_PER_UPDATE: usize = 256;
@@ -49,8 +47,7 @@ const SELECTION_WRITE_DELAY: Duration = Duration::from_secs(1);
 const DEFAULT_COLUMNS: u16 = 80;
 /// Default height used when the palette creates a new pane or session.
 const DEFAULT_ROWS: u16 = 24;
-/// Space between a terminal's text and its pane's edges, in logical pixels:
-/// the common inset terminals leave so text does not run into the frame.
+/// Inset between a terminal's text and its pane's edges, in logical pixels.
 pub(crate) const TERMINAL_PADDING: f32 = 8.0;
 /// Default session name used by the argument-free palette action.
 const DEFAULT_SESSION_NAME: &str = "session";
@@ -58,8 +55,7 @@ const DEFAULT_SESSION_NAME: &str = "session";
 /// Window options whose timing can be shortened or disabled by a headless caller.
 #[derive(Clone, Debug)]
 pub struct ShellOptions {
-    /// Fallback cadence of the event-driven pump; `None` starts no pump, and
-    /// lets a host application call `update` itself.
+    /// Fallback cadence of the pump. `None` starts no pump.
     pub update_interval: Option<Duration>,
     /// Least time between two looks at the settings file.
     pub settings_interval: Duration,
@@ -71,18 +67,16 @@ pub struct ShellOptions {
     pub theme: TerminalTheme,
     /// Optional settings file polled during updates and rewritten when they change.
     pub settings_path: Option<PathBuf>,
-    /// Where the person's ssh configuration is read and written.
-    ///
-    /// The product's binary resolves the person's own from `$HOME` and hands
-    /// it in; a test hands in a scratch path. The shell itself never reaches
-    /// for `$HOME`, so a shell a case builds touches no file this machine
-    /// holds, and one given no path reads and writes nothing.
+    /// The person's ssh configuration. Absent never touches `$HOME`.
     pub ssh_config_path: Option<PathBuf>,
-    /// The file that records the tab each session was left on. Resolved like
-    /// [`Self::ssh_config_path`]: absent reads and writes nothing.
+    /// The file that records the tab each session was left on. Absent reads and writes nothing.
     pub selection_path: Option<PathBuf>,
     /// How long a changed record waits, so a burst of tab changes is one write.
     pub selection_write_delay: Duration,
+    /// The file that records where this window sat. Absent reads and writes nothing.
+    pub bounds_path: Option<PathBuf>,
+    /// How long a moved or resized window waits before that file is written.
+    pub bounds_write_delay: Duration,
 }
 
 impl Default for ShellOptions {
@@ -97,6 +91,8 @@ impl Default for ShellOptions {
             ssh_config_path: None,
             selection_path: None,
             selection_write_delay: SELECTION_WRITE_DELAY,
+            bounds_path: None,
+            bounds_write_delay: crate::window_bounds::WRITE_DELAY,
         }
     }
 }
@@ -177,6 +173,8 @@ pub struct WindowShell {
     focus_handle: FocusHandle,
     /// What the window is following on a person's behalf.
     pub(crate) following: Following,
+    /// Last size and place of this window, written once it settles.
+    pub(crate) frame_watch: crate::window_bounds::FrameWatch,
     /// Tabs or sessions numbered while Command is held.
     shortcut_hint: ShortcutHint,
     /// Files from a paste still being written into a pane.
@@ -228,12 +226,14 @@ impl WindowShell {
             ssh,
             focus_handle,
             following,
+            frame_watch: crate::window_bounds::FrameWatch::idle(),
             shortcut_hint: ShortcutHint::None,
             pending_upload: crate::upload::Pending::default(),
             tab_scroll: ScrollHandle::new(),
             scrolled_tab: None,
         };
         crate::settings::load_into(&mut shell, context);
+        crate::window_bounds::watch(&mut shell, window, context);
         shell
     }
     /// The shared host interface used by tabs, sessions and application actions.
@@ -883,6 +883,7 @@ impl gpui_kit::EventEmitter<Notice> for WindowShell {}
 impl Drop for WindowShell {
     fn drop(&mut self) {
         self.write_session_tabs(true);
+        self.write_window_bounds(true);
     }
 }
 impl WindowShell {
@@ -976,8 +977,7 @@ impl Render for WindowShell {
                         .w_full()
                         .bg(crate::chrome::painted_pane_color(&self.options.theme))
                         .child(body)
-                        // Over the panes, not above them: a strip that comes
-                        // and goes must not resize every terminal twice.
+                        // Over the panes, so a strip that comes and goes does not resize every terminal.
                         .child(
                             div()
                                 .absolute()

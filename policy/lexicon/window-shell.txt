@@ -12,11 +12,13 @@ fonts
 forgotten
 forwarded
 frees
+fullscreen
 growing
 hidden
 hot
 included
 includes
+maximized
 outbox
 polled
 preferences
@@ -36,4 +38,5 @@ update
 visible
 weights
 wildcard
+windowed
 windows
