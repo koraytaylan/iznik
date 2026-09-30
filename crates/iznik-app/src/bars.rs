@@ -61,29 +61,56 @@ pub fn render(
         state,
         selected,
         shell,
-        TabPlacement::Bar,
-        ShortcutHint::None,
-        None,
+        StripOptions {
+            placement: TabPlacement::Bar,
+            hint: ShortcutHint::None,
+            scroll: None,
+            session_button: None,
+        },
     )
 }
 
-/// The same, with the tab strip drawn for `placement`.
-///
-/// `hint` leads the tab chips or the session chips with their shortcut number.
+/// Where the strips sit, and the button kept at the end of the session bar.
 ///
 /// `scroll` keeps the tab strip's horizontal offset. Without it the strip
 /// still scrolls, and the offset lives on the element until the next frame
-/// that omits it.
+/// that omits it. `session_button` is outside the chip strip, so a long row
+/// of sessions cannot cover it.
+pub struct StripOptions<'scroll> {
+    /// Where the tab strip is drawn.
+    pub placement: TabPlacement,
+    /// Which chips lead with a shortcut number.
+    pub hint: ShortcutHint,
+    /// The tab strip's horizontal offset.
+    pub scroll: Option<&'scroll ScrollHandle>,
+    /// Drawn at the right of the session bar, outside the chip strip.
+    pub session_button: Option<AnyElement>,
+}
+
+impl std::fmt::Debug for StripOptions<'_> {
+    /// Elements carry no debug representation of their own; name the type only.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StripOptions")
+            .finish_non_exhaustive()
+    }
+}
+
+/// The same, with the tab strip and session bar drawn from `options`.
 #[must_use]
 pub fn render_placed(
     theme: &Theme,
     state: &EngineState,
     selected: Option<&TabKey>,
     shell: Option<&WeakEntity<WindowShell>>,
-    placement: TabPlacement,
-    hint: ShortcutHint,
-    scroll: Option<&ScrollHandle>,
+    options: StripOptions<'_>,
 ) -> Bars {
+    let StripOptions {
+        placement,
+        hint,
+        scroll,
+        session_button,
+    } = options;
     let mut tab_children = Vec::new();
     let mut session_children = Vec::new();
     if state.hosts().next().is_none() && state.model().hosts.is_empty() {
@@ -104,9 +131,7 @@ pub fn render_placed(
     }
     Bars {
         top: tab_bar(theme, placement, scroll, tab_children),
-        bottom: session_bar_container(theme)
-            .children(session_children)
-            .into_any_element(),
+        bottom: session_bar(theme, session_children, session_button),
     }
 }
 
@@ -347,13 +372,14 @@ fn tab_bar_container(
     }
 }
 
-/// Build the empty bottom toolbar container, styled as a bar.
+/// The session bar. Chips that do not fit are clipped in their own strip.
 ///
 /// A session chip has the same padding, border and line box as a tab chip,
 /// so the bar is the tab bar's height. A shorter strip lets the name and the
-/// close mark paint outside it. Chips that run past the right edge are
-/// clipped; the palette is the fallback for what the bar cannot show.
-fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoElement {
+/// close mark paint outside it. `button`, when there is one, stays at the
+/// right, past that strip. The palette is the fallback for a chip the strip
+/// cannot show.
+fn session_bar(theme: &Theme, sessions: Vec<AnyElement>, button: Option<AnyElement>) -> AnyElement {
     div()
         .id("session-bar")
         .test_support()
@@ -364,7 +390,6 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
         .gap_2()
         .w_full()
         .min_w_0()
-        .overflow_x_hidden()
         .h_10()
         .px_2()
         .flex_shrink_0()
@@ -372,6 +397,19 @@ fn session_bar_container(theme: &Theme) -> impl ParentElement + Styled + IntoEle
         .text_color(theme.foreground)
         .border_t_1()
         .border_color(theme.status_bar_border)
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .h_full()
+                .min_w_0()
+                .items_center()
+                .gap_2()
+                .overflow_x_hidden()
+                .children(sessions),
+        )
+        .children(button)
+        .into_any_element()
 }
 
 /// Render one session chip: its name, highlighted while selected, choosing

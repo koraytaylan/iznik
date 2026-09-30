@@ -14,6 +14,69 @@ use crate::host::manager::task::write;
 use crate::host::manager::{HostManager, ManagerError, ManagerEvent, Order, Shared};
 use crate::transport::channel::{ChannelError, RemoteChannel};
 
+/// What the application says when a person stops a paste.
+pub const UPLOAD_CANCEL: &str = "cancelled";
+
+/// One file the person asked to stop sending.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadStop {
+    /// The host it was going to.
+    pub host: String,
+    /// The pane whose directory would have received it.
+    pub pane: PaneId,
+    /// The name relative to that directory.
+    pub name: String,
+}
+
+/// Remembers `name` so the piece loop stops before the next piece.
+pub fn remember_stop(stops: &mut Vec<UploadStop>, host: &str, pane: PaneId, name: &str) {
+    if stop_remembered(stops, host, pane, name) {
+        return;
+    }
+    stops.push(UploadStop {
+        host: host.to_owned(),
+        pane,
+        name: name.to_owned(),
+    });
+}
+
+/// Whether `name` was stopped.
+#[must_use]
+pub fn stop_remembered(stops: &[UploadStop], host: &str, pane: PaneId, name: &str) -> bool {
+    stops
+        .iter()
+        .any(|stop| stop.host == host && stop.pane == pane && stop.name == name)
+}
+
+/// Drops a remembered stop. A later paste of the same name can be sent.
+#[must_use]
+pub fn forget_stop(stops: &mut Vec<UploadStop>, host: &str, pane: PaneId, name: &str) -> bool {
+    let Some(index) = stops
+        .iter()
+        .position(|stop| stop.host == host && stop.pane == pane && stop.name == name)
+    else {
+        return false;
+    };
+    stops.swap_remove(index);
+    true
+}
+
+/// Records a stop where the piece loop can see it.
+pub(crate) fn remember_on(shared: &Shared, host: &str, pane: PaneId, name: &str) {
+    let Ok(mut stops) = shared.upload_stop.lock() else {
+        return;
+    };
+    remember_stop(&mut stops, host, pane, name);
+}
+
+/// Whether this file was stopped. Seeing the stop forgets it.
+fn forget_seen(shared: &Shared, host: &HostId, pane: PaneId, name: &str) -> bool {
+    let Ok(mut stops) = shared.upload_stop.lock() else {
+        return false;
+    };
+    forget_stop(&mut stops, &host.0, pane, name)
+}
+
 impl HostManager {
     /// Sends the file at `path` into a pane's directory, under `name`.
     ///
@@ -56,6 +119,11 @@ impl HostManager {
                 offset,
             },
         )
+    }
+
+    /// Stop `name` before its next piece. A file that is only waiting is never sent.
+    pub fn cancel_upload(&self, alias: &str, pane: PaneId, name: &str) {
+        remember_on(&self.shared, alias, pane, name);
     }
 }
 
@@ -143,6 +211,10 @@ async fn send_file(
     path: &Path,
     mut offset: u64,
 ) -> Result<(), SendError> {
+    if forget_seen(shared, host, pane, name) {
+        failed(host, shared, pane, UPLOAD_CANCEL.to_owned());
+        return Ok(());
+    }
     if name.is_empty() {
         return Err(SendError::Local(format!(
             "\"{name}\" is not a file name the host can receive"
@@ -189,6 +261,10 @@ async fn send_file(
     publish_progress(host, shared, pane, name, offset, length);
     let most = usize::try_from(room).unwrap_or(1);
     loop {
+        if forget_seen(shared, host, pane, name) {
+            failed(host, shared, pane, UPLOAD_CANCEL.to_owned());
+            return Ok(());
+        }
         let remaining = length.saturating_sub(offset);
         if remaining == 0 {
             return write_piece(channel, pane, name, offset, true, Vec::new())

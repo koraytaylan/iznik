@@ -10,7 +10,7 @@ use gpui_kit::StatefulInteractiveElement as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, Role,
+    AnyElement, Context, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Role,
     SharedString, Size, Styled, TestSupportExt, WeakEntity, canvas, div, px,
 };
 
@@ -325,8 +325,46 @@ fn banner(context: &mut Context<'_, WindowShell>, failure: &Notice) -> AnyElemen
 /// The terminal color the pane area is painted with, so the grid's own
 /// background and the space around it cannot disagree.
 #[must_use]
-pub fn painted_pane_color(theme: &crate::vt::TerminalTheme) -> gpui_kit::Hsla {
+pub fn painted_pane_color(theme: &crate::vt::TerminalTheme) -> Hsla {
     grid::terminal_color(theme.background)
+}
+
+/// The pane area, and the uploads panel beside it when that panel is open.
+///
+/// The connection strips lie over the panes, so a strip that comes and goes
+/// does not resize every terminal.
+#[must_use]
+pub(crate) fn pane_row(
+    body: AnyElement,
+    strips: Vec<AnyElement>,
+    panel: Option<AnyElement>,
+    pane_color: Hsla,
+) -> AnyElement {
+    let pane = div()
+        .id("pane-area")
+        .test_support()
+        .role(Role::Group)
+        .aria_label("Panes")
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .bg(pane_color)
+        .child(body)
+        .child(div().absolute().top_0().left_0().w_full().children(strips));
+    let Some(panel) = panel else {
+        return pane.w_full().into_any_element();
+    };
+    div()
+        .flex()
+        .flex_row()
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .w_full()
+        .child(pane)
+        .child(panel)
+        .into_any_element()
 }
 
 impl WindowShell {

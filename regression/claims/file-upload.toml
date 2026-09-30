@@ -37,3 +37,33 @@ id = "upload-resumes-after-the-link-drops"
 statement = "A temporary file is kept when the link drops, a later piece past its length is told that length, and a piece at that length finishes the file."
 test = "iznik-server::file_upload::upload_resumes_a_file_after_the_link_drops"
 because = "the temporary file is on the host, and two socket pairs are enough to see a connection drop between pieces"
+
+[[claim]]
+id = "upload-groups-a-directory"
+statement = "A pasted directory is one entry: the directory and the files found inside it, with how many of those files are finished and the bytes sent against the bytes they hold. A file pasted beside it stays its own entry."
+test = "iznik-app::upload::upload_groups_a_directory"
+because = "the grouping is a reading of the record list, and a container would only repeat the same records"
+
+[[claim]]
+id = "upload-counts-bytes-in-the-bar"
+statement = "One byte of a ten-thousand-byte file is already a step on the progress bar, while a whole-percent reading of the same pair is still zero."
+test = "iznik-app::upload::upload_reads_any_length_and_its_progress"
+because = "the bar's resolution is arithmetic on the byte counts, and a container would only repeat those counts"
+
+[[claim]]
+id = "upload-names-a-rate"
+statement = "Two samples of a paste, a known time apart, name how many bytes per second were sent and how long the bytes still to send would take. The samples are kept against the directory the person pasted, not against each file inside it."
+test = "iznik-app::upload::upload_rate_reads_bytes_per_second_and_time_left"
+because = "the rate is a reading of byte samples and the clock handed in, and a container would only repeat those samples"
+
+[[claim]]
+id = "upload-clear-leaves-a-busy-paste"
+statement = "Clearing the uploads list drops a finished paste and keeps a paste that is still sending, including the directory it was pasted as and a file inside it that already finished. Stopping that paste marks only the file still open, as cancelled."
+test = "iznik-app::upload::upload_clear_leaves_a_busy_paste"
+because = "which rows stay is a reading of the record list, and a container would only repeat those records"
+
+[[claim]]
+id = "upload-stop-is-remembered"
+statement = "A stop asked for one pasted file is remembered for that file alone, and forgotten once it has been seen, so the piece loop can end before the next piece without stopping a different file or a later paste of the same name."
+test = "iznik-client::upload_stop::upload_stop_is_remembered_for_that_file"
+because = "the piece loop consults this list before reading the next piece, and the list itself is the decision"

@@ -229,9 +229,11 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
 | `menu` | The application's main menu: the named menus the system menu bar shows while an iznik window is frontmost, and the handlers that run each item. |
 | `upload` | A paste of files or directories into the focused pane: confirmation, one file at a time, the remote path typed back, and the record a later launch continues. |
+| `upload_list` | Clearing finished pastes from the panel, removing one, and stopping a paste that is still being sent. |
 | `upload_log` | The upload record beside the settings file. A file still sending is continued from the bytes already sent; a finished one stays in the list. |
+| `upload_rate` | Bytes per second and time left for a paste, from recent samples kept on the window. |
 | `upload_tree` | A pasted directory expanded depth-first. A symbolic link is refused rather than followed. |
-| `upload_window` | The uploads window: every paste this process has made, including one still sending, and the same list after a launch. |
+| `upload_window` | The uploads panel, docked at the right of the panes and opened from the session bar. A pasted directory is one entry. The same list is there after a launch. |
 | `tools_log` | The process log kept for Developer Tools: tracing at `IZNIK_LOG` (or `info`), the latest lines, and the same lines on standard error. |
 | `tools_window` | The Developer Tools window: each host's connection and panes, and the process log following its newest line. |
 

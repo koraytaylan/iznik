@@ -504,6 +504,16 @@ impl EngineBridge {
             .map_err(EngineError::Manager)
     }
 
+    /// Stop a file before its next piece. A file still waiting is never sent.
+    ///
+    /// # Errors
+    /// Returns `Stopped` when the engine has shut down.
+    pub fn cancel_upload(&self, alias: &str, pane: PaneId, name: &str) -> Result<(), EngineError> {
+        let engine = self.engine()?;
+        engine.cancel_upload(alias, pane, name);
+        Ok(())
+    }
+
     /// Return credit only after the grid consumes the corresponding snapshot.
     ///
     /// # Errors

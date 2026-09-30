@@ -582,9 +582,12 @@ impl Render for TitleTabScrollFixture {
             &self.state,
             None,
             None,
-            bars::TabPlacement::TitleBar,
-            ShortcutHint::None,
-            Some(&self.scroll),
+            bars::StripOptions {
+                placement: bars::TabPlacement::TitleBar,
+                hint: ShortcutHint::None,
+                scroll: Some(&self.scroll),
+                session_button: None,
+            },
         );
         div()
             .size_full()
@@ -613,9 +616,12 @@ impl Render for TabScrollFixture {
             &self.state,
             None,
             None,
-            bars::TabPlacement::Bar,
-            ShortcutHint::None,
-            Some(&self.scroll),
+            bars::StripOptions {
+                placement: bars::TabPlacement::Bar,
+                hint: ShortcutHint::None,
+                scroll: Some(&self.scroll),
+                session_button: None,
+            },
         );
         div().size_full().child(bars.top).child(bars.bottom)
     }

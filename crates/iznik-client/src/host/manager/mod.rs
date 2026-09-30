@@ -62,6 +62,9 @@ mod waiting;
 
 pub use crate::host::manager::error::ManagerError;
 pub use crate::host::manager::event::{ManagerEvent, answered_length};
+pub use crate::host::manager::upload::{
+    UPLOAD_CANCEL, UploadStop, forget_stop, remember_stop, stop_remembered,
+};
 
 /// How long a caller waits for a host's task to end before it is cut short.
 ///
@@ -229,6 +232,8 @@ pub(crate) struct Shared {
     pub(crate) options: ManagerOptions,
     /// What this build carries.
     pub(crate) artifacts: ArtifactSet,
+    /// Pastes the person stopped. The piece loop reads this before each piece.
+    pub(crate) upload_stop: Mutex<Vec<UploadStop>>,
 }
 
 impl Shared {
@@ -429,6 +434,7 @@ impl HostManager {
             listeners: Mutex::new(Vec::new()),
             options,
             artifacts,
+            upload_stop: Mutex::new(Vec::new()),
         });
         // Giving up on a command is a decision about a clock and a model, and
         // nothing else: it belongs where it happens whether a host is

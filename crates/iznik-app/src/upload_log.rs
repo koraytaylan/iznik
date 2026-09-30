@@ -42,7 +42,7 @@ pub enum UploadPhase {
     Failed,
 }
 
-/// One pasted file, as the uploads window draws it and the record stores it.
+/// One pasted file, as the uploads panel draws it and the record stores it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UploadRecord {
     /// The name relative to the pane's directory.

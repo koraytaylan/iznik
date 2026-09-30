@@ -35,11 +35,159 @@ fn upload_takes_file_paths_before_the_path_text() {
 #[test]
 fn upload_reads_any_length_and_its_progress() {
     assert_eq!(iznik_app::upload::byte_text(0), "0 B");
+    assert_eq!(iznik_app::upload::byte_text(1536), "1.5 KiB");
     assert_eq!(iznik_app::upload::byte_text(2048), "2 KiB");
     assert_eq!(iznik_app::upload::byte_text(5 * 1024 * 1024), "5 MiB");
     assert_eq!(iznik_app::upload::percent(0, 0), 100);
     assert_eq!(iznik_app::upload::percent(1, 4), 25);
     assert_eq!(iznik_app::upload::percent(4, 4), 100);
+    assert_eq!(iznik_app::upload::percent(1, 10_000), 0);
+    assert_eq!(iznik_app::upload_rate::percent_points(1, 10_000), 1);
+}
+
+/// A pasted directory is one entry, and a file pasted beside it is another.
+///
+/// # Panics
+///
+/// When the grouping, the count, or the byte line differs.
+#[test]
+fn upload_groups_a_directory() {
+    use iznik_app::upload::{groups, label, place_line, status_line};
+    use iznik_app::upload_log::UploadPhase;
+    let mut directory = sample("notes/", UploadPhase::Finished, 0, 0, true, true);
+    directory.remote = Some("/home/me/notes".to_owned());
+    let records = vec![
+        directory,
+        sample(
+            "notes/a.txt",
+            UploadPhase::Finished,
+            2048,
+            2048,
+            false,
+            false,
+        ),
+        sample("notes/sub/", UploadPhase::Finished, 0, 0, true, false),
+        sample(
+            "notes/sub/b.txt",
+            UploadPhase::Sending,
+            512,
+            4096,
+            false,
+            false,
+        ),
+        sample("readme.txt", UploadPhase::Finished, 1024, 1024, false, true),
+    ];
+    let found = groups(&records);
+    let tree = found.get(1).expect("the directory is the older paste");
+    let file = found.first().expect("the newer file is first");
+    assert_eq!(found.len(), 2);
+    assert_eq!(tree.records.len(), 4);
+    assert_eq!(label(tree), "notes");
+    assert_eq!(status_line(tree), "1 of 2 finished \u{b7} 2.5 KiB / 6 KiB");
+    assert_eq!(place_line(tree), "build \u{b7} /home/me/notes");
+    assert_eq!(label(file), "readme.txt");
+    assert_eq!(status_line(file), "finished \u{b7} 1 KiB");
+}
+
+/// Clearing the list drops a finished paste and keeps one that is still sending.
+///
+/// # Panics
+///
+/// When a busy paste is dropped, or a finished one is kept.
+#[test]
+fn upload_clear_leaves_a_busy_paste() {
+    use iznik_app::upload::UploadPhase;
+    use iznik_app::upload_list::{fail_open, keeping_busy};
+    use iznik_protocol::identity::PaneId;
+
+    let records = vec![
+        sample("notes/", UploadPhase::Finished, 0, 0, true, true),
+        sample("notes/a.txt", UploadPhase::Finished, 10, 10, false, false),
+        sample("notes/b.txt", UploadPhase::Sending, 4, 10, false, false),
+        sample("readme.txt", UploadPhase::Finished, 8, 8, false, true),
+    ];
+    let kept = keeping_busy(&records);
+    assert_eq!(kept.len(), 3, "the directory paste stays together");
+    assert!(
+        kept.iter().all(|record| record.name.starts_with("notes")),
+        "the finished file pasted beside it is gone"
+    );
+    let mut open = records;
+    let names = fail_open(&mut open, "build", PaneId(1), "notes/");
+    assert_eq!(names, vec!["notes/b.txt".to_owned()]);
+    let sending = open
+        .iter()
+        .find(|record| record.name == "notes/b.txt")
+        .expect("the file");
+    assert_eq!(sending.phase, UploadPhase::Failed);
+    assert_eq!(sending.detail.as_deref(), Some("cancelled"));
+    assert!(
+        open.iter()
+            .any(|record| record.name == "notes/a.txt" && record.phase == UploadPhase::Finished),
+        "a file already written stays written"
+    );
+}
+
+/// A paste names bytes per second and the time left from two samples of its total.
+///
+/// # Panics
+///
+/// When the rate line differs, or a single sample produces one.
+#[test]
+fn upload_rate_reads_bytes_per_second_and_time_left() {
+    use std::time::{Duration, Instant};
+
+    use iznik_app::upload_log::UploadPhase;
+    use iznik_app::upload_rate::{line, note};
+    use iznik_protocol::identity::PaneId;
+
+    let mut records = vec![
+        sample("notes/", UploadPhase::Finished, 0, 0, true, true),
+        sample("notes/a.txt", UploadPhase::Sending, 0, 4_096, false, false),
+    ];
+    let start = Instant::now();
+    let later = start
+        .checked_add(Duration::from_secs(2))
+        .expect("two seconds fit");
+    let mut rate = Vec::new();
+    note(&mut rate, &records, "build", "notes/a.txt", start);
+    assert!(
+        line(&rate, "build", PaneId(1), "notes/", 4_096).is_none(),
+        "one sample has no rate"
+    );
+    let file = records.get_mut(1).expect("the file");
+    file.sent = 2_048;
+    note(&mut rate, &records, "build", "notes/a.txt", later);
+    assert_eq!(
+        line(&rate, "build", PaneId(1), "notes/", 4_096),
+        Some("1 KiB/s \u{b7} 2 seconds left".to_owned()),
+        "the directory is rated by the bytes its files have sent"
+    );
+}
+
+/// One record aimed at the same host and pane.
+fn sample(
+    name: &str,
+    phase: iznik_app::upload_log::UploadPhase,
+    sent: u64,
+    total: u64,
+    directory: bool,
+    type_path: bool,
+) -> iznik_app::upload_log::UploadRecord {
+    iznik_app::upload_log::UploadRecord {
+        name: name.to_owned(),
+        host: "build".to_owned(),
+        pane: iznik_protocol::identity::PaneId(1),
+        local: PathBuf::from(name),
+        sent,
+        total,
+        remote: None,
+        detail: None,
+        phase,
+        type_path,
+        directory,
+        retry_once: false,
+    }
 }
 
 /// A directory is sent as itself and everything inside it, parents first.

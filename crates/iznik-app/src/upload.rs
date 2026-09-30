@@ -28,8 +28,25 @@ pub use crate::upload_log::{UploadPhase, UploadRecord};
 const KIBIBYTE: u64 = 1024;
 /// How many bytes a mebibyte holds.
 const MEBIBYTE: u64 = KIBIBYTE.saturating_mul(KIBIBYTE);
+/// Tenths of a unit in a size reading, so 1.5 KiB is not rounded to 1 or 2.
+const READING_STEP: u64 = 10;
 /// A full progress reading, as a count out of this many.
 pub(crate) const FULL_PERCENT: u16 = 100;
+
+/// Whether the uploads panel is open, and whether a paste may open it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum UploadPanel {
+    /// Closed. The next sign of a paste may open it.
+    #[default]
+    Hidden,
+    /// Closed by the person while the current paste is still going.
+    ///
+    /// Progress from that paste stays off the screen. The next paste clears
+    /// this and may open the panel again.
+    Held,
+    /// Open beside the panes.
+    Open,
+}
 
 /// Files still being written into one pane, and every paste this window has seen.
 #[derive(Clone, Debug, Default)]
@@ -38,24 +55,45 @@ pub struct Pending {
     key: Option<PaneKey>,
     /// Every paste, newest last. Sending, waiting, finished and failed.
     pub(crate) records: Vec<UploadRecord>,
-    /// Whether the uploads window has already been opened for this process.
-    opened: bool,
+    /// The uploads panel.
+    pub(crate) panel: UploadPanel,
     /// Whether a file has been handed to the host since this process started.
     live: bool,
     /// Whether the record on disk has been read.
     loaded: bool,
+    /// Recent byte totals for pastes still on screen, so a row can name a rate.
+    ///
+    /// Not written to the record: a later launch has no clock for it.
+    pub(crate) rate: Vec<crate::upload_rate::RateTrack>,
 }
 
 /// Bytes as a short reading: kibibytes until a mebibyte, then mebibytes.
+///
+/// A size that is not a whole unit keeps one decimal place.
 #[must_use]
 pub fn byte_text(bytes: u64) -> String {
     if bytes < KIBIBYTE {
         return format!("{bytes} B");
     }
     if bytes < MEBIBYTE {
-        return format!("{} KiB", bytes.checked_div(KIBIBYTE).unwrap_or(0));
+        return format!("{} KiB", unit_text(bytes, KIBIBYTE));
     }
-    format!("{} MiB", bytes.checked_div(MEBIBYTE).unwrap_or(0))
+    format!("{} MiB", unit_text(bytes, MEBIBYTE))
+}
+
+/// `bytes` counted in `unit`s, with one decimal place when the remainder matters.
+fn unit_text(bytes: u64, unit: u64) -> String {
+    let whole = bytes.checked_div(unit).unwrap_or(0);
+    let remainder = bytes.checked_rem(unit).unwrap_or(0);
+    let step = remainder
+        .saturating_mul(READING_STEP)
+        .checked_div(unit)
+        .unwrap_or(0);
+    if step == 0 {
+        whole.to_string()
+    } else {
+        format!("{whole}.{step}")
+    }
 }
 
 /// How far `sent` is through `total`, from zero through [`FULL_PERCENT`].
@@ -71,6 +109,291 @@ pub fn percent(sent: u64, total: u64) -> u16 {
         .checked_div(total)
         .unwrap_or(0);
     u16::try_from(wide).unwrap_or(FULL_PERCENT)
+}
+
+/// One paste, as the panel lists it.
+///
+/// A directory and everything found inside it is one group. A file pasted on
+/// its own is a group of one. The records stay in the order they are sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadGroup {
+    /// The files and directories of this paste.
+    pub records: Vec<UploadRecord>,
+}
+
+/// How far the files in a group have been sent.
+struct UploadReading {
+    /// Files whose host already has them.
+    finished: usize,
+    /// Files the host did not accept.
+    failed: usize,
+    /// Files being counted. Directories are left out once a group has a file.
+    count: usize,
+    /// Bytes sent across those files.
+    sent: u64,
+    /// Bytes those files hold.
+    total: u64,
+}
+
+/// The pastes in `records`, newest first.
+///
+/// A directory the person pasted owns every following record that was found
+/// inside it. The next path they pasted starts another group.
+#[must_use]
+pub fn groups(records: &[UploadRecord]) -> Vec<UploadGroup> {
+    let mut found = Vec::new();
+    let mut index = 0_usize;
+    while index < records.len() {
+        let Some(record) = records.get(index) else {
+            break;
+        };
+        if record.directory && record.type_path {
+            let end = directory_end(records, index);
+            let members = records.get(index..end).unwrap_or_default().to_vec();
+            found.push(UploadGroup { records: members });
+            index = end;
+        } else {
+            found.push(UploadGroup {
+                records: vec![record.clone()],
+            });
+            index = index.saturating_add(1);
+        }
+    }
+    found.reverse();
+    found
+}
+
+/// The index just after the directory at `start` and the records inside it.
+fn directory_end(records: &[UploadRecord], start: usize) -> usize {
+    let Some(root) = records.get(start) else {
+        return start;
+    };
+    let mut end = start.saturating_add(1);
+    while let Some(record) = records.get(end) {
+        let inside = record.host == root.host
+            && record.pane == root.pane
+            && !record.type_path
+            && record.name.starts_with(&root.name);
+        if !inside {
+            break;
+        }
+        end = end.saturating_add(1);
+    }
+    end
+}
+
+/// The name the panel shows for `group`.
+///
+/// A directory is its own last component. A file keeps the path relative to
+/// the pane, which is the name the host was given.
+#[must_use]
+pub fn label(group: &UploadGroup) -> &str {
+    let Some(record) = group
+        .records
+        .iter()
+        .find(|record| record.type_path)
+        .or(group.records.first())
+    else {
+        return "";
+    };
+    if record.directory {
+        entry_name(&record.name)
+    } else {
+        record.name.as_str()
+    }
+}
+
+/// The last component of `name`, ignoring a trailing slash.
+fn entry_name(name: &str) -> &str {
+    let trimmed = name.trim_end_matches('/');
+    trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed)
+}
+
+/// The line under a group's name: how many files are done, and the bytes.
+#[must_use]
+pub fn status_line(group: &UploadGroup) -> String {
+    if group.records.iter().all(|record| record.directory) {
+        return directory_only(&group.records);
+    }
+    if group
+        .records
+        .iter()
+        .any(|record| record.directory && record.type_path)
+    {
+        return directory_line(&reading_of(&group.records));
+    }
+    group
+        .records
+        .first()
+        .map(|record| file_line(record, &reading_of(&group.records)))
+        .unwrap_or_default()
+}
+
+/// Where a group was sent, and the path the host gave back once it has one.
+#[must_use]
+pub fn place_line(group: &UploadGroup) -> String {
+    let Some(record) = group
+        .records
+        .iter()
+        .find(|record| record.type_path)
+        .or(group.records.first())
+    else {
+        return String::new();
+    };
+    match &record.remote {
+        Some(path) => format!("{} · {path}", record.host),
+        None => record.host.clone(),
+    }
+}
+
+/// Why a group was not written, when one of its files failed.
+#[must_use]
+pub fn failure_line(group: &UploadGroup) -> Option<&str> {
+    group
+        .records
+        .iter()
+        .find_map(|record| record.detail.as_deref())
+}
+
+/// How full the group's progress bar is, from zero through [`FULL_PERCENT`].
+#[must_use]
+pub fn filled(records: &[UploadRecord]) -> u16 {
+    let reading = reading_of(records);
+    if reading.total == 0 {
+        if reading.count > 0 && reading.finished == reading.count {
+            FULL_PERCENT
+        } else {
+            0
+        }
+    } else {
+        percent(reading.sent, reading.total)
+    }
+}
+
+/// Whether any record is still waiting or on its way.
+#[must_use]
+pub fn busy(records: &[UploadRecord]) -> bool {
+    records
+        .iter()
+        .any(|record| matches!(record.phase, UploadPhase::Sending | UploadPhase::Waiting))
+}
+
+/// The header line for every group currently listed.
+#[must_use]
+pub fn panel_line(groups: &[UploadGroup]) -> String {
+    if groups.is_empty() {
+        return String::new();
+    }
+    let sending = groups.iter().filter(|group| busy(&group.records)).count();
+    let finished = groups
+        .iter()
+        .filter(|group| {
+            group
+                .records
+                .iter()
+                .all(|record| record.phase == UploadPhase::Finished)
+        })
+        .count();
+    let failed = groups
+        .iter()
+        .filter(|group| {
+            !busy(&group.records)
+                && group
+                    .records
+                    .iter()
+                    .any(|record| record.phase == UploadPhase::Failed)
+        })
+        .count();
+    if sending > 0 {
+        return format!("{sending} sending");
+    }
+    if failed > 0 && finished > 0 {
+        return format!("{finished} finished · {failed} failed");
+    }
+    if failed > 0 {
+        return format!("{failed} failed");
+    }
+    format!("{finished} finished")
+}
+
+/// Files only, once the group has one. An empty directory counts itself.
+fn reading_of(records: &[UploadRecord]) -> UploadReading {
+    let files_only = records.iter().any(|record| !record.directory);
+    let mut reading = UploadReading {
+        finished: 0,
+        failed: 0,
+        count: 0,
+        sent: 0,
+        total: 0,
+    };
+    for record in records {
+        if files_only && record.directory {
+            continue;
+        }
+        reading.count = reading.count.saturating_add(1);
+        reading.sent = reading.sent.saturating_add(record.sent);
+        reading.total = reading.total.saturating_add(record.total);
+        match record.phase {
+            UploadPhase::Finished => reading.finished = reading.finished.saturating_add(1),
+            UploadPhase::Failed => reading.failed = reading.failed.saturating_add(1),
+            UploadPhase::Waiting | UploadPhase::Sending => {}
+        }
+    }
+    reading
+}
+
+/// A directory the person pasted, counted by the files inside it.
+fn directory_line(reading: &UploadReading) -> String {
+    let mut line = format!("{} of {} finished", reading.finished, reading.count);
+    if reading.failed > 0 {
+        line = format!("{line} · {} failed", reading.failed);
+    }
+    if reading.total == 0 {
+        return line;
+    }
+    let size = if reading.sent == reading.total {
+        byte_text(reading.total)
+    } else {
+        format!("{} / {}", byte_text(reading.sent), byte_text(reading.total))
+    };
+    format!("{line} · {size}")
+}
+
+/// A directory with nothing inside it to send.
+fn directory_only(records: &[UploadRecord]) -> String {
+    if records
+        .iter()
+        .any(|record| record.phase == UploadPhase::Failed)
+    {
+        return records
+            .iter()
+            .find_map(|record| record.detail.clone())
+            .unwrap_or_else(|| "failed".to_owned());
+    }
+    if records
+        .iter()
+        .all(|record| record.phase == UploadPhase::Finished)
+    {
+        return "finished".to_owned();
+    }
+    "waiting".to_owned()
+}
+
+/// One file: its phase, the bytes, and the path the host gave it.
+fn file_line(record: &UploadRecord, reading: &UploadReading) -> String {
+    let reading_text = format!("{} / {}", byte_text(reading.sent), byte_text(reading.total));
+    match record.phase {
+        UploadPhase::Waiting => format!("waiting · {reading_text}"),
+        UploadPhase::Sending => format!(
+            "sending · {reading_text} · {}%",
+            percent(reading.sent, reading.total)
+        ),
+        UploadPhase::Finished => format!("finished · {}", byte_text(reading.total)),
+        UploadPhase::Failed => record.detail.clone().map_or_else(
+            || format!("failed · {reading_text}"),
+            |detail| format!("failed · {detail}"),
+        ),
+    }
 }
 
 /// What a clipboard offers a pane.
@@ -194,13 +517,19 @@ pub fn begin(
 ) -> Result<(), crate::bridge::EngineError> {
     ensure_loaded(shell);
     let kept = std::mem::take(&mut shell.pending_upload.records);
-    let opened = shell.pending_upload.opened;
+    let rate = std::mem::take(&mut shell.pending_upload.rate);
+    let panel = if shell.pending_upload.panel == UploadPanel::Open {
+        UploadPanel::Open
+    } else {
+        UploadPanel::Hidden
+    };
     shell.pending_upload = Pending {
         key: Some(key),
         records: kept,
-        opened,
+        panel,
         live: false,
         loaded: true,
+        rate,
     };
     remember(shell, files);
     let result = send_next(shell);
@@ -208,20 +537,29 @@ pub fn begin(
     result
 }
 
-/// Opens the uploads window the first time a paste is under way.
+/// Opens the uploads panel the first time a paste is under way.
+///
+/// Closing the panel during that paste keeps later progress from opening it
+/// again. The next paste may open it, because starting one clears the close.
 pub fn open_once(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
-    if shell.pending_upload.opened {
+    if shell.pending_upload.panel != UploadPanel::Hidden {
         return;
     }
-    shell.pending_upload.opened = true;
-    crate::upload_window::open(context);
+    shell.pending_upload.panel = UploadPanel::Open;
+    context.notify();
 }
 
-/// Opens the uploads window from the menu, even when one is already open.
+/// Shows or hides the uploads panel.
+///
+/// Hiding it during a paste does not stop the file that is already on its way.
 pub fn show(shell: &mut WindowShell, context: &mut Context<'_, WindowShell>) {
     ensure_loaded(shell);
-    shell.pending_upload.opened = true;
-    crate::upload_window::open(context);
+    shell.pending_upload.panel = if shell.pending_upload.panel == UploadPanel::Open {
+        UploadPanel::Held
+    } else {
+        UploadPanel::Open
+    };
+    context.notify();
 }
 
 /// Moves a finished or failed upload along, and ignores events about other work.
@@ -273,6 +611,12 @@ pub fn on_event(
             write_record(shell);
         }
         ManagerEvent::UploadFailed { host, pane, detail } => {
+            // The row was already marked, and this pane may since have started
+            // another paste. Acting again would cancel that one and raise the
+            // failure strip for a stop the person asked for.
+            if detail == iznik_client::host::manager::UPLOAD_CANCEL {
+                return;
+            }
             if held_for_later(detail) && same_pane(shell, host, *pane) {
                 shell.pending_upload.live = false;
                 write_record(shell);
@@ -367,7 +711,22 @@ fn note_progress(shell: &mut WindowShell, host: &HostId, name: &str, sent: u64, 
     record.sent = sent;
     record.total = total;
     record.phase = UploadPhase::Sending;
+    let host_name = host.0.clone();
+    crate::upload_rate::note(
+        &mut shell.pending_upload.rate,
+        &shell.pending_upload.records,
+        &host_name,
+        name,
+        std::time::Instant::now(),
+    );
     write_record(shell);
+}
+
+/// Bytes sent and bytes held, counting files and leaving directories out once a file exists.
+#[must_use]
+pub fn byte_pair(records: &[UploadRecord]) -> (u64, u64) {
+    let reading = reading_of(records);
+    (reading.sent, reading.total)
 }
 
 /// Marks the sending file finished and names the path the host gave it.
@@ -513,7 +872,7 @@ fn incomplete(shell: &WindowShell) -> bool {
 }
 
 /// Writes the record beside the settings file, when there is one.
-fn write_record(shell: &WindowShell) {
+pub(crate) fn write_record(shell: &WindowShell) {
     let Some(path) = crate::upload_log::path_beside(shell.options.settings_path.as_deref()) else {
         return;
     };
@@ -521,7 +880,7 @@ fn write_record(shell: &WindowShell) {
 }
 
 /// Forgets the pane a paste was aimed at. The records stay.
-fn stop(shell: &mut WindowShell) {
+pub(crate) fn stop(shell: &mut WindowShell) {
     shell.pending_upload.key = None;
     shell.pending_upload.live = false;
 }

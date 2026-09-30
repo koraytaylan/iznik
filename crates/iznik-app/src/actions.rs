@@ -46,7 +46,7 @@ pub enum ActionId {
     OpenSettings,
     /// Open the developer tools window.
     OpenTools,
-    /// Open the window that lists pasted files.
+    /// Show or hide the uploads panel.
     OpenUpload,
 }
 
@@ -250,7 +250,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     spec(
         ActionId::OpenUpload,
         "iznik: uploads",
-        "Show files pasted into panes, including those still sending.",
+        "Show or hide the panel of files pasted into panes.",
         ActionTarget::Application,
         ActionContext::None,
         None,

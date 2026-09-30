@@ -181,6 +181,8 @@ pub struct WindowShell {
     pub(crate) pending_upload: crate::upload::Pending,
     /// Horizontal offset of the tab strip.
     tab_scroll: ScrollHandle,
+    /// Vertical offset of the uploads list.
+    pub(crate) upload_scroll: ScrollHandle,
     /// The selection already scrolled into that strip.
     scrolled_tab: Option<TabKey>,
 }
@@ -230,6 +232,7 @@ impl WindowShell {
             shortcut_hint: ShortcutHint::None,
             pending_upload: crate::upload::Pending::default(),
             tab_scroll: ScrollHandle::new(),
+            upload_scroll: ScrollHandle::new(),
             scrolled_tab: None,
         };
         crate::settings::load_into(&mut shell, context);
@@ -917,7 +920,10 @@ impl Render for WindowShell {
         self.scroll_selected_tab();
         let entity = context.entity().downgrade();
         let body = self.body(&entity, context);
+        let strips = self.connection_strips(context);
         let theme = context.theme();
+        let panel = crate::upload_window::panel(self, theme, &entity);
+        let panel_button = crate::upload_window::session_button(theme, self, &entity);
         let placement = if self.settings().theme.tabs_in_title_bar {
             bars::TabPlacement::TitleBar
         } else {
@@ -928,9 +934,12 @@ impl Render for WindowShell {
             self.hosts.state(),
             self.selected.as_ref(),
             Some(&entity),
-            placement,
-            self.shortcut_hint,
-            Some(&self.tab_scroll),
+            bars::StripOptions {
+                placement,
+                hint: self.shortcut_hint,
+                scroll: Some(&self.tab_scroll),
+                session_button: Some(panel_button),
+            },
         );
         let (title, tab_bar) = match placement {
             bars::TabPlacement::TitleBar => (bars.top, None),
@@ -965,28 +974,12 @@ impl Render for WindowShell {
                 .text_color(theme.foreground)
                 .child(TitleBar::new().child(title))
                 .children(tab_bar)
-                .child(
-                    div()
-                        .id("pane-area")
-                        .test_support()
-                        .role(Role::Group)
-                        .aria_label("Panes")
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .bg(crate::chrome::painted_pane_color(&self.options.theme))
-                        .child(body)
-                        // Over the panes, so a strip that comes and goes does not resize every terminal.
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .w_full()
-                                .children(self.connection_strips(context)),
-                        ),
-                )
+                .child(crate::chrome::pane_row(
+                    body,
+                    strips,
+                    panel,
+                    crate::chrome::painted_pane_color(&self.options.theme),
+                ))
                 .child(bars.bottom)
                 .child(palette_overlay)
                 .children(menu_overlay)
