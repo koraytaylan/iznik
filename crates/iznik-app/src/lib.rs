@@ -13,6 +13,7 @@ pub mod configuration_file;
 pub mod follow;
 pub mod grid;
 pub mod host_ui;
+pub mod icon;
 pub mod input;
 pub mod layout;
 pub mod lifecycle;

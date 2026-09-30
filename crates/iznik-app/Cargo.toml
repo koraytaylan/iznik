@@ -24,6 +24,12 @@ gpui-kit = "=0.6.1"
 gpui-kit-assets = "=0.6.1"
 iznik-client = { path = "../iznik-client" }
 iznik-protocol = { path = "../iznik-protocol" }
+# Decodes the rasterized site marks into the window icon and the status item.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# The status item: menu bar, notification area, and Linux status notifier.
+# Linux and BSD need the `ksni` backend, which speaks the status-notifier
+# protocol without GTK. The default backend links libappindicator instead.
+tray-icon = { version = "=0.26.0", default-features = false }
 # The engine's structured log, shown on the developer tools log page.
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
@@ -42,3 +48,8 @@ iznik-testkit = { path = "../iznik-testkit" }
 # and model encodings the mirror's cases feed it. Nothing in `src/` uses it:
 # the engine behind the bridge owns the runtime the product runs on.
 tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }
+
+# `tray-icon` refuses to compile on Linux and BSD unless one backend is
+# chosen. `ksni` is the one that does not need a system GTK library.
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+tray-icon = { version = "=0.26.0", default-features = false, features = ["ksni"] }

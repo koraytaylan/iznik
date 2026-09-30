@@ -1,18 +1,18 @@
 [[claim]]
 id = "app-bundle-linux-layout"
-statement = "The Linux application layout contains the staged executable, still executable, every staged server under share/iznik/artifacts still executable and without its checksums or manifest, and a versioned desktop entry."
+statement = "The Linux application layout contains the staged executable, still executable, every staged server under share/iznik/artifacts still executable and without its checksums or manifest, and a versioned desktop entry that names the icon, with the favicon and the medallion in the hicolor theme."
 test = "iznik-app::bundle_layout::linux_layout_is_versioned"
 because = "The layout writer is deterministic filesystem logic and needs no platform host."
 
 [[claim]]
 id = "app-bundle-macos-layout"
-statement = "The macOS application layout contains the executable, still executable, every staged server under Contents/Resources/artifacts, and a version-stamped property list."
+statement = "The macOS application layout contains the executable, still executable, every staged server under Contents/Resources/artifacts, a version-stamped property list that names the icon, and that icon."
 test = "iznik-app::bundle_layout::macos_layout_is_versioned"
 because = "The property list writer is deterministic and can be verified on Linux."
 
 [[claim]]
 id = "app-bundle-windows-layout"
-statement = "The Windows application layout contains bin/iznik.exe, every staged server under share/iznik/artifacts, and a version file. There is no installer."
+statement = "The Windows application layout contains bin/iznik.exe, every staged server under share/iznik/artifacts, a version file, and an icon file. There is no installer."
 test = "iznik-app::bundle_layout::windows_layout_is_versioned"
 because = "The layout writer is deterministic filesystem logic and needs no Windows host."
 

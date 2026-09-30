@@ -7,12 +7,15 @@ displayed
 executable
 finds
 hoc
+icns
+ico
 icon
 identifier
 linux
 macos
 packaging
 plist
+png
 property
 seals
 servers

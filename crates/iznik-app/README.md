@@ -41,8 +41,15 @@ runs:
 
 ```sh
 ./scripts/app/run.sh      # checks the toolchain, then runs `cargo app`
-cargo app                 # builds the server, then `cargo run --package iznik-app`
+cargo app                 # builds the servers, then starts iznik-app
 ```
+
+On macOS, `cargo app` then builds the application, writes a debug `.app`
+beside it, signs that bundle, and runs it, so the Dock shows the medallion.
+On Linux and Windows it is `cargo run --package iznik-app`. The menu bar, the
+notification area and the Linux status item are the same medallion, installed
+by the process whether or not it was launched from a bundle. A click brings
+the windows forward, and a right click can show them or quit.
 
 `cargo app` builds a server for **both** Linux architectures — `x86_64` and
 aarch64 — with `cargo xtask distribution`, about a second each when nothing
@@ -226,6 +233,7 @@ is done, iznik is not usable with a screen reader for reading terminal output.
 | `vt::eviction` | How many rows a full history has let go of from its top, counted from a tracked reference on the emulator's last row, so row numbers that include them never move. |
 | `vt::batch` | Commands the emulator thread finds queued together: a pane's output fed before one snapshot that carries every chunk's credit and receipt. |
 | `host_ui` | The window's own state: per-host connection state, the client model mirror updated from snapshots and deltas through `iznik-client`'s reducer, the upgrade a host returns with its connection, and the notices a surface shows. |
+| `icon` | The site's medallion and favicon: the about dialog, the status item (the medallion; a click brings the windows forward), and the rasters a window manager and a bundle use. |
 | `lifecycle` | Cross-window application lifecycle glue, such as quitting when a named window closes. |
 | `menu` | The application's main menu: the named menus the system menu bar shows while an iznik window is frontmost, and the handlers that run each item. |
 | `upload` | A paste of files or directories into the focused pane: confirmation, one file at a time, the remote path typed back, and the record a later launch continues. |

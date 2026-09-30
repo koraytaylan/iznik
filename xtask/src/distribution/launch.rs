@@ -3,10 +3,15 @@
 //!
 //! A bundle carries its servers; a workspace build has what
 //! `cargo xtask distribution` wrote into cargo's target directory, where the
-//! application looks for them. This is that build and `cargo run` as one
+//! application looks for them. This is that build and a launch as one
 //! command, with cargo's progress on the terminal for both, so a person never
 //! has to know the servers are a separate step. Up to date, each server build
 //! takes about a second; after a change to the server, it is rebuilt.
+//!
+//! On macOS the launch is a signed debug bundle. A process started with
+//! `cargo run` has no bundle, and the Dock takes its icon from the bundle, so
+//! this writes one and runs that. Linux and Windows keep `cargo run`; their
+//! status item is installed by the process.
 //!
 //! Every Linux architecture is built by default, not only this machine's. A
 //! host is whatever it is, and a server for the wrong architecture is one the
@@ -16,11 +21,14 @@
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::process::{Command, ExitCode};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode, ExitStatus};
 
 use iznik_harness::process::Output;
 
-use crate::distribution::{build_with_output, linux, target_directory, workspace_root};
+use crate::distribution::{
+    DISTRIBUTION_DIRECTORY, build_with_output, linux, signing, target_directory, workspace_root,
+};
 
 /// The flag naming a server to build, repeatable.
 const TARGET_FLAG: &str = "--target";
@@ -30,6 +38,15 @@ const USAGE_LINE: &str = "usage: cargo app [--target <triple>]...";
 
 /// The variable that tells cargo which target directory to use.
 const TARGET_DIRECTORY_VARIABLE: &str = "CARGO_TARGET_DIR";
+
+/// The profile `cargo app` builds the application under.
+const DEBUG_PROFILE: &str = "debug";
+
+/// The package cargo builds.
+const APPLICATION_PACKAGE: &str = "iznik-app";
+
+/// The name the bundle writer gives the application.
+const APPLICATION_NAME: &str = "iznik";
 
 /// The servers built when no `--target` is given: every Linux architecture
 /// this distributes, in a fixed order.
@@ -86,18 +103,82 @@ pub fn run(arguments: &[OsString]) -> ExitCode {
         }
     }
     say("cargo app: starting iznik-app");
-    // The application runs until a person closes it, so it has no deadline;
-    // what it is given is the same target directory the servers went into,
-    // two directories up from the executable cargo builds there.
-    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .current_dir(&root)
-        .args(["run", "--locked", "--package", "iznik-app"])
-        .env(TARGET_DIRECTORY_VARIABLE, target_directory(&root))
+    // The application runs until a person closes it, so it has no deadline.
+    // On macOS the Dock icon comes from the signed bundle this writes first.
+    if cfg!(target_os = "macos") {
+        start_bundled(&root)
+    } else {
+        start_direct(&root)
+    }
+}
+
+/// `cargo run`. The status item is installed by the process.
+fn start_direct(root: &Path) -> ExitCode {
+    let status = cargo(root)
+        .args(["run", "--locked", "--package", APPLICATION_PACKAGE])
         .status();
+    command_exit(status, "cargo could not be started")
+}
+
+/// Build the application, write a debug bundle, sign it, and run that bundle.
+fn start_bundled(root: &Path) -> ExitCode {
+    let directory = target_directory(root);
+    let built = cargo(root)
+        .args(["build", "--locked", "--package", APPLICATION_PACKAGE])
+        .status();
+    if command_exit(built, "cargo could not be started") != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    let binary = application_binary(&directory);
+    let bundle = directory
+        .join(DEBUG_PROFILE)
+        .join(format!("{APPLICATION_NAME}.app"));
+    let triple = format!("{}-apple-darwin", std::env::consts::ARCH);
+    let servers = directory.join(DISTRIBUTION_DIRECTORY);
+    let written = Command::new(&binary)
+        .arg("--bundle")
+        .arg(&triple)
+        .arg(&binary)
+        .arg(&bundle)
+        .arg(env!("CARGO_PKG_VERSION"))
+        .arg(&servers)
+        .status();
+    if command_exit(written, "the bundle writer could not be started") != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    let signature = signing::Signature::from_environment();
+    if let Err(error) = signing::sign_bundle(&bundle, &triple, &signature) {
+        return refuse(&format!("cargo app: {error}"));
+    }
+    let executable = bundle.join("Contents").join("MacOS").join(APPLICATION_NAME);
+    let status = Command::new(executable).current_dir(root).status();
+    command_exit(status, "the application could not be started")
+}
+
+/// Cargo, pointed at this workspace and its target directory.
+fn cargo(root: &Path) -> Command {
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .current_dir(root)
+        .env(TARGET_DIRECTORY_VARIABLE, target_directory(root));
+    command
+}
+
+/// The application binary cargo just built.
+fn application_binary(directory: &Path) -> PathBuf {
+    let mut name = APPLICATION_PACKAGE.to_owned();
+    if cfg!(target_os = "windows") {
+        name.push_str(".exe");
+    }
+    directory.join(DEBUG_PROFILE).join(name)
+}
+
+/// The exit of a command. A failure to start is said here.
+fn command_exit(status: std::io::Result<ExitStatus>, failure: &str) -> ExitCode {
     match status {
-        Ok(finished) if finished.success() => ExitCode::SUCCESS,
-        Ok(_finished) => ExitCode::FAILURE,
-        Err(error) => refuse(&format!("cargo app: cargo could not be started: {error}")),
+        Ok(completed) if completed.success() => ExitCode::SUCCESS,
+        Ok(_completed) => ExitCode::FAILURE,
+        Err(error) => refuse(&format!("cargo app: {failure}: {error}")),
     }
 }
 

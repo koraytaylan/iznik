@@ -141,10 +141,11 @@ fn run() -> ExitCode {
     let failed = Rc::new(Cell::new(false));
     let failing = Rc::clone(&failed);
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(iznik_app::icon::ApplicationAssets)
         .run(move |app| {
             gpui_kit::init(app);
             iznik_app::menu::install(app);
+            iznik_app::icon::install(app);
             if let Err(refusal) = iznik_app::theme::apply_default_theme(app) {
                 let _written = writeln!(std::io::stderr(), "iznik-app: {refusal}");
             }
@@ -235,6 +236,7 @@ fn open_window(app_context: &mut gpui_kit::AsyncApp) -> Result<(), Box<dyn std::
                 window_options.window_bounds = Some(placement.bounds);
                 window_options.display_id = placement.display;
             }
+            window_options.icon = iznik_app::icon::window_icon();
             window_options
         });
         let window = app_context.open_window(window_options, |window, build_context| {

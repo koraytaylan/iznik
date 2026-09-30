@@ -131,6 +131,7 @@
 - `cosmic-text` — reached from `gpui-pre-wgpu`.
 - `cpufeatures` — reached from `sha2`.
 - `crc32fast` — reached from `flate2`, `image`, `object`, `png`, `tiff` and 1 more.
+- `crossbeam-channel` — reached from `muda`, `tray-icon`.
 - `crossbeam-deque` — reached from `ignore`, `rayon-core`.
 - `crossbeam-epoch` — reached from `crossbeam-deque`.
 - `crossbeam-queue` — reached from `postage`.
@@ -151,6 +152,7 @@
 - `dlib` — reached from `wayland-sys`, `yeslogic-fontconfig-sys`.
 - `document-features` — reached from `flate2`, `quick-xml`, `taffy`, `wgpu`, `wgpu-core`.
 - `downcast-rs` — reached from `portable-pty`.
+- `dpi` — reached from `muda`.
 - `dunce` — reached from `gpui-pre-windows`, `open`.
 - `dwrote` — reached from `zed-font-kit`.
 - `dyn-clone` — reached from `schemars`.
@@ -288,7 +290,7 @@
 - `idna` — reached from `url`.
 - `idna_adapter` — reached from `idna`.
 - `ignore` — reached from `globwalk`.
-- `image` — reached from `exr`, `gpui-pre`, `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-windows` and 2 more.
+- `image` — decodes the application's window icon and status item; also reached from `exr`, `gpui-pre`, `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-windows` and 2 more.
 - `image-webp` — reached from `image`, `resvg`, `tiff`.
 - `imagesize` — reached from `usvg`.
 - `imgref` — reached from `loop9`, `ravif`.
@@ -311,10 +313,12 @@
 - `jni-sys-macros` — reached from `jni-sys`.
 - `jobserver` — reached from `zstd`.
 - `js-sys` — reached from `chrono`, `getrandom`, `glow`, `gpui-pre-reqwest`, `gpui-pre-web` and 14 more.
+- `keyboard-types` — reached from `muda`.
 - `khronos-egl` — reached from `wgpu-hal`.
 - `khronos_api` — reached from `gl_generator`.
 - `kqueue` — reached from `notify`.
 - `kqueue-sys` — reached from `kqueue`.
+- `ksni` — the status-notifier backend, reached from `tray-icon`.
 - `kurbo` — reached from `skrifa`, `svgtypes`, `usvg`.
 - `lazy_static` — reached from `portable-pty` and `tracing-subscriber`.
 - `leak` — reached from `leaky-cow`.
@@ -365,6 +369,7 @@
 - `miniz_oxide` — reached from `backtrace`, `exr`, `fdeflate`, `flate2`, `png`.
 - `mio` — reached from `tokio`.
 - `moxcms` — reached from `image`.
+- `muda` — reached from `tray-icon`.
 - `multiversion` — reached from `encoding_rs`.
 - `multiversion-macros` — reached from `multiversion`.
 - `multiversion_no_op` — reached from `encoding_rs`.
@@ -428,7 +433,7 @@
 - `parking_lot` — reached from `accesskit_windows`, `arc-swap`, `gpui-pre`, `gpui-pre-apple`, `gpui-pre-http-client` and 16 more.
 - `parking_lot_core` — reached from `once_cell`, `parking_lot`.
 - `paste` — reached from `gpui-component`, `image-webp`, `itertools`, `metal`, `portable-atomic` and 3 more.
-- `pastey` — reached from `av-scenechange`.
+- `pastey` — reached from `av-scenechange`, `ksni`.
 - `pathfinder_geometry` — reached from `gpui-pre-macos`, `zed-font-kit`.
 - `pathfinder_simd` — reached from `pathfinder_geometry`, `zed-font-kit`.
 - `pbkdf2` — reached from `oo7`.
@@ -601,6 +606,7 @@
 - `system-configuration-sys` — reached from `system-configuration`.
 - `taffy` — reached from `gpui-pre`.
 - `tao-core-video-sys` — reached from `zed-scap`.
+- `task-local` — reached from `ksni`.
 - `tauri-winrt-notification` — reached from `notify-rust`.
 - `tempfile` — reached from `cbindgen`.
 - `tendril` — reached from `markup5ever`, `markup5ever_rcdom`.
@@ -635,6 +641,7 @@
 - `tracing-core` — reached from `tracing` and `tracing-subscriber`.
 - `tracing-log` — reached from `tracing-subscriber`.
 - `tracing-subscriber` — the log writer and the level filter behind `IZNIK_LOG`.
+- `tray-icon` — the menu bar, the notification area and the Linux status item.
 - `triomphe` — reached from `rust-i18n-support`.
 - `try-lock` — reached from `event-listener`, `want`.
 - `ttf-parser` — reached from `fontdb`, `gpui-pre`, `rustybuzz`.

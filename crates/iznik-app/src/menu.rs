@@ -15,8 +15,8 @@
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
-    App, Context, InteractiveElement, KeyBinding, Menu, MenuItem, NoAction, SystemMenuType, Window,
-    actions,
+    App, Context, InteractiveElement, KeyBinding, Menu, MenuItem, NoAction, Styled, SystemMenuType,
+    Window, actions, img, px,
 };
 
 use crate::actions::ActionId;
@@ -28,6 +28,10 @@ pub const APPLICATION_NAME: &str = "iznik";
 
 /// The page the Help menu opens.
 const SOURCE_ADDRESS: &str = "https://github.com/koraytaylan/iznik";
+
+/// Side of the medallion in the about dialog, in pixels. Large enough to
+/// read the plate, and small enough to sit in the dialog's icon slot.
+const ABOUT_MARK_SIZE: f32 = 96.0;
 
 actions!(
     iznik,
@@ -249,6 +253,11 @@ fn about(app: &mut App) {
             dialog
                 .title(format!("{APPLICATION_NAME} {version}"))
                 .description("A terminal client that keeps sessions running on a host.")
+                .icon(
+                    img(crate::icon::MARK)
+                        .w(px(ABOUT_MARK_SIZE))
+                        .h(px(ABOUT_MARK_SIZE)),
+                )
         });
     });
 }

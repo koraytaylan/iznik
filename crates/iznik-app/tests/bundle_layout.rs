@@ -37,6 +37,25 @@ fn linux_layout_is_versioned() -> std::io::Result<()> {
     );
     let desktop = fs::read_to_string(output.join("iznik.desktop"))?;
     assert!(desktop.contains(&format!("Version={}", env!("CARGO_PKG_VERSION"))));
+    assert!(
+        desktop.contains("Icon=iznik"),
+        "the desktop entry names the icon"
+    );
+    assert_eq!(
+        fs::read(output.join("share/icons/hicolor/16x16/apps/iznik.png"))?,
+        include_bytes!("../assets/icon-16.png"),
+        "the smallest theme size is the favicon"
+    );
+    assert_eq!(
+        fs::read(output.join("share/icons/hicolor/256x256/apps/iznik.png"))?,
+        include_bytes!("../assets/mark-256.png"),
+        "the large theme size is the medallion"
+    );
+    assert_eq!(
+        fs::read(output.join("share/icons/hicolor/scalable/apps/iznik.svg"))?,
+        include_bytes!("../assets/mark.svg"),
+        "the scalable icon is the medallion"
+    );
     carried(&output.join("share/iznik/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())
@@ -74,6 +93,15 @@ fn macos_layout_is_versioned() -> std::io::Result<()> {
     assert!(plist.contains("<key>CFBundleExecutable</key><string>iznik</string>"));
     assert!(plist.contains("<key>CFBundlePackageType</key><string>APPL</string>"));
     assert!(plist.contains("<key>NSHighResolutionCapable</key><true/>"));
+    assert!(
+        plist.contains("<key>CFBundleIconFile</key><string>iznik</string>"),
+        "the property list names the icon"
+    );
+    assert_eq!(
+        fs::read(output.join("Contents/Resources/iznik.icns"))?,
+        include_bytes!("../assets/icon.icns"),
+        "the bundle carries the icon"
+    );
     carried(&output.join("Contents/Resources/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())
@@ -99,6 +127,11 @@ fn windows_layout_is_versioned() -> std::io::Result<()> {
     assert_eq!(fs::read(output.join("bin/iznik.exe"))?, b"binary");
     let version = fs::read_to_string(output.join("version.txt"))?;
     assert!(version.contains(env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        fs::read(output.join("iznik.ico"))?,
+        include_bytes!("../assets/icon.ico"),
+        "the layout carries the icon"
+    );
     carried(&output.join("share/iznik/artifacts"))?;
     fs::remove_dir_all(root)?;
     Ok(())
@@ -201,6 +234,20 @@ fn the_application_finds_its_bundled_servers() -> std::io::Result<()> {
     );
     fs::remove_dir_all(root)?;
     Ok(())
+}
+
+#[test]
+/// The window icon is the medallion, decoded, with painted pixels.
+///
+/// # Panics
+///
+/// Panics when the embedded medallion does not decode, or is the wrong size.
+fn the_window_icon_decodes() {
+    let icon = iznik_app::icon::window_icon().expect("the medallion decodes");
+    assert_eq!(icon.width(), 128, "the window icon is 128 pixels wide");
+    assert_eq!(icon.height(), 128, "the window icon is 128 pixels tall");
+    let painted = icon.pixels().any(|pixel| pixel[3] == 255);
+    assert!(painted, "the medallion has painted pixels");
 }
 
 /// A staged application executable.

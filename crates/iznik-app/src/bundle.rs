@@ -46,9 +46,43 @@ pub fn write_linux(binary: &Path, servers: &Path, output: &Path, version: &str) 
     let _bytes = fs::copy(binary, output.join("bin").join(APPLICATION_NAME))?;
     copy_servers(servers, &joined(output, LINUX_SERVERS))?;
     let desktop = format!(
-        "[Desktop Entry]\nName={APPLICATION_NAME}\nExec={APPLICATION_NAME}\nVersion={version}\nType=Application\n"
+        "[Desktop Entry]\nName={APPLICATION_NAME}\nExec={APPLICATION_NAME}\nIcon={APPLICATION_NAME}\nVersion={version}\nType=Application\n"
     );
+    write_linux_theme(output)?;
     fs::write(output.join("iznik.desktop"), desktop)
+}
+
+/// The hicolor icons and the scalable medallion a desktop environment looks
+/// up by the name in the desktop entry.
+///
+/// # Errors
+///
+/// Returns an I/O error when a directory or an icon cannot be written.
+fn write_linux_theme(output: &Path) -> io::Result<()> {
+    let theme = joined(output, &["share", "icons", "hicolor"]);
+    write_icon_png(&theme, "16x16", include_bytes!("../assets/icon-16.png"))?;
+    write_icon_png(&theme, "32x32", include_bytes!("../assets/icon-32.png"))?;
+    write_icon_png(&theme, "48x48", include_bytes!("../assets/mark-48.png"))?;
+    write_icon_png(&theme, "128x128", include_bytes!("../assets/mark-128.png"))?;
+    write_icon_png(&theme, "256x256", include_bytes!("../assets/mark-256.png"))?;
+    write_icon_png(&theme, "512x512", include_bytes!("../assets/mark-512.png"))?;
+    let mark_directory = theme.join("scalable").join("apps");
+    fs::create_dir_all(&mark_directory)?;
+    fs::write(
+        mark_directory.join(format!("{APPLICATION_NAME}.svg")),
+        include_bytes!("../assets/mark.svg"),
+    )
+}
+
+/// One themed PNG, under `hicolor/<size>/apps`.
+///
+/// # Errors
+///
+/// Returns an I/O error when the directory or the file cannot be written.
+fn write_icon_png(theme: &Path, size: &str, bytes: &[u8]) -> io::Result<()> {
+    let directory = theme.join(size).join("apps");
+    fs::create_dir_all(&directory)?;
+    fs::write(directory.join(format!("{APPLICATION_NAME}.png")), bytes)
 }
 
 /// Write a Windows layout: `bin/iznik.exe` and the servers beside it, the same
@@ -67,6 +101,10 @@ pub fn write_windows(
     fs::create_dir_all(output.join("bin"))?;
     let _bytes = fs::copy(binary, output.join("bin").join(WINDOWS_EXECUTABLE))?;
     copy_servers(servers, &joined(output, LINUX_SERVERS))?;
+    fs::write(
+        output.join(format!("{APPLICATION_NAME}.ico")),
+        include_bytes!("../assets/icon.ico"),
+    )?;
     fs::write(output.join("version.txt"), format!("{version}\n"))
 }
 
@@ -82,8 +120,14 @@ pub fn write_macos(binary: &Path, servers: &Path, output: &Path, version: &str) 
     fs::create_dir_all(contents.join("MacOS"))?;
     let _bytes = fs::copy(binary, contents.join("MacOS").join(APPLICATION_NAME))?;
     copy_servers(servers, &joined(&contents, MACOS_SERVERS))?;
+    let resources = contents.join("Resources");
+    fs::create_dir_all(&resources)?;
+    fs::write(
+        resources.join(format!("{APPLICATION_NAME}.icns")),
+        include_bytes!("../assets/icon.icns"),
+    )?;
     let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist><dict><key>CFBundleIdentifier</key><string>{APPLICATION_IDENTIFIER}</string><key>CFBundleShortVersionString</key><string>{version}</string><key>CFBundleName</key><string>{APPLICATION_NAME}</string><key>CFBundleExecutable</key><string>{APPLICATION_NAME}</string><key>CFBundlePackageType</key><string>APPL</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist><dict><key>CFBundleIdentifier</key><string>{APPLICATION_IDENTIFIER}</string><key>CFBundleShortVersionString</key><string>{version}</string><key>CFBundleName</key><string>{APPLICATION_NAME}</string><key>CFBundleExecutable</key><string>{APPLICATION_NAME}</string><key>CFBundleIconFile</key><string>{APPLICATION_NAME}</string><key>CFBundlePackageType</key><string>APPL</string><key>NSHighResolutionCapable</key><true/></dict></plist>\n"
     );
     fs::write(contents.join("Info.plist"), plist)
 }
