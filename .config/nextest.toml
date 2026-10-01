@@ -97,6 +97,13 @@ filter = 'test(pane_many_share_one_thread)'
 test-group = 'shells'
 threads-required = 12
 
+# Before the timing rule below, which also matches this test. That rule asks
+# for `num-cpus`. `num-test-threads` is what keeps every other test off the
+# machine, including a test that sits in a group. The budget is unchanged.
+[[profile.default.overrides]]
+filter = 'test(keystroke_latency_under_flood)'
+threads-required = 'num-test-threads'
+
 # A timing measurement never shares the machine with the rest of the suite.
 [[profile.default.overrides]]
 filter = 'test(/latency|throughput|baseline/)'

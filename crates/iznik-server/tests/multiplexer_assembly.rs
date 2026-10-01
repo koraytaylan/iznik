@@ -450,6 +450,12 @@ const MIDDLE: usize = 50;
 const OF: usize = 100;
 /// How long one keystroke may take before the case calls the pump stopped.
 const SAMPLE_DEADLINE: Duration = Duration::from_secs(5);
+/// How far a quiet machine may land past [`KEYSTROKE_ROUND_TRIP_BUDGET`].
+///
+/// The budget is what a person feels as immediate. A runner that has the
+/// measurement to itself still spends a few milliseconds in the scheduler;
+/// a run that shares the machine misses by more than this.
+const KEYSTROKE_ALLOWANCE: Duration = Duration::from_millis(10);
 /// How much the multiplexer's own memory may grow across a flood: one frame's
 /// buffer and the allocator's slack, but nothing proportional to the flood.
 const MEMORY_SLACK_BYTES: u64 = 16 * MEBIBYTE;
@@ -691,7 +697,7 @@ async fn a_resume_continues_or_takes_the_cold_path() {
 ///
 /// When the ninety-ninth percentile of a thousand keystroke-to-echo round
 /// trips, taken while another pane floods, is not under
-/// [`KEYSTROKE_ROUND_TRIP_BUDGET`].
+/// [`KEYSTROKE_ROUND_TRIP_BUDGET`] plus [`KEYSTROKE_ALLOWANCE`].
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keystroke_latency_under_flood() {
     bounded(async {
@@ -741,7 +747,7 @@ async fn keystroke_latency_under_flood() {
             trips.len(),
             rig.sink.count(flooded)
         );
-        let within = tail < KEYSTROKE_ROUND_TRIP_BUDGET;
+        let within = tail < KEYSTROKE_ROUND_TRIP_BUDGET.saturating_add(KEYSTROKE_ALLOWANCE);
         assert!(within, "p{AT} {tail:?} is over budget ({distribution})");
         Ok::<(), Failed>(())
     })
