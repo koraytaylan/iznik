@@ -299,6 +299,7 @@ async fn it_decodes_every_message_the_golden_holds() {
             "Mark",
             "Pong",
             "Error",
+            "UploadAccepted",
         ]
         .into_iter()
         .map(str::to_owned)

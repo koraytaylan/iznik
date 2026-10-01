@@ -139,8 +139,14 @@ threads-required = 2
 # rest of the suite, starves one past its own deadline and turns the suite's
 # parallelism into a failure rather than a slower run. Twelve threads shared
 # with the scenarios above, which take three each, keeps a wait a wait.
+#
+# The keystroke latency case is left out. The timing rule above already asks
+# for every core, but a test that is also in this group takes those cores out
+# of the group's twelve, and the rest of the group keeps running beside it.
+# A round trip over the budget is then the suite, not the multiplexer. The
+# budget itself is unchanged.
 [[profile.default.overrides]]
-filter = 'package(iznik-server)'
+filter = 'package(iznik-server) - test(keystroke_latency_under_flood)'
 test-group = 'shells'
 
 # The client's own cases that stand a whole server up — a daemon, a socket and
