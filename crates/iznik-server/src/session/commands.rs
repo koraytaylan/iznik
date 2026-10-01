@@ -95,7 +95,19 @@ pub async fn settle(command: SessionCommand) -> SessionCommand {
 
 /// [`settle`] under a deadline of the caller's choosing.
 pub async fn settle_within(mut command: SessionCommand, deadline: Duration) -> SessionCommand {
-    let slot = match &mut command {
+    let Some(asked) = take_working_directory(&mut command) else {
+        return command;
+    };
+    if accept_directory(read_directory(&asked, deadline).await) {
+        restore_working_directory(&mut command, asked);
+    }
+    command
+}
+
+/// The working directory a creating command carries, as a slot that can be
+/// taken out and put back.
+fn working_directory_slot(command: &mut SessionCommand) -> Option<&mut Option<String>> {
+    match command {
         SessionCommand::CreateSession {
             working_directory, ..
         }
@@ -104,31 +116,77 @@ pub async fn settle_within(mut command: SessionCommand, deadline: Duration) -> S
         }
         | SessionCommand::CreatePane {
             working_directory, ..
-        } => working_directory,
-        _other => return command,
-    };
-    if let Some(asked) = slot.take() {
-        // An answer that came after the deadline is as late as none, so the
-        // rule is the same whichever of the two the timer noticed first.
-        let started = tokio::time::Instant::now();
-        let looked = tokio::time::timeout(deadline, tokio::fs::metadata(&asked))
-            .await
-            .ok()
-            .filter(|_answered| started.elapsed() <= deadline);
-        match looked {
-            Some(Ok(metadata)) if metadata.is_dir() => *slot = Some(asked),
-            Some(Ok(_other)) => {
-                tracing::info!("a pane asked to start in something that is not a directory");
-            }
-            Some(Err(error)) => {
-                tracing::info!(%error, "a pane asked to start in a directory that is not there");
-            }
-            None => {
-                tracing::warn!("a pane's working directory did not answer in time");
-            }
-        }
+        } => Some(working_directory),
+        _other => None,
     }
-    command
+}
+
+/// The directory a creating command asked for, taken out of it.
+///
+/// `None` when the command does not start a pane, or named no directory.
+/// Taking it out is what drops a directory that does not answer: the command
+/// is left without one, and the pane starts in the home directory.
+fn take_working_directory(command: &mut SessionCommand) -> Option<String> {
+    let slot = working_directory_slot(command)?;
+    slot.take()
+}
+
+/// Puts a directory back on the creating command it was taken from.
+fn restore_working_directory(command: &mut SessionCommand, directory: String) {
+    if let Some(slot) = working_directory_slot(command) {
+        *slot = Some(directory);
+    }
+}
+
+/// Metadata for `asked`, when the lookup finishes inside `deadline`.
+///
+/// An answer that arrives after the deadline counts as no answer, so the
+/// rule is the same whichever of the two the timer noticed first.
+async fn read_directory(
+    asked: &str,
+    deadline: Duration,
+) -> Option<std::io::Result<std::fs::Metadata>> {
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(deadline, tokio::fs::metadata(asked))
+        .await
+        .ok()
+        .filter(|_answered| started.elapsed() <= deadline)
+}
+
+/// Whether the lookup found a directory. Anything else is logged and dropped.
+fn accept_directory(looked: Option<std::io::Result<std::fs::Metadata>>) -> bool {
+    if let Some(Ok(metadata)) = &looked
+        && metadata.is_dir()
+    {
+        return true;
+    }
+    note_dropped_directory(looked);
+    false
+}
+
+/// Why a directory was dropped: it was not one, it was not there, or it did
+/// not answer in time.
+fn note_dropped_directory(looked: Option<std::io::Result<std::fs::Metadata>>) {
+    match looked {
+        Some(Ok(_metadata)) => note_not_directory(),
+        Some(Err(error)) => note_missing_directory(&error),
+        None => note_late_directory(),
+    }
+}
+
+/// The path answered, and it is not a directory.
+fn note_not_directory() {
+    tracing::info!("a pane asked to start in something that is not a directory");
+}
+
+/// The path is not a directory that is there.
+fn note_missing_directory(error: &std::io::Error) {
+    tracing::info!(%error, "a pane asked to start in a directory that is not there");
+}
+
+/// The path did not answer before the deadline.
+fn note_late_directory() {
+    tracing::warn!("a pane's working directory did not answer in time");
 }
 
 /// The answer a refusal becomes: the code a client acts on, and the words a

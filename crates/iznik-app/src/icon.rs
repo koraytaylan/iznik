@@ -162,9 +162,27 @@ fn status_menu() -> Option<Box<dyn tray_icon::menu::ContextMenu>> {
 /// Put the medallion in the status area.
 fn install_icon() {
     let Some(icon) = status_icon() else {
-        tracing::warn!("the status icon could not be read");
+        note_missing_icon();
         return;
     };
+    match build_status_icon(icon) {
+        Ok(installed) => keep_installed_icon(installed),
+        Err(error) => note_failed_icon(&error),
+    }
+}
+
+/// The embedded medallion could not be read as a status item.
+fn note_missing_icon() {
+    tracing::warn!("the status icon could not be read");
+}
+
+/// A status item carrying the medallion, with its menu when that menu can be
+/// built.
+///
+/// # Errors
+///
+/// The status area's own error when the item cannot be created.
+fn build_status_icon(icon: tray_icon::Icon) -> tray_icon::Result<tray_icon::TrayIcon> {
     let mut builder = tray_icon::TrayIconBuilder::new()
         .with_tooltip(APPLICATION_NAME)
         .with_icon(icon)
@@ -172,16 +190,19 @@ fn install_icon() {
     if let Some(menu) = status_menu() {
         builder = builder.with_menu(menu);
     }
-    match builder.build() {
-        Ok(installed) => {
-            APPLICATION_ICON.with(|held| {
-                *held.borrow_mut() = Some(installed);
-            });
-        }
-        Err(error) => {
-            tracing::warn!("the status icon was not installed: {error}");
-        }
-    }
+    builder.build()
+}
+
+/// Keep a status item for the life of the process.
+fn keep_installed_icon(installed: tray_icon::TrayIcon) {
+    APPLICATION_ICON.with(|held| {
+        *held.borrow_mut() = Some(installed);
+    });
+}
+
+/// The status area refused the item.
+fn note_failed_icon(error: &tray_icon::Error) {
+    tracing::warn!("the status icon was not installed: {error}");
 }
 
 /// The menu item's action, when it is one of ours.
