@@ -96,7 +96,7 @@ fn unit_text(bytes: u64, unit: u64) -> String {
     }
 }
 
-/// How far `sent` is through `total`, from zero through [`FULL_PERCENT`].
+/// How far `sent` is through `total`, from zero through 100.
 ///
 /// An empty file is already complete.
 #[must_use]
@@ -255,7 +255,7 @@ pub fn failure_line(group: &UploadGroup) -> Option<&str> {
         .find_map(|record| record.detail.as_deref())
 }
 
-/// How full the group's progress bar is, from zero through [`FULL_PERCENT`].
+/// How full the group's progress bar is, from zero through 100.
 #[must_use]
 pub fn filled(records: &[UploadRecord]) -> u16 {
     let reading = reading_of(records);

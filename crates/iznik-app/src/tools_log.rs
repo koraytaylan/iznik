@@ -79,7 +79,7 @@ fn signal() -> WakeSignal {
     WAKE.get_or_init(WakeSignal::new).clone()
 }
 
-/// Install the process log: `tracing` lines at [`LEVEL_VARIABLE`], or `info`.
+/// Install the process log: `tracing` lines at `IZNIK_LOG`, or `info`.
 ///
 /// A subscriber already installed by something else is left in place. This
 /// application does not ask the engine for a log file, so the subscriber

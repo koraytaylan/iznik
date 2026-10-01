@@ -24,7 +24,7 @@ const PARTIAL_PREFIX: &str = ".iznik-partial-";
 
 /// The longest file name an upload accepts, in bytes.
 ///
-/// A directory entry holds [`DIRECTORY_ENTRY_BYTES`]. The temporary name is
+/// A directory entry holds what POSIX `NAME_MAX` allows. The temporary name is
 /// the partial prefix plus the file's own name, and both have to fit in one
 /// entry, so the name itself is shorter by that prefix.
 pub const MAXIMUM_FILE_NAME_BYTES: usize = DIRECTORY_ENTRY_BYTES - PARTIAL_PREFIX.len();
