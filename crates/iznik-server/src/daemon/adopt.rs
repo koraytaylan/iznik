@@ -414,12 +414,17 @@ struct ParsedAdopt {
     lock: RawFd,
 }
 
+/// Where `--adopt` places the inherited listener, after the state path.
+const LISTENER_ARGUMENT: usize = 2;
+/// Where `--adopt` places the inherited lock, after the listener.
+const LOCK_ARGUMENT: usize = 3;
+
 /// Parses `--adopt`'s arguments, or nothing when they are not three numbers
 /// and a path.
 fn parse_adopted(arguments: &[OsString]) -> Option<ParsedAdopt> {
     let state = arguments.get(1)?.clone();
-    let listener = parse_descriptor(arguments.get(2)?)?;
-    let lock = parse_descriptor(arguments.get(3)?)?;
+    let listener = parse_descriptor(arguments.get(LISTENER_ARGUMENT)?)?;
+    let lock = parse_descriptor(arguments.get(LOCK_ARGUMENT)?)?;
     Some(ParsedAdopt {
         state: PathBuf::from(state),
         listener,

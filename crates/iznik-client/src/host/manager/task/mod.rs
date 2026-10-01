@@ -18,16 +18,18 @@ use crate::bootstrap::{Replacement, upgrade};
 use crate::commands::{abandoned, expire, replay};
 use crate::host::identity::HostId;
 use crate::host::manager::credit::{CreditBatch, CreditReceipt};
-use crate::host::manager::hearing::{heard, told_the_model};
+use crate::host::manager::hearing::told_the_model;
 use crate::host::manager::reach::{Reached, reach};
 use crate::host::manager::unanswered::{Unanswered, still_asked};
-use crate::host::manager::waiting::{Waiting, Woken, afresh, hold_until, keep, keeps, waiting};
-use crate::host::manager::{ManagerEvent, ORDERS_PER_TURN, Order, Shared, bootstrapping, seeded};
+use crate::host::manager::waiting::{Waiting, Woken, afresh, hold_until, keep, waiting};
+use crate::host::manager::{ManagerEvent, Order, Shared, bootstrapping, seeded};
 use crate::host::state::{Action, HostEvent, HostState, HostStateMachine};
 use crate::model::HostView;
 use crate::reduce::Notification;
 use crate::transport::Transport;
 use crate::transport::channel::{ChannelError, RemoteChannel};
+
+mod serve;
 
 /// How one turn of a host's life ended.
 enum Ended {
@@ -525,7 +527,7 @@ async fn pump(
         channel,
         mut record,
     } = link;
-    let ended = serve_link(host, shared, machine, orders, kept, channel, &mut record).await;
+    let ended = serve::serve_link(host, shared, machine, orders, kept, channel, &mut record).await;
     if !matches!(ended, Ended::Stopped) {
         unanswered.link_ended(host, shared, &record.carried);
     }
@@ -582,112 +584,6 @@ fn admitted(host: &HostId, shared: &Shared, order: &Order, record: &mut LinkReco
             true
         }
         _otherwise => true,
-    }
-}
-
-/// The loop [`pump`] runs: what arrived and what was ordered, until the link
-/// goes, with what it carried kept in `record`.
-async fn serve_link(
-    host: &HostId,
-    shared: &Arc<Shared>,
-    machine: &Mutex<HostStateMachine>,
-    orders: &mut UnboundedReceiver<Order>,
-    kept: &mut Vec<Order>,
-    mut channel: RemoteChannel,
-    record: &mut LinkRecord,
-) -> Ended {
-    let mut carried = 0_usize;
-    // An order taken off the queue while gathering credit, and not credit:
-    // the next turn is its.
-    let mut pending: Option<Order> = None;
-    loop {
-        let now = Instant::now();
-        let soon = now
-            .checked_add(shared.options.expire_interval)
-            .unwrap_or(now);
-        let turn = match pending.take() {
-            Some(order) => Turn::Ordered(Some(order)),
-            None => next_turn(&mut channel, orders, soon, carried < ORDERS_PER_TURN).await,
-        };
-        carried = if matches!(turn, Turn::Ordered(_)) {
-            carried.saturating_add(1)
-        } else {
-            0
-        };
-        match turn {
-            Turn::Arrived(Ok(received)) => {
-                if let Err(detail) = heard(host, shared, &mut channel, received).await {
-                    let _dead = advance(shared, host, machine, dead(&detail));
-                    return Ended::Gone;
-                }
-            }
-            // Nothing arrived inside the wake-up, which is not a failure:
-            // the loop goes round so that orders are still taken.
-            Turn::Arrived(Err(ChannelError::Deadline { .. })) => {}
-            Turn::Arrived(Err(error)) => {
-                let _dead = advance(shared, host, machine, dead(&error.to_string()));
-                return Ended::Gone;
-            }
-            Turn::Ordered(None | Some(Order::Stop)) => {
-                let _torn = advance(shared, host, machine, HostEvent::Removed);
-                return Ended::Stopped;
-            }
-            Turn::Ordered(Some(Order::Reconnect)) => {
-                channel.close();
-                let _dead = advance(shared, host, machine, dead("a reconnection was asked for"));
-                // Asked for, so the backoff is not waited out.
-                let _now = advance(shared, host, machine, HostEvent::RetryDue);
-                return Ended::Gone;
-            }
-            Turn::Ordered(Some(Order::Upgrade {
-                force,
-                keep_sessions,
-            })) => {
-                // The link is talking to the daemon being replaced, so it goes;
-                // the outer loop runs the replacement and connects again. The
-                // machine says work is under way, so the window shows an
-                // upgrade rather than a host that merely vanished.
-                channel.close();
-                let _asked = advance(shared, host, machine, HostEvent::UpgradeAsked);
-                return Ended::Upgrade {
-                    force,
-                    keep_sessions,
-                };
-            }
-            Turn::Ordered(Some(Order::Credit { receipt })) => {
-                let (carrying, after) = carry_credit(&mut channel, &receipt, orders, shared).await;
-                if carrying.is_err() {
-                    return credit_failed(host, shared, machine, kept, after);
-                }
-                pending = after;
-            }
-            Turn::Ordered(Some(order)) => {
-                if !admitted(host, shared, &order, record) {
-                    continue;
-                }
-                let order = current(host, shared, order);
-                let holdable = keeps(&order).then(|| order.clone());
-                let carrying = carry(host, shared, &mut channel, order).await;
-                if let Err(ChannelError::Message(refusal)) = &carrying {
-                    // Refused here, before a byte of it was written: the order
-                    // fails and the link, which never saw it, carries on.
-                    tracing::warn!(host = ?host.0, %refusal, "an order could not be encoded");
-                    continue;
-                }
-                if carrying.is_err() {
-                    // Held for the next connection, under the same rule as an
-                    // order that arrived while there was none: what the link
-                    // died holding was taken from the application, which was
-                    // told so, and dropping it here would lose a subscription
-                    // and leave a pane blank for ever.
-                    if let Some(held) = holdable {
-                        keep(kept, held);
-                    }
-                    let _dead = advance(shared, host, machine, dead("the link would not take it"));
-                    return Ended::Gone;
-                }
-            }
-        }
     }
 }
 

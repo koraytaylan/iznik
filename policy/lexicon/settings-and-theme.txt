@@ -18,10 +18,12 @@ defaults
 drawable
 emulator
 everforest
+exponent
 fahrenheit
 families
 family
 flexoki
+gamma
 generic
 gruvbox
 harper
@@ -33,6 +35,7 @@ kibble
 kit
 lands
 leftovers
+linear
 loosest
 malformed
 mellifluous

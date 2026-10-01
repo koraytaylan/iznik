@@ -103,6 +103,12 @@ fn pump_draws_output_before_its_fallback(context: &mut TestAppContext) {
 /// Propagates fixture, encoding and window failures, and a frame that does not
 /// arrive before the deadline.
 fn woken(context: &mut TestAppContext) -> Result<(), Failed> {
+    // The emulator thread raises the pump's signal. The test scheduler records
+    // a wake from any other thread as non-determinism and fails the test at
+    // the end, which is what a slow run hits once the pump is already waiting.
+    // Allowing parking keeps that wake, and the hour-long fallback still cannot
+    // be what delivers the frame: this loop never advances the test clock.
+    context.background_executor.allow_parking();
     context.update(gpui_kit::init);
     let (bridge, _directory) = engine::start("pump")?;
     let thread = Rc::new(VtThread::start(VtOptions::default())?);

@@ -38,7 +38,7 @@ const LABEL_WIDTH: f32 = 160.0;
 const LOG_VIEW_HEIGHT: f32 = 480.0;
 /// How far past the visible log the list prepares rows, so scrolling does not
 /// wait to measure them.
-const LOG_OVERDRAW: f32 = 64.0;
+const LOG_MARGIN: f32 = 64.0;
 /// What the hosts page says it is.
 const HOSTS_PAGE: &str = "Hosts";
 /// What the log page says it is.
@@ -58,12 +58,12 @@ pub fn report_lines(
     selected: Option<&TabKey>,
     failure: Option<&Notice>,
 ) -> Vec<String> {
-    let cards = host_cards(state, selected, failure);
-    if cards.is_empty() {
+    let card_list = host_card_list(state, selected, failure);
+    if card_list.is_empty() {
         return vec![EMPTY_REPORT.to_owned()];
     }
     let mut lines = Vec::new();
-    for card in cards {
+    for card in card_list {
         lines.push(card.alias);
         for (label, value) in card.rows {
             lines.push(format!("  {label}: {value}"));
@@ -111,14 +111,14 @@ struct HostCard {
 }
 
 /// Every card the window has to draw, failure first.
-fn host_cards(
+fn host_card_list(
     state: &EngineState,
     selected: Option<&TabKey>,
     failure: Option<&Notice>,
 ) -> Vec<HostCard> {
-    let mut cards = Vec::new();
+    let mut card_list = Vec::new();
     if let Some(failure) = failure {
-        cards.push(HostCard {
+        card_list.push(HostCard {
             alias: format!("failure {}", failure.host),
             rows: vec![("Detail".to_owned(), failure.detail.clone())],
         });
@@ -128,14 +128,14 @@ fn host_cards(
             .host(&host)
             .cloned()
             .unwrap_or_else(HostReport::unknown);
-        cards.push(host_card(
+        card_list.push(host_card(
             &host,
             &report,
             state.model().host(&host),
             selected,
         ));
     }
-    cards
+    card_list
 }
 
 /// The labeled rows for one host.
@@ -297,7 +297,7 @@ impl ToolsWindow {
     }
 
     /// The host cards to draw, or one card when the main window has closed.
-    fn cards(&self, app: &App) -> Vec<HostCard> {
+    fn card_list(&self, app: &App) -> Vec<HostCard> {
         self.shell.upgrade().map_or_else(
             || {
                 vec![HostCard {
@@ -307,7 +307,7 @@ impl ToolsWindow {
             },
             |shell| {
                 let shell = shell.read(app);
-                host_cards(
+                host_card_list(
                     shell.hosts.state(),
                     shell.selected(),
                     shell.notices.failure(),
@@ -339,11 +339,11 @@ fn watch_log(context: &mut Context<'_, ToolsWindow>) -> Task<()> {
     context.spawn(async move |view, asynchronous| {
         loop {
             wake.raised().await;
-            let refreshed = view.update(asynchronous, |tools, update_context| {
+            let updated = view.update(asynchronous, |tools, update_context| {
                 tools.adopt_log();
                 update_context.notify();
             });
-            if refreshed.is_err() {
+            if updated.is_err() {
                 break;
             }
         }
@@ -351,11 +351,11 @@ fn watch_log(context: &mut Context<'_, ToolsWindow>) -> Task<()> {
 }
 
 /// The hosts page: one group per host, each a labeled list.
-fn hosts_page(cards: &[HostCard], report: &str) -> SettingPage {
+fn hosts_page(card_list: &[HostCard], report: &str) -> SettingPage {
     let mut page = SettingPage::new(HOSTS_PAGE)
         .resettable(false)
         .description("The connection, the server, and every pane this client is showing.");
-    if cards.is_empty() {
+    if card_list.is_empty() {
         let label = report.to_owned();
         return page.group(
             SettingGroup::new().item(SettingItem::render(move |_, _, _| {
@@ -369,7 +369,7 @@ fn hosts_page(cards: &[HostCard], report: &str) -> SettingPage {
         );
     }
     let mut first = true;
-    for card in cards {
+    for card in card_list {
         let rows = card.rows.clone();
         let alias = card.alias.clone();
         let label = first.then(|| report.to_owned());
@@ -417,7 +417,7 @@ fn host_list(
 /// The log page: a console that follows the newest line, with a jump back to it.
 /// A log list that follows its last line. Rows carry no padding of their own.
 fn log_list(count: usize) -> ListState {
-    let list = ListState::new(count, ListAlignment::Top, px(LOG_OVERDRAW));
+    let list = ListState::new(count, ListAlignment::Top, px(LOG_MARGIN));
     list.set_follow_mode(FollowMode::Tail);
     list
 }
@@ -461,7 +461,7 @@ impl Render for ToolsWindow {
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         self.adopt_log();
-        let cards = self.cards(context);
+        let card_list = self.card_list(context);
         let report = self.report(context);
         let log_lines = self.log_lines.clone();
         let log_list = self.log_list.clone();
@@ -475,7 +475,7 @@ impl Render for ToolsWindow {
             .child(
                 div().flex_1().min_h_0().child(
                     SettingsPanel::new("iznik-developer")
-                        .page(hosts_page(&cards, &report))
+                        .page(hosts_page(&card_list, &report))
                         .page(log_page(&log_lines, log_list)),
                 ),
             )

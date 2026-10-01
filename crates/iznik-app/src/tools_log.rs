@@ -180,7 +180,7 @@ mod tests {
     /// Panics when the line is absent.
     #[test]
     fn install_keeps_a_log_line() {
-        install_with_info();
+        install_subscriber();
         tracing::info!("tools log fixture");
         let lines = snapshot();
         assert!(
@@ -214,8 +214,8 @@ mod tests {
         );
     }
 
-    /// Install at info. A subscriber already installed by another test is kept.
-    fn install_with_info() {
+    /// Install the subscriber. One already installed by another test is kept.
+    fn install_subscriber() {
         clear();
         let _installed = tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new(DEFAULT_LEVEL))

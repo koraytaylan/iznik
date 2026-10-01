@@ -110,7 +110,7 @@ because = "the shortcuts and the numbered chips are the headless production shel
 [[claim]]
 id = "window-command-new-tab"
 statement = "Command-T asks the host for a new tab in the session on screen, and the focused terminal does not receive that key."
-test = "iznik-app::menu::command_t_asks_the_host_for_a_tab"
+test = "iznik-app::menu::new_tab_command_asks_the_host_for_a_tab"
 because = "the shortcut is the headless production shell's own key dispatch into the menu's New Tab action, over a real terminal surface; no container is required"
 
 [[claim]]
@@ -122,7 +122,7 @@ because = "the window's model is the engine state's own copy, and the deltas are
 [[claim]]
 id = "window-command-close"
 statement = "Command-W closes the focused pane of the tab on screen. A tab that is running a program is not asked to close as a whole."
-test = "iznik-app::menu::command_w_closes_the_focused_pane"
+test = "iznik-app::menu::close_command_closes_the_focused_pane"
 because = "the shortcut is the headless production shell's own key dispatch into the menu's Close Pane action; no container is required"
 
 [[claim]]

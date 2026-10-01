@@ -56,13 +56,13 @@ fn tab_reaches_the_focused_pane(context: &mut TestAppContext) {
 /// Command-W closes the focused pane. A running program does not turn that
 /// into a request to close the whole tab.
 #[gpui_kit::test]
-fn command_w_closes_the_focused_pane(context: &mut TestAppContext) {
+fn close_command_closes_the_focused_pane(context: &mut TestAppContext) {
     check(&close_pane(context));
 }
 
 /// Command-T asks the host for a new tab in the session on screen.
 #[gpui_kit::test]
-fn command_t_asks_the_host_for_a_tab(context: &mut TestAppContext) {
+fn new_tab_command_asks_the_host_for_a_tab(context: &mut TestAppContext) {
     check(&new_tab(context));
 }
 

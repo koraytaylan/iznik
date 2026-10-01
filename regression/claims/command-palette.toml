@@ -115,7 +115,7 @@ because = "the offered arrangements are pure over the model mirror"
 [[claim]]
 id = "command-palette-close-pane"
 statement = "pane: close addresses the focused pane of the tab on screen. When focus was never recorded it addresses that tab's first pane in reading order, and focus recorded on another tab's pane does not close that pane."
-test = "iznik-app::prompt::pane_close_acts_on_the_focused_pane_or_the_first"
+test = "iznik-app::prompt::pane_close_runs_on_the_focused_pane_or_the_first"
 because = "which pane a close addresses is a pure projection of the window model and the selected tab"
 
 [[claim]]

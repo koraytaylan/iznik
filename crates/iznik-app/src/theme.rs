@@ -85,15 +85,15 @@ pub fn failure_strip_colors(theme: &ThemeColor) -> (Hsla, Hsla, Hsla) {
 /// close to its surface keeps the text the rest of that theme already uses.
 fn danger_text(theme: &ThemeColor, field: Hsla) -> Hsla {
     let mut chosen = theme.foreground;
-    let mut best = contrast_ratio(chosen, field);
+    let mut chosen_ratio = contrast_ratio(chosen, field);
     for candidate in [theme.danger, theme.danger_foreground] {
         if !candidate.is_opaque() {
             continue;
         }
         let ratio = contrast_ratio(candidate, field);
-        if ratio > best {
+        if ratio > chosen_ratio {
             chosen = candidate;
-            best = ratio;
+            chosen_ratio = ratio;
         }
     }
     chosen

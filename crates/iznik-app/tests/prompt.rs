@@ -817,7 +817,7 @@ fn held_tab(state: &EngineState, id: u64) -> Option<Tab> {
 /// # Panics
 ///
 /// Panics when the fixture does not encode or the addressed pane differs.
-fn pane_close_acts_on_the_focused_pane_or_the_first() {
+fn pane_close_runs_on_the_focused_pane_or_the_first() {
     let mut held = state().expect("fixture");
     let key = selected(10);
     let tab = held_tab(&held, 10).expect("tab");

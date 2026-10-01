@@ -64,13 +64,13 @@ pub fn percent_points(sent: u64, total: u64) -> u16 {
     if total == 0 {
         return PERCENT_SCALE;
     }
-    let scaled = sent
+    let points = sent
         .min(total)
         .saturating_mul(u64::from(PERCENT_SCALE))
         .checked_div(total)
         .unwrap_or(0)
         .min(u64::from(PERCENT_SCALE));
-    u16::try_from(scaled).unwrap_or(PERCENT_SCALE)
+    u16::try_from(points).unwrap_or(PERCENT_SCALE)
 }
 
 /// [`percent_points`] as the zero-to-one-hundred value a progress bar takes.
