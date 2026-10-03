@@ -287,6 +287,28 @@ fn terminal_page(shell: &WeakEntity<WindowShell>) -> SettingPage {
                     |behavior, value| behavior.option_as_meta = value,
                 )
                 .description("Send Option as Meta instead of typing the layout's characters."),
+            )
+            .item(
+                behavior_item(
+                    shell,
+                    "Ask Before Closing a Session",
+                    |behavior| behavior.confirm_close.session,
+                    |behavior, value| behavior.confirm_close.session = value,
+                )
+                .description(
+                    "Ask before closing a session that has more than one tab. One idle tab closes at once.",
+                ),
+            )
+            .item(
+                behavior_item(
+                    shell,
+                    "Ask Before Closing a Running Tab",
+                    |behavior| behavior.confirm_close.running,
+                    |behavior, value| behavior.confirm_close.running = value,
+                )
+                .description(
+                    "Ask before closing a tab or session that is running a program. A shell at its prompt closes at once.",
+                ),
             ),
     )
 }
@@ -327,6 +349,7 @@ fn behavior_of(shell: &WeakEntity<WindowShell>, app: &App) -> Behavior {
     Behavior {
         clipboard_write: settings.clipboard_write,
         confirm_multiline_paste: settings.confirm_multiline_paste,
+        confirm_close: settings.confirm_close,
         option_as_meta: settings.option_as_meta,
     }
 }

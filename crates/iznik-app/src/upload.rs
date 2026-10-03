@@ -489,7 +489,7 @@ impl WindowShell {
             );
             return;
         }
-        if self.palette.prompt.is_some() {
+        if self.question_open() {
             self.failure(
                 &paste.key.host,
                 "the files were not sent: another question is open; answer it, then paste again"

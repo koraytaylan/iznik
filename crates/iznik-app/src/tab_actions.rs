@@ -199,16 +199,12 @@ fn close(
     window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) {
-    for tab in tabs {
-        if let Err(error) = shell.dispatch_shown(
-            &key.host.0,
-            SessionCommand::CloseTab { tab: *tab },
-            window,
-            context,
-        ) {
-            shell.failure(&key.host, error.to_string(), context);
-            return;
-        }
+    let commands = tabs
+        .iter()
+        .map(|tab| SessionCommand::CloseTab { tab: *tab })
+        .collect();
+    if let Err(error) = shell.request_close(&key.host.0, commands, window, context) {
+        shell.failure(&key.host, error.to_string(), context);
     }
 }
 
@@ -233,12 +229,12 @@ fn close_sessions(
     window: &mut Window,
     context: &mut Context<'_, WindowShell>,
 ) {
-    for session in sessions {
-        let command = SessionCommand::CloseSession { session: *session };
-        if let Err(error) = shell.dispatch_shown(&key.host.0, command, window, context) {
-            shell.failure(&key.host, error.to_string(), context);
-            return;
-        }
+    let commands = sessions
+        .iter()
+        .map(|session| SessionCommand::CloseSession { session: *session })
+        .collect();
+    if let Err(error) = shell.request_close(&key.host.0, commands, window, context) {
+        shell.failure(&key.host, error.to_string(), context);
     }
 }
 

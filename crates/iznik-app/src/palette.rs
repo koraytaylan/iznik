@@ -471,14 +471,24 @@ pub fn dispatch_action(
         palette.close();
         return Ok(true);
     }
-    match prompt::begin_with(
+    let asks = shell.settings().confirm_close;
+    match prompt::begin_asking(
         action,
         shell.hosts().state(),
         shell.selected(),
         &shell.ssh_alias(),
+        asks,
     ) {
         Some(Step::Ask(prompt)) => {
             palette.ask(prompt);
+            return Ok(true);
+        }
+        Some(Step::Confirm(question)) => {
+            let prompt_open = palette.prompt.is_some();
+            shell.offer_close(question, prompt_open, context);
+            if !prompt_open {
+                palette.close();
+            }
             return Ok(true);
         }
         Some(Step::Perform(answer)) => {
@@ -565,6 +575,12 @@ pub fn perform(shell: &mut WindowShell, answer: Answer) -> Result<(), crate::bri
             HostOperation::Uninstall => shell.hosts_mut().uninstall(&host.0),
         },
         Answer::Command { host, command } => shell.dispatch_command(&host.0, command).map(|_| ()),
+        Answer::Commands { host, commands } => {
+            for command in commands {
+                shell.dispatch_command(&host.0, command)?;
+            }
+            Ok(())
+        }
         Answer::Paste { key, text } => shell
             .thread
             .send(crate::vt::VtCommand::Input {
@@ -606,7 +622,7 @@ impl WindowShell {
             }
             return;
         }
-        if self.palette.prompt.is_some() {
+        if self.question_open() {
             self.failure(&key.host, PASTE_WHILE_ASKING.to_owned(), context);
             return;
         }
@@ -659,12 +675,16 @@ impl WindowShell {
         window: &mut Window,
         context: &mut Context<'_, Self>,
     ) {
+        let place = self
+            .selected()
+            .and_then(|selected| crate::bars::tab_place(self.hosts().state(), selected));
         let mut palette_state = std::mem::take(&mut self.palette);
         let result = match action {
             Some(action) => dispatch_action(self, &mut palette_state, action, window, context),
             None => submit_prompt(self, &mut palette_state),
         };
         self.palette = palette_state;
+        self.settle_after_close(place.as_ref(), window, context);
         if let Err(error) = result {
             self.failure(&HostId("palette".to_owned()), error.to_string(), context);
         }

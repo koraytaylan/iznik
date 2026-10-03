@@ -114,6 +114,12 @@ test = "iznik-app::menu::new_tab_command_asks_the_host_for_a_tab"
 because = "the shortcut is the headless production shell's own key dispatch into the menu's New Tab action, over a real terminal surface; no container is required"
 
 [[claim]]
+id = "window-close-asks-before-ending-work"
+statement = "Closing a tab asks first only when a pane title names a program other than its shell, and closing a session asks first when it holds more than one tab or a program is running. The question names that close on its own button, and cancel is the other answer. Either question can be turned off. An idle shell, and a session of one idle tab, close at once. Both questions are on when the settings file does not mention them."
+test = "iznik-app::close_confirmation::closing_asks_for_a_running_program_or_a_session_with_many_tabs"
+because = "the question is a pure reading of the model titles and the two settings; no container is required"
+
+[[claim]]
 id = "window-close-shows-before-the-host-answers"
 statement = "Closing a tab removes it from the window's model before the host answers. A second close of that same tab is not recorded, and the host's own removal still applies without a failure."
 test = "iznik-app::close_confirmation::a_close_shows_before_the_host_answers"

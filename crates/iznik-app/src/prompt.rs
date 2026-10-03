@@ -141,6 +141,13 @@ pub enum Answer {
         /// The complete command.
         command: SessionCommand,
     },
+    /// Send these session commands to this host, in order.
+    Commands {
+        /// The host the commands are for.
+        host: HostId,
+        /// The complete commands.
+        commands: Vec<SessionCommand>,
+    },
 }
 
 /// Ask before writing pasted files into a pane's directory.
@@ -198,8 +205,10 @@ pub fn paste_prompt(key: crate::vt::PaneKey, text: String) -> Prompt {
 /// What choosing an action leads to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// Ask for the argument first.
+    /// Ask for the argument first, in the palette.
     Ask(Prompt),
+    /// Ask in the close dialog before sending the close.
+    Confirm(crate::close_ask::CloseQuestion),
     /// Nothing is left to ask: perform this.
     Perform(Answer),
 }
@@ -212,12 +221,35 @@ pub fn begin(action: ActionId, state: &EngineState, selected: Option<&TabKey>) -
 }
 
 /// The same, with the ssh configuration's own aliases offered by Add Host.
+///
+/// Closing asks with both questions on. [`begin_asking`] takes the settings.
 #[must_use]
 pub fn begin_with(
     action: ActionId,
     state: &EngineState,
     selected: Option<&TabKey>,
     ssh_aliases: &[String],
+) -> Option<Step> {
+    begin_asking(
+        action,
+        state,
+        selected,
+        ssh_aliases,
+        crate::close_ask::CloseAsks::default(),
+    )
+}
+
+/// What an action needs before it can be performed.
+///
+/// `asks` is whether closing a multi-tab session, and closing a running
+/// program, wait for an answer. Anything other than a close ignores it.
+#[must_use]
+pub fn begin_asking(
+    action: ActionId,
+    state: &EngineState,
+    selected: Option<&TabKey>,
+    ssh_aliases: &[String],
+    asks: crate::close_ask::CloseAsks,
 ) -> Option<Step> {
     if action == ActionId::AddHost {
         return Some(Step::Ask(add_host_prompt(ssh_aliases.to_vec())));
@@ -231,49 +263,10 @@ pub fn begin_with(
     if action == ActionId::ReorderSessions {
         return session_reorder_step(state, selected).map(Step::Ask);
     }
-    if action == ActionId::CloseTab {
-        return close_tab_step(state, selected?).map(Step::Ask);
+    if action == ActionId::CloseTab || action == ActionId::CloseSession {
+        return crate::close_ask::step(action, state, selected?, asks).map(Step::Confirm);
     }
     ask(action, state, selected).map(Step::Ask)
-}
-
-/// Ask before closing a tab whose panes are running a program other than
-/// their shell, because closing it ends those programs. A tab of idle shells
-/// needs no question, and `None` lets it close at once.
-fn close_tab_step(state: &EngineState, selected: &TabKey) -> Option<Prompt> {
-    let tab = state
-        .model()
-        .host(&selected.host)?
-        .model
-        .sessions
-        .iter()
-        .find(|session| session.id == selected.session)?
-        .tabs
-        .iter()
-        .find(|tab| tab.id == selected.tab)?;
-    let running: Vec<&str> = tab
-        .panes
-        .iter()
-        .filter_map(|pane| iznik_protocol::program::program_label(&pane.title))
-        .collect();
-    if running.is_empty() {
-        return None;
-    }
-    Some(Prompt {
-        action: Some(ActionId::CloseTab),
-        question: format!(
-            "Close this tab? It is running {}, which will end.",
-            running.join(", ")
-        ),
-        initial: String::new(),
-        expected: Expected::Choice(vec![Choice {
-            label: "Close tab".to_owned(),
-            answer: Answer::Command {
-                host: selected.host.clone(),
-                command: crate::bars::close_tab(selected.tab),
-            },
-        }]),
-    })
 }
 
 /// The prompt for reordering the host's sessions: each other position the

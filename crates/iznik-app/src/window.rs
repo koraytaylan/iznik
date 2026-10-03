@@ -918,6 +918,7 @@ impl Render for WindowShell {
         context: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         self.scroll_selected_tab();
+        let close_overlay = crate::close_ask::overlay(self, context);
         let entity = context.entity().downgrade();
         let body = self.body(&entity, context);
         let strips = self.connection_strips(context);
@@ -960,7 +961,8 @@ impl Render for WindowShell {
                 .flex()
                 .flex_col()
                 .capture_key_down(context.listener(|shell, event, window, context| {
-                    if palette::route_key(shell, event, window, context)
+                    if shell.close_key(event, window, context)
+                        || palette::route_key(shell, event, window, context)
                         || shell.chord(&event.keystroke, window, context)
                         || shell.shortcut_key(event, window, context)
                         || shell.bar_key(event, window, context)
@@ -983,6 +985,7 @@ impl Render for WindowShell {
                 .child(bars.bottom)
                 .child(palette_overlay)
                 .children(menu_overlay)
+                .child(close_overlay)
                 .children(gpui_kit::component::Root::render_notification_layer(
                     root_window,
                     context,

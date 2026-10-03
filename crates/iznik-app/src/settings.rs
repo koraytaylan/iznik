@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::actions::INVENTORY;
+use crate::close_ask::CloseAsks;
 use crate::host_ui::{Notice, NoticeKind};
 use crate::theme::AppTheme;
 use crate::vt::{MAXIMUM_SCROLLBACK_BYTES, MINIMUM_SCROLLBACK_BYTES, SCROLLBACK_BYTES};
@@ -46,6 +47,8 @@ const OWNED_FIELDS: &[&str] = &[
     "scrollback_bytes",
     "clipboard_write",
     "confirm_multiline_paste",
+    "confirm_close_session",
+    "confirm_close_running",
     "option_as_meta",
 ];
 /// The prefix of a keybinding override's field.
@@ -69,6 +72,8 @@ pub struct Settings {
     /// Whether a paste with line breaks into a program without bracketed
     /// paste waits for a person to confirm it.
     pub confirm_multiline_paste: bool,
+    /// Whether closing a session or a running program asks first.
+    pub confirm_close: CloseAsks,
     /// Whether Option is sent as Meta rather than used by the keyboard
     /// layout to type characters such as `@` on Turkish Q.
     pub option_as_meta: bool,
@@ -86,6 +91,7 @@ impl Default for Settings {
             scrollback_bytes: SCROLLBACK_BYTES,
             clipboard_write: true,
             confirm_multiline_paste: true,
+            confirm_close: CloseAsks::default(),
             option_as_meta: false,
             unowned: Vec::new(),
         }
@@ -265,7 +271,7 @@ pub fn validate_keybindings(keybindings: &BTreeMap<String, String>) -> Result<()
 #[must_use]
 pub fn encode(settings: &Settings) -> String {
     let mut text = format!(
-        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\nconfirm_multiline_paste={}\noption_as_meta={}\n",
+        "foreground={},{},{}\nbackground={},{},{}\nfont_family={}\nfont_size={}\nline_height={}\ntabs_in_title_bar={}\ntheme_name={}\nscrollback_bytes={}\nclipboard_write={}\nconfirm_multiline_paste={}\nconfirm_close_session={}\nconfirm_close_running={}\noption_as_meta={}\n",
         settings.theme.foreground.r,
         settings.theme.foreground.g,
         settings.theme.foreground.b,
@@ -280,6 +286,8 @@ pub fn encode(settings: &Settings) -> String {
         settings.scrollback_bytes,
         settings.clipboard_write,
         settings.confirm_multiline_paste,
+        settings.confirm_close.session,
+        settings.confirm_close.running,
         settings.option_as_meta
     );
     for (action, chord) in &settings.keybindings {
@@ -390,6 +398,8 @@ pub fn decode(text: &str) -> Result<Settings, SettingsError> {
             }
             "clipboard_write" => settings.clipboard_write = flag(field, value)?,
             "confirm_multiline_paste" => settings.confirm_multiline_paste = flag(field, value)?,
+            "confirm_close_session" => settings.confirm_close.session = flag(field, value)?,
+            "confirm_close_running" => settings.confirm_close.running = flag(field, value)?,
             "option_as_meta" => settings.option_as_meta = flag(field, value)?,
             "scrollback_bytes" => {
                 settings.scrollback_bytes = value
@@ -465,8 +475,8 @@ impl WindowShell {
     }
 
     /// Change the terminal behavior settings — the program clipboard, the
-    /// multi-line paste question and Option as Meta — apply them to every
-    /// pane and write the file.
+    /// multi-line paste question, the close questions and Option as Meta —
+    /// apply them to every pane and write the file.
     pub fn edit_behavior(
         &mut self,
         edit: impl FnOnce(&mut Behavior),
@@ -476,11 +486,13 @@ impl WindowShell {
         let mut behavior = Behavior {
             clipboard_write: settings.clipboard_write,
             confirm_multiline_paste: settings.confirm_multiline_paste,
+            confirm_close: settings.confirm_close,
             option_as_meta: settings.option_as_meta,
         };
         edit(&mut behavior);
         settings.clipboard_write = behavior.clipboard_write;
         settings.confirm_multiline_paste = behavior.confirm_multiline_paste;
+        settings.confirm_close = behavior.confirm_close;
         settings.option_as_meta = behavior.option_as_meta;
         let theme = settings.theme.clone();
         self.apply_theme(&theme, context);
@@ -496,6 +508,8 @@ pub struct Behavior {
     /// Whether a multi-line paste into a program without bracketed paste waits
     /// for a person to confirm it.
     pub confirm_multiline_paste: bool,
+    /// Whether closing a session or a running program asks first.
+    pub confirm_close: CloseAsks,
     /// Whether Option is sent as Meta.
     pub option_as_meta: bool,
 }

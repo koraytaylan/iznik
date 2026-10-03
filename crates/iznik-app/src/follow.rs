@@ -25,6 +25,10 @@ use crate::status::Remedy;
 use crate::vt::PaneKey;
 use crate::window::{SessionKey, TabKey, WindowShell};
 
+/// What a person is told when a close arrives while another question is open.
+const CLOSE_WHILE_ASKING: &str =
+    "the close was not sent: another question is open; answer it, then close again";
+
 /// A model change this window asked for and has not seen yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expectation {
@@ -67,6 +71,17 @@ pub struct Following {
     /// When the record first changed without being written since; a burst of
     /// tab changes is written once, after the selection write delay.
     pub unwritten_since: Option<std::time::Instant>,
+    /// The close confirmation on screen, with where the selection sat.
+    pub close_question: Option<OpenClose>,
+}
+
+/// A close confirmation on screen, and the selection it was asked from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenClose {
+    /// What the dialog says, and what confirming sends.
+    pub question: crate::close_ask::CloseQuestion,
+    /// Where the selected tab sat, so confirming lands on its neighbor.
+    pub place: Option<TabPlace>,
 }
 
 /// Every tab a host holds.
@@ -158,6 +173,15 @@ pub fn loaded(path: Option<&std::path::Path>) -> Following {
     following
 }
 
+/// The host an answer sends a command to, when it is a close.
+fn answer_host(answer: &crate::prompt::Answer) -> Option<HostId> {
+    match answer {
+        crate::prompt::Answer::Command { host, .. }
+        | crate::prompt::Answer::Commands { host, .. } => Some(host.clone()),
+        _ => None,
+    }
+}
+
 /// The hosts added from this window that are connected, have sent their
 /// model, and hold no session.
 #[must_use]
@@ -237,6 +261,133 @@ impl WindowShell {
             context.notify();
         }
         Ok(submission)
+    }
+
+    /// Send close commands, asking first when a setting says this close should.
+    ///
+    /// A session with more than one tab asks when confirm-close-session is on.
+    /// A tab or session running a program other than its shell asks when
+    /// confirm-close-running is on. The host publishes that program as the
+    /// pane title. An idle shell closes at once. The question replaces a
+    /// close question already open. Another question — a rename, a paste —
+    /// is left as it is, and nothing closes until it is answered.
+    ///
+    /// # Errors
+    ///
+    /// As [`WindowShell::dispatch_shown`], for a close that is sent.
+    pub fn request_close(
+        &mut self,
+        alias: &str,
+        commands: Vec<SessionCommand>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> Result<(), EngineError> {
+        let host = HostId(alias.to_owned());
+        let asks = self.settings().confirm_close;
+        if let Some(question) =
+            crate::close_ask::question(self.hosts().state(), &host, &commands, asks)
+        {
+            let prompt_open = self.palette.prompt.is_some();
+            self.offer_close(question, prompt_open, context);
+            return Ok(());
+        }
+        for command in commands {
+            self.dispatch_shown(alias, command, window, context)?;
+        }
+        Ok(())
+    }
+
+    /// Whether a palette question or the close dialog is waiting for an answer.
+    #[must_use]
+    pub(crate) fn question_open(&self) -> bool {
+        self.palette.prompt.is_some() || self.following.close_question.is_some()
+    }
+
+    /// Open the close dialog, unless another question is already waiting.
+    ///
+    /// `prompt_open` is a palette question — a rename, a paste — which is
+    /// left as it is, and this close is not sent. A close dialog already
+    /// open is replaced. During a palette choice the palette state is held
+    /// aside, so the caller says whether that question is open.
+    pub(crate) fn offer_close(
+        &mut self,
+        question: crate::close_ask::CloseQuestion,
+        prompt_open: bool,
+        context: &mut Context<'_, Self>,
+    ) {
+        if prompt_open {
+            if let Some(host) = answer_host(&question.answer) {
+                self.failure(&host, CLOSE_WHILE_ASKING.to_owned(), context);
+            }
+            return;
+        }
+        let place = self
+            .selected()
+            .and_then(|selected| bars::tab_place(self.hosts().state(), selected));
+        self.palette.close();
+        self.close_menu(context);
+        self.following.close_question = Some(OpenClose { question, place });
+        context.notify();
+    }
+
+    /// Send the close the dialog is holding, then leave the neighbor on screen.
+    pub(crate) fn accept_close(&mut self, window: &mut Window, context: &mut Context<'_, Self>) {
+        let Some(open) = self.following.close_question.take() else {
+            return;
+        };
+        let host = answer_host(&open.question.answer);
+        if let Err(error) = crate::palette::perform(self, open.question.answer)
+            && let Some(host) = host
+        {
+            self.failure(&host, error.to_string(), context);
+        }
+        self.settle_after_close(open.place.as_ref(), window, context);
+        context.notify();
+    }
+
+    /// Leave the close unsent.
+    pub(crate) fn dismiss_close(&mut self, context: &mut Context<'_, Self>) {
+        if self.following.close_question.take().is_some() {
+            context.notify();
+        }
+    }
+
+    /// Answer the close dialog from the keyboard, and keep the key from the terminal.
+    ///
+    /// Return confirms. Escape cancels. Any other key is swallowed while the
+    /// dialog is open.
+    pub(crate) fn close_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) -> bool {
+        if self.following.close_question.is_none() {
+            return false;
+        }
+        let key = event.keystroke.key.as_str();
+        let plain = !event.keystroke.modifiers.modified();
+        if plain && key == "escape" {
+            self.dismiss_close(context);
+        } else if plain && key == "enter" {
+            self.accept_close(window, context);
+        }
+        true
+    }
+
+    /// Move off a tab a close has already dropped, using where it sat before.
+    pub(crate) fn settle_after_close(
+        &mut self,
+        place: Option<&TabPlace>,
+        window: &mut Window,
+        context: &mut Context<'_, Self>,
+    ) {
+        if self
+            .selected()
+            .is_some_and(|selected| self.tab(selected).is_none())
+        {
+            self.reconcile(place, window, context);
+        }
     }
 
     /// Keep the current tab when the model still holds it. When that tab has

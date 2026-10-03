@@ -179,6 +179,8 @@ fn command(prompt: &Prompt, text: &str, index: usize) -> Result<SessionCommand, 
 #[test]
 /// Only the actions that need an argument open a prompt.
 ///
+/// Closing a session is one of them when the session holds more than one tab.
+///
 /// # Panics
 ///
 /// Panics when an argument-free action asks, or an argument action does not.
@@ -187,7 +189,6 @@ fn only_argument_actions_open_a_prompt() {
     let key = selected(10);
     for action in [
         ActionId::CreateSession,
-        ActionId::CloseSession,
         ActionId::CreateTab,
         ActionId::CloseTab,
         ActionId::CreatePane,
@@ -202,6 +203,10 @@ fn only_argument_actions_open_a_prompt() {
     ] {
         assert!(begin(action, &state, Some(&key)).is_none(), "{action:?}");
     }
+    assert!(
+        begin(ActionId::CloseSession, &state, Some(&key)).is_some(),
+        "a session with more than one tab asks before it closes"
+    );
     for action in [
         ActionId::AddHost,
         ActionId::RenameSession,

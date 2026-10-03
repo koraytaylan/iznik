@@ -114,7 +114,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     spec(
         ActionId::CloseSession,
         "session: close",
-        "Close the selected session and its tabs.",
+        "Close the selected session and its tabs. A session with more than one tab, or one running a program, asks in a dialog first.",
         ActionTarget::SessionCommand,
         ActionContext::Session,
         None,
@@ -146,7 +146,7 @@ pub const INVENTORY: &[ActionSpec] = &[
     spec(
         ActionId::CloseTab,
         "tab: close",
-        "Close the selected tab and its panes.",
+        "Close the selected tab and its panes. A tab running a program asks in a dialog first.",
         ActionTarget::SessionCommand,
         ActionContext::Tab,
         Some("ctrl-shift-w"),

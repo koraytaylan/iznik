@@ -186,8 +186,8 @@ where
 }
 
 /// Run one inventory action through the palette's own path: an argument-free
-/// action is sent at once, one that needs an argument opens the palette at its
-/// prompt, and one the model cannot support says so in a notice.
+/// action is sent at once, one that needs an argument opens its question, and
+/// one the model cannot support says so in a notice.
 fn run(
     shell: &mut WindowShell,
     action: ActionId,

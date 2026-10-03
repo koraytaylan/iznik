@@ -691,7 +691,11 @@ fn tab_close(
             application.stop_propagation();
             let command = SessionCommand::CloseTab { tab };
             let _ignored = target.update(application, |window_shell, context| {
-                let _submission = window_shell.dispatch_shown(&alias, command, window, context);
+                if let Err(error) =
+                    window_shell.request_close(&alias, vec![command], window, context)
+                {
+                    window_shell.failure(&HostId(alias.clone()), error.to_string(), context);
+                }
             });
         });
     }
@@ -720,7 +724,11 @@ fn session_close(
             application.stop_propagation();
             let command = SessionCommand::CloseSession { session };
             let _ignored = target.update(application, |window_shell, context| {
-                let _submission = window_shell.dispatch_shown(&alias, command, window, context);
+                if let Err(error) =
+                    window_shell.request_close(&alias, vec![command], window, context)
+                {
+                    window_shell.failure(&HostId(alias.clone()), error.to_string(), context);
+                }
             });
         });
     }

@@ -44,6 +44,9 @@ fn malformed_keybinding_is_refused() {
 #[test]
 /// Settings encode and decode without losing theme or keybinding values.
 ///
+/// The two close questions are on by default, including in a file that
+/// predates them, and a file can turn each one off.
+///
 /// # Panics
 ///
 /// Panics when the stable settings format is not reversible.
@@ -56,6 +59,15 @@ fn settings_round_trip() {
         .keybindings
         .insert("CreateSession".to_owned(), "ctrl-n".to_owned());
     assert_eq!(decode(&encode(&settings)).expect("round trip"), settings);
+    assert!(Settings::default().confirm_close.session);
+    assert!(Settings::default().confirm_close.running);
+    let quiet =
+        decode("confirm_close_session=false\nconfirm_close_running=false\n").expect("flags");
+    assert!(!quiet.confirm_close.session);
+    assert!(!quiet.confirm_close.running);
+    let kept = decode("font_size=14\n").expect("older file");
+    assert!(kept.confirm_close.session);
+    assert!(kept.confirm_close.running);
 }
 
 #[test]
